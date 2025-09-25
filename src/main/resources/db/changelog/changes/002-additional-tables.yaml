@@ -1,0 +1,58 @@
+databaseChangeLog:
+  - changeSet:
+      id: 002-additional-tables
+      author: refactor
+      changes:
+        - createTable:
+            tableName: queue_players
+            columns:
+              - column: { name: id, type: BIGINT AUTO_INCREMENT, constraints: { primaryKey: true }}
+              - column: { name: player_id, type: BIGINT, constraints: { nullable: false }}
+              - column: { name: summoner_name, type: VARCHAR(255), constraints: { nullable: false }}
+              - column: { name: region, type: VARCHAR(10), constraints: { nullable: false }}
+              - column: { name: custom_lp, type: INT, defaultValueNumeric: 0 }
+              - column: { name: primary_lane, type: VARCHAR(20) }
+              - column: { name: secondary_lane, type: VARCHAR(20) }
+              - column: { name: join_time, type: TIMESTAMP, defaultValueComputed: CURRENT_TIMESTAMP }
+              - column: { name: queue_position, type: INT }
+              - column: { name: is_active, type: TINYINT, defaultValueNumeric: 1 }
+              - column: { name: acceptance_status, type: TINYINT, defaultValueNumeric: 0 }
+        - addUniqueConstraint: { tableName: queue_players, columnNames: summoner_name, constraintName: uq_queue_players_summoner }
+        - createIndex:
+            tableName: queue_players
+            indexName: idx_queue_acceptance
+            columns:
+              - column: { name: acceptance_status }
+        - createTable:
+            tableName: discord_lol_links
+            columns:
+              - column: { name: id, type: BIGINT AUTO_INCREMENT, constraints: { primaryKey: true }}
+              - column: { name: discord_id, type: VARCHAR(255), constraints: { nullable: false }}
+              - column: { name: discord_username, type: VARCHAR(255), constraints: { nullable: false }}
+              - column: { name: game_name, type: VARCHAR(255), constraints: { nullable: false }}
+              - column: { name: tag_line, type: VARCHAR(10), constraints: { nullable: false }}
+              - column: { name: summoner_name, type: VARCHAR(255), constraints: { nullable: false }}
+              - column: { name: verified, type: TINYINT, defaultValueNumeric: 0 }
+              - column: { name: created_at, type: TIMESTAMP, defaultValueComputed: CURRENT_TIMESTAMP }
+              - column: { name: updated_at, type: TIMESTAMP, defaultValueComputed: CURRENT_TIMESTAMP }
+              - column: { name: last_used, type: TIMESTAMP }
+        - addUniqueConstraint: { tableName: discord_lol_links, columnNames: discord_id, constraintName: uq_discord_links_discord_id }
+        - createTable:
+            tableName: matches
+            columns:
+              - column: { name: id, type: BIGINT AUTO_INCREMENT, constraints: { primaryKey: true }}
+              - column: { name: match_id, type: VARCHAR(255), constraints: { nullable: false }}
+              - column: { name: team1_players, type: TEXT, constraints: { nullable: false }}
+              - column: { name: team2_players, type: TEXT, constraints: { nullable: false }}
+              - column: { name: winner_team, type: INT }
+              - column: { name: average_mmr_team1, type: INT }
+              - column: { name: average_mmr_team2, type: INT }
+              - column: { name: mmr_changes, type: TEXT }
+              - column: { name: status, type: VARCHAR(50), defaultValue: pending }
+              - column: { name: created_at, type: TIMESTAMP, defaultValueComputed: CURRENT_TIMESTAMP }
+              - column: { name: completed_at, type: TIMESTAMP }
+              - column: { name: riot_game_id, type: VARCHAR(255) }
+              - column: { name: actual_winner, type: INT }
+              - column: { name: actual_duration, type: INT }
+              - column: { name: riot_id, type: VARCHAR(255) }
+        - addUniqueConstraint: { tableName: matches, columnNames: match_id, constraintName: uq_matches_match_id }

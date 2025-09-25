@@ -1,0 +1,270 @@
+<div class="dashboard">
+  <!-- Hero Section -->
+  <div class="hero-section" *ngIf="player">
+    <div class="hero-content">
+      <div class="player-avatar">
+        <img [src]="getProfileIconUrl()" alt="Profile Icon" class="profile-icon">
+        <div class="rank-badge" *ngIf="player.rank" [style.background]="getRankColor()">
+          {{ player.rank.tier }}
+        </div>
+      </div>
+
+      <div class="player-info">
+        <h1>Bem-vindo de volta, <span class="highlight">{{ player.summonerName }}</span>!</h1>
+        <p class="subtitle">Pronto para dominar a Fenda do Invocador?</p>
+        <div class="player-stats-row">
+          <div class="stat-pill">
+            <span class="stat-icon">⚡</span>
+            <span class="stat-value">{{ player.currentMMR || player.mmr || 'N/A' }}</span>
+            <span class="stat-label">MMR</span>
+          </div>
+          <div class="stat-pill" *ngIf="player.rankedData?.soloQueue || player.rank">
+            <span class="stat-icon">🏆</span>
+            <span class="stat-value">{{ getSoloQueueRank() }}</span>
+            <span class="stat-label">Solo/Duo ({{ getSoloQueueLP() }} LP)</span>
+          </div>
+
+          <!-- Flex Rank -->
+          <div class="stat-pill" *ngIf="hasFlexRank()">
+            <span class="stat-icon">🎖️</span>
+            <span class="stat-value">{{ getFlexRank() }}</span>
+            <span class="stat-label">Flex ({{ getFlexLP() }} LP)</span>
+          </div>
+
+          <!-- Unranked indicator when no rank data available -->
+          <div class="stat-pill" *ngIf="!hasSoloQueueRank() && !hasFlexRank()">
+            <span class="stat-icon">🥉</span>
+            <span class="stat-value">{{ getRankStatus() }}</span>
+            <span class="stat-label">Ranking</span>
+          </div>
+
+          <div class="stat-pill">
+            <span class="stat-icon">📈</span>
+            <span class="stat-value">{{ getWinRate() }}%</span>
+            <span class="stat-label">Taxa de Vitória</span>
+          </div>
+
+          <div class="stat-pill">
+            <span class="stat-icon">🎮</span>
+            <span class="stat-value">{{ getTotalGames() }}</span>
+            <span class="stat-label">Jogos</span>
+          </div>
+
+          <!-- Nova seção para partidas customizadas -->
+          <div class="stat-pill custom-matches">
+            <span class="stat-icon">🏟️</span>
+            <span class="stat-value" *ngIf="!isLoadingCustomCount">{{ customMatchesCount }}</span>
+            <span class="stat-value loading" *ngIf="isLoadingCustomCount">...</span>
+            <span class="stat-label">Partidas Customizadas</span>
+          </div>
+
+          <div class="stat-pill" *ngIf="player.summonerLevel">
+            <span class="stat-icon">⭐</span>
+            <span class="stat-value">{{ player.summonerLevel }}</span>
+            <span class="stat-label">Nível</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Seção de boas-vindas se não há jogador -->
+  <div class="welcome-no-player" *ngIf="!player">
+    <div class="welcome-content">
+      <h1>🎮 LoL Matchmaking</h1>
+      <p>Configure seus dados para começar a usar o sistema</p>
+      <button class="btn btn-primary" (click)="onOpenSettings()">
+        <span>⚙️ Configurar Dados</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Quick Actions -->
+  <div class="quick-actions-section" *ngIf="player">
+    <h2>🚀 Ações Rápidas</h2>
+    <div class="action-cards">
+      <button type="button" class="action-card primary" (click)="onJoinQueue(); showButtonFeedback($event)">
+        <div class="action-icon">⚔️</div>
+        <h3>Entrar na Fila</h3>
+        <p>Buscar partida 5v5 ranqueada</p>
+        <div class="action-badge">{{ queueStatus.playersInQueue }} na fila</div>
+      </button>
+
+      <button type="button" class="action-card secondary" (click)="onViewHistory(); showButtonFeedback($event)">
+        <div class="action-icon">📊</div>
+        <h3>Ver Histórico</h3>
+        <p>Analisar suas últimas partidas</p>
+      </button>
+
+      <button type="button" class="action-card tertiary" (click)="onOpenSettings(); showButtonFeedback($event)">
+        <div class="action-icon">⚙️</div>
+        <h3>Configurações</h3>
+        <p>Ajustar preferências</p>
+      </button>
+    </div>
+  </div>
+
+  <!-- Queue Status -->
+  <div class="queue-status-section" *ngIf="player">
+    <h2>📈 Status da Fila</h2>
+    <div class="status-grid">
+      <div class="status-card">
+        <div class="status-icon">👥</div>
+        <div class="status-info">
+          <span class="status-value">{{ queueStatus.playersInQueue }}</span>
+          <span class="status-label">Jogadores na Fila</span>
+        </div>
+        <div class="status-trend">📈</div>
+      </div>
+
+      <div class="status-card">
+        <div class="status-icon">⏱️</div>
+        <div class="status-info">
+          <span class="status-value">{{ getWaitTimeText() }}</span>
+          <span class="status-label">Tempo Médio</span>
+        </div>
+        <div class="status-trend">⏳</div>
+      </div>
+
+      <div class="status-card">
+        <div class="status-icon">🎯</div>
+        <div class="status-info">
+          <span class="status-value">{{ formatWaitTime(queueStatus.estimatedMatchTime || 0) }}</span>
+          <span class="status-label">Próxima Partida</span>
+        </div>
+        <div class="status-trend">🔮</div>
+      </div>
+
+      <div class="status-card" [class.active]="queueStatus.isActive">
+        <div class="status-icon">🌐</div>
+        <div class="status-info">
+          <span class="status-value">{{ queueStatus.isActive ? 'Ativo' : 'Inativo' }}</span>
+          <span class="status-label">Sistema</span>
+        </div>
+        <div class="status-trend">{{ queueStatus.isActive ? '🟢' : '🔴' }}</div>
+      </div>
+    </div>
+  </div>
+  <!-- Recent Activity -->
+  <div class="recent-activity-section" *ngIf="player">
+    <h2>📈 Atividade Recente</h2>
+
+    <!-- Loading State -->
+    <div class="loading-matches" *ngIf="isLoadingMatches">
+      <div class="loading-spinner">⏳</div>
+      <p>Carregando histórico de partidas...</p>
+    </div>
+
+    <!-- Error State -->
+    <div class="matches-error" *ngIf="matchHistoryError && !isLoadingMatches">
+      <div class="error-icon">⚠️</div>
+      <p>{{ matchHistoryError }}</p>
+      <button class="btn btn-secondary" (click)="loadRecentMatches()">Tentar Novamente</button>
+    </div>
+
+    <!-- Matches List -->
+    <div class="recent-matches" *ngIf="recentMatches.length > 0 && !isLoadingMatches">
+      <div class="match-item" *ngFor="let match of recentMatches.slice(0, 3)" [class.victory]="match.isVictory"
+        [class.defeat]="!match.isVictory">
+        <div class="match-result">
+          <span class="result-icon">{{ match.isVictory ? '🏆' : '💔' }}</span>
+          <span class="result-text">{{ match.isVictory ? 'Vitória' : 'Derrota' }}</span>
+        </div>
+
+        <div class="match-details">
+          <div class="match-info">
+            <span class="match-mode">{{ match.gameMode || 'Matchmaking' }}</span>
+            <span class="match-duration">{{ formatMatchDuration(match.duration) }}</span>
+          </div> <!-- Champion and KDA info when available -->
+          <div class="match-champion" *ngIf="match.champion || match.kda || match.playerName">
+            <div class="player-info" *ngIf="match.playerName || match.champion">
+              <span class="player-name" *ngIf="match.playerName">{{ match.playerName }}</span>
+              <span class="champion-name" *ngIf="match.champion">{{ match.champion }}</span>
+            </div>
+            <span class="kda" *ngIf="match.kda">{{ match.kda }}</span>
+          </div>
+        </div>
+
+        <div class="match-mmr">
+          <span class="mmr-change" [class.positive]="(match.mmrChange || 0) > 0"
+            [class.negative]="(match.mmrChange || 0) < 0">
+            {{ (match.mmrChange || 0) > 0 ? '+' : '' }}{{ match.mmrChange || 0 }}
+          </span>
+          <span class="mmr-label">MMR</span>
+        </div>
+
+        <div class="match-date">
+          {{ formatRelativeTime(match.timestamp || 0) }}
+        </div>
+      </div>
+    </div>
+
+    <!-- No matches state -->
+    <div class="no-matches" *ngIf="recentMatches.length === 0 && !isLoadingMatches && !matchHistoryError">
+      <div class="no-matches-icon">🎮</div>
+      <p>Nenhuma partida recente encontrada</p>
+      <p class="no-matches-subtitle">Jogue algumas partidas para ver sua atividade aqui!</p>
+    </div>
+
+    <div class="view-all-matches" *ngIf="recentMatches.length > 0">
+      <button class="btn btn-secondary" (click)="onViewHistory()">
+        Ver Todas as Partidas
+      </button>
+    </div>
+  </div>
+
+  <!-- Performance Stats -->
+  <div class="performance-section" *ngIf="player">
+    <h2>📊 Performance</h2>
+
+    <div class="performance-grid">
+      <div class="performance-card">
+        <div class="perf-header">
+          <span class="perf-icon">🔥</span>
+          <span class="perf-title">Sequência Atual</span>
+        </div>
+        <div class="perf-value">{{ getCurrentStreak() }}</div>
+        <div class="perf-subtitle">{{ getStreakType() }}</div>
+      </div>
+
+      <div class="performance-card">
+        <div class="perf-header">
+          <span class="perf-icon">📈</span>
+          <span class="perf-title">MMR Mais Alto</span>
+        </div>
+        <div class="perf-value">{{ getHighestMMR() }}</div>
+        <div class="perf-subtitle">Recorde pessoal</div>
+      </div>
+
+      <div class="performance-card">
+        <div class="perf-header">
+          <span class="perf-icon">🏆</span>
+          <span class="perf-title">Vitórias Hoje</span>
+        </div>
+        <div class="perf-value">{{ getTodayWins() }}</div>
+        <div class="perf-subtitle">Últimas 24h</div>
+      </div>
+
+      <div class="performance-card">
+        <div class="perf-header">
+          <span class="perf-icon">⭐</span>
+          <span class="perf-title">Classificação</span>
+        </div>
+        <div class="perf-value">#{{ leaderboardPosition }}</div>
+        <div class="perf-subtitle">No ranking</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tips Section -->
+  <div class="tips-section" *ngIf="player">
+    <h2>💡 Dica do Dia</h2>
+    <div class="tip-card">
+      <div class="tip-icon">🎯</div>
+      <div class="tip-content">
+        <h3>{{ getCurrentTip().title }}</h3>
+        <p>{{ getCurrentTip().description }}</p>
+      </div>
+    </div>
+  </div>
+</div>

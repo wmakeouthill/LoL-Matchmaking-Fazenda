@@ -1,0 +1,443 @@
+/* ========== MODAL BASE ========== */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 10000;
+  backdrop-filter: blur(3px);
+}
+
+.modal-container {
+  background: #1e2328;
+  border-radius: 12px;
+  border: 2px solid #463714;
+  min-width: 900px;
+  max-width: 95vw;
+  max-height: 95vh;
+  overflow-y: auto;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+  color: #f0e6d2;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid #463714;
+  background: linear-gradient(135deg, #1e2328 0%, #3c3c41 100%);
+  border-radius: 12px 12px 0 0;
+
+  h2 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #f0e6d2;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+
+    .icon {
+      font-size: 1.6rem;
+    }
+  }
+}
+
+.close-button {
+  background: none;
+  border: none;
+  font-size: 1.8rem;
+  color: #cdbe91;
+  cursor: pointer;
+  padding: 5px 10px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #f0e6d2;
+  }
+}
+
+.modal-content {
+  padding: 24px;
+}
+
+/* ========== CONFIDENCE SECTION ========== */
+.confidence-section {
+  margin-bottom: 24px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.confidence-badge {
+  display: inline-block;
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-weight: 600;
+  font-size: 1.1rem;
+  margin-bottom: 12px;
+
+  &.high-confidence {
+    background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%);
+    color: #5bc0de;
+    border: 1px solid #5bc0de;
+  }
+
+  &.medium-confidence {
+    background: linear-gradient(135deg, #f7971e 0%, #ffd200 100%);
+    color: #1e2328;
+    border: 1px solid #f7971e;
+  }
+
+  &.low-confidence {
+    background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%);
+    color: #f0e6d2;
+    border: 1px solid #ff416c;
+  }
+}
+
+.confidence-details {
+  .detail-item {
+    margin: 4px 0;
+    color: #cdbe91;
+    font-size: 0.9rem;
+  }
+}
+
+/* ========== COMPARISON SECTION ========== */
+.comparison-section {
+  margin-bottom: 24px;
+}
+
+.match-comparison {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.match-column {
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+
+  &.custom-match {
+    background: rgba(139, 69, 19, 0.1);
+    border-color: #8b4513;
+  }
+
+  &.lcu-match {
+    background: rgba(70, 130, 180, 0.1);
+    border-color: #4682b4;
+  }
+
+  h3 {
+    margin: 0 0 16px 0;
+    font-size: 1.2rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+}
+
+.match-info {
+  margin-bottom: 16px;
+
+  p {
+    margin: 4px 0;
+    font-size: 0.9rem;
+    color: #cdbe91;
+
+    strong {
+      color: #f0e6d2;
+    }
+  }
+}
+
+/* ========== TEAMS ========== */
+.teams-container {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.team {
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+
+  &.blue-team {
+    background: rgba(0, 123, 255, 0.1);
+    border-color: #007bff;
+
+    h4 {
+      color: #5bc0de;
+    }
+  }
+
+  &.red-team {
+    background: rgba(220, 53, 69, 0.1);
+    border-color: #dc3545;
+
+    h4 {
+      color: #ff6b6b;
+    }
+  }
+
+  h4 {
+    margin: 0 0 12px 0;
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  h5 {
+    margin: 8px 0 6px 0;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #cdbe91;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+}
+
+/* ========== CHAMPIONS ========== */
+.champion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.champion-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.champion-img {
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  border: 1px solid #463714;
+}
+
+.champion-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+
+  .champion-name {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #f0e6d2;
+  }
+
+  .player-name {
+    font-size: 0.75rem;
+    color: #cdbe91;
+  }
+
+  .player-lane {
+    font-size: 0.7rem;
+    color: #a09b8c;
+    text-transform: capitalize;
+  }
+}
+
+/* ========== BANS ========== */
+.ban-list {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.ban-img {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 1px solid #dc3545;
+  opacity: 0.7;
+  cursor: help;
+
+  &:hover {
+    opacity: 1;
+  }
+}
+
+/* ========== WINNER BADGE ========== */
+.winner-badge {
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+
+  &.blue-winner {
+    background: rgba(0, 123, 255, 0.2);
+    color: #5bc0de;
+    border: 1px solid #007bff;
+  }
+
+  &.red-winner {
+    background: rgba(220, 53, 69, 0.2);
+    color: #ff6b6b;
+    border: 1px solid #dc3545;
+  }
+}
+
+/* ========== LEADERSHIP NOTICES ========== */
+.leadership-notice,
+.non-leader-notice {
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.leadership-notice {
+  background: rgba(40, 167, 69, 0.1);
+  border: 1px solid #28a745;
+
+  .leader-badge {
+    font-weight: 600;
+    color: #28a745;
+    margin-bottom: 8px;
+    font-size: 1.1rem;
+  }
+
+  p {
+    margin: 0;
+    color: #cdbe91;
+  }
+}
+
+.non-leader-notice {
+  background: rgba(255, 193, 7, 0.1);
+  border: 1px solid #ffc107;
+
+  .waiting-badge {
+    font-weight: 600;
+    color: #ffc107;
+    margin-bottom: 8px;
+    font-size: 1.1rem;
+  }
+
+  p {
+    margin: 0;
+    color: #cdbe91;
+  }
+}
+
+/* ========== ACTION BUTTONS ========== */
+.action-buttons {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 24px;
+}
+
+.action-buttons button {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 160px;
+  justify-content: center;
+
+  .icon {
+    font-size: 1.1rem;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.confirm-button {
+  background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+  color: white;
+  border: 1px solid #28a745;
+
+  &:hover:not(:disabled) {
+    background: linear-gradient(135deg, #218838 0%, #1ca085 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3);
+  }
+}
+
+.reject-button {
+  background: linear-gradient(135deg, #dc3545 0%, #e74c3c 100%);
+  color: white;
+  border: 1px solid #dc3545;
+
+  &:hover:not(:disabled) {
+    background: linear-gradient(135deg, #c82333 0%, #d62c1a 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3);
+  }
+}
+
+.cancel-button {
+  background: transparent;
+  color: #cdbe91;
+  border: 1px solid #463714;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #f0e6d2;
+    transform: translateY(-1px);
+  }
+}
+
+/* ========== RESPONSIVE ========== */
+@media (max-width: 1200px) {
+  .modal-container {
+    min-width: 80vw;
+  }
+
+  .match-comparison {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+
+@media (max-width: 768px) {
+  .modal-container {
+    min-width: 95vw;
+    margin: 10px;
+  }
+
+  .teams-container {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .action-buttons {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .action-buttons button {
+    width: 100%;
+    max-width: 300px;
+  }
+}

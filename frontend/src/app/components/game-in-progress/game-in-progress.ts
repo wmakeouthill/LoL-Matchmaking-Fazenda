@@ -1,0 +1,1843 @@
+import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, OnChanges, SimpleChanges } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { ApiService } from '../../services/api';
+import { ChampionService } from '../../services/champion.service';
+import { interval, Subscription, Observable, of, firstValueFrom } from 'rxjs';
+import { ProfileIconService } from '../../services/profile-icon.service';
+import { BotService } from '../../services/bot.service';
+import { LcuMatchConfirmationModalComponent } from '../lcu-match-confirmation-modal/lcu-match-confirmation-modal';
+
+type TeamColor = 'blue' | 'red';
+
+interface GameData {
+  sessionId: string;
+  gameId: string;
+  team1: any[];
+  team2: any[];
+  startTime: Date;
+  pickBanData: any;
+  isCustomGame: boolean;
+  originalMatchId?: any;
+  originalMatchData?: any;
+  riotId?: string | null;
+}
+
+interface GameResult {
+  sessionId: string;
+  gameId: string;
+  winner: TeamColor | null;
+  duration: number;
+  endTime: Date;
+  team1: any[];
+  team2: any[];
+  pickBanData: any;
+  detectedByLCU: boolean;
+  isCustomGame: boolean;
+  originalMatchId?: any;
+  originalMatchData?: any;
+  riotId?: string | null;
+}
+
+function logGameInProgress(...args: any[]) {
+  const fs = (window as any).electronAPI?.fs;
+  const path = (window as any).electronAPI?.path;
+  const process = (window as any).electronAPI?.process;
+  const logPath = path && process ? path.join(process.cwd(), 'frontend.log') : '';
+  const logLine = `[${new Date().toISOString()}] [GameInProgress] ` + args.map(a => (typeof a === 'object' ? JSON.stringify(a) : a)).join(' ') + '\n';
+  if (fs && logPath) {
+    fs.appendFile(logPath, logLine, (err: any) => { });
+  }
+  console.log('[GameInProgress]', ...args);
+}
+
+@Component({
+  selector: 'app-game-in-progress',
+  standalone: true,
+  imports: [CommonModule, LcuMatchConfirmationModalComponent],
+  templateUrl: './game-in-progress.html',
+  styleUrl: './game-in-progress.scss'
+})
+export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
+  @Input() gameData: GameData | null = null;
+  @Input() currentPlayer: any = null;
+  @Output() onGameComplete = new EventEmitter<GameResult>();
+  @Output() onGameCancel = new EventEmitter<void>();
+
+  // Game state
+  gameStatus: 'waiting' | 'in-progress' | 'ended' = 'waiting';
+  gameStartTime: Date | null = null;
+  gameDuration: number = 0;
+
+  // LCU detection
+  lcuGameDetected: boolean = false;
+  lcuDetectionEnabled: boolean = true;
+
+  // Manual result declaration
+  selectedWinner: TeamColor | null = null;
+
+  // NEW: LCU Match Confirmation Modal
+  showLcuConfirmationModal: boolean = false;
+  lcuConfirmationData: any = null;
+  isMatchLeader: boolean = false;
+
+  // Match confirmation modal (legacy - can be removed later)
+  showMatchConfirmation: boolean = false;
+  detectedLCUMatch: any = null;
+  matchComparisonResult: any = null;
+
+  // Auto detection state
+  isAutoDetecting: boolean = false;
+
+  // Live match linking
+  currentLiveMatchId: number | null = null;
+  matchLinkingEnabled: boolean = true;
+  lastLinkingAttempt: number = 0;
+  linkingAttempts: number = 0;
+  maxLinkingAttempts: number = 5;
+  linkingStartTime: number = 0;
+
+  // Timers
+  private gameTimer: Subscription | null = null;
+  private lcuDetectionTimer: Subscription | null = null;
+
+  // Game tracking
+  private currentGameSession: any = null;
+
+  constructor(
+    private readonly apiService: ApiService,
+    private readonly championService: ChampionService,
+    private readonly profileIconService: ProfileIconService,
+    public botService: BotService
+  ) { } ngOnInit() {
+    logGameInProgress('🚀 [GameInProgress] Inicializando componente...');
+    logGameInProgress('📊 [GameInProgress] gameData recebido:', {
+      hasGameData: !!this.gameData,
+      originalMatchId: this.gameData?.originalMatchId, // ✅ VERIFICAR ESTE VALOR
+      gameDataKeys: this.gameData ? Object.keys(this.gameData) : [],
+      hasTeam1: !!(this.gameData?.team1),
+      hasTeam2: !!(this.gameData?.team2),
+      team1Length: this.gameData?.team1?.length || 0,
+      team2Length: this.gameData?.team2?.length || 0,
+      fullGameData: this.gameData // ✅ LOG COMPLETO
+    });
+    logGameInProgress('👤 [GameInProgress] currentPlayer:', this.currentPlayer);
+
+    // ✅ CORREÇÃO: Só inicializar se temos gameData
+    if (this.gameData) {
+      this.initializeGame();
+    } else {
+      logGameInProgress('⏳ [GameInProgress] Aguardando gameData...');
+    }
+  }
+
+  ngOnChanges(changes: SimpleChanges) {
+    logGameInProgress('🔄 [GameInProgress] ngOnChanges detectado:', changes);
+
+    // ✅ CORREÇÃO: Detectar quando gameData é recebido
+    if (changes['gameData']?.currentValue && !changes['gameData']?.previousValue) {
+      logGameInProgress('🎮 [GameInProgress] gameData recebido via ngOnChanges, inicializando jogo...');
+      this.initializeGame();
+    }
+  }
+
+  ngOnDestroy() {
+    this.stopTimers();
+  } private initializeGame() {
+    logGameInProgress('🎮 [GameInProgress] Inicializando jogo...');
+    this.logGameDataSnapshot();
+
+    if (!this.ensureGameData()) {
+      return;
+    }
+
+    this.setupInitialState();
+    this.normalizePickBanDataSafe();
+
+    // ✅ Preencher campeões dos jogadores a partir do pick_ban_data normalizado
+    this.hydratePlayersFromPickBanData();
+
+    // Start game timer & live match linking
+    this.startGameTimer();
+    this.startLiveMatchLinking();
+  }
+
+  // ✅ NOVO: Hidratar campeões dos jogadores usando pick_ban_data (suporta resume/polling)
+  private hydratePlayersFromPickBanData(): void {
+    try {
+      if (!this.gameData) return;
+      const pickBanData = (this as any)._normalizedPickBanData || this.gameData.pickBanData;
+      if (!pickBanData) return;
+
+      // Coletar picks de múltiplas fontes para robustez
+      const picksFromTeams = [
+        ...(pickBanData.team1Picks || []),
+        ...(pickBanData.team2Picks || [])
+      ];
+      const picksFromActions = Array.isArray(pickBanData.actions)
+        ? pickBanData.actions.filter((a: any) => (a.action === 'pick' || a.type === 'pick'))
+        : [];
+      const picks: any[] = [...picksFromTeams, ...picksFromActions];
+
+      if (picks.length === 0) return;
+
+      // Mapear por identificadores possíveis
+      const toKey = (v: any) => (typeof v === 'string' ? v.toLowerCase() : String(v || '').toLowerCase());
+      const pickByPlayer = new Map<string, any>();
+      for (const p of picks) {
+        const id1 = p.playerName ? toKey(p.playerName) : '';
+        const id2 = p.playerId ? toKey(p.playerId) : '';
+        if (id1) pickByPlayer.set(id1, p);
+        if (id2) pickByPlayer.set(id2, p);
+      }
+
+      const applyPick = (player: any) => {
+        if (!player) return;
+        // Não sobrescrever se já tem informação
+        if (player.championName || player.champion) return;
+        const key1 = player.summonerName ? toKey(player.summonerName) : '';
+        const key2 = player.name ? toKey(player.name) : '';
+        const found = (key1 && pickByPlayer.get(key1)) || (key2 && pickByPlayer.get(key2));
+        if (!found) return;
+
+        const id = found.champion?.id ?? found.championId ?? found.champion_id;
+        const idNum = typeof id === 'string' ? parseInt(id, 10) : id;
+        const name = found.champion?.name || (idNum != null ? this.getChampionNameById(idNum) : undefined);
+        if (idNum != null || name) {
+          player.champion = { id: idNum, name };
+          if (name) player.championName = name;
+        }
+      };
+
+      // Hidratar times
+      if (Array.isArray(this.gameData.team1)) {
+        this.gameData.team1.forEach(applyPick);
+      }
+      if (Array.isArray(this.gameData.team2)) {
+        this.gameData.team2.forEach(applyPick);
+      }
+
+      logGameInProgress('✅ [GameInProgress] Jogadores hidratados a partir do pick_ban_data');
+    } catch (e) {
+      logGameInProgress('⚠️ [GameInProgress] Falha ao hidratar jogadores via pick_ban_data:', e);
+    }
+  }
+
+  private logGameDataSnapshot(): void {
+    logGameInProgress('📊 [GameInProgress] gameData atual:', {
+      gameData: this.gameData,
+      hasGameData: !!this.gameData,
+      sessionId: this.gameData?.sessionId,
+      team1Length: this.gameData?.team1?.length || 0,
+      team2Length: this.gameData?.team2?.length || 0,
+      team1Sample: this.gameData?.team1?.[0],
+      team2Sample: this.gameData?.team2?.[0]
+    });
+  }
+
+  private ensureGameData(): boolean {
+    if (!this.gameData) {
+      logGameInProgress('❌ [GameInProgress] gameData não está disponível');
+      return false;
+    }
+
+    // ✅ CORREÇÃO: Verificar se temos os dados mínimos necessários
+    if (!this.gameData.team1 || !this.gameData.team2) {
+      logGameInProgress('❌ [GameInProgress] Dados dos times não estão disponíveis:', {
+        hasTeam1: !!this.gameData.team1,
+        hasTeam2: !!this.gameData.team2,
+        gameDataKeys: Object.keys(this.gameData)
+      });
+      return false;
+    }
+
+    if (this.gameData.team1.length === 0 || this.gameData.team2.length === 0) {
+      logGameInProgress('❌ [GameInProgress] Times estão vazios:', {
+        team1Length: this.gameData.team1.length,
+        team2Length: this.gameData.team2.length
+      });
+      return false;
+    }
+
+    return true;
+  }
+
+  private setupInitialState(): void {
+    this.gameStartTime = new Date();
+    this.gameStatus = 'waiting';
+    this.linkingStartTime = Date.now(); // Inicializar tempo para vinculação
+
+    logGameInProgress('✅ [GameInProgress] Partida inicializada com sucesso:', {
+      sessionId: this.gameData?.sessionId,
+      team1: this.gameData?.team1?.length || 0,
+      team2: this.gameData?.team2?.length || 0,
+      isCustom: this.gameData?.isCustomGame
+    });
+  }
+
+  private normalizePickBanDataSafe(): void {
+    try {
+      if (!this.gameData) return;
+
+      const maybePickBan = (this as any)._normalizedPickBanData || null;
+      if (maybePickBan) return;
+
+      let parsedPickBan: any = null;
+      const pb = (this.gameData as any).pickBanData;
+      const dr = (this.gameData as any).draftResults;
+
+      if (pb) {
+        parsedPickBan = typeof pb === 'string' ? JSON.parse(pb) : pb;
+      } else if (dr) {
+        parsedPickBan = typeof dr === 'string' ? JSON.parse(dr) : dr;
+      }
+
+      // ✅ Normalização das phases: garantir team 'blue'/'red', champion {id,name}, e locked boolean
+      if (parsedPickBan && Array.isArray(parsedPickBan.phases)) {
+        const normalizeTeam = (team: any, teamId?: any): 'blue' | 'red' | undefined => {
+          // Suporta 1/2, '1'/'2', 100/200, 'blue'/'red'
+          if (team === 'blue' || team === 'red') return team;
+          const t = typeof team === 'string' ? parseInt(team, 10) : team;
+          const tid = typeof teamId === 'string' ? parseInt(teamId, 10) : teamId;
+          let value: number | undefined = undefined;
+          if (Number.isFinite(t)) {
+            value = t as number;
+          } else if (Number.isFinite(tid)) {
+            value = tid as number;
+          }
+          if (value === 1 || value === 100) return 'blue';
+          if (value === 2 || value === 200) return 'red';
+          return undefined;
+        };
+
+        const normalizedPhases = parsedPickBan.phases.map((phase: any) => {
+          const teamNormalized = normalizeTeam(phase.team, phase.teamId);
+          let action = phase.action || phase.type;
+          if (!action) {
+            if (phase.phase === 'bans') action = 'ban';
+            else if (phase.phase === 'picks') action = 'pick';
+          }
+
+          // Normalizar champion
+          let championObj = phase.champion;
+          const championId = phase.championId || phase.champion_id || phase.champion?.id;
+          if (!championObj && (championId || championId === 0)) {
+            const idNum = typeof championId === 'string' ? parseInt(championId, 10) : championId;
+            const name = this.getChampionNameById(idNum || 0) || undefined;
+            championObj = { id: idNum, name };
+          } else if (championObj && typeof championObj === 'object') {
+            if (championObj.id != null && championObj.name == null) {
+              const name = this.getChampionNameById(typeof championObj.id === 'string' ? parseInt(championObj.id, 10) : championObj.id);
+              if (name && name !== 'Minion') championObj = { ...championObj, name };
+            }
+          }
+
+          // locked padrão: true se tem champion; respeita flags alternativas
+          const locked = phase.locked === true || phase.completed === true || phase.done === true || !!championObj;
+
+          return {
+            ...phase,
+            team: teamNormalized || phase.team,
+            action,
+            champion: championObj,
+            locked
+          };
+        });
+
+        (this as any)._normalizedPickBanData = { ...parsedPickBan, phases: normalizedPhases };
+      } else {
+        // Sem phases ou estrutura desconhecida: ainda assim armazenar o bruto para fallbacks
+        (this as any)._normalizedPickBanData = parsedPickBan || null;
+      }
+
+      if ((this as any)._normalizedPickBanData && !this.gameData.pickBanData && dr) {
+        logGameInProgress('✅ [GameInProgress] pickBanData normalizado a partir de draftResults');
+      }
+    } catch (e) {
+      logGameInProgress('⚠️ [GameInProgress] Falha ao normalizar pickBanData:', e);
+    }
+  }
+
+  private startGameTimer() {
+    this.gameTimer = interval(1000).subscribe(() => {
+      if (this.gameStartTime) {
+        this.gameDuration = Math.floor((Date.now() - this.gameStartTime.getTime()) / 1000);
+      }
+    });
+  }
+  // Live match linking system - tries to link to actual LoL match every 2 minutes
+  private startLiveMatchLinking() {
+    if (!this.matchLinkingEnabled) return;
+
+    // ✅ CORREÇÃO: Não iniciar detecção automática para jogos customizados/simulados
+    if (this.gameData?.isCustomGame) {
+      logGameInProgress('🎭 [GameInProgress] Jogo customizado/simulado detectado - desabilitando detecção automática LCU');
+      return;
+    }
+
+    // Try to link immediately
+    this.tryLinkToLiveMatch();
+
+    // Then try every 2 minutes
+    this.lcuDetectionTimer = interval(120000).subscribe(() => { // 2 minutes
+      this.tryLinkToLiveMatch();
+    });
+  }
+
+  private async tryLinkToLiveMatch(): Promise<void> {
+    if (this.shouldStopLinking()) {
+      return;
+    }
+
+    this.lastLinkingAttempt = Date.now();
+    this.linkingAttempts++;
+
+    try {
+      const gameState = await firstValueFrom(this.apiService.getCurrentGame());
+
+      if (!gameState?.success || !gameState.data) {
+        return;
+      }
+
+      const currentGame = gameState.data;
+      await this.processLiveGameCandidate(currentGame);
+
+    } catch (error) {
+      logGameInProgress('❌ Erro ao tentar vincular partida ao vivo:', error);
+    }
+  }
+
+  private shouldStopLinking(): boolean {
+    const now = Date.now();
+
+    // Check if we've exceeded the maximum number of attempts
+    if (this.linkingAttempts >= this.maxLinkingAttempts) {
+      this.stopLcuDetectionTimer();
+      return true;
+    }
+
+    // Check if we've exceeded the time limit (10 minutes)
+    const timeLimitMs = 10 * 60 * 1000;
+    if (now - this.linkingStartTime > timeLimitMs) {
+      this.stopLcuDetectionTimer();
+      return true;
+    }
+
+    // Avoid too frequent attempts
+    return (now - this.lastLinkingAttempt < 30000);
+  }
+
+  private stopLcuDetectionTimer(): void {
+    if (this.lcuDetectionTimer) {
+      this.lcuDetectionTimer.unsubscribe();
+      this.lcuDetectionTimer = null;
+    }
+  }
+
+  private async processLiveGameCandidate(currentGame: any): Promise<void> {
+    // Check if this is a valid game to link
+    if (currentGame.gameMode && currentGame.gameId) {
+      // Check if we're already linked to this match
+      if (this.currentLiveMatchId === parseInt(currentGame.gameId)) {
+        return;
+      }
+
+      // Check if this match seems to correspond to our draft
+      const linkingScore = this.calculateLiveLinkingScore(currentGame);
+
+      if (linkingScore.shouldLink) {
+        // NEW: Instead of auto-linking, show confirmation modal
+        this.showLcuMatchConfirmationModal(currentGame, linkingScore);
+      }
+    }
+  }
+
+  // Calculate if current live match should be linked to our draft
+  private calculateLiveLinkingScore(liveGame: any): { shouldLink: boolean, score: number, reason: string } {
+    if (!this.gameData?.pickBanData) {
+      return { shouldLink: false, score: 0, reason: 'Dados de draft não disponíveis' };
+    }
+
+    let score = 0;
+    const reasons: string[] = [];
+
+    // Check game timing (should be recent)
+    if (liveGame.gameCreation) {
+      const gameTime = new Date(liveGame.gameCreation);
+      const draftTime = this.gameData.startTime ? new Date(this.gameData.startTime) : new Date();
+      const timeDiff = Math.abs(gameTime.getTime() - draftTime.getTime()) / (1000 * 60); // minutes
+
+      if (timeDiff <= 15) { // Within 15 minutes of draft
+        score += 30;
+        reasons.push(`Horário compatível (${Math.round(timeDiff)} min)`);
+      } else {
+        return { shouldLink: false, score: 0, reason: `Muito tempo entre draft e partida (${Math.round(timeDiff)} min)` };
+      }
+    }
+
+    // Check if it's a custom game (preferred for our use case)
+    if (liveGame.gameMode === 'CLASSIC' && liveGame.gameType === 'CUSTOM_GAME') {
+      score += 40;
+      reasons.push('Partida customizada');
+    } else if (liveGame.gameMode === 'CLASSIC') {
+      score += 20;
+      reasons.push('Partida clássica');
+    }
+
+    // Check player participation (if current player is in the game)
+    if (this.currentPlayer && liveGame.participants) {
+      const currentPlayerInGame = liveGame.participants.some((p: any) =>
+        p.summonerName === this.currentPlayer?.summonerName ||
+        p.gameName === this.currentPlayer?.summonerName
+      );
+
+      if (currentPlayerInGame) {
+        score += 30;
+        reasons.push('Jogador atual está na partida');
+      } else {
+        // Not necessarily a deal-breaker, but reduces confidence
+        score -= 10;
+        reasons.push('Jogador atual não encontrado na partida');
+      }
+    }
+
+    const shouldLink = score >= 60; // Need at least 60% confidence
+    const reason = reasons.join(', ');
+
+    return { shouldLink, score, reason };
+  }
+
+  private startLCUDetection() {
+    if (!this.lcuDetectionEnabled) return;    // Check LCU every 5 seconds for game state
+    this.lcuDetectionTimer = interval(5000).subscribe(() => {
+      this.checkLCUStatus();
+    });
+  }
+
+  private async checkLCUStatus() {
+    try {
+      const gameState = await firstValueFrom(this.apiService.getCurrentGame());
+
+      if (gameState?.success) {
+        const currentGame = gameState.data;
+
+        // Check if we're in a game
+        if (currentGame?.gameMode) {
+          if (!this.lcuGameDetected) {
+            this.onLCUGameDetected(currentGame);
+          }
+
+          // Check if game ended
+          if (currentGame.gamePhase === 'EndOfGame' || currentGame.gamePhase === 'PostGame') {
+            this.onLCUGameEnded(currentGame);
+          }
+        } else if (this.lcuGameDetected && this.gameStatus === 'in-progress') {
+          // Game was detected but now we're not in game anymore
+          this.onLCUGameEnded(null);
+        }
+      }
+    } catch (error) {
+      logGameInProgress('🔍 LCU não disponível para detecção automática:', error);
+    }
+  }
+  private onLCUGameDetected(gameData: any) {
+    this.lcuGameDetected = true;
+    this.gameStatus = 'in-progress';
+    this.currentGameSession = gameData;
+  } private onLCUGameEnded(endGameData: any) {
+
+    if (endGameData?.teams) {
+      // Try to detect winner from LCU data
+      const winningTeam = endGameData.teams.find((team: any) => team.win === "Win" || team.win === true);
+      if (winningTeam) {
+        const winner = winningTeam.teamId === 100 ? 'blue' : 'red';
+        this.autoCompleteGame(winner, true);
+        return;
+      }
+    }
+
+    // If we can't detect winner automatically, ask user to declare
+    this.gameStatus = 'ended';
+  }
+
+  private autoCompleteGame(winner: TeamColor, detectedByLCU: boolean) {
+    if (!this.gameData) return;
+
+    const result: GameResult = {
+      sessionId: this.gameData.sessionId,
+      gameId: this.generateGameId(),
+      winner: winner,
+      duration: this.gameDuration,
+      endTime: new Date(),
+      team1: this.gameData.team1,
+      team2: this.gameData.team2,
+      pickBanData: this.gameData.pickBanData,
+      detectedByLCU: detectedByLCU,
+      isCustomGame: true,
+      originalMatchId: this.gameData.originalMatchId,
+      originalMatchData: this.gameData.originalMatchData,
+      riotId: this.gameData.riotId
+    };
+
+    this.onGameComplete.emit(result);
+  }
+  // Novo método para completar jogo com dados reais do LCU
+  private autoCompleteGameWithRealData(winner: TeamColor | null, detectedByLCU: boolean, lcuMatchData: any) {
+    if (!this.gameData) return;
+
+    const result: GameResult = {
+      sessionId: this.gameData.sessionId,
+      gameId: this.generateGameId(),
+      winner: winner,
+      duration: this.gameDuration,
+      endTime: new Date(),
+      team1: this.gameData.team1,
+      team2: this.gameData.team2,
+      pickBanData: this.gameData.pickBanData,
+      detectedByLCU: detectedByLCU,
+      isCustomGame: true,
+      originalMatchId: this.gameData.originalMatchId || lcuMatchData.gameId,
+      originalMatchData: lcuMatchData, // Incluir dados completos da partida do LCU
+      riotId: this.gameData.riotId || (lcuMatchData.platformId ? `${lcuMatchData.platformId}_${lcuMatchData.gameId}` : `BR1_${lcuMatchData.gameId}`)
+    };
+
+    logGameInProgress('✅ Partida concluída automaticamente com dados reais do LCU:', result);
+    this.onGameComplete.emit(result);
+  }
+
+  // Manual winner declaration
+  declareWinner(winner: TeamColor) {
+    this.selectedWinner = winner;
+  }
+  confirmWinner() {
+    if (!this.selectedWinner || !this.gameData) return;
+
+    // Se temos dados da partida detectada do LCU, incluir eles
+    if (this.detectedLCUMatch) {
+      logGameInProgress('✅ Confirmando vencedor com dados reais do LCU');
+      this.autoCompleteGameWithRealData(this.selectedWinner, true, this.detectedLCUMatch);
+    } else {
+      logGameInProgress('✅ Confirmando vencedor sem dados do LCU (manual)');
+      const result: GameResult = {
+        sessionId: this.gameData.sessionId,
+        gameId: this.generateGameId(),
+        winner: this.selectedWinner,
+        duration: this.gameDuration,
+        endTime: new Date(),
+        team1: this.gameData.team1,
+        team2: this.gameData.team2,
+        pickBanData: this.gameData.pickBanData,
+        detectedByLCU: false,
+        isCustomGame: true,
+        originalMatchId: this.gameData.originalMatchId,
+        originalMatchData: this.gameData.originalMatchData,
+        riotId: this.gameData.riotId
+      };
+
+      this.onGameComplete.emit(result);
+    }
+  }  // Cancel game
+  async cancelGame() {
+    logGameInProgress('❌ [GameInProgress] Cancelando partida...');
+
+    // ✅ CORREÇÃO: Remover chamada HTTP duplicada - o cancelamento será tratado via WebSocket no app component
+    // O app component agora envia mensagem WebSocket 'cancel_game_in_progress' que inclui Discord cleanup e retorno à fila
+
+    // Emitir evento de cancelamento para o componente pai
+    this.onGameCancel.emit();
+  }
+  // Try to auto-resolve winner on component load (useful after app restart)
+  private async tryAutoResolveWinner() {
+
+    // First, try to get winner from LCU
+    const lcuWinner = await this.tryGetWinnerFromLCU();
+    if (lcuWinner) {
+      this.autoCompleteGame(lcuWinner, true);
+      return;
+    }
+
+    // If LCU fails, try to compare with last custom match
+    const historyWinner = await this.tryGetWinnerFromHistory();
+    if (historyWinner) {
+      this.autoCompleteGame(historyWinner, false);
+    }
+  }  // Enhanced method to detect winner with automatic confirmation
+  async retryAutoDetection() {
+    logGameInProgress('[DEBUG-SIMULATE] 🔄 Detectando vencedor via comparação com LCU...');
+
+    // Set loading state
+    this.isAutoDetecting = true;
+
+    try {
+      // Get LCU match history to compare
+      const historyResponse = await firstValueFrom(this.apiService.getLCUMatchHistoryAll(0, 30, false));
+
+      if (!historyResponse?.success || !historyResponse?.matches?.length) {
+        logGameInProgress('[DEBUG-SIMULATE] ⚠️ Nenhuma partida encontrada no histórico do LCU');
+        alert('Nenhuma partida encontrada no histórico do LCU. Certifique-se de que o League of Legends está aberto.');
+        return;
+      }
+
+      logGameInProgress('[DEBUG-SIMULATE] 🔍 Histórico LCU obtido:', historyResponse.matches.length, 'partidas');
+
+      // Try to find matching game
+      const matchResult = this.findMatchingLCUGame(historyResponse.matches);
+
+      if (!matchResult.match) {
+        logGameInProgress('[DEBUG-SIMULATE] ⚠️ Nenhuma partida correspondente encontrada');
+        logGameInProgress('[DEBUG-SIMULATE] 🔍 Dados da partida atual para comparação:');
+        logGameInProgress('[DEBUG-SIMULATE] 🔍 Team1:', this.gameData?.team1?.map(p => ({ name: p.summonerName, champion: p.champion, lane: p.lane })));
+        logGameInProgress('[DEBUG-SIMULATE] 🔍 Team2:', this.gameData?.team2?.map(p => ({ name: p.summonerName, champion: p.champion, lane: p.lane })));
+        alert('Nenhuma partida correspondente foi encontrada no histórico do LCU. Verifique se a partida foi concluída no League of Legends.');
+        return;
+      }
+
+      logGameInProgress('[DEBUG-SIMULATE] ✅ Partida correspondente encontrada:', matchResult);
+
+      // Store detected match data
+      this.detectedLCUMatch = matchResult.match;
+      this.matchComparisonResult = matchResult;
+
+      // Automatically confirm the match without showing modal
+      logGameInProgress('[DEBUG-SIMULATE] ⚡ Confirmando partida automaticamente...');
+      this.confirmDetectedMatch();
+
+    } catch (error) {
+      logGameInProgress('[DEBUG-SIMULATE] ❌ Erro ao detectar via histórico do LCU:', error);
+      alert('Erro ao acessar o histórico do LCU. Certifique-se de que o League of Legends está aberto.');
+    } finally {
+      // Reset loading state
+      this.isAutoDetecting = false;
+    }
+  }
+  // Find matching LCU game based on current game data
+  private findMatchingLCUGame(lcuMatches: any[]): { match: any, confidence: number, reason: string } {
+    if (!this.gameData) {
+      return { match: null, confidence: 0, reason: 'Nenhum dado de jogo disponível' };
+    }
+
+    logGameInProgress('[DEBUG-SIMULATE] 🔍 Procurando partida correspondente entre', lcuMatches.length, 'partidas do LCU');
+    logGameInProgress('[DEBUG-SIMULATE] 🔍 GameData atual:', {
+      sessionId: this.gameData.sessionId,
+      gameId: this.gameData.gameId,
+      originalMatchId: this.gameData.originalMatchId,
+      team1Count: this.gameData.team1?.length,
+      team2Count: this.gameData.team2?.length
+    });
+
+    // HIGHEST PRIORITY: Check if we have a live-linked match
+    if (this.currentLiveMatchId) {
+      const linkedMatch = lcuMatches.find((match: any) => match.gameId.toString() === this.currentLiveMatchId);
+      if (linkedMatch) {
+        logGameInProgress('🎯 Partida encontrada por vinculação automática:', linkedMatch.gameId);
+        return {
+          match: linkedMatch,
+          confidence: 100,
+          reason: `Partida vinculada automaticamente durante o jogo (ID: ${linkedMatch.gameId})`
+        };
+      }
+    }
+
+    // SECOND PRIORITY: Try to match by original match ID if this is a simulation
+    if (this.gameData.originalMatchId) {
+      const exactMatch = lcuMatches.find((match: any) => match.gameId === this.gameData?.originalMatchId);
+      if (exactMatch) {
+        logGameInProgress('✅ Partida encontrada por ID exato:', exactMatch.gameId);
+        return {
+          match: exactMatch,
+          confidence: 100,
+          reason: `Partida encontrada por ID exato (${exactMatch.gameId})`
+        };
+      }
+    }
+
+    // THIRD PRIORITY: Compare by similarity (champions, timing, etc.)
+    let bestMatch: any = null;
+    let bestScore = 0;
+    let bestReason = '';
+
+    // ✅ NOVO: Log das primeiras partidas para debug
+    logGameInProgress('[DEBUG-SIMULATE] 🔍 Primeiras 3 partidas do LCU para debug:');
+    lcuMatches.slice(0, 3).forEach((match, index) => {
+      logGameInProgress(`[DEBUG-SIMULATE] 🔍 LCU Match ${index + 1}:`, {
+        gameId: match.gameId,
+        queueId: match.queueId,
+        gameCreation: match.gameCreation,
+        participantsCount: match.participants?.length || 0,
+        hasTeams: !!match.teams,
+        teams: match.teams?.map((t: any) => ({ teamId: t.teamId, win: t.win }))
+      });
+    });
+
+    for (const lcuMatch of lcuMatches) {
+      const similarity = this.calculateMatchSimilarity(lcuMatch);
+
+      // ✅ NOVO: Log do score de cada partida
+      if (similarity.confidence > 20) { // Só logar partidas com score > 20
+        logGameInProgress(`[DEBUG-SIMULATE] 🔍 LCU Match ${lcuMatch.gameId}: score=${similarity.confidence}, reason="${similarity.reason}"`);
+      }
+
+      if (similarity.confidence > bestScore) {
+        bestMatch = lcuMatch;
+        bestScore = similarity.confidence;
+        bestReason = similarity.reason;
+      }
+    }
+
+    // Only accept matches with reasonable confidence
+    if (bestScore >= 70) {
+      logGameInProgress('[DEBUG-SIMULATE] ✅ Partida correspondente encontrada por similaridade:', { match: bestMatch.gameId, score: bestScore });
+      return {
+        match: bestMatch,
+        confidence: bestScore,
+        reason: bestReason
+      };
+    }
+
+    // No good match found
+    logGameInProgress('[DEBUG-SIMULATE] ⚠️ Nenhuma partida correspondente encontrada');
+    return {
+      match: null,
+      confidence: 0,
+      reason: 'Nenhuma partida correspondente encontrada no histórico'
+    };
+  }
+
+  // Calculate similarity between current game and LCU match
+  private calculateMatchSimilarity(lcuMatch: any): { confidence: number, reason: string } {
+    if (!this.gameData?.pickBanData) {
+      return { confidence: 0, reason: 'Dados de pick/ban não disponíveis' };
+    }
+
+    let totalScore = 0;
+    let maxScore = 0;
+    const reasons: string[] = [];
+
+    // Team composition comparison
+    const compositionResult = this.compareTeamCompositions(lcuMatch);
+    totalScore += compositionResult.score;
+    maxScore += compositionResult.maxScore;
+    if (compositionResult.reason) reasons.push(compositionResult.reason);
+
+    // Timing comparison
+    const timingResult = this.compareGameTiming(lcuMatch);
+    totalScore += timingResult.score;
+    maxScore += timingResult.maxScore;
+    if (timingResult.reason) reasons.push(timingResult.reason);
+
+    // Match completion check
+    const completionResult = this.checkMatchCompletion(lcuMatch);
+    totalScore += completionResult.score;
+    maxScore += completionResult.maxScore;
+    if (completionResult.reason) reasons.push(completionResult.reason);
+
+    const confidence = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
+    const reason = reasons.length > 0 ? reasons.join(', ') : 'Pouca similaridade encontrada';
+
+    return { confidence, reason };
+  }
+
+  private compareTeamCompositions(lcuMatch: any): { score: number, maxScore: number, reason: string | null } {
+    if (!this.gameData) return { score: 0, maxScore: 50, reason: null };
+
+    const currentTeam1Champions = this.extractChampionsFromTeam(this.gameData.team1);
+    const currentTeam2Champions = this.extractChampionsFromTeam(this.gameData.team2);
+    const lcuChampions = this.extractChampionsFromLCUMatch(lcuMatch);
+
+    if (currentTeam1Champions.length === 0 || currentTeam2Champions.length === 0) {
+      return { score: 0, maxScore: 50, reason: null };
+    }
+
+    const team1MatchScore = this.compareChampionLists(currentTeam1Champions, lcuChampions.team1) +
+      this.compareChampionLists(currentTeam2Champions, lcuChampions.team2);
+
+    const team2MatchScore = this.compareChampionLists(currentTeam1Champions, lcuChampions.team2) +
+      this.compareChampionLists(currentTeam2Champions, lcuChampions.team1);
+
+    const bestScore = Math.max(team1MatchScore, team2MatchScore);
+    const reason = bestScore > 30 ? `Composição de times similar (${Math.round(bestScore)}%)` : null;
+
+    return { score: bestScore, maxScore: 50, reason };
+  }
+
+  private compareGameTiming(lcuMatch: any): { score: number, maxScore: number, reason: string | null } {
+    if (!lcuMatch.gameCreation) {
+      return { score: 0, maxScore: 20, reason: null };
+    }
+
+    const matchTime = new Date(lcuMatch.gameCreation);
+    const gameStartTime = this.gameData?.startTime ? new Date(this.gameData.startTime) : new Date();
+    const timeDifference = Math.abs(matchTime.getTime() - gameStartTime.getTime()) / (1000 * 60); // minutes
+
+    if (timeDifference > 30) {
+      return { score: 0, maxScore: 20, reason: null };
+    }
+
+    const timeScore = Math.max(0, 20 - (timeDifference / 30) * 20);
+    const reason = timeScore > 10 ? `Horário compatível (${Math.round(timeDifference)} min de diferença)` : null;
+
+    return { score: timeScore, maxScore: 20, reason };
+  }
+
+  private checkMatchCompletion(lcuMatch: any): { score: number, maxScore: number, reason: string | null } {
+    if (!lcuMatch.teams || lcuMatch.teams.length !== 2) {
+      return { score: 0, maxScore: 30, reason: null };
+    }
+
+    const hasWinner = lcuMatch.teams.some((team: any) => team.win === "Win" || team.win === true);
+    const score = hasWinner ? 30 : 0;
+    const reason = hasWinner ? 'Partida finalizada com vencedor definido' : null;
+
+    return { score, maxScore: 30, reason };
+  }
+
+  // Extract champion names from team
+  private extractChampionsFromTeam(team: any[]): string[] {
+    return team.map(player => {
+      // ✅ CORREÇÃO: Suportar diferentes formatos de dados de campeão
+      let championName = null;
+
+      if (player.champion) {
+        if (typeof player.champion === 'string') {
+          // Formato: player.champion = "Trundle"
+          championName = player.champion;
+        } else if (player.champion.name) {
+          // Formato: player.champion = { name: "Trundle" }
+          championName = player.champion.name;
+        }
+      }
+
+      return championName ? championName.toLowerCase() : null;
+    }).filter(name => name !== null);
+  }
+
+  // Extract champions from LCU match
+  private extractChampionsFromLCUMatch(lcuMatch: any): { team1: string[], team2: string[] } {
+    const team1: string[] = [];
+    const team2: string[] = [];
+
+    logGameInProgress('[DEBUG-SIMULATE] 🔍 Extraindo campeões do LCU Match:', lcuMatch.gameId);
+    logGameInProgress('[DEBUG-SIMULATE] 🔍 Participants:', lcuMatch.participants?.length || 0);
+    logGameInProgress('[DEBUG-SIMULATE] 🔍 ParticipantIdentities:', lcuMatch.participantIdentities?.length || 0);
+
+    if (lcuMatch.participants && lcuMatch.participantIdentities) {
+      lcuMatch.participants.forEach((participant: any, index: number) => {
+        const championName = this.getChampionNameById(participant.championId);
+        logGameInProgress(`[DEBUG-SIMULATE] 🔍 Participant ${index}: championId=${participant.championId}, championName="${championName}", teamId=${participant.teamId}`);
+
+        if (championName) {
+          if (participant.teamId === 100) {
+            team1.push(championName.toLowerCase());
+          } else if (participant.teamId === 200) {
+            team2.push(championName.toLowerCase());
+          }
+        }
+      });
+    }
+
+    logGameInProgress('[DEBUG-SIMULATE] 🔍 Resultado final:');
+    logGameInProgress('[DEBUG-SIMULATE] 🔍 Team1 champions:', team1);
+    logGameInProgress('[DEBUG-SIMULATE] 🔍 Team2 champions:', team2);
+
+    return { team1, team2 };
+  }
+
+  // Compare two champion lists and return similarity percentage
+  private compareChampionLists(list1: string[], list2: string[]): number {
+    if (list1.length === 0 || list2.length === 0) return 0;
+
+    let matches = 0;
+    for (const champion of list1) {
+      // ✅ NOVO: Comparação mais flexível
+      const found = list2.find(c => {
+        // Comparação exata
+        if (c === champion) return true;
+        // Comparação ignorando espaços e caracteres especiais
+        const normalized1 = champion.replace(/[^a-zA-Z]/g, '').toLowerCase();
+        const normalized2 = c.replace(/[^a-zA-Z]/g, '').toLowerCase();
+        if (normalized1 === normalized2) return true;
+        // Comparação parcial (um contém o outro)
+        if (normalized1.includes(normalized2) || normalized2.includes(normalized1)) return true;
+        return false;
+      });
+
+      if (found) {
+        matches++;
+        logGameInProgress(`[DEBUG-SIMULATE] ✅ Match encontrado: "${champion}" = "${found}"`);
+      } else {
+        logGameInProgress(`[DEBUG-SIMULATE] ❌ No match: "${champion}" não encontrado em [${list2.join(', ')}]`);
+      }
+    }
+
+    const similarity = (matches / Math.max(list1.length, list2.length)) * 50; // Max 50 points per team
+    logGameInProgress(`[DEBUG-SIMULATE] 📊 Similaridade: ${matches}/${Math.max(list1.length, list2.length)} = ${similarity} pontos`);
+
+    return similarity;
+  }
+
+  // Modal actions
+  confirmDetectedMatch(): void {
+    if (!this.detectedLCUMatch || !this.matchComparisonResult) return;
+
+    const lcuMatch = this.detectedLCUMatch;    // Extract winner from LCU match
+    let winner: TeamColor | null = null;
+    if (lcuMatch.teams && lcuMatch.teams.length === 2) {
+      // LCU teams use string values: "Win" or "Fail"
+      const winningTeam = lcuMatch.teams.find((team: any) => team.win === "Win" || team.win === true);
+      if (winningTeam) {
+        winner = winningTeam.teamId === 100 ? 'blue' : 'red';
+      }
+    }
+
+    logGameInProgress('🔍 Detecção de vencedor:', {
+      teams: lcuMatch.teams?.map((t: any) => ({ teamId: t.teamId, win: t.win })),
+      detectedWinner: winner
+    });
+
+    logGameInProgress('✅ Partida confirmada automaticamente');
+    logGameInProgress('🎮 Dados da partida LCU:', lcuMatch.gameId);
+
+    // Fechar modal imediatamente
+    this.showMatchConfirmation = false;
+
+    // Atualizar gameData com informações da partida real
+    if (this.gameData) {
+      this.gameData.originalMatchId = lcuMatch.gameId;
+      this.gameData.riotId = lcuMatch.platformId ? `${lcuMatch.platformId}_${lcuMatch.gameId}` : `BR1_${lcuMatch.gameId}`;
+      this.gameData.originalMatchData = lcuMatch;
+    }
+
+    if (winner) {
+      logGameInProgress('🏆 Vencedor detectado automaticamente via LCU:', winner);
+      this.selectedWinner = winner;
+
+      // Completar jogo automaticamente com dados reais - APENAS uma vez via evento onGameComplete
+      this.autoCompleteGameWithRealData(winner, true, lcuMatch);
+    } else {
+      logGameInProgress('⚠️ Partida confirmada mas sem vencedor detectado - completando partida como inconclusiva');
+
+      // Mesmo sem vencedor detectado, completar a partida automaticamente
+      // Marca como null (inconclusivo) mas salva no histórico
+      this.autoCompleteGameWithRealData(null, true, lcuMatch);
+
+      // Mostrar notificação de que a partida foi salva mas sem vencedor definido
+      this.showSuccessNotification(
+        'Partida salva!',
+        'A partida foi detectada e salva no histórico, mas o vencedor não pôde ser determinado automaticamente.'
+      );
+    }
+  }
+
+  rejectDetectedMatch(): void {
+    logGameInProgress('❌ Partida detectada rejeitada pelo usuário');
+    this.closeMatchConfirmation();
+  }
+
+  closeMatchConfirmation(): void {
+    this.showMatchConfirmation = false;
+    this.detectedLCUMatch = null;
+    this.matchComparisonResult = null;
+  }
+
+  // Get champion name by ID (helper method)
+  getChampionNameById(championId: number): string | null {
+    // ✅ CORREÇÃO: Usar o ChampionService para resolver nomes de campeões
+    if (!championId) return null;
+
+    try {
+      // Tentar usar o ChampionService primeiro (método estático)
+      const championName = ChampionService.getChampionNameById(championId);
+      if (championName && championName !== 'Minion') {
+        return championName;
+      }
+    } catch (error) {
+      logGameInProgress('⚠️ [GameInProgress] Erro ao usar ChampionService:', error);
+    }
+
+    // ✅ FALLBACK: Se ChampionService falhar, usar o método do backend
+    // O backend agora resolve os nomes dos campeões usando DataDragonService
+    // Este método é mantido apenas para compatibilidade com dados antigos
+    return `Champion${championId}`;
+  }
+
+  // Helper methods for modal template
+  formatLCUMatchDate(gameCreation: number): string {
+    if (!gameCreation) return 'Data não disponível';
+    return new Date(gameCreation).toLocaleString('pt-BR');
+  }
+
+  formatGameDuration(gameDuration: number): string {
+    if (!gameDuration) return 'Duração não disponível';
+    const minutes = Math.floor(gameDuration / 60);
+    const seconds = gameDuration % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  }
+  getLCUMatchWinner(lcuMatch: any): TeamColor | null {
+    if (!lcuMatch?.teams || lcuMatch.teams.length !== 2) return null;
+
+    // LCU teams use string values: "Win" or "Fail"
+    const winningTeam = lcuMatch.teams.find((team: any) => team.win === "Win" || team.win === true);
+    if (!winningTeam) return null;
+
+    return winningTeam.teamId === 100 ? 'blue' : 'red';
+  }
+
+  getLCUTeamParticipants(lcuMatch: any, teamId: number): any[] {
+    if (!lcuMatch?.participants) return [];
+
+    return lcuMatch.participants.filter((participant: any) => participant.teamId === teamId);
+  }
+  // Missing utility methods
+  private stopTimers(): void {
+    if (this.gameTimer) {
+      this.gameTimer.unsubscribe();
+      this.gameTimer = null;
+    }
+    if (this.lcuDetectionTimer) {
+      this.lcuDetectionTimer.unsubscribe();
+      this.lcuDetectionTimer = null;
+    }
+
+    // Reset linking state
+    this.currentLiveMatchId = null;
+    this.matchLinkingEnabled = false;
+  }
+
+  private generateGameId(): string {
+    return 'game_' + Date.now() + '_' + Math.random().toString(36).substring(2, 11);
+  }
+
+  // Try to get winner from current LCU game
+  private async tryGetWinnerFromLCU(): Promise<TeamColor | null> {
+    try {
+      const gameState = await firstValueFrom(this.apiService.getCurrentGame());
+
+      if (!gameState?.success || !gameState.data) {
+        logGameInProgress('📡 Nenhum jogo ativo no LCU');
+        return null;
+      }
+
+      const currentGame = gameState.data;      // Check if game has ended and get winner
+      if (currentGame.gamePhase === 'EndOfGame' || currentGame.gamePhase === 'PostGame') {
+        if (currentGame.teams) {
+          const winningTeam = currentGame.teams.find((team: any) => team.win === "Win" || team.win === true);
+          if (winningTeam) {
+            return winningTeam.teamId === 100 ? 'blue' : 'red';
+          }
+        }
+      }
+
+      return null;
+    } catch (error) {
+      logGameInProgress('❌ Erro ao verificar LCU:', error);
+      return null;
+    }
+  }
+
+  // Try to get winner by comparing picks with last custom match
+  private async tryGetWinnerFromHistory(): Promise<TeamColor | null> {
+    try {
+      if (!this.currentPlayer?.id) {
+        logGameInProgress('❌ ID do jogador atual não encontrado');
+        return null;
+      }
+
+      logGameInProgress('🔍 Buscando histórico para player ID:', this.currentPlayer.id);
+
+      // Para o sistema buscar corretamente, vamos usar múltiplos identificadores
+      let playerIdentifiers = [this.currentPlayer.id.toString()];
+
+      if (this.currentPlayer?.summonerName) {
+        playerIdentifiers.push(this.currentPlayer.summonerName);
+      }
+
+      // Para usuário especial, adicionar IDs conhecidos
+      if (this.currentPlayer?.summonerName === 'popcorn seller' && this.currentPlayer?.tagLine === 'coup') {
+        playerIdentifiers.push('1'); // ID numérico
+        playerIdentifiers.push('popcorn seller'); // Nome do summoner
+        logGameInProgress('🎯 Usando múltiplos identificadores para busca:', playerIdentifiers);
+      }
+
+      // Tentar buscar com cada identificador até encontrar partidas
+      let history: any = null;
+      for (const identifier of playerIdentifiers) {
+        logGameInProgress(`🔍 Tentando buscar com identificador: ${identifier}`);
+        history = await firstValueFrom(this.apiService.getCustomMatches(identifier, 0, 30));
+
+        if (history?.success && history.matches?.length > 0) {
+          logGameInProgress(`✅ Encontrado histórico com identificador: ${identifier}`);
+          break;
+        }
+      }
+
+      logGameInProgress('📋 Resposta do histórico de partidas:', history);
+
+      if (!history?.success || !history?.matches?.length) {
+        logGameInProgress('📝 Nenhum histórico de partidas customizadas encontrado');
+        return null;
+      }
+
+      // Compare with the last custom match to find potential winner
+      const lastMatch = history.matches[0];
+      logGameInProgress('🔍 Última partida customizada:', lastMatch);
+
+      // This is a simplified comparison - you might want to enhance this
+      if (this.compareGameWithMatch(lastMatch)) {
+        // Try to extract winner from match data
+        const winner = this.extractWinnerFromMatch(lastMatch);
+        if (winner) {
+          logGameInProgress('🏆 Vencedor encontrado via histórico:', winner);
+          return winner;
+        }
+      }
+
+      return null;
+    } catch (error) {
+      logGameInProgress('❌ Erro ao buscar histórico:', error);
+      return null;
+    }
+  }
+
+  private compareGameWithMatch(match: any): boolean {
+    // Simplified comparison logic
+    // You can enhance this based on your match data structure
+    return true; // For now, assume all matches are comparable
+  }
+
+  private extractWinnerFromMatch(match: any): TeamColor | null {
+    if (!match.winner_team) return null;
+    return match.winner_team === 1 ? 'blue' : 'red';
+  }
+  // Toggle LCU detection
+  toggleLCUDetection(): void {
+    this.lcuDetectionEnabled = !this.lcuDetectionEnabled;
+    logGameInProgress('🔄 LCU Detection toggled:', this.lcuDetectionEnabled);
+
+    if (this.lcuDetectionEnabled) {
+      // Start LCU detection if enabled
+      this.startLCUDetection();
+    } else {
+      // Stop LCU detection if disabled
+      this.stopLCUDetection();
+    }
+  }
+
+  private stopLCUDetection(): void {
+    if (this.lcuDetectionTimer) {
+      this.lcuDetectionTimer.unsubscribe();
+      this.lcuDetectionTimer = null;
+    }
+    this.lcuGameDetected = false;
+  }
+
+  // Template helper methods
+  getGameStatusIcon(): string {
+    switch (this.gameStatus) {
+      case 'waiting': return '⏳';
+      case 'in-progress': return '🎮';
+      case 'ended': return '🏁';
+      default: return '❓';
+    }
+  }
+
+  getGameStatusText(): string {
+    switch (this.gameStatus) {
+      case 'waiting': return 'Aguardando início';
+      case 'in-progress': return 'Jogo em andamento';
+      case 'ended': return 'Jogo finalizado';
+      default: return 'Status desconhecido';
+    }
+  }
+
+  getGameDurationFormatted(): string {
+    const minutes = Math.floor(this.gameDuration / 60);
+    const seconds = this.gameDuration % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  }
+
+  getTeamColor(team: TeamColor): string {
+    return team === 'blue' ? '#4FC3F7' : '#F44336';
+  }
+
+  getTeamName(team: TeamColor): string {
+    return team === 'blue' ? 'Time Azul' : 'Time Vermelho';
+  }
+
+  getTeamPlayers(team: TeamColor): any[] {
+    if (!this.gameData) {
+      logGameInProgress('⚠️ [GameInProgress] gameData não disponível');
+      return [];
+    }
+
+    const players = team === 'blue' ? this.gameData.team1 : this.gameData.team2;
+
+    logGameInProgress(`🔍 [GameInProgress] Buscando jogadores do time ${team}:`, {
+      gameDataKeys: Object.keys(this.gameData),
+      hasTeam1: !!this.gameData.team1,
+      hasTeam2: !!this.gameData.team2,
+      team1Length: this.gameData.team1?.length || 0,
+      team2Length: this.gameData.team2?.length || 0,
+      requestedTeam: team,
+      playersFound: players?.length || 0,
+      players: players?.map((p: any) => ({
+        name: p.summonerName || p.name,
+        id: p.id,
+        champion: p.champion?.name
+      })) || []
+    });
+
+    return players || [];
+  }
+
+  getMyTeam(): TeamColor | null {
+    if (!this.gameData || !this.currentPlayer) return null;
+
+    const isInTeam1 = this.gameData.team1.some(player =>
+      player.id === this.currentPlayer?.id ||
+      player.summonerName === this.currentPlayer?.summonerName
+    );
+
+    if (isInTeam1) return 'blue';
+
+    const isInTeam2 = this.gameData.team2.some(player =>
+      player.id === this.currentPlayer?.id ||
+      player.summonerName === this.currentPlayer?.summonerName
+    );
+
+    if (isInTeam2) return 'red';
+
+    return null;
+  }
+  isMyTeamWinner(): boolean {
+    const myTeam = this.getMyTeam();
+    return myTeam === this.selectedWinner;
+  }
+
+  /**
+   * Retorna o Observable da URL do ícone de perfil se for humano, ou null se for bot
+   */
+  getProfileIconUrlIfHuman(player: any): Observable<string | null> {
+    if (this.botService.isBot(player)) {
+      return of(null);
+    }
+    const identifier = player.summonerName || player.name || player.displayName || player.gameName;
+    if (!identifier) return of(null);
+    return this.profileIconService.getProfileIconUrl(identifier);
+  }
+
+  // Métodos de notificação simplificados (podem ser integrados com um serviço de notificações mais complexo)
+  private showSuccessNotification(title: string, message: string): void {
+    // Por enquanto usar alert, mas pode ser substituído por um toast/notification service
+    alert(`✅ ${title}\n${message}`);
+  }
+
+  private showErrorNotification(title: string, message: string): void {
+    // Por enquanto usar alert, mas pode ser substituído por um toast/notification service
+    alert(`❌ ${title}\n${message}`);
+  }
+
+  // ✅ NOVO: Métodos para obter bans dos times
+  getTeamBans(team: TeamColor): any[] {
+    // Usar pickBanData normalizado se existir
+    const normalizedPickBan = (this as any)._normalizedPickBanData;
+    const hasPickBan = !!(normalizedPickBan || this.gameData?.pickBanData);
+    if (!hasPickBan) {
+      logGameInProgress('⚠️ [GameInProgress] pickBanData não disponível para bans');
+      return [];
+    }
+
+    try {
+      const pickBanData = normalizedPickBan || this.gameData?.pickBanData;
+      logGameInProgress(`🔍 [GameInProgress] Buscando bans do time ${team}:`, {
+        hasPickBanData: !!pickBanData,
+        hasPhases: !!pickBanData?.phases,
+        phasesLength: pickBanData?.phases?.length || 0,
+        pickBanDataStructure: pickBanData ? Object.keys(pickBanData) : []
+      });
+
+      // ✅ CORREÇÃO: Extrair bans das phases (estrutura correta)
+      if (Array.isArray(pickBanData?.phases)) {
+        const teamBans = pickBanData.phases
+          .filter((phase: any) =>
+            phase.action === 'ban' &&
+            phase.team === team &&
+            phase.champion &&
+            phase.locked
+          )
+          .map((phase: any) => ({
+            champion: phase.champion,
+            championName: phase.champion?.name,
+            championId: phase.champion?.id
+          }));
+
+        if (teamBans.length > 0) {
+          logGameInProgress(`✅ [GameInProgress] Bans encontrados para time ${team} nas phases:`, teamBans);
+          return teamBans;
+        }
+        // Se não encontramos nas phases (campos não preenchidos), continuar para fallbacks abaixo
+      }
+
+      // ✅ FALLBACK: Verificar estrutura alternativa para dados de partida real
+      if (team === 'blue' && pickBanData?.team1Bans) {
+        const bans = (pickBanData.team1Bans || []).map((b: any) => ({
+          champion: b.champion || (b.championId != null ? { id: b.championId, name: this.getChampionNameById(b.championId) } : undefined),
+          championName: b.champion?.name || b.championName || (b.championId != null ? this.getChampionNameById(b.championId) : undefined),
+          championId: b.champion?.id ?? b.championId
+        }));
+        if (bans.length > 0) {
+          logGameInProgress(`✅ [GameInProgress] Bans encontrados para time ${team} em team1Bans:`, bans);
+          return bans;
+        }
+      } else if (team === 'red' && pickBanData?.team2Bans) {
+        const bans = (pickBanData.team2Bans || []).map((b: any) => ({
+          champion: b.champion || (b.championId != null ? { id: b.championId, name: this.getChampionNameById(b.championId) } : undefined),
+          championName: b.champion?.name || b.championName || (b.championId != null ? this.getChampionNameById(b.championId) : undefined),
+          championId: b.champion?.id ?? b.championId
+        }));
+        if (bans.length > 0) {
+          logGameInProgress(`✅ [GameInProgress] Bans encontrados para time ${team} em team2Bans:`, bans);
+          return bans;
+        }
+      }
+
+      // ✅ NOVO: Fallback via actions (se existir)
+      if (Array.isArray(pickBanData?.actions)) {
+        const normalizeTeam = (t: any): TeamColor | null => {
+          if (t === 'blue' || t === 'red') return t;
+          const n = typeof t === 'string' ? parseInt(t, 10) : t;
+          if (n === 1 || n === 100) return 'blue';
+          if (n === 2 || n === 200) return 'red';
+          return null;
+        };
+        const bans = pickBanData.actions
+          .filter((a: any) => (a.action === 'ban' || a.type === 'ban') && normalizeTeam(a.team) === team && (a.locked || a.completed || a.done || a.championId != null || a.champion))
+          .map((a: any) => {
+            const id = a.champion?.id ?? a.championId;
+            const name = a.champion?.name ?? (id != null ? this.getChampionNameById(id) : undefined);
+            return {
+              champion: a.champion || (id != null ? { id, name } : undefined),
+              championName: name,
+              championId: id
+            };
+          });
+        if (bans.length > 0) {
+          logGameInProgress(`✅ [GameInProgress] Bans encontrados para time ${team} em actions:`, bans);
+          return bans;
+        }
+      }
+
+      // ✅ NOVO: Verificar estrutura de dados da partida real (Riot API)
+      if (Array.isArray(pickBanData?.bans)) {
+        const teamId = team === 'blue' ? 100 : 200;
+        const teamBans = pickBanData.bans
+          .filter((ban: any) => ban.teamId === teamId)
+          .map((ban: any) => ({
+            champion: { id: ban.championId, name: this.getChampionNameById(ban.championId) },
+            championName: this.getChampionNameById(ban.championId),
+            championId: ban.championId
+          }));
+
+        logGameInProgress(`✅ [GameInProgress] Bans da partida real encontrados para time ${team}:`, teamBans);
+        return teamBans;
+      }
+
+      logGameInProgress(`⚠️ [GameInProgress] Nenhum ban encontrado para time ${team}`);
+      return [];
+    } catch (error) {
+      logGameInProgress('❌ [GameInProgress] Erro ao obter bans do time:', error);
+      return [];
+    }
+  }
+
+  // ✅ NOVO: Método para obter picks dos times
+  getTeamPicks(team: TeamColor): any[] {
+    const normalizedPickBan2 = (this as any)._normalizedPickBanData;
+    const hasPickBan2 = !!(normalizedPickBan2 || this.gameData?.pickBanData);
+    if (!hasPickBan2) {
+      logGameInProgress('⚠️ [GameInProgress] pickBanData não disponível para picks');
+      return [];
+    }
+
+    try {
+      const pickBanData = normalizedPickBan2 || this.gameData?.pickBanData;
+      logGameInProgress(`🔍 [GameInProgress] Buscando picks do time ${team}:`, {
+        hasPickBanData: !!pickBanData,
+        hasPhases: !!pickBanData?.phases,
+        phasesLength: pickBanData?.phases?.length || 0,
+        pickBanDataStructure: pickBanData ? Object.keys(pickBanData) : []
+      });
+
+      // ✅ CORREÇÃO: Extrair picks das phases (estrutura correta)
+      if (Array.isArray(pickBanData?.phases)) {
+        const teamPicks = pickBanData.phases
+          .filter((phase: any) =>
+            phase.action === 'pick' &&
+            phase.team === team &&
+            phase.champion &&
+            phase.locked
+          )
+          .map((phase: any) => ({
+            champion: phase.champion,
+            championName: phase.champion?.name,
+            championId: phase.champion?.id,
+            player: phase.playerName || phase.player
+          }));
+
+        if (teamPicks.length > 0) {
+          logGameInProgress(`✅ [GameInProgress] Picks encontrados para time ${team} nas phases:`, teamPicks);
+          return teamPicks;
+        }
+        // Se fases não possuem campeões preenchidos, seguir com fallbacks
+      }
+
+      // ✅ FALLBACK: Verificar estrutura alternativa para dados de partida real
+      if (team === 'blue' && pickBanData?.team1Picks) {
+        const picks = (pickBanData.team1Picks || []).map((p: any) => ({
+          champion: p.champion || (p.championId != null ? { id: p.championId, name: this.getChampionNameById(p.championId) } : undefined),
+          championName: p.champion?.name || p.championName || (p.championId != null ? this.getChampionNameById(p.championId) : undefined),
+          championId: p.champion?.id ?? p.championId,
+          player: p.playerName || p.player
+        }));
+        if (picks.length > 0) {
+          logGameInProgress(`✅ [GameInProgress] Picks encontrados para time ${team} em team1Picks:`, picks);
+          return picks;
+        }
+      } else if (team === 'red' && pickBanData?.team2Picks) {
+        const picks = (pickBanData.team2Picks || []).map((p: any) => ({
+          champion: p.champion || (p.championId != null ? { id: p.championId, name: this.getChampionNameById(p.championId) } : undefined),
+          championName: p.champion?.name || p.championName || (p.championId != null ? this.getChampionNameById(p.championId) : undefined),
+          championId: p.champion?.id ?? p.championId,
+          player: p.playerName || p.player
+        }));
+        if (picks.length > 0) {
+          logGameInProgress(`✅ [GameInProgress] Picks encontrados para time ${team} em team2Picks:`, picks);
+          return picks;
+        }
+      }
+
+      // ✅ NOVO: Fallback via actions (se existir)
+      if (Array.isArray(pickBanData?.actions)) {
+        const normalizeTeam = (t: any): TeamColor | null => {
+          if (t === 'blue' || t === 'red') return t;
+          const n = typeof t === 'string' ? parseInt(t, 10) : t;
+          if (n === 1 || n === 100) return 'blue';
+          if (n === 2 || n === 200) return 'red';
+          return null;
+        };
+        const picks = pickBanData.actions
+          .filter((a: any) => (a.action === 'pick' || a.type === 'pick') && normalizeTeam(a.team) === team && (a.locked || a.completed || a.done || a.championId != null || a.champion))
+          .map((a: any) => {
+            const id = a.champion?.id ?? a.championId;
+            const name = a.champion?.name ?? (id != null ? this.getChampionNameById(id) : undefined);
+            return {
+              champion: a.champion || (id != null ? { id, name } : undefined),
+              championName: name,
+              championId: id,
+              player: a.playerName || a.player
+            };
+          });
+        if (picks.length > 0) {
+          logGameInProgress(`✅ [GameInProgress] Picks encontrados para time ${team} em actions:`, picks);
+          return picks;
+        }
+      }
+
+      // ✅ NOVO: Verificar estrutura de dados da partida real (Riot API)
+      if (Array.isArray(pickBanData?.picks)) {
+        const teamId = team === 'blue' ? 100 : 200;
+        const teamPicks = pickBanData.picks
+          .filter((pick: any) => pick.teamId === teamId)
+          .map((pick: any) => ({
+            champion: { id: pick.championId, name: this.getChampionNameById(pick.championId) },
+            championName: this.getChampionNameById(pick.championId),
+            championId: pick.championId,
+            player: pick.playerName || pick.summonerName
+          }));
+
+        logGameInProgress(`✅ [GameInProgress] Picks da partida real encontrados para time ${team}:`, teamPicks);
+        return teamPicks;
+      }
+
+      logGameInProgress(`⚠️ [GameInProgress] Nenhum pick encontrado para time ${team}`);
+      return [];
+    } catch (error) {
+      logGameInProgress('❌ [GameInProgress] Erro ao obter picks do time:', error);
+      return [];
+    }
+  }
+
+  // ✅ NOVO: Método para obter ícone da lane
+  getLaneIcon(lane: string): string {
+    const laneIcons: { [key: string]: string } = {
+      'top': '⚔️',
+      'jungle': '🌲',
+      'mid': '🔮',
+      'adc': '🏹',
+      'support': '🛡️',
+      'fill': '❓'
+    };
+
+    return laneIcons[lane?.toLowerCase()] || '❓';
+  }
+
+  // ✅ NOVO: Método para formatar nome da lane
+  getLaneName(lane: string): string {
+    const laneNames: { [key: string]: string } = {
+      'top': 'Top',
+      'jungle': 'Jungle',
+      'mid': 'Mid',
+      'adc': 'ADC',
+      'support': 'Support',
+      'fill': 'Fill'
+    };
+
+    return laneNames[lane?.toLowerCase()] || lane || 'Fill';
+  }
+
+  // NEW: LCU Match Confirmation Modal Handlers
+  onLcuMatchConfirmed(comparisonData: any): void {
+    console.log('🎯 LCU match confirmed by leader:', comparisonData);
+
+    // Extract winner from LCU match data
+    let winner: TeamColor | null = null;
+    if (comparisonData?.lcuMatch?.teams && comparisonData.lcuMatch.teams.length === 2) {
+      const winningTeam = comparisonData.lcuMatch.teams.find((team: any) => team.win === "Win" || team.win === true);
+      if (winningTeam) {
+        winner = winningTeam.teamId === 100 ? 'blue' : 'red';
+      }
+    }
+
+    // Apply the confirmed result to the game
+    if (winner) {
+      this.selectedWinner = winner;
+      console.log('🏆 Winner applied from LCU confirmation:', winner);
+
+      // Complete the game with LCU data
+      if (comparisonData.lcuMatch) {
+        console.log('📊 Applying LCU match data:', comparisonData.lcuMatch);
+        this.autoCompleteGameWithRealData(winner, true, comparisonData.lcuMatch);
+      } else {
+        // Fallback to normal completion
+        this.autoCompleteGame(winner, true);
+      }
+    } else {
+      console.log('⚠️ No winner detected in LCU match, requiring manual declaration');
+      // If no winner detected, just close modal and let user declare manually
+    }
+
+    this.closeLcuConfirmationModal();
+  } onLcuMatchRejected(): void {
+    console.log('❌ LCU match rejected by leader');
+    this.closeLcuConfirmationModal();
+    // Continue trying to detect other matches
+    this.tryLinkToLiveMatch();
+  }
+
+  onLcuModalClosed(): void {
+    console.log('🚫 LCU confirmation modal closed');
+    this.closeLcuConfirmationModal();
+  }
+
+  private showLcuMatchConfirmationModal(lcuMatchData: any, linkingScore: any): void {
+    console.log('🎯 Showing LCU match confirmation modal');
+
+    // Extract pick/ban data from our game for comparison
+    const ourPickBanData = this.extractPickBanDataForComparison();
+
+    // Transform our game data into the structure expected by the modal
+    const customMatchData = this.transformGameDataForModal(ourPickBanData);
+
+    // Calculate similarity details
+    const similarityData = this.calculateSimilarityForModal(customMatchData, lcuMatchData, linkingScore);
+
+    // Create comparison data structure in the format expected by the modal
+    this.lcuConfirmationData = {
+      customMatch: customMatchData,
+      lcuMatch: lcuMatchData,
+      similarity: similarityData
+    };
+
+    console.log('🎯 LCU confirmation data prepared:', this.lcuConfirmationData);
+
+    // Determine if user is the match leader
+    this.isMatchLeader = this.determineIfUserIsLeader();
+
+    // Show the modal
+    this.showLcuConfirmationModal = true;
+  }
+
+  private closeLcuConfirmationModal(): void {
+    this.showLcuConfirmationModal = false;
+    this.lcuConfirmationData = null;
+  }
+
+  private determineIfUserIsLeader(): boolean {
+    // For now, always return true since we want the leader to be able to confirm
+    // In a real implementation, you would check if the current user is the match creator
+    // or has leader privileges in the current match
+    console.log('🎯 Determining if user is leader - currently always true');
+    return true;
+  }
+
+  // Private method to extract data from pick_ban_data for LCU comparison
+  private extractPickBanDataForComparison(): any {
+    if (!this.gameData?.pickBanData) {
+      return null;
+    }
+
+    try {
+      const pickBanData = typeof this.gameData.pickBanData === 'string'
+        ? JSON.parse(this.gameData.pickBanData)
+        : this.gameData.pickBanData;
+
+      return {
+        team1: {
+          picks: pickBanData.team1Picks || [],
+          bans: pickBanData.team1Bans || []
+        },
+        team2: {
+          picks: pickBanData.team2Picks || [],
+          bans: pickBanData.team2Bans || []
+        }
+      };
+    } catch (error) {
+      console.error('❌ Error parsing pick_ban_data:', error);
+      return null;
+    }
+  }
+
+  // Transform game data into the structure expected by the modal
+  private transformGameDataForModal(ourPickBanData: any): any {
+    if (!this.gameData || !ourPickBanData) {
+      return {
+        id: 0,
+        players: [],
+        picks: [],
+        bans: [],
+        pickBanData: {
+          team1Picks: [],
+          team2Picks: [],
+          team1Bans: [],
+          team2Bans: []
+        }
+      };
+    }
+
+    // Extract player names from both teams
+    const allPlayers = [
+      ...(this.gameData.team1?.map(p => p.summonerName || p.name) || []),
+      ...(this.gameData.team2?.map(p => p.summonerName || p.name) || [])
+    ];
+
+    // Transform picks and bans into modal format
+    const transformPicks = (picks: any[]): any[] => {
+      return picks.map(pick => ({
+        playerName: pick.player || pick.summonerName || pick.playerName || 'Unknown',
+        champion: {
+          id: pick.championId?.toString() || pick.champion?.id || 'unknown',
+          name: pick.championName || pick.champion?.name || pick.champion || 'Unknown Champion',
+          image: pick.champion?.image || undefined
+        },
+        playerLane: pick.lane || pick.assignedLane || pick.playerLane || 'unknown'
+      }));
+    };
+
+    const transformBans = (bans: any[]): any[] => {
+      return bans.map(ban => ({
+        playerName: ban.playerName || ban.player || 'Unknown',
+        champion: {
+          id: ban.championId?.toString() || ban.champion?.id || 'unknown',
+          name: ban.championName || ban.champion?.name || ban.champion || 'Unknown Champion',
+          image: ban.champion?.image || undefined
+        }
+      }));
+    };
+
+    const team1Picks = transformPicks(ourPickBanData.team1?.picks || []);
+    const team2Picks = transformPicks(ourPickBanData.team2?.picks || []);
+    const team1Bans = transformBans(ourPickBanData.team1?.bans || []);
+    const team2Bans = transformBans(ourPickBanData.team2?.bans || []);
+
+    // Extract all champions for picks/bans arrays
+    const allPicks = [...team1Picks, ...team2Picks].map(p => p.champion);
+    const allBans = [...team1Bans, ...team2Bans].map(b => b.champion);
+
+    return {
+      id: parseInt(this.gameData.gameId) || 0,
+      players: allPlayers,
+      picks: allPicks,
+      bans: allBans,
+      pickBanData: {
+        team1Picks,
+        team2Picks,
+        team1Bans,
+        team2Bans
+      }
+    };
+  }
+
+  // Calculate similarity data for the modal
+  private calculateSimilarityForModal(customMatchData: any, lcuMatchData: any, linkingScore: any): any {
+    const details: string[] = [];
+
+    // Add linking score reason
+    if (linkingScore.reason) {
+      details.push(linkingScore.reason);
+    }
+
+    // Calculate player match percentage
+    const customPlayers = customMatchData.players || [];
+    const lcuPlayers = lcuMatchData.participants?.map((p: any) =>
+      p.summonerName || p.gameName || `Summoner ${p.participantId}`
+    ) || [];
+
+    let playerMatches = 0;
+    customPlayers.forEach((player: string) => {
+      if (lcuPlayers.some((lcuPlayer: string) =>
+        lcuPlayer.toLowerCase().includes(player.toLowerCase()) ||
+        player.toLowerCase().includes(lcuPlayer.toLowerCase())
+      )) {
+        playerMatches++;
+      }
+    });
+
+    const playerMatchPercentage = customPlayers.length > 0
+      ? Math.round((playerMatches / customPlayers.length) * 100)
+      : 0;
+
+    if (playerMatches > 0) {
+      details.push(`${playerMatches}/${customPlayers.length} jogadores encontrados`);
+    }
+
+    // Calculate champion match percentage
+    const customChampions = customMatchData.picks?.map((p: any) => p.name?.toLowerCase()) || [];
+    const lcuChampions = lcuMatchData.participants?.map((p: any) =>
+      this.getChampionNameById(p.championId)?.toLowerCase()
+    ) || [];
+
+    let championMatches = 0;
+    customChampions.forEach((champion: string) => {
+      if (lcuChampions.includes(champion)) {
+        championMatches++;
+      }
+    });
+
+    const championMatchPercentage = customChampions.length > 0
+      ? Math.round((championMatches / customChampions.length) * 100)
+      : 0;
+
+    if (championMatches > 0) {
+      details.push(`${championMatches}/${customChampions.length} campeões correspondentes`);
+    }
+
+    // Use the linking score as overall confidence, but adjust based on our calculations
+    const overallScore = Math.max(linkingScore.score || 0,
+      Math.round((playerMatchPercentage + championMatchPercentage) / 2));
+
+    return {
+      playerMatch: playerMatchPercentage,
+      championMatch: championMatchPercentage,
+      overall: overallScore,
+      details: details
+    };
+  }
+}

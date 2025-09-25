@@ -1,0 +1,27 @@
+databaseChangeLog:
+  - changeSet:
+      id: 004-schema-alignment
+      author: refactor
+      changes:
+        # Tabela settings (existente no backend Node, usada pela entidade Setting)
+        - createTable:
+            tableName: settings
+            columns:
+              - column: { name: key, type: VARCHAR(191), constraints: { primaryKey: true, primaryKeyName: pk_settings } }
+              - column: { name: value, type: TEXT, constraints: { nullable: false } }
+              - column: { name: created_at, type: TIMESTAMP, defaultValueComputed: CURRENT_TIMESTAMP }
+              - column: { name: updated_at, type: TIMESTAMP, defaultValueComputed: CURRENT_TIMESTAMP }
+        # Adiciona UNIQUE em players.summoner_id para alinhar com criação do backend Node (se não existir)
+        - addUniqueConstraint:
+            tableName: players
+            columnNames: summoner_id
+            constraintName: uq_players_summoner_id
+        # Garante que created_by em custom_matches é NOT NULL como no backend Node
+        - addNotNullConstraint:
+            tableName: custom_matches
+            columnName: created_by
+            columnDataType: VARCHAR(255)
+      rollback:
+        - dropTable: { tableName: settings }
+        - dropUniqueConstraint: { tableName: players, constraintName: uq_players_summoner_id }
+        - dropNotNullConstraint: { tableName: custom_matches, columnName: created_by, columnDataType: VARCHAR(255) }

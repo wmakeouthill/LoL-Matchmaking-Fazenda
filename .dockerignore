@@ -1,0 +1,24 @@
+# Ignorar pastas/arquivos que não precisam do contexto do Docker
+target/classes
+target/generated-sources
+target/generated-test-sources
+target/maven-archiver
+target/maven-status
+target/test-classes
+target/surefire-reports
+target/node
+# Manter target/*.jar para Docker builds
+.git
+.gitignore
+.idea
+.vscode
+node_modules
+npm-debug.log
+.DS_Store
+*.md
+*.log
+*.iml
+
+# Ignorar dados sensíveis
+config-example.properties
+application-secrets.properties

@@ -1,0 +1,16 @@
+databaseChangeLog:
+  - changeSet:
+      id: 003-align-matches-columns
+      author: refactor
+      changes:
+        # Adiciona colunas presentes no backend Node se não existirem
+        - addColumn:
+            tableName: matches
+            columns:
+              - column: { name: pick_ban_data, type: TEXT }
+              - column: { name: detected_by_lcu, type: TINYINT, defaultValueNumeric: 0 }
+              - column: { name: linked_results, type: TEXT }
+      rollback:
+        - dropColumn: { columnName: pick_ban_data, tableName: matches }
+        - dropColumn: { columnName: detected_by_lcu, tableName: matches }
+        - dropColumn: { columnName: linked_results, tableName: matches }

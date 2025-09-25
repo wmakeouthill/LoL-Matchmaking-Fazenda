@@ -1,0 +1,104 @@
+databaseChangeLog:
+  - changeSet:
+      id: add-missing-columns-discord-links
+      author: migration
+      preConditions:
+        onFail: MARK_RAN
+        not:
+          columnExists:
+            tableName: discord_lol_links
+            columnName: region
+      changes:
+        - addColumn:
+            tableName: discord_lol_links
+            columns:
+              - column:
+                  name: region
+                  type: VARCHAR(50)
+                  constraints:
+                    nullable: true
+  - changeSet:
+      id: add-missing-columns-discord-links-linked-at
+      author: migration
+      preConditions:
+        onFail: MARK_RAN
+        not:
+          columnExists:
+            tableName: discord_lol_links
+            columnName: linked_at
+      changes:
+        - addColumn:
+            tableName: discord_lol_links
+            columns:
+              - column:
+                  name: linked_at
+                  type: TIMESTAMP
+                  defaultValueComputed: CURRENT_TIMESTAMP
+  - changeSet:
+      id: add-missing-columns-discord-links-active
+      author: migration
+      preConditions:
+        onFail: MARK_RAN
+        not:
+          columnExists:
+            tableName: discord_lol_links
+            columnName: active
+      changes:
+        - addColumn:
+            tableName: discord_lol_links
+            columns:
+              - column:
+                  name: active
+                  type: TINYINT
+                  defaultValueNumeric: 1
+  - changeSet:
+      id: add-missing-columns-event-inbox-data
+      author: migration
+      preConditions:
+        onFail: MARK_RAN
+        not:
+          columnExists:
+            tableName: event_inbox
+            columnName: data
+      changes:
+        - addColumn:
+            tableName: event_inbox
+            columns:
+              - column:
+                  name: data
+                  type: TEXT
+  - changeSet:
+      id: add-missing-columns-event-inbox-created-at
+      author: migration
+      preConditions:
+        onFail: MARK_RAN
+        not:
+          columnExists:
+            tableName: event_inbox
+            columnName: created_at
+      changes:
+        - addColumn:
+            tableName: event_inbox
+            columns:
+              - column:
+                  name: created_at
+                  type: TIMESTAMP
+                  defaultValueComputed: CURRENT_TIMESTAMP
+  - changeSet:
+      id: add-missing-columns-event-inbox-processed
+      author: migration
+      preConditions:
+        onFail: MARK_RAN
+        not:
+          columnExists:
+            tableName: event_inbox
+            columnName: processed
+      changes:
+        - addColumn:
+            tableName: event_inbox
+            columns:
+              - column:
+                  name: processed
+                  type: TINYINT
+                  defaultValueNumeric: 0
+

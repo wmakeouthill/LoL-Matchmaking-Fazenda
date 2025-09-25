@@ -1,0 +1,62 @@
+{
+  "name": "lol-matchmaking-electron",
+  "version": "1.0.0",
+  "description": "League of Legends Matchmaking Desktop App",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "npx tsc",
+    "build:frontend": "cd frontend && npm run build:prod",
+    "build:all": "npm run build:frontend && npm run build",
+    "dev:electron": "npm run build && npx electron .",
+    "electron": "npm run build:all && npx electron .",
+    "electron:dev": "npm run build && npx electron . --dev",
+    "build:electron": "npm run build:all && npx electron-builder",
+    "dist": "npm run build:all && npx electron-builder",
+    "watch": "npx tsc --watch",
+    "watch:frontend": "cd frontend && npm run watch",
+    "clean": "rmdir /s /q dist 2>nul || rm -rf dist 2>/dev/null || true",
+    "clean:frontend": "cd frontend && npm run clean",
+    "clean:all": "npm run clean && npm run clean:frontend",
+    "electron:run-with-url": "node scripts/electron-with-url.js",
+    "prebuild:all": "npm run clean:all"
+  },
+  "keywords": [
+    "electron",
+    "lol",
+    "matchmaking",
+    "gaming",
+    "typescript"
+  ],
+  "author": "LOL Matchmaking Team",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.6.4",
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  },
+  "build": {
+    "appId": "com.lolmatchmaking.app",
+    "productName": "LOL Matchmaking",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "frontend/dist/browser/**/*",
+      "node_modules/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "electron/assets/icon.ico"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "electron/assets/icon.png"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "electron/assets/icon.icns"
+    }
+  }
+}

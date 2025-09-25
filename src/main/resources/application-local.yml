@@ -1,0 +1,24 @@
+# Configurações para desenvolvimento local
+server:
+  port: 8080
+
+# URLs e endpoints para ambiente local
+app:
+  frontend:
+    url: "http://localhost:4200"
+  backend:
+    url: "http://localhost:8080"
+    base-url: "http://localhost:8080"
+  websocket:
+    endpoint: "ws://localhost:8080/ws"
+  cors:
+    allowed-origins:
+      - "http://localhost:4200"
+      - "http://localhost:3000"
+      - "http://127.0.0.1:4200"
+      - "http://127.0.0.1:3000"
+
+logging:
+  level:
+    br.com.lolmatchmaking: DEBUG
+    org.springframework.web: DEBUG

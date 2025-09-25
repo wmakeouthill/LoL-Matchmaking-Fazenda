@@ -1,0 +1,78 @@
+<div class="lane-selector-overlay" *ngIf="isVisible" (click)="onClose()">
+  <div class="lane-selector-modal" (click)="$event.stopPropagation()">
+    <div class="modal-header">
+      <h3>🎯 Selecionar Posições</h3>
+      <button class="close-btn" (click)="onClose()">✕</button>
+    </div>
+
+    <div class="modal-content">
+      <div class="selection-section">
+        <h4>Lane Primária</h4>
+        <div class="lane-grid">
+          <button
+            *ngFor="let lane of lanes"
+            class="lane-button"
+            [class.selected]="selectedPrimary === lane.id"
+            (click)="selectPrimaryLane(lane.id)">
+            <span class="lane-icon">{{ lane.icon }}</span>
+            <span class="lane-name">{{ lane.name }}</span>
+            <span class="lane-desc">{{ lane.description }}</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="selection-section" *ngIf="selectedPrimary">
+        <h4>Lane Secundária</h4>
+        <div class="lane-grid">
+          <button
+            *ngFor="let lane of lanes"
+            class="lane-button"
+            [class.selected]="selectedSecondary === lane.id"
+            [class.disabled]="lane.id === selectedPrimary"
+            [disabled]="lane.id === selectedPrimary"
+            (click)="selectSecondaryLane(lane.id)">
+            <span class="lane-icon">{{ lane.icon }}</span>
+            <span class="lane-name">{{ lane.name }}</span>
+            <span class="lane-desc">{{ lane.description }}</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="preferences-section" *ngIf="selectedPrimary && selectedSecondary">
+        <label class="checkbox-label">
+          <input
+            type="checkbox"
+            [(ngModel)]="autoAccept"
+            name="autoAccept">
+          <span class="checkmark"></span>
+          Aceitar partidas automaticamente
+        </label>
+      </div>
+
+      <div class="selection-summary" *ngIf="selectedPrimary && selectedSecondary">
+        <h4>Resumo da Seleção</h4>
+        <div class="summary-item">
+          <strong>Primária:</strong> {{ getLaneIcon(selectedPrimary) }} {{ getLaneName(selectedPrimary) }}
+        </div>
+        <div class="summary-item">
+          <strong>Secundária:</strong> {{ getLaneIcon(selectedSecondary) }} {{ getLaneName(selectedSecondary) }}
+        </div>
+        <div class="summary-item" *ngIf="autoAccept">
+          <strong>Auto-aceitar:</strong> ✅ Ativado
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn-secondary" (click)="onClose()">
+        Cancelar
+      </button>
+      <button
+        class="btn-primary"
+        [disabled]="!isValidSelection()"
+        (click)="onConfirm()">
+        🚀 Entrar na Fila
+      </button>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,884 @@
+// ========== ESTILOS PRINCIPAIS ==========
+.draft-pick-ban {
+  padding: 10px;
+  background: linear-gradient(135deg, #0a1428 0%, #1e2e4b 100%);
+  min-height: 100vh;
+  color: #f0f2f5;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+// ========== HEADER ==========
+.pick-ban-header {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  border-radius: 6px;
+  padding: 10px 16px;
+  margin-bottom: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.header-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.title-section {
+  h2 {
+    margin: 0;
+    color: #f0c040;
+    font-size: 18px;
+    font-weight: bold;
+    white-space: nowrap;
+  }
+}
+
+.progress-section {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  justify-content: center;
+
+  .progress-bar {
+    width: 200px;
+    height: 5px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+    overflow: hidden;
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #c9aa71, #f0c040);
+      transition: width 0.3s ease;
+    }
+  }
+
+  .progress-text {
+    font-size: 11px;
+    color: #c9aa71;
+    font-weight: 500;
+    min-width: 30px;
+  }
+}
+
+.timer-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  .timer {
+    background: #2d5a87;
+    color: #fff;
+    padding: 6px 12px;
+    border-radius: 5px;
+    font-size: 16px;
+    font-weight: bold;
+    min-width: 50px;
+    text-align: center;
+    border: 2px solid #3c6e95;
+
+    &.warning {
+      background: #c8aa5f;
+      border-color: #d4af37;
+      animation: pulse 1s infinite;
+    }
+  }
+}
+
+.status-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: right;
+
+  .current-player-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    .current-player-label {
+      font-size: 11px;
+      color: #a09b8c;
+      white-space: nowrap;
+    }
+
+    .current-player-name {
+      font-size: 12px;
+      color: #f0f2f5;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.1);
+      padding: 3px 6px;
+      border-radius: 3px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      white-space: nowrap;
+    }
+
+    .current-action-text {
+      color: #c9aa71;
+      font-size: 11px;
+      font-style: italic;
+      white-space: nowrap;
+    }
+  }
+}
+  .timer {
+    background: #2d5a87;
+    color: #fff;
+    padding: 6px 12px;
+    border-radius: 5px;
+    font-size: 16px;
+    font-weight: bold;
+    min-width: 50px;
+    text-align: center;
+    border: 2px solid #3c6e95;
+
+    &.warning {
+      background: #c8aa5f;
+      border-color: #d4af37;
+      animation: pulse 1s infinite;
+    }
+  }
+
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+// ========== CONTAINER DOS TIMES ==========
+.teams-container {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+// ========== ESTILOS DOS TIMES ==========
+.team {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 12px;
+  border: 2px solid;
+}
+
+.blue-team {
+  border-color: #5bc0de;
+}
+
+.red-team {
+  border-color: #d9534f;
+}
+
+.team-header {
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.team-name {
+  font-size: 15px;
+  font-weight: bold;
+  color: #f0f2f5;
+}
+
+// ========== ESTILOS DOS BANS ==========
+.team-bans {
+  margin-bottom: 12px;
+  padding: 10px 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+
+  // Layout horizontal com "Bans" à esquerda
+  display: flex;
+  align-items: center;
+  gap: 16px;
+
+  h4 {
+    margin: 0;
+    font-size: 12px;
+    color: #c9aa71;
+    font-weight: 600;
+    white-space: nowrap;
+    min-width: 36px;
+  }
+}
+
+.banned-champions-row {
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+  flex-wrap: wrap;
+  flex: 1;
+  justify-content: space-evenly;
+  align-items: center;
+  padding: 0 8px;
+}
+
+.banned-champion {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 50px;
+  flex: 1;
+  max-width: 60px;
+
+  .banned-img {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    border: 2px solid #d9534f;
+    opacity: 0.7;
+    object-fit: cover;
+  }
+
+  .banned-name {
+    font-size: 9px;
+    color: #d9534f;
+    text-align: center;
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.2;
+  }
+}
+
+.banned-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 50px;
+  flex: 1;
+  max-width: 60px;
+
+  .ban-placeholder {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    color: rgba(255, 255, 255, 0.4);
+    border: 2px dashed rgba(255, 255, 255, 0.2);
+  }
+}
+
+// ========== ESTILOS DOS PICKS ==========
+.team-picks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pick-slot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.3s ease;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+}
+
+.champion-img {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  border: 2px solid #c9aa71;
+  object-fit: cover;
+}
+
+.champion-placeholder {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: bold;
+  color: #888;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+}
+
+.pick-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.champion-name {
+  font-size: 13px;
+  font-weight: bold;
+  color: #f0f2f5;
+  line-height: 1.2;
+}
+
+.player-name {
+  font-size: 11px;
+  color: #c9aa71;
+  line-height: 1.2;
+}
+
+.you-indicator {
+  color: #f0c040;
+  font-weight: bold;
+}
+
+.player-lane {
+  font-size: 10px;
+  color: #888;
+  line-height: 1.2;
+}
+
+// ✅ NOVO: Estilo para jogadores autofill
+.autofill-player {
+  color: #d9534f !important;
+  font-weight: bold;
+  font-style: italic;
+}
+
+// ✅ NOVO: Estilo para slot do jogador atual na vez
+.pick-slot.current-turn {
+  background: rgba(240, 192, 64, 0.2);
+  border-color: #f0c040;
+  box-shadow: 0 0 10px rgba(240, 192, 64, 0.3);
+  animation: currentTurnPulse 2s infinite;
+}
+
+@keyframes currentTurnPulse {
+
+  0%,
+  100% {
+    box-shadow: 0 0 10px rgba(240, 192, 64, 0.3);
+  }
+
+  50% {
+    box-shadow: 0 0 20px rgba(240, 192, 64, 0.6);
+  }
+}
+
+// ========== SEÇÃO DE BANS GERAIS ==========
+.bans-section {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  text-align: center;
+
+  h3 {
+    margin: 0 0 15px 0;
+    color: #d9534f;
+    font-size: 16px;
+  }
+}
+
+.banned-champions {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  justify-content: center;
+  max-width: 200px;
+  margin: 0 auto;
+}
+
+// ========== SELEÇÃO DE CAMPEÕES ==========
+.champion-selection {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  text-align: center;
+}
+
+.selection-header {
+  margin-bottom: 20px;
+
+  h3 {
+    margin: 0 0 8px 0;
+    color: #f0c040;
+    font-size: 20px;
+  }
+
+  .selection-subtitle {
+    margin: 0;
+    color: #c9aa71;
+    font-size: 14px;
+  }
+}
+
+.modal-trigger-section {
+  display: flex;
+  justify-content: center;
+}
+
+.open-modal-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 30px;
+  background: linear-gradient(135deg, #c9aa71, #f0c040);
+  border: none;
+  border-radius: 12px;
+  color: #1a1a1a;
+  font-weight: bold;
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  min-width: 200px;
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(240, 192, 64, 0.3);
+  }
+
+  .btn-icon {
+    font-size: 24px;
+  }
+
+  .btn-text {
+    font-size: 16px;
+    font-weight: bold;
+  }
+
+  .btn-hint {
+    font-size: 12px;
+    opacity: 0.8;
+  }
+}
+
+// ========== MENSAGEM DE AGUARDO ==========
+.waiting-message {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 40px 20px;
+  text-align: center;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.waiting-content {
+  .waiting-icon {
+    font-size: 48px;
+    margin-bottom: 20px;
+    animation: spin 2s linear infinite;
+  }
+
+  h3 {
+    margin: 0 0 10px 0;
+    color: #f0c040;
+    font-size: 20px;
+  }
+
+  p {
+    margin: 0;
+    color: #c9aa71;
+    font-size: 16px;
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+// ========== MENSAGEM DE CONCLUSÃO ==========
+.completion-message {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 40px 20px;
+  text-align: center;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.completion-content {
+  .completion-icon {
+    font-size: 48px;
+    margin-bottom: 20px;
+  }
+
+  h3 {
+    margin: 0 0 10px 0;
+    color: #28a745;
+    font-size: 20px;
+  }
+
+  p {
+    margin: 0 0 30px 0;
+    color: #c9aa71;
+    font-size: 16px;
+  }
+}
+
+.final-teams {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 30px;
+  margin-bottom: 30px;
+}
+
+.final-team {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 15px;
+
+  h4 {
+    margin: 0 0 15px 0;
+    color: #f0f2f5;
+    font-size: 16px;
+    text-align: center;
+  }
+}
+
+.final-picks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.final-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+
+  .final-champion-img {
+    width: 30px;
+    height: 30px;
+    border-radius: 4px;
+    border: 1px solid #c9aa71;
+  }
+
+  .final-champion-name {
+    font-size: 12px;
+    color: #f0f2f5;
+  }
+}
+
+.completion-actions {
+  display: flex;
+  gap: 15px;
+  justify-content: center;
+}
+
+// ========== RESPONSIVIDADE ==========
+@media (max-width: 768px) {
+  .teams-container {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .bans-section {
+    order: -1;
+  }
+
+  .pick-ban-header {
+    flex-direction: column;
+    gap: 15px;
+    text-align: center;
+  }
+
+  .progress-bar {
+    width: 100%;
+    max-width: 300px;
+  }
+
+  .final-teams {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .completion-actions {
+    flex-direction: column;
+    align-items: center;
+  }
+}
+
+// ========== ESTILOS DOS BANS COMPACTOS ==========
+.team-bans.compact {
+  margin-bottom: 10px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.banned-champions-row.compact {
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  justify-content: center;
+  flex-wrap: wrap;
+  max-width: 250px;
+  margin: 0 auto;
+}
+
+.banned-champion.compact {
+  display: flex;
+  align-items: center;
+  min-width: 30px;
+
+  .banned-img.compact {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: 2px solid #d9534f;
+    opacity: 0.7;
+  }
+}
+
+.banned-placeholder.compact {
+  display: flex;
+  align-items: center;
+  min-width: 30px;
+
+  .ban-placeholder.compact {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: rgba(217, 83, 79, 0.3);
+    border: 2px dashed #d9534f;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: #d9534f;
+  }
+}
+
+// ========== BOTÕES DE AÇÃO ==========
+.action-buttons {
+  display: flex;
+  justify-content: center;
+  margin: 12px 0;
+  padding: 0;
+}
+
+.draft-control-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.buttons-container {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+}
+
+// ========== BOTÕES ==========
+.btn {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  text-decoration: none;
+  min-height: 32px;
+
+  &:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .btn-icon {
+    font-size: 13px;
+  }
+
+  .btn-text {
+    font-size: 13px;
+  }
+
+  // Variante compacta
+  &.btn-compact {
+    padding: 5px 10px;
+    font-size: 12px;
+    min-height: 28px;
+
+    .btn-icon {
+      font-size: 12px;
+    }
+
+    .btn-text {
+      font-size: 12px;
+    }
+  }
+
+  // Variante grande
+  &.btn-lg {
+    padding: 16px 32px;
+    font-size: 16px;
+
+    .btn-icon {
+      font-size: 16px;
+    }
+
+    .btn-text {
+      font-size: 16px;
+    }
+  }
+
+  // Cores dos botões
+  &.btn-primary {
+    background: linear-gradient(135deg, #007bff, #0056b3);
+    color: white;
+    border: 1px solid #007bff;
+
+    &:hover:not(:disabled) {
+      background: linear-gradient(135deg, #0056b3, #007bff);
+      border-color: #0056b3;
+    }
+  }
+
+  &.btn-secondary {
+    background: linear-gradient(135deg, #6c757d, #5a6268);
+    color: white;
+    border: 1px solid #6c757d;
+
+    &:hover:not(:disabled) {
+      background: linear-gradient(135deg, #5a6268, #6c757d);
+      border-color: #5a6268;
+    }
+  }
+
+  &.btn-outline {
+    background: transparent;
+    color: #a09b8c;
+    border: 1px solid rgba(160, 155, 140, 0.5);
+
+    &:hover:not(:disabled) {
+      background: rgba(160, 155, 140, 0.1);
+      border-color: #a09b8c;
+      color: #f0f2f5;
+    }
+  }
+
+  &.btn-success {
+    background: linear-gradient(135deg, #28a745, #20c997);
+    color: white;
+    border: 1px solid #28a745;
+
+    &:hover:not(:disabled) {
+      background: linear-gradient(135deg, #20c997, #28a745);
+      border-color: #20c997;
+    }
+  }
+
+  &.btn-danger {
+    background: linear-gradient(135deg, #dc3545, #c82333);
+    color: white;
+    border: 1px solid #dc3545;
+
+    &:hover:not(:disabled) {
+      background: linear-gradient(135deg, #c82333, #dc3545);
+      border-color: #c82333;
+    }
+  }
+}
+
+// ========== RESPONSIVIDADE ==========
+@media (max-width: 1024px) {
+  .header-content {
+    flex-direction: column;
+    gap: 10px;
+
+    .progress-section .progress-bar {
+      width: 120px;
+    }
+  }
+
+  .teams-container {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .draft-control-buttons {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .team-bans {
+    flex-direction: column;
+    gap: 8px;
+
+    h4 {
+      text-align: center;
+    }
+
+    .banned-champions-row {
+      justify-content: center;
+    }
+  }
+
+  .status-section {
+    flex-direction: column;
+    gap: 4px;
+    text-align: center;
+  }
+}
+
+@media (max-width: 768px) {
+  .draft-pick-ban {
+    padding: 8px;
+  }
+
+  .header-content {
+    .status-section, .progress-section {
+      text-align: center;
+    }
+
+    .progress-section .progress-bar {
+      width: 100px;
+    }
+
+    .title-section h2 {
+      font-size: 16px;
+    }
+  }
+
+  .team {
+    padding: 10px;
+  }
+}

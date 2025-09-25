@@ -1,0 +1,409 @@
+<div class="game-in-progress-container">
+  <!-- Header -->
+  <div class="game-header">
+    <div class="game-title">
+      <h2>{{ getGameStatusIcon() }} Partida em Andamento</h2>
+      <p class="game-status">{{ getGameStatusText() }}</p>
+    </div>
+
+    <div class="game-info">
+      <div class="game-timer">
+        <span class="timer-label">Duração:</span>
+        <span class="timer-value">{{ getGameDurationFormatted() }}</span>
+      </div>
+
+      <div class="lcu-status" *ngIf="lcuDetectionEnabled">
+        <span class="status-indicator" [class.active]="lcuGameDetected"></span>
+        <span>{{ lcuGameDetected ? 'LCU Conectado' : 'Aguardando LCU' }}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Teams Display -->
+  <div class="teams-section">
+    <div class="team team-blue" [style.border-color]="getTeamColor('blue')">
+      <div class="team-header">
+        <h3 [style.color]="getTeamColor('blue')">{{ getTeamName('blue') }}</h3>
+        <div class="team-status" *ngIf="selectedWinner">
+          <span class="winner-badge" *ngIf="selectedWinner === 'blue'">🏆 VITÓRIA</span>
+          <span class="loser-badge" *ngIf="selectedWinner === 'red'">💀 DERROTA</span>
+        </div>
+      </div>
+
+      <!-- ✅ NOVO: Bans do Time Azul -->
+      <div class="team-bans" *ngIf="getTeamBans('blue').length > 0">
+        <div class="bans-header">
+          <span class="bans-title">🚫 Bans:</span>
+        </div>
+        <div class="bans-list">
+          <div class="ban-item" *ngFor="let ban of getTeamBans('blue')">
+            <span class="ban-champion" *ngIf="ban.champion">{{ ban.champion.name || ban.championName || 'Campeão'
+              }}</span>
+            <span class="ban-champion" *ngIf="!ban.champion && ban.championId">ID: {{ ban.championId }}</span>
+          </div>
+        </div>
+      </div>
+
+  <!-- Picks removidos da área superior: exibidos apenas nos cards dos jogadores -->
+
+      <div class="team-players">
+        <div class="player" *ngFor="let player of getTeamPlayers('blue')"
+          [class.current-player]="currentPlayer && player.id === currentPlayer.id">
+          <div class="player-lane">
+            <span class="lane-icon">{{ getLaneIcon(player.assignedLane || player.lane || player.role) }}</span>
+            <span class="lane-name">{{ getLaneName(player.assignedLane || player.lane || player.role) }}</span>
+          </div>
+          <div class="player-info">
+            <ng-container *ngIf="!(botService.isBot(player)); else botIcon">
+              <img *ngIf="getProfileIconUrlIfHuman(player) | async as iconUrl" [src]="iconUrl" width="24" height="24"
+                style="border-radius:50%;margin-right:6px;vertical-align:middle;" alt="Ícone de perfil" />
+            </ng-container>
+            <ng-template #botIcon>
+              <img src="/assets/images/champion-placeholder.svg" width="24" height="24"
+                style="border-radius:50%;margin-right:6px;vertical-align:middle;opacity:0.5;" alt="Bot" />
+            </ng-template>
+            <span class="player-name">{{ player.summonerName || player.name }}</span>
+          </div>
+          <div class="player-champion" *ngIf="player.championName || player.champion">
+            <span class="champion-name">🏆 {{ player.championName || player.champion?.name }}</span>
+          </div>
+          <div class="player-champion" *ngIf="!player.championName && !player.champion">
+            <span class="champion-placeholder">⚔️ Campeão não selecionado</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="vs-divider">
+      <span class="vs-text">VS</span>
+      <div class="game-duration-display">
+        {{ getGameDurationFormatted() }}
+      </div>
+    </div>
+
+    <div class="team team-red" [style.border-color]="getTeamColor('red')">
+      <div class="team-header">
+        <h3 [style.color]="getTeamColor('red')">{{ getTeamName('red') }}</h3>
+        <div class="team-status" *ngIf="selectedWinner">
+          <span class="winner-badge" *ngIf="selectedWinner === 'red'">🏆 VITÓRIA</span>
+          <span class="loser-badge" *ngIf="selectedWinner === 'blue'">💀 DERROTA</span>
+        </div>
+      </div>
+
+      <!-- ✅ NOVO: Bans do Time Vermelho -->
+      <div class="team-bans" *ngIf="getTeamBans('red').length > 0">
+        <div class="bans-header">
+          <span class="bans-title">🚫 Bans:</span>
+        </div>
+        <div class="bans-list">
+          <div class="ban-item" *ngFor="let ban of getTeamBans('red')">
+            <span class="ban-champion" *ngIf="ban.champion">{{ ban.champion.name || ban.championName || 'Campeão'
+              }}</span>
+            <span class="ban-champion" *ngIf="!ban.champion && ban.championId">ID: {{ ban.championId }}</span>
+          </div>
+        </div>
+      </div>
+
+  <!-- Picks removidos da área superior: exibidos apenas nos cards dos jogadores -->
+
+      <div class="team-players">
+        <div class="player" *ngFor="let player of getTeamPlayers('red')"
+          [class.current-player]="currentPlayer && player.id === currentPlayer.id">
+          <div class="player-lane">
+            <span class="lane-icon">{{ getLaneIcon(player.assignedLane || player.lane || player.role) }}</span>
+            <span class="lane-name">{{ getLaneName(player.assignedLane || player.lane || player.role) }}</span>
+          </div>
+          <div class="player-info">
+            <ng-container *ngIf="!(botService.isBot(player)); else botIconRed">
+              <img *ngIf="getProfileIconUrlIfHuman(player) | async as iconUrl" [src]="iconUrl" width="24" height="24"
+                style="border-radius:50%;margin-right:6px;vertical-align:middle;" alt="Ícone de perfil" />
+            </ng-container>
+            <ng-template #botIconRed>
+              <img src="/assets/images/champion-placeholder.svg" width="24" height="24"
+                style="border-radius:50%;margin-right:6px;vertical-align:middle;opacity:0.5;" alt="Bot" />
+            </ng-template>
+            <span class="player-name">{{ player.summonerName || player.name }}</span>
+          </div>
+          <div class="player-champion" *ngIf="player.championName || player.champion">
+            <span class="champion-name">🏆 {{ player.championName || player.champion?.name }}</span>
+          </div>
+          <div class="player-champion" *ngIf="!player.championName && !player.champion">
+            <span class="champion-placeholder">⚔️ Campeão não selecionado</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- Game Status Information -->
+  <div class="game-status-section">
+    <div class="status-card">
+      <div class="status-item">
+        <span class="status-label">Status:</span>
+        <span class="status-value" [class]="gameStatus">{{ getGameStatusText() }}</span>
+      </div>
+
+      <div class="status-item" *ngIf="gameStartTime">
+        <span class="status-label">Início:</span>
+        <span class="status-value">{{ gameStartTime | date:'HH:mm:ss' }}</span>
+      </div>
+
+      <div class="status-item" *ngIf="lcuGameDetected">
+        <span class="status-label">Detecção LCU:</span>
+        <span class="status-value connected">✅ Ativa</span>
+      </div>
+
+      <div class="status-item" *ngIf="currentLiveMatchId">
+        <span class="status-label">Partida Vinculada:</span>
+        <span class="status-value linked">🔗 ID {{ currentLiveMatchId }}</span>
+      </div>
+    </div>
+
+    <!-- Live Linking Info -->
+    <div class="linking-info" *ngIf="matchLinkingEnabled">
+      <div class="linking-status">
+        <span class="linking-icon">🔗</span>
+        <div class="linking-text">
+          <strong>Sistema de Vinculação Automática</strong>
+          <p *ngIf="!currentLiveMatchId">Procurando partida do LoL para vincular automaticamente...</p>
+          <p *ngIf="currentLiveMatchId">Partida vinculada! O resultado será detectado automaticamente.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- Winner Declaration Section -->
+  <div class="winner-section" *ngIf="gameStatus === 'ended' || !lcuDetectionEnabled">
+    <div class="winner-declaration">
+      <h3>Declarar Vencedor</h3>
+      <div class="auto-detection-info" *ngIf="lcuDetectionEnabled">
+        <p class="info-message">
+          ℹ️ <strong>Detecção Automática Ativada:</strong>
+          Use o botão "Tentar Detectar Vencedor" para que o sistema identifique automaticamente o resultado da partida.
+        </p>
+      </div>
+      <p>Ou selecione manualmente o time vencedor da partida:</p>
+
+      <div class="winner-buttons">
+        <button class="team-button team-blue-btn" [class.selected]="selectedWinner === 'blue'"
+          (click)="declareWinner('blue')">
+          <span class="team-icon">🛡️</span>
+          <span class="team-name">Time Azul</span>
+          <span class="winner-icon" *ngIf="selectedWinner === 'blue'">✓</span>
+        </button>
+
+        <button class="team-button team-red-btn" [class.selected]="selectedWinner === 'red'"
+          (click)="declareWinner('red')">
+          <span class="team-icon">⚔️</span>
+          <span class="team-name">Time Vermelho</span>
+          <span class="winner-icon" *ngIf="selectedWinner === 'red'">✓</span>
+        </button>
+      </div>
+
+      <div class="your-team-info" *ngIf="getMyTeam()">
+        <p>Seu time: <strong [style.color]="getTeamColor(getMyTeam()!)">{{ getTeamName(getMyTeam()!) }}</strong></p>
+        <p class="result-preview" *ngIf="selectedWinner">
+          Resultado:
+          <span [class.victory]="isMyTeamWinner()" [class.defeat]="!isMyTeamWinner()">
+            {{ isMyTeamWinner() ? '🏆 VITÓRIA' : '💀 DERROTA' }}
+          </span>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Section -->
+  <div class="settings-section">
+    <div class="settings-card">
+      <h4>Configurações</h4>
+      <div class="setting-item">
+        <label class="setting-label" (click)="toggleLCUDetection()" (keydown.enter)="toggleLCUDetection()" (keydown.space)="toggleLCUDetection()">>
+          <input type="checkbox" [attr.checked]="lcuDetectionEnabled ? '' : null" readonly>
+          <span class="checkmark"></span>
+          Detecção automática via LCU
+        </label>
+        <p class="setting-description">
+          Detectar automaticamente o fim da partida através do cliente do League of Legends
+        </p>
+      </div>
+      <div class="setting-item">
+        <div class="detection-buttons">
+          <button class="btn btn-outline retry-detection-btn" (click)="retryAutoDetection()"
+            [disabled]="isAutoDetecting">
+            <span class="btn-icon" *ngIf="!isAutoDetecting">🔄</span>
+            <span class="btn-icon spinning" *ngIf="isAutoDetecting">⏳</span>
+            <span *ngIf="!isAutoDetecting">Tentar Detectar Vencedor</span>
+            <span *ngIf="isAutoDetecting">Detectando...</span>
+          </button>
+        </div>
+        <p class="setting-description">
+          Tenta detectar o vencedor automaticamente via LCU ou comparando com o histórico.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Action Buttons -->
+  <div class="action-buttons">
+    <button class="btn btn-primary" [disabled]="!selectedWinner" (click)="confirmWinner()"
+      *ngIf="gameStatus === 'ended' || !lcuDetectionEnabled">
+      <span class="btn-icon">✅</span>
+      Confirmar Resultado
+    </button>
+
+    <button class="btn btn-secondary" (click)="cancelGame()">
+      <span class="btn-icon">❌</span>
+      Cancelar Partida
+    </button>
+  </div>
+
+  <!-- Debug Info (only in development) -->
+  <div class="debug-section" *ngIf="false">
+    <h4>Debug Info</h4>
+    <pre>{{ {
+      gameStatus: gameStatus,
+      lcuDetected: lcuGameDetected,
+      selectedWinner: selectedWinner,
+      gameDuration: gameDuration,
+      lcuEnabled: lcuDetectionEnabled
+    } | json }}</pre>
+  </div>
+
+  <!-- Match Confirmation Modal -->
+  <div class="modal-overlay" *ngIf="showMatchConfirmation" (click)="closeMatchConfirmation()" (keydown.escape)="closeMatchConfirmation()">
+    <div class="match-confirmation-modal" (click)="$event.stopPropagation()" (keydown)="$event.stopPropagation()">>
+      <div class="modal-header">
+        <h3>🔍 Partida Detectada no League of Legends</h3>
+        <button class="close-btn" (click)="closeMatchConfirmation()">×</button>
+      </div>
+
+      <div class="modal-content" *ngIf="detectedLCUMatch && matchComparisonResult"> <!-- Match Information -->
+        <div class="match-info-section">
+          <div class="confidence-indicator">
+            <div class="confidence-badge" [class.high-confidence]="matchComparisonResult.confidence >= 80"
+              [class.medium-confidence]="matchComparisonResult.confidence >= 50 && matchComparisonResult.confidence < 80"
+              [class.low-confidence]="matchComparisonResult.confidence < 50">
+              {{ matchComparisonResult.confidence }}% de similaridade
+            </div>
+            <p class="confidence-reason">{{ matchComparisonResult.reason }}</p>
+
+            <!-- Live linking status -->
+            <div class="live-linking-status" *ngIf="currentLiveMatchId">
+              <span class="live-indicator">🔗 VINCULADA AUTOMATICAMENTE</span>
+              <p class="live-description">Esta partida foi detectada e vinculada automaticamente durante o jogo.</p>
+            </div>
+          </div>
+
+          <div class="lcu-match-details">
+            <h4>Detalhes da Partida do LoL:</h4>
+            <div class="match-detail-row">
+              <span class="label">Data/Hora:</span>
+              <span class="value">{{ formatLCUMatchDate(detectedLCUMatch.gameCreation) }}</span>
+            </div>
+            <div class="match-detail-row">
+              <span class="label">Duração:</span>
+              <span class="value">{{ formatGameDuration(detectedLCUMatch.gameDuration) }}</span>
+            </div>
+            <div class="match-detail-row">
+              <span class="label">ID da Partida:</span>
+              <span class="value">{{ detectedLCUMatch.gameId }}</span>
+            </div>
+            <div class="match-detail-row" *ngIf="getLCUMatchWinner(detectedLCUMatch)">
+              <span class="label">Vencedor:</span>
+              <span class="value winner"
+                [style.color]="getLCUMatchWinner(detectedLCUMatch) === 'blue' ? '#4FC3F7' : '#F44336'">
+                Time {{ getLCUMatchWinner(detectedLCUMatch) === 'blue' ? 'Azul' : 'Vermelho' }} 🏆
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Team Comparison -->
+        <div class="team-comparison-section">
+          <h4>Comparação de Times:</h4>
+
+          <div class="teams-comparison">
+            <!-- Current Game Teams -->
+            <div class="current-game-teams">
+              <h5>Jogo Atual no App:</h5>
+              <div class="team-comparison-row">
+                <div class="team-comp team-blue">
+                  <strong>Time Azul:</strong>
+                  <ul class="champion-list">
+                    <li *ngFor="let player of getTeamPlayers('blue')">
+                      {{ player.champion?.name || 'Sem campeão' }}
+                    </li>
+                  </ul>
+                </div>
+                <div class="team-comp team-red">
+                  <strong>Time Vermelho:</strong>
+                  <ul class="champion-list">
+                    <li *ngFor="let player of getTeamPlayers('red')">
+                      {{ player.champion?.name || 'Sem campeão' }}
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <!-- LCU Match Teams -->
+            <div class="lcu-game-teams">
+              <h5>Partida Detectada do LoL:</h5>
+              <div class="team-comparison-row">
+                <div class="team-comp team-blue">
+                  <strong>Time {{ detectedLCUMatch.teams?.[0]?.teamId === 100 ? 'Azul' : 'Vermelho' }}:</strong>
+                  <ul class="champion-list">
+                    <li *ngFor="let participant of getLCUTeamParticipants(detectedLCUMatch, 100)">
+                      {{ getChampionNameById(participant.championId) || 'Champion ' + participant.championId }}
+                    </li>
+                  </ul>
+                </div>
+                <div class="team-comp team-red">
+                  <strong>Time {{ detectedLCUMatch.teams?.[1]?.teamId === 200 ? 'Vermelho' : 'Azul' }}:</strong>
+                  <ul class="champion-list">
+                    <li *ngFor="let participant of getLCUTeamParticipants(detectedLCUMatch, 200)">
+                      {{ getChampionNameById(participant.championId) || 'Champion ' + participant.championId }}
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Confirmation Message -->
+        <div class="confirmation-message">
+          <p class="confirmation-text">
+            <strong>Esta é a partida que você acabou de jogar?</strong>
+          </p>
+          <p class="confirmation-subtitle">
+            Se confirmar, o resultado desta partida será aplicado ao seu jogo no aplicativo.
+          </p>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" (click)="confirmDetectedMatch()" [disabled]="!detectedLCUMatch">
+          <span class="btn-icon">✅</span>
+          <span *ngIf="getLCUMatchWinner(detectedLCUMatch)">Sim, Esta é a Partida</span>
+          <span *ngIf="!getLCUMatchWinner(detectedLCUMatch)">Confirmar (Declarar Vencedor Manualmente)</span>
+        </button>
+        <button class="btn btn-secondary" (click)="rejectDetectedMatch()">
+          <span class="btn-icon">❌</span>
+          Não, Buscar Outra
+        </button>
+        <button class="btn btn-outline" (click)="closeMatchConfirmation()">
+          <span class="btn-icon">🚫</span>
+          Cancelar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- NEW: LCU Match Confirmation Modal -->
+  <app-lcu-match-confirmation-modal
+    *ngIf="showLcuConfirmationModal"
+    [comparisonData]="lcuConfirmationData"
+    [isLeader]="isMatchLeader"
+    (confirmed)="onLcuMatchConfirmed($event)"
+    (rejected)="onLcuMatchRejected()"
+    (cancelled)="onLcuModalClosed()">
+  </app-lcu-match-confirmation-modal>
+</div>

@@ -1,0 +1,35 @@
+# Configurações para Google Cloud Run
+server:
+  port: ${PORT:8080}
+
+# URLs e endpoints para ambiente Google Cloud
+app:
+  frontend:
+    url: "${FRONTEND_URL:https://your-frontend-service-url.run.app}"
+  backend:
+    url: "${BACKEND_URL:https://your-backend-service-url.run.app}"
+    base-url: "${BACKEND_URL:https://your-backend-service-url.run.app}"
+  websocket:
+    endpoint: "${WS_ENDPOINT:wss://your-backend-service-url.run.app/ws}"
+  cors:
+    allowed-origins:
+      - "${FRONTEND_URL:https://your-frontend-service-url.run.app}"
+      - "${BACKEND_URL:https://your-backend-service-url.run.app}"
+      - "https://*.run.app"
+
+# Configurações específicas para Cloud Run
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  health:
+    probes:
+      enabled: true
+
+logging:
+  level:
+    br.com.lolmatchmaking: INFO
+    root: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"

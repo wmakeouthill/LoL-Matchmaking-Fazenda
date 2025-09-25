@@ -1,0 +1,24 @@
+server:
+  port: 8080
+
+# URLs e endpoints para ambiente Docker local
+app:
+  frontend:
+    url: "http://localhost:${FRONTEND_PORT:3000}"
+  backend:
+    url: "http://localhost:${PORT:8080}"
+    base-url: "http://localhost:${PORT:8080}"
+  websocket:
+    endpoint: "ws://localhost:${PORT:8080}/ws"
+  cors:
+    allowed-origins:
+      - "http://localhost:3000"
+      - "http://localhost:4200"
+      - "http://127.0.0.1:3000"
+      - "http://127.0.0.1:4200"
+      - "http://localhost:${PORT:8080}"
+
+logging:
+  level:
+    br.com.lolmatchmaking: INFO
+    root: INFO

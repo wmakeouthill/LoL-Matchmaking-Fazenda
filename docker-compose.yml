@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  # Banco de dados MySQL para desenvolvimento local
+  mysql:
+    image: mysql:8.0
+    container_name: lol-matchmaking-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: lolmatchmaking
+      MYSQL_USER: loluser
+      MYSQL_PASSWORD: lolpass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./src/main/resources/db:/docker-entrypoint-initdb.d
+    networks:
+      - lol-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  # Aplicação Spring Boot
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    container_name: lol-matchmaking-app
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: lolmatchmaking
+      MYSQL_USER: loluser
+      MYSQL_PASSWORD: lolpass
+      # Configurações para WebSocket e CORS
+      BACKEND_URL: http://localhost:8080
+      FRONTEND_URL: http://localhost:3000
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - lol-network
+    volumes:
+      # Para hot reload durante desenvolvimento (opcional)
+      - ./target/classes:/app/BOOT-INF/classes
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+    driver: local
+
+networks:
+  lol-network:
+    driver: bridge

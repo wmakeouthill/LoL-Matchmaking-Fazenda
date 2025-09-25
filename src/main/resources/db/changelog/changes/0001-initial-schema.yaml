@@ -1,0 +1,215 @@
+databaseChangeLog:
+  - changeSet:
+      id: baseline-players
+      author: migration
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            tableExists:
+              tableName: players
+      changes:
+        - createTable:
+            tableName: players
+            columns:
+              - column: { name: id, type: BIGINT AUTO_INCREMENT, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: summoner_name, type: VARCHAR(255), constraints: { nullable: false, unique: true } }
+              - column: { name: summoner_id, type: VARCHAR(255) }
+              - column: { name: puuid, type: VARCHAR(255) }
+              - column: { name: region, type: VARCHAR(10), constraints: { nullable: false } }
+              - column: { name: current_mmr, type: INT, defaultValueNumeric: "1000" }
+              - column: { name: peak_mmr, type: INT, defaultValueNumeric: "1000" }
+              - column: { name: games_played, type: INT, defaultValueNumeric: "0" }
+              - column: { name: wins, type: INT, defaultValueNumeric: "0" }
+              - column: { name: losses, type: INT, defaultValueNumeric: "0" }
+              - column: { name: win_streak, type: INT, defaultValueNumeric: "0" }
+              - column: { name: created_at, type: TIMESTAMP, defaultValueComputed: CURRENT_TIMESTAMP }
+              - column: { name: updated_at, type: TIMESTAMP, defaultValueComputed: CURRENT_TIMESTAMP }
+              - column: { name: custom_mmr, type: INT, defaultValueNumeric: "1000" }
+              - column: { name: custom_peak_mmr, type: INT, defaultValueNumeric: "1000" }
+              - column: { name: custom_games_played, type: INT, defaultValueNumeric: "0" }
+              - column: { name: custom_wins, type: INT, defaultValueNumeric: "0" }
+              - column: { name: custom_losses, type: INT, defaultValueNumeric: "0" }
+              - column: { name: custom_win_streak, type: INT, defaultValueNumeric: "0" }
+              - column: { name: custom_lp, type: INT, defaultValueNumeric: "0" }
+        - addUniqueConstraint: { tableName: players, columnNames: summoner_id, constraintName: uq_players_summoner_id }
+        - addUniqueConstraint: { tableName: players, columnNames: puuid, constraintName: uq_players_puuid }
+  - changeSet:
+      id: baseline-matches
+      author: migration
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            tableExists:
+              tableName: matches
+      changes:
+        - createTable:
+            tableName: matches
+            columns:
+              - column: { name: id, type: BIGINT AUTO_INCREMENT, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: match_id, type: VARCHAR(255), constraints: { nullable: false, unique: true } }
+              - column: { name: team1_players, type: TEXT, constraints: { nullable: true } }
+              - column: { name: team2_players, type: TEXT, constraints: { nullable: true } }
+              - column: { name: winner_team, type: INT }
+              - column: { name: average_mmr_team1, type: INT }
+              - column: { name: average_mmr_team2, type: INT }
+              - column: { name: mmr_changes, type: TEXT }
+              - column: { name: status, type: VARCHAR(50), defaultValue: pending }
+              - column: { name: created_at, type: TIMESTAMP, defaultValueComputed: CURRENT_TIMESTAMP }
+              - column: { name: completed_at, type: TIMESTAMP }
+              - column: { name: riot_game_id, type: VARCHAR(255) }
+              - column: { name: actual_winner, type: INT }
+              - column: { name: actual_duration, type: INT }
+              - column: { name: riot_id, type: VARCHAR(255) }
+              - column: { name: pick_ban_data, type: TEXT }
+              - column: { name: detected_by_lcu, type: TINYINT, defaultValueNumeric: "0" }
+              - column: { name: linked_results, type: TEXT }
+  - changeSet:
+      id: baseline-custom-matches
+      author: migration
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            tableExists:
+              tableName: custom_matches
+      changes:
+        - createTable:
+            tableName: custom_matches
+            columns:
+              - column: { name: id, type: BIGINT AUTO_INCREMENT, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: title, type: VARCHAR(255) }
+              - column: { name: description, type: TEXT }
+              - column: { name: team1_players, type: TEXT, constraints: { nullable: false } }
+              - column: { name: team2_players, type: TEXT, constraints: { nullable: false } }
+              - column: { name: winner_team, type: INT }
+              - column: { name: status, type: VARCHAR(50), defaultValue: pending }
+              - column: { name: created_by, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: created_at, type: TIMESTAMP, defaultValueComputed: CURRENT_TIMESTAMP }
+              - column: { name: completed_at, type: TIMESTAMP }
+              - column: { name: game_mode, type: VARCHAR(20), defaultValue: 5v5 }
+              - column: { name: duration, type: INT }
+              - column: { name: lp_changes, type: TEXT }
+              - column: { name: average_mmr_team1, type: INT }
+              - column: { name: average_mmr_team2, type: INT }
+              - column: { name: participants_data, type: TEXT }
+              - column: { name: riot_game_id, type: VARCHAR(255) }
+              - column: { name: detected_by_lcu, type: TINYINT, defaultValueNumeric: "0" }
+              - column: { name: notes, type: TEXT }
+              - column: { name: custom_lp, type: INT, defaultValueNumeric: "0" }
+              - column: { name: updated_at, type: TIMESTAMP }
+              - column: { name: pick_ban_data, type: TEXT }
+              - column: { name: linked_results, type: TEXT }
+              - column: { name: actual_winner, type: INT }
+              - column: { name: actual_duration, type: INT }
+              - column: { name: riot_id, type: VARCHAR(255) }
+              - column: { name: mmr_changes, type: TEXT }
+              - column: { name: match_leader, type: VARCHAR(255) }
+              - column: { name: owner_backend_id, type: VARCHAR(100) }
+              - column: { name: owner_heartbeat, type: BIGINT }
+  - changeSet:
+      id: baseline-queue-players
+      author: migration
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            tableExists:
+              tableName: queue_players
+      changes:
+        - createTable:
+            tableName: queue_players
+            columns:
+              - column: { name: id, type: BIGINT AUTO_INCREMENT, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: player_id, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: summoner_name, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: region, type: VARCHAR(10), constraints: { nullable: false } }
+              - column: { name: custom_lp, type: INT, defaultValueNumeric: "0" }
+              - column: { name: primary_lane, type: VARCHAR(20) }
+              - column: { name: secondary_lane, type: VARCHAR(20) }
+              - column: { name: join_time, type: TIMESTAMP, defaultValueComputed: CURRENT_TIMESTAMP }
+              - column: { name: queue_position, type: INT }
+              - column: { name: is_active, type: TINYINT, defaultValueNumeric: "1" }
+              - column: { name: acceptance_status, type: TINYINT, defaultValueNumeric: "0" }
+        - addUniqueConstraint: { tableName: queue_players, columnNames: summoner_name, constraintName: uq_queue_players_summoner_name }
+        - createIndex:
+            tableName: queue_players
+            indexName: idx_queue_acceptance
+            columns:
+              - column:
+                  name: acceptance_status
+  - changeSet:
+      id: baseline-discord-links
+      author: migration
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            tableExists:
+              tableName: discord_lol_links
+      changes:
+        - createTable:
+            tableName: discord_lol_links
+            columns:
+              - column: { name: id, type: BIGINT AUTO_INCREMENT, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: discord_id, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: discord_username, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: game_name, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: tag_line, type: VARCHAR(10), constraints: { nullable: false } }
+              - column: { name: summoner_name, type: VARCHAR(255), constraints: { nullable: false } }
+              - column: { name: verified, type: TINYINT, defaultValueNumeric: "0" }
+              - column: { name: created_at, type: TIMESTAMP, defaultValueComputed: CURRENT_TIMESTAMP }
+              - column: { name: updated_at, type: TIMESTAMP, defaultValueComputed: CURRENT_TIMESTAMP }
+              - column: { name: last_used, type: TIMESTAMP }
+        - addUniqueConstraint: { tableName: discord_lol_links, columnNames: discord_id, constraintName: uq_discord_lol_links_discord_id }
+  - changeSet:
+      id: baseline-settings
+      author: migration
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            tableExists:
+              tableName: settings
+      changes:
+        - createTable:
+            tableName: settings
+            columns:
+              - column: { name: key, type: VARCHAR(191), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: value, type: TEXT, constraints: { nullable: false } }
+              - column: { name: created_at, type: TIMESTAMP, defaultValueComputed: CURRENT_TIMESTAMP }
+              - column: { name: updated_at, type: TIMESTAMP, defaultValueComputed: CURRENT_TIMESTAMP }
+  - changeSet:
+      id: baseline-event-inbox
+      author: migration
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            tableExists:
+              tableName: event_inbox
+      changes:
+        - createTable:
+            tableName: event_inbox
+            columns:
+              - column: { name: id, type: BIGINT AUTO_INCREMENT, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: event_id, type: VARCHAR(191), constraints: { nullable: false } }
+              - column: { name: event_type, type: VARCHAR(50), constraints: { nullable: false } }
+              - column: { name: match_id, type: BIGINT }
+              - column: { name: backend_id, type: VARCHAR(100), constraints: { nullable: false } }
+              - column: { name: payload, type: TEXT }
+              - column: { name: timestamp, type: BIGINT, constraints: { nullable: false } }
+              - column: { name: received_at, type: TIMESTAMP, defaultValueComputed: CURRENT_TIMESTAMP }
+        - addUniqueConstraint: { tableName: event_inbox, columnNames: event_id, constraintName: uniq_event_id }
+        - createIndex:
+            tableName: event_inbox
+            indexName: idx_event_type
+            columns:
+              - column:
+                  name: event_type
+        - createIndex:
+            tableName: event_inbox
+            indexName: idx_match_id
+            columns:
+              - column:
+                  name: match_id
+        - createIndex:
+            tableName: event_inbox
+            indexName: idx_backend
+            columns:
+              - column:
+                  name: backend_id

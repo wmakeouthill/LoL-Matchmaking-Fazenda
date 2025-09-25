@@ -1,0 +1,186 @@
+<div class="modal-overlay" *ngIf="isVisible" (click)="onOverlayClick($event)" (keydown)="onOverlayClick($event)">
+  <div class="modal-container" (click)="$event.stopPropagation()" (keydown)="$event.stopPropagation()">
+    <div class="modal-header">
+      <h2>
+        <span class="icon">🔍</span>
+        Confirmação de Partida Identificada
+      </h2>
+      <button class="close-button" (click)="onCancel()">×</button>
+    </div>
+
+    <div class="modal-content" *ngIf="comparisonData">
+      <!-- Confidence Score -->
+      <div class="confidence-section">
+        <div class="confidence-badge"
+             [class.high-confidence]="comparisonData.similarity.overall >= 80"
+             [class.medium-confidence]="comparisonData.similarity.overall >= 60 && comparisonData.similarity.overall < 80"
+             [class.low-confidence]="comparisonData.similarity.overall < 60">
+          {{ comparisonData.similarity.overall }}% de similaridade
+        </div>
+        <div class="confidence-details">
+          <p *ngFor="let detail of comparisonData.similarity.details" class="detail-item">
+            • {{ detail }}
+          </p>
+        </div>
+      </div>
+
+      <!-- Match Comparison -->
+      <div class="comparison-section">
+        <div class="match-comparison">
+          <!-- Custom Match (Draft) -->
+          <div class="match-column custom-match">
+            <h3>🎯 Partida do Draft</h3>
+            <div class="match-info">
+              <p><strong>ID:</strong> {{ comparisonData.customMatch.id }}</p>
+              <p><strong>Jogadores:</strong> {{ comparisonData.customMatch.players.length }}</p>
+            </div>
+
+            <!-- Teams from Pick/Ban Data -->
+            <div class="teams-container">
+              <div class="team blue-team">
+                <h4>Time Azul</h4>
+                <div class="picks-section">
+                  <h5>Picks</h5>
+                  <div class="champion-list">
+                    <div *ngFor="let pick of comparisonData.customMatch.pickBanData.team1Picks"
+                         class="champion-item">
+                      <img [src]="pick.champion.image || getChampionImageUrl(pick.champion.id)"
+                           [alt]="pick.champion.name" class="champion-img">
+                      <div class="champion-info">
+                        <span class="champion-name">{{ pick.champion.name }}</span>
+                        <span class="player-name">{{ pick.playerName }}</span>
+                        <span class="player-lane">{{ pick.playerLane }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="bans-section">
+                  <h5>Bans</h5>
+                  <div class="ban-list">
+                    <img *ngFor="let ban of comparisonData.customMatch.pickBanData.team1Bans"
+                         [src]="ban.champion.image || getChampionImageUrl(ban.champion.id)"
+                         [alt]="ban.champion.name"
+                         class="ban-img"
+                         [title]="ban.champion.name + ' (banido por ' + ban.playerName + ')'">
+                  </div>
+                </div>
+              </div>
+
+              <div class="team red-team">
+                <h4>Time Vermelho</h4>
+                <div class="picks-section">
+                  <h5>Picks</h5>
+                  <div class="champion-list">
+                    <div *ngFor="let pick of comparisonData.customMatch.pickBanData.team2Picks"
+                         class="champion-item">
+                      <img [src]="pick.champion.image || getChampionImageUrl(pick.champion.id)"
+                           [alt]="pick.champion.name" class="champion-img">
+                      <div class="champion-info">
+                        <span class="champion-name">{{ pick.champion.name }}</span>
+                        <span class="player-name">{{ pick.playerName }}</span>
+                        <span class="player-lane">{{ pick.playerLane }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="bans-section">
+                  <h5>Bans</h5>
+                  <div class="ban-list">
+                    <img *ngFor="let ban of comparisonData.customMatch.pickBanData.team2Bans"
+                         [src]="ban.champion.image || getChampionImageUrl(ban.champion.id)"
+                         [alt]="ban.champion.name"
+                         class="ban-img"
+                         [title]="ban.champion.name + ' (banido por ' + ban.playerName + ')'">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- LCU Match -->
+          <div class="match-column lcu-match">
+            <h3>🎮 Partida do LCU</h3>
+            <div class="match-info">
+              <p><strong>Game ID:</strong> {{ comparisonData.lcuMatch.gameId }}</p>
+              <p><strong>Data:</strong> {{ formatDate(comparisonData.lcuMatch.gameCreation) }}</p>
+              <p><strong>Duração:</strong> {{ formatDuration(comparisonData.lcuMatch.gameDuration) }}</p>
+              <p><strong>Resultado:</strong>
+                <span class="winner-badge"
+                      [class.blue-winner]="getLCUWinner() === 'blue'"
+                      [class.red-winner]="getLCUWinner() === 'red'">
+                  {{ getLCUWinner() === 'blue' ? 'Time Azul Venceu' :
+                     getLCUWinner() === 'red' ? 'Time Vermelho Venceu' : 'Sem resultado' }}
+                </span>
+              </p>
+            </div>
+
+            <!-- LCU Teams -->
+            <div class="teams-container">
+              <div class="team blue-team">
+                <h4>Time Azul (100)</h4>
+                <div class="champion-list">
+                  <div *ngFor="let participant of getLCUTeamParticipants(100)"
+                       class="champion-item">
+                    <img [src]="getChampionImageById(participant.championId)"
+                         [alt]="getChampionNameById(participant.championId)"
+                         class="champion-img">
+                    <div class="champion-info">
+                      <span class="champion-name">{{ getChampionNameById(participant.championId) }}</span>
+                      <span class="player-name">{{ getParticipantName(participant) }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="team red-team">
+                <h4>Time Vermelho (200)</h4>
+                <div class="champion-list">
+                  <div *ngFor="let participant of getLCUTeamParticipants(200)"
+                       class="champion-item">
+                    <img [src]="getChampionImageById(participant.championId)"
+                         [alt]="getChampionNameById(participant.championId)"
+                         class="champion-img">
+                    <div class="champion-info">
+                      <span class="champion-name">{{ getChampionNameById(participant.championId) }}</span>
+                      <span class="player-name">{{ getParticipantName(participant) }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Leadership Notice -->
+      <div class="leadership-notice" *ngIf="isLeader">
+        <div class="leader-badge">👑 LÍDER DA PARTIDA</div>
+        <p>Como líder desta partida, você pode confirmar se esta é a partida correta do LCU.</p>
+      </div>
+      <div class="non-leader-notice" *ngIf="!isLeader">
+        <div class="waiting-badge">⏳ AGUARDANDO CONFIRMAÇÃO</div>
+        <p>Apenas o líder da partida pode confirmar esta identificação.</p>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="action-buttons">
+        <button class="confirm-button"
+                [disabled]="!isLeader"
+                (click)="onConfirm()">
+          <span class="icon">✅</span>
+          {{ isLeader ? 'Confirmar Partida' : 'Somente o Líder Pode Confirmar' }}
+        </button>
+        <button class="reject-button"
+                [disabled]="!isLeader"
+                (click)="onReject()">
+          <span class="icon">❌</span>
+          {{ isLeader ? 'Rejeitar' : 'Somente o Líder Pode Rejeitar' }}
+        </button>
+        <button class="cancel-button" (click)="onCancel()">
+          <span class="icon">↩️</span>
+          Fechar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

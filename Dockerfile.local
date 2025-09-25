@@ -1,0 +1,18 @@
+# Dockerfile.local: rápido para desenvolvimento local
+# Requer que você já tenha executado `mvn -DskipTests package` localmente
+FROM eclipse-temurin:21-jre
+WORKDIR /app
+
+# Copia o jar gerado localmente (nome específico)
+COPY target/spring-backend-0.1.0-SNAPSHOT.jar app.jar
+
+# Porta padrão para desenvolvimento local
+EXPOSE 8080
+
+# Variáveis de ambiente para desenvolvimento local
+ENV JAVA_OPTS=""
+ENV SPRING_PROFILES_ACTIVE="local"
+
+# Para desenvolvimento local, o frontend já está incluído no JAR
+# Os arquivos estáticos foram copiados durante o build do Maven para target/classes/static/
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar app.jar --server.port=${PORT:-8080}"]

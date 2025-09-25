@@ -1,0 +1,279 @@
+/* Global styles for League of Legends Matchmaking App */
+/* Removido Google Fonts para evitar problemas de CSP em produção */
+/* @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap'); */
+
+// League of Legends Color Palette
+:root {
+  // Primary Colors
+  --primary-blue: #0596aa;
+  --primary-gold: #c89b3c;
+  --primary-bronze: #cd7f32;
+
+  // Background Colors
+  --bg-primary: #010a13;
+  --bg-secondary: #1e2328;
+  --bg-tertiary: #3c3c41;
+  --bg-card: rgba(30, 35, 40, 0.8);
+  --bg-overlay: rgba(1, 10, 19, 0.95);
+
+  // Text Colors
+  --text-primary: #f0e6d2;
+  --text-secondary: #a09b8c;
+  --text-muted: #5bc0de;
+  --text-accent: #c8aa6e;
+
+  // Border Colors
+  --border-primary: #463714;
+  --border-secondary: #c8aa6e;
+  --border-accent: #0596aa;
+
+  // Status Colors
+  --success: #00ff88;
+  --warning: #ffb347;
+  --error: #ff6b6b;
+  --info: #74b9ff;
+
+  // League Rank Colors
+  --iron: #4a4a4a;
+  --bronze: #cd7f32;
+  --silver: #c0c0c0;
+  --gold: #ffd700;
+  --platinum: #40e0d0;
+  --diamond: #b9f2ff;
+  --master: #9932cc;
+  --grandmaster: #ff0000;
+  --challenger: #00bfff;
+
+  // Gradients
+  --gradient-primary: linear-gradient(135deg, var(--primary-blue), var(--primary-gold));
+  --gradient-card: linear-gradient(145deg, rgba(30, 35, 40, 0.9), rgba(60, 60, 65, 0.6));
+  --gradient-header: linear-gradient(180deg, rgba(1, 10, 19, 0.98), rgba(30, 35, 40, 0.95));
+
+  // Shadows
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 20px rgba(200, 170, 110, 0.3);
+
+  // Spacing
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-xxl: 48px;
+
+  // Border Radius
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  // Transitions
+  --transition-fast: 0.2s ease;
+  --transition-normal: 0.3s ease;
+  --transition-slow: 0.5s ease;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  width: 100%;
+  font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  overflow: hidden;
+  line-height: 1.6;
+}
+
+body {
+  background:
+    radial-gradient(circle at 20% 20%, rgba(5, 150, 170, 0.1) 0%, transparent 50%),
+    radial-gradient(circle at 80% 80%, rgba(200, 155, 60, 0.1) 0%, transparent 50%),
+    linear-gradient(135deg, #010a13 0%, #1e2328 100%);
+  background-attachment: fixed;
+}
+
+#app {
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  flex-direction: column;
+}
+
+// Scrollbar Styling
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--primary-gold);
+  border-radius: var(--radius-sm);
+  transition: var(--transition-fast);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-accent);
+}
+
+// Global Button Styles
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  border: 2px solid transparent;
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: var(--transition-normal);
+  position: relative;
+  overflow: hidden;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+    transition: var(--transition-normal);
+  }
+
+  &:hover::before {
+    left: 100%;
+  }
+
+  &.btn-primary {
+    background: var(--gradient-primary);
+    color: white;
+    border-color: var(--primary-blue);
+    box-shadow: var(--shadow-sm);
+
+    &:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-md);
+    }
+  }
+
+  &.btn-secondary {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border-color: var(--border-primary);
+
+    &:hover {
+      border-color: var(--primary-gold);
+      background: var(--bg-tertiary);
+    }
+  }
+
+  &.btn-success {
+    background: var(--success);
+    color: var(--bg-primary);
+    border-color: var(--success);
+  }
+
+  &.btn-danger {
+    background: var(--error);
+    color: white;
+    border-color: var(--error);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none !important;
+  }
+}
+
+// Global Card Styles
+.card {
+  background: var(--gradient-card);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(10px);
+  transition: var(--transition-normal);
+
+  &:hover {
+    border-color: var(--border-secondary);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
+  }
+}
+
+// Utility Classes
+.text-center { text-align: center; }
+.text-left { text-align: left; }
+.text-right { text-align: right; }
+
+// Regras específicas para botões da fila
+.queue-action .button-wrapper {
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  text-align: center !important;
+  width: 100% !important;
+}
+
+.queue-action .queue-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+  margin: 0 auto !important;
+}
+
+.queue-action .queue-btn span {
+  text-align: center !important;
+  display: inline-block !important;
+  width: auto !important;
+}
+
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.flex-wrap { flex-wrap: wrap; }
+.items-center { align-items: center; }
+.justify-center { justify-content: center; }
+.justify-between { justify-content: space-between; }
+
+.grid { display: grid; }
+.grid-cols-2 { grid-template-columns: repeat(2, 1fr); }
+.grid-cols-3 { grid-template-columns: repeat(3, 1fr); }
+.grid-cols-4 { grid-template-columns: repeat(4, 1fr); }
+
+.gap-sm { gap: var(--spacing-sm); }
+.gap-md { gap: var(--spacing-md); }
+.gap-lg { gap: var(--spacing-lg); }
+
+.p-sm { padding: var(--spacing-sm); }
+.p-md { padding: var(--spacing-md); }
+.p-lg { padding: var(--spacing-lg); }
+
+.m-sm { margin: var(--spacing-sm); }
+.m-md { margin: var(--spacing-md); }
+.m-lg { margin: var(--spacing-lg); }
+
+.rounded { border-radius: var(--radius-md); }
+.rounded-lg { border-radius: var(--radius-lg); }
+
+.shadow { box-shadow: var(--shadow-sm); }
+.shadow-md { box-shadow: var(--shadow-md); }
+.shadow-lg { box-shadow: var(--shadow-lg); }
