@@ -41,6 +41,9 @@ public class LCUService {
     @Value("${app.lcu.protocol:https}")
     private String lcuProtocol;
 
+    @Value("${app.lcu.host:127.0.0.1}")
+    private String lcuHost;
+
     private String lcuBaseUrl;
     private HttpClient lcuClient;
     private boolean isConnected = false;
@@ -54,6 +57,7 @@ public class LCUService {
     public void initialize() {
         log.info("🎮 Inicializando LCUService...");
         setupLCUClient();
+        discoverLCUFromLockfile(); // Tentar descobrir via lockfile primeiro
         startLCUMonitoring();
         log.info("✅ LCUService inicializado");
     }
@@ -120,7 +124,7 @@ public class LCUService {
             }
 
             if (lcuPort > 0) {
-                lcuBaseUrl = lcuProtocol + "://127.0.0.1:" + lcuPort;
+                lcuBaseUrl = lcuProtocol + "://" + lcuHost + ":" + lcuPort;
                 String statusUrl = lcuBaseUrl + "/lol-summoner/v1/current-summoner";
 
                 HttpRequest request = HttpRequest.newBuilder()
@@ -140,8 +144,9 @@ public class LCUService {
                     lcuStatus.put("connected", true);
                     lcuStatus.put("summonerId", currentSummonerId);
                     lcuStatus.put("port", lcuPort);
+                    lcuStatus.put("host", lcuHost);
 
-                    log.debug("✅ LCU conectado - Summoner ID: {}", currentSummonerId);
+                    log.debug("✅ LCU conectado - {}:{} Summoner ID: {}", lcuHost, lcuPort, currentSummonerId);
                     return true;
                 }
             }
@@ -151,6 +156,7 @@ public class LCUService {
 
         isConnected = false;
         lcuStatus.put("connected", false);
+        lcuStatus.put("host", lcuHost);
         return false;
     }
 
@@ -163,7 +169,7 @@ public class LCUService {
 
         for (int port : commonPorts) {
             try {
-                String testUrl = lcuProtocol + "://127.0.0.1:" + port + "/lol-summoner/v1/current-summoner";
+                String testUrl = lcuProtocol + "://" + lcuHost + ":" + port + "/lol-summoner/v1/current-summoner";
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create(testUrl))
                         .header("Authorization",
@@ -175,7 +181,7 @@ public class LCUService {
 
                 if (response.statusCode() == 200) {
                     lcuPort = port;
-                    log.info("🔍 Porta LCU descoberta: {}", port);
+                    log.info("🔍 Porta LCU descoberta em {}: {}", lcuHost, port);
                     return;
                 }
             } catch (Exception e) {
@@ -350,7 +356,7 @@ public class LCUService {
     /**
      * Obtém status do LCU
      */
-    public Map<String, Object> getLCUStatus() {
+    public Map<String, Object> getStatus() {
         return new HashMap<>(lcuStatus);
     }
 
@@ -367,4 +373,85 @@ public class LCUService {
     public String getCurrentGameId() {
         return currentGameId;
     }
+
+    /**
+     * Configura conexão com LCU em tempo de execução.
+     * Se host for "auto", tenta host.docker.internal e depois 127.0.0.1
+     */
+    public synchronized boolean configure(String host, int port, String protocol, String password) {
+        try {
+            String[] hostsToTry;
+            if (host == null || host.isBlank() || "auto".equalsIgnoreCase(host)) {
+                hostsToTry = new String[] { "host.docker.internal", "127.0.0.1" };
+            } else {
+                hostsToTry = new String[] { host };
+            }
+
+            String originalHost = this.lcuHost;
+            int originalPort = this.lcuPort;
+            String originalProtocol = this.lcuProtocol;
+            String originalPassword = this.lcuPassword;
+
+            for (String h : hostsToTry) {
+                this.lcuHost = h;
+                if (port > 0) this.lcuPort = port;
+                if (protocol != null && !protocol.isBlank()) this.lcuProtocol = protocol;
+                if (password != null) this.lcuPassword = password;
+
+                log.info("🔧 Configurando LCU manualmente: {}:{} ({})", this.lcuHost, this.lcuPort, this.lcuProtocol);
+                boolean ok = this.checkLCUStatus();
+                if (ok) {
+                    log.info("✅ LCU configurado com sucesso em {}:{}", this.lcuHost, this.lcuPort);
+                    return true;
+                }
+            }
+
+            // Restore if failed
+            this.lcuHost = originalHost;
+            this.lcuPort = originalPort;
+            this.lcuProtocol = originalProtocol;
+            this.lcuPassword = originalPassword;
+            return false;
+        } catch (Exception e) {
+            log.error("❌ Erro ao configurar LCU", e);
+            return false;
+        }
+    }
+
+    /**
+     * Descobre informações do LCU via lockfile
+     */
+    private void discoverLCUFromLockfile() {
+        try {
+            // Caminhos comuns do lockfile do League of Legends
+            String[] possiblePaths = {
+                System.getProperty("user.home") + "/AppData/Local/Riot Games/League of Legends/lockfile",
+                "C:/Riot Games/League of Legends/lockfile",
+                System.getenv("LOCALAPPDATA") + "/Riot Games/League of Legends/lockfile"
+            };
+
+            for (String path : possiblePaths) {
+                java.io.File lockfile = new java.io.File(path);
+                if (lockfile.exists()) {
+                    try {
+                        String content = java.nio.file.Files.readString(lockfile.toPath());
+                        String[] parts = content.split(":");
+                        if (parts.length >= 5) {
+                            lcuPort = Integer.parseInt(parts[2]);
+                            lcuPassword = parts[3];
+                            lcuProtocol = parts[4];
+
+                            log.info("🔍 LCU descoberto via lockfile - Porta: {}, Protocolo: {}", lcuPort, lcuProtocol);
+                            return;
+                        }
+                    } catch (Exception e) {
+                        log.debug("Erro ao ler lockfile {}: {}", path, e.getMessage());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Lockfile do LCU não encontrado: {}", e.getMessage());
+        }
+    }
 }
+

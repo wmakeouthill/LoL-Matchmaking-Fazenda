@@ -143,6 +143,9 @@ export class App implements OnInit, OnDestroy {
 
   @ViewChild(DraftPickBanComponent) draftComponentRef: DraftPickBanComponent | undefined;
 
+  private lcuTelemetryInterval: any = null;
+  private readonly LCU_TELEMETRY_INTERVAL_MS = 5000;
+
   constructor(
     private readonly apiService: ApiService,
     private readonly queueStateService: QueueStateService,
@@ -284,1740 +287,204 @@ export class App implements OnInit, OnDestroy {
         reject(new Error('Timeout aguardando WebSocket conectar'));
       }, 15000); // 15 segundos de timeout
 
-      this.apiService.onWebSocketReady().pipe(
-        filter(isReady => isReady),
-        take(1)
-      ).subscribe({
-        next: () => {
-          clearTimeout(timeout);
-          console.log('✅ [App] WebSocket está pronto para comunicação');
-          resolve();
-        },
-        error: (error) => {
-          clearTimeout(timeout);
-          reject(error instanceof Error ? error : new Error(String(error)));
-        }
-      });
-    });
-  }
-
-  // ✅ NOVO: Carregar dados do jogador com retry
-  private async loadPlayerDataWithRetry(): Promise<void> {
-    const maxAttempts = 3;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        console.log(`🔄 [App] Tentativa ${attempt}/${maxAttempts} de carregar dados do jogador...`);
-
-        await new Promise<void>((resolve, reject) => {
-          this.apiService.getPlayerFromLCU().subscribe({
-            next: (player: Player) => {
-              console.log('✅ [App] Dados do jogador carregados do LCU:', player);
-              this.currentPlayer = player;
-              this.savePlayerData(player);
-              this.updateSettingsForm();
-              resolve();
-            },
-            error: (error) => {
-              console.warn(`⚠️ [App] Tentativa ${attempt} falhou:`, error);
-              if (attempt === maxAttempts) {
-                // Última tentativa - tentar localStorage
-                this.tryLoadFromLocalStorage();
-                if (this.currentPlayer) {
-                  resolve();
-                } else {
-                  reject(new Error('Não foi possível carregar dados do jogador'));
-                }
-              } else {
-                reject(error instanceof Error ? error : new Error(String(error)));
-              }
-            }
-          });
-        });
-
-        // Se chegou até aqui, dados foram carregados com sucesso
-        console.log('✅ [App] Dados do jogador carregados com sucesso');
-        return;
-
-      } catch (error) {
-        console.warn(`⚠️ [App] Tentativa ${attempt} de carregar dados falhou:`, error);
-
-        if (attempt < maxAttempts) {
-          // Aguardar antes da próxima tentativa
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        }
-      }
-    }
-
-    // Se todas as tentativas falharam
-    console.warn('⚠️ [App] Todas as tentativas de carregar dados falharam, usando dados padrão se disponíveis');
-  }
-
-  // ✅ MELHORADO: Identificar jogador de forma segura
-  private async identifyPlayerSafely(): Promise<void> {
-    if (!this.currentPlayer) {
-      console.warn('⚠️ [App] Nenhum jogador disponível para identificação');
-      return;
-    }
-
-    const playerIdentifier = this.buildPlayerIdentifier(this.currentPlayer);
-    if (!playerIdentifier) {
-      console.error('❌ [App] Não foi possível construir identificador único para identificação');
-      return;
-    }
-
-    console.log('🆔 [App] Iniciando identificação com identificador único:', playerIdentifier);
-
-    const maxAttempts = 3;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        console.log(`🆔 [App] Tentativa ${attempt}/${maxAttempts} de identificação...`);
-
-        await new Promise<void>((resolve, reject) => {
-          this.apiService.identifyPlayer(this.currentPlayer).subscribe({
-            next: (response: any) => {
-              if (response.success) {
-                console.log('✅ [App] Jogador identificado com sucesso no backend:', playerIdentifier);
-                resolve();
-              } else {
-                reject(new Error(response.error || 'Erro desconhecido na identificação'));
-              }
-            },
-            error: (error: any) => {
-              reject(error instanceof Error ? error : new Error(String(error)));
-            }
-          });
-        });
-
-        // Se chegou até aqui, identificação foi bem-sucedida
-        console.log('✅ [App] Identificação do jogador completa:', playerIdentifier);
-        return;
-
-      } catch (error) {
-        console.error(`❌ [App] Tentativa ${attempt} de identificação falhou:`, error);
-
-        if (attempt < maxAttempts) {
-          // Aguardar antes da próxima tentativa
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        }
-      }
-    }
-
-    console.warn('⚠️ [App] Todas as tentativas de identificação falharam, mas continuando...');
-  }
-
-  // ✅ NOVO: Iniciar atualizações periódicas
-  private startPeriodicUpdates(): void {
-    // Atualização periódica da fila a cada 10 segundos
-    setInterval(() => {
-      if (this.currentPlayer?.displayName) {
-        console.log('🔄 [App] Atualização periódica do status da fila');
-        this.refreshQueueStatus();
-      }
-    }, 10000);
-  }
-
-  // ✅ NOVO: Lidar com erros de inicialização
-  private handleInitializationError(error: any): void {
-    console.error('❌ [App] Erro crítico na inicialização:', error);
-
-    // Marcar como conectado mesmo com erros para permitir funcionalidade básica
-    this.isConnected = true;
-
-    // Notificar usuário sobre problemas
-    this.addNotification('warning', 'Inicialização Parcial',
-      'Algumas funcionalidades podem não estar disponíveis. Verifique a conexão com o backend.');
-
-    // Tentar reconectar após um tempo
-    setTimeout(() => {
-      console.log('🔄 [App] Tentando reinicializar após erro...');
-      this.initializeAppSequence();
-    }, 30000); // Tentar novamente em 30 segundos
-  }
-
-  // ✅ NOVO: Salvar dados do jogador
-  private savePlayerData(player: Player): void {
-    console.log('💾 [App] === SALVANDO DADOS DO JOGADOR ===');
-    console.log('💾 [App] Dados originais do player:', {
-      id: player.id,
-      summonerName: player.summonerName,
-      gameName: player.gameName,
-      tagLine: player.tagLine,
-      displayName: player.displayName
-    });
-
-    // ✅ PADRONIZAÇÃO COMPLETA: Sempre usar gameName#tagLine como identificador único
-    const playerIdentifier = this.buildPlayerIdentifier(player);
-
-    if (playerIdentifier) {
-      player.displayName = playerIdentifier;
-      player.summonerName = playerIdentifier;
-      console.log('✅ [App] Identificador único padronizado:', playerIdentifier);
-    } else {
-      console.warn('⚠️ [App] Não foi possível construir identificador único:', {
-        gameName: player.gameName,
-        tagLine: player.tagLine,
-        summonerName: player.summonerName,
-        displayName: player.displayName
-      });
-
-      // Fallback: usar dados disponíveis
-      if (player.displayName) {
-        player.summonerName = player.displayName;
-      } else if (player.gameName && player.tagLine) {
-        player.displayName = `${player.gameName}#${player.tagLine}`;
-        player.summonerName = player.displayName;
-      }
-    }
-
-    // Adicionar propriedade customLp se não existir
-    if (!player.customLp) {
-      player.customLp = player.currentMMR || 1200;
-    }
-
-    // Salvar no localStorage para backup
-    localStorage.setItem('currentPlayer', JSON.stringify(player));
-
-    console.log('✅ [App] Jogador salvo com identificador único:', player.displayName);
-    console.log('💾 [App] Dados finais do player:', {
-      id: player.id,
-      summonerName: player.summonerName,
-      gameName: player.gameName,
-      tagLine: player.tagLine,
-      displayName: player.displayName
-    });
-    console.log('💾 [App] === FIM DO SALVAMENTO ===');
-  }
-
-  // ✅ NOVO: Construir identificador único padronizado
-  private buildPlayerIdentifier(player: Player): string | null {
-    // ✅ PRIORIDADE 1: gameName#tagLine (padrão)
-    if (player.gameName && player.tagLine) {
-      return `${player.gameName}#${player.tagLine}`;
-    }
-
-    // ✅ PRIORIDADE 2: displayName (se já está no formato correto)
-    if (player.displayName?.includes('#')) {
-      return player.displayName;
-    }
-
-    // ✅ PRIORIDADE 3: summonerName (fallback)
-    if (player.summonerName) {
-      return player.summonerName;
-    }
-
-    return null;
-  }
-
-  // ✅ NOVO: Processar mensagens do backend
-  // ✅ OTIMIZADO: Método simplificado para reduzir complexidade cognitiva (SonarQube)
-  private handleBackendMessage(message: any): void {
-    // Validação básica consolidada
-    if (!this.isValidBackendMessage(message)) return;
-
-    // Throttle otimizado
-    if (!this.shouldProcessBackendMessage(message)) return;
-
-    this.lastMessageTimestamp = Date.now();
-    console.log(`📡 [App] ${message.type}:`, message.data);
-
-    // Roteamento simplificado por tipo
-    this.routeBackendMessage(message);
-  }
-
-  // ✅ NOVO: Validação consolidada
-  private isValidBackendMessage(message: any): boolean {
-    return message?.type;
-  }
-
-  // ✅ NOVO: Verificação de throttle otimizada
-  private shouldProcessBackendMessage(message: any): boolean {
-    const criticalMessages = ['draft_action', 'draftUpdate', 'draft_data_sync', 'draft_timer_update', 'draft_player_change', 'draft_pick_completed'];
-    const shouldSkipThrottle = criticalMessages.includes(message.type);
-
-    if (!shouldSkipThrottle && Date.now() - this.lastMessageTimestamp < 100) {
-      console.log('📡 [App] ⚠️ Throttle aplicado');
-      return false;
-    }
-    return true;
-  }
-
-  // ✅ NOVO: Roteamento simplificado
-  private routeBackendMessage(message: any): void {
-    const { type, data } = message;
-
-    // Draft messages
-    if (this.isDraftMessageType(type)) {
-      this.handleDraftMessageByType(type, data);
-      return;
-    }
-
-    // Match messages
-    if (this.isMatchMessageType(type)) {
-      this.handleMatchMessageByType(type, data);
-      return;
-    }
-
-    // System messages
-    this.handleSystemMessageByType(type, data);
-  }
-
-  // ✅ NOVO: Verificadores de tipo otimizados
-  private isDraftMessageType(type: string): boolean {
-    return type.includes('draft') || type === 'draftUpdate';
-  }
-
-  private isMatchMessageType(type: string): boolean {
-    return type.includes('match') || type === 'game_started';
-  }
-
-  // ✅ NOVO: Handlers por categoria
-  private handleDraftMessageByType(type: string, data: any): void {
-    if (!data) {
-      console.error(`❌ [App] ${type}: data é null/undefined`);
-      return;
-    }
-
-    const draftHandlers: { [key: string]: () => void } = {
-      'draft_timer_update': () => {
-        logApp('⏰ [App] DRAFT_TIMER_UPDATE', { matchId: data.matchId, timeRemaining: data.timeRemaining, timestamp: new Date().toISOString() });
-        this.handleDraftTimerUpdate(data);
-      },
-      'draft_player_change': () => {
-        logApp('🔄 [App] DRAFT_PLAYER_CHANGE', { matchId: data.matchId, currentAction: data.currentAction, timestamp: new Date().toISOString() });
-        this.handleDraftPlayerChange(data);
-      },
-      'draftUpdate': () => {
-        logApp('🔄 [App] DRAFT_UPDATE', { matchId: data.matchId, currentAction: data.currentAction, timestamp: new Date().toISOString() });
-        this.handleDraftAction(data);
-      },
-      'draft_pick_completed': () => {
-        logApp('🎯 [App] DRAFT_PICK_COMPLETED', { matchId: data.matchId, playerId: data.playerId, timestamp: new Date().toISOString() });
-        this.handleDraftPickCompleted(data);
-      },
-      'draft_action': () => this.handleDraftAction(data),
-      'draft_data_sync': () => this.handleDraftDataSync(data),
-      'draft_started': () => this.handleDraftStarted(data),
-      'draft_cancelled': () => this.handleDraftCancelled(data)
-    };
-
-    const handler = draftHandlers[type];
-    if (handler) {
-      handler();
-    }
-  }
-
-  private handleMatchMessageByType(type: string, data: any): void {
-    const matchHandlers: { [key: string]: () => void } = {
-      'match_found': () => this.handleMatchFound(data),
-      // Chamada assíncrona encapsulada para manter assinatura () => void
-      'match_found_fallback': () => { void this.handleMatchFoundFallback(data); },
-      'match_acceptance_progress': () => this.handleAcceptanceProgress(data),
-      'match_fully_accepted': () => this.handleMatchFullyAccepted(data),
-      'match_timer_update': () => this.handleMatchTimerUpdate(data),
-      'game_started': () => this.handleGameStarted(data)
-    };
-
-    const handler = matchHandlers[type];
-    if (handler) {
-      handler();
-    }
-  }
-
-  private handleSystemMessageByType(type: string, data: any): void {
-    const systemHandlers: { [key: string]: () => void } = {
-      'queue_update': () => this.handleQueueUpdate(data),
-      'backend_connection_success': () => {
-        if (this.currentPlayer) {
-          this.identifyPlayerSafely();
-        }
-      }
-    };
-
-    const handler = systemHandlers[type];
-    if (handler) {
-      handler();
-    } else {
-      console.log('📡 [App] Mensagem não reconhecida:', type);
-    }
-  }
-
-  // ✅ MANTIDO: Compatibilidade para métodos legacy
-  // ✅ MANTIDO: Compatibilidade para métodos legacy
-  private identifyCurrentPlayerOnConnect(): void {
-    console.log('🔄 [App] Método legacy - redirecionando para identifyPlayerSafely()');
-    this.identifyPlayerSafely();
-  }
-
-  // ✅ OTIMIZAÇÃO: Métodos auxiliares para reduzir complexidade cognitiva
-  private isDraftMessage(type: string): boolean {
-    return ['draft_timer_update', 'draft_player_change', 'draftUpdate', 'draft_pick_completed', 'draft_action', 'draft_data_sync', 'draft_started', 'draft_cancelled'].includes(type);
-  }
-
-  private isMatchMessage(type: string): boolean {
-    return ['match_found', 'match_found_fallback', 'match_acceptance_progress', 'match_fully_accepted', 'match_timer_update'].includes(type);
-  }
-
-  private processDraftMessage(type: string, data: any): void {
-    if (!data) {
-      console.error(`❌ [App] ${type}: data é null/undefined`);
-      return;
-    }
-
-    switch (type) {
-      case 'draft_timer_update':
-        logApp('⏰ [App] DRAFT_TIMER_UPDATE', { matchId: data.matchId, timeRemaining: data.timeRemaining, timestamp: new Date().toISOString() });
-        this.handleDraftTimerUpdate(data);
-        break;
-      case 'draft_player_change':
-        logApp('🔄 [App] DRAFT_PLAYER_CHANGE', { matchId: data.matchId, currentAction: data.currentAction, timestamp: new Date().toISOString() });
-        this.handleDraftPlayerChange(data);
-        break;
-      case 'draftUpdate':
-        logApp('🔄 [App] DRAFT_UPDATE', { matchId: data.matchId, currentAction: data.currentAction, timestamp: new Date().toISOString() });
-        this.handleDraftAction(data);
-        break;
-      case 'draft_pick_completed':
-        logApp('🎯 [App] DRAFT_PICK_COMPLETED', { matchId: data.matchId, playerId: data.playerId, timestamp: new Date().toISOString() });
-        this.handleDraftPickCompleted(data);
-        break;
-      case 'draft_action':
-        this.handleDraftAction(data);
-        break;
-      case 'draft_data_sync':
-        this.handleDraftDataSync(data);
-        break;
-      case 'draft_started':
-        this.handleDraftStarted(data);
-        break;
-      case 'draft_cancelled':
-        this.handleDraftCancelled(data);
-        break;
-    }
-  }
-
-  private processMatchMessage(type: string, data: any): void {
-    switch (type) {
-      case 'match_found':
-        this.handleMatchFound(data);
-        break;
-      case 'match_acceptance_progress':
-        this.handleAcceptanceProgress(data);
-        break;
-      case 'match_fully_accepted':
-        this.handleMatchFullyAccepted(data);
-        break;
-      case 'match_timer_update':
-        this.handleMatchTimerUpdate(data);
-        break;
-    }
-  }
-
-  private processSystemMessage(type: string, data: any): void {
-    switch (type) {
-      case 'queue_update':
-        this.handleQueueUpdate(data);
-        break;
-      case 'backend_connection_success':
-        if (this.currentPlayer) {
-          this.identifyPlayerSafely();
-        }
-        break;
-      default:
-        console.log('📡 [App] Mensagem não reconhecida:', type);
-    }
-  }
-
-  // ✅ NOVO: Configurar listener do componente queue
-  private setupQueueComponentListener(): void {
-    document.addEventListener('matchFound', (event: any) => {
-      console.log('🎮 [App] Match found do componente queue:', event.detail);
-    });
-  }
-
-  // ✅ SIMPLIFICADO: Handlers apenas atualizam interface
-  private handleMatchFound(data: any): void {
-    console.log('🎮 [App] === MATCH FOUND RECEBIDO ===');
-    console.log('🎮 [App] MatchId recebido:', data?.matchId);
-    console.log('🎮 [App] Última partida processada:', this.lastMatchId);
-
-    // ✅ Verificar se deve processar esta partida
-    if (!this.shouldProcessMatch(data)) {
-      return;
-    }
-
-    // ✅ Processar dados da partida
-    const matchFoundData = this.processMatchData(data);
-    if (!matchFoundData) {
-      return;
-    }
-
-    // ✅ Finalizar configuração da partida
-    this.finalizeMatchSetup(matchFoundData);
-  }
-
-  // ✅ NOVO: Handler para fallback de match_found (broadcast geral)
-  private async handleMatchFoundFallback(data: any): Promise<void> {
-    console.log('📢 [App] match_found_fallback recebido:', data);
-
-    // Evitar duplicidade se já estamos exibindo a mesma partida
-    if (this.showMatchFound && this.matchFoundData?.matchId === data?.matchId) {
-      console.log('📢 [App] Fallback ignorado: partida já exibida');
-      return;
-    }
-
-    // Força uma verificação de status para obter os detalhes corretos do backend/MySQL
-    try {
-      await this.checkSyncStatus();
-      // Se depois do polling não abriu, exibir um aviso ao usuário
-      if (!this.showMatchFound) {
-        this.addNotification('info', 'Partida encontrada', 'Sincronizando detalhes da partida...');
-      }
-    } catch (err) {
-      console.warn('⚠️ [App] Erro ao processar fallback do match_found:', err);
-    }
-  }
-
-  // ✅ NOVO: Verificar se deve processar a partida
-  private shouldProcessMatch(data: any): boolean {
-    // Verificar se já processamos esta partida
-    if (this.lastMatchId === data?.matchId) {
-      console.log('🎮 [App] ❌ PARTIDA JÁ PROCESSADA - ignorando duplicata');
-      return false;
-    }
-
-    // Verificar se já temos esta partida ativa
-    if (this.matchFoundData && this.matchFoundData.matchId === data.matchId) {
-      console.log('🎮 [App] ❌ PARTIDA JÁ ESTÁ ATIVA - ignorando duplicata');
-      return false;
-    }
-
-    // Verificar se já estamos mostrando uma partida
-    if (this.showMatchFound && this.matchFoundData) {
-      console.log('🎮 [App] ❌ JÁ EXISTE UMA PARTIDA ATIVA - ignorando nova');
-      return false;
-    }
-
-    console.log('🎮 [App] ✅ PROCESSANDO PARTIDA RECEBIDA DO BACKEND:', data.matchId);
-    return true;
-  }
-
-  // ✅ NOVO: Processar dados da partida
-  private processMatchData(data: any): MatchFoundData | null {
-    // Marcar esta partida como processada
-    this.lastMatchId = data.matchId;
-
-    // Criar estrutura base da partida
-    const matchFoundData: MatchFoundData = {
-      matchId: data.matchId,
-      playerSide: 'blue',
-      teammates: [],
-      enemies: [],
-      averageMMR: { yourTeam: 1200, enemyTeam: 1200 },
-      estimatedGameDuration: 25,
-      phase: 'accept',
-      acceptTimeout: data.acceptTimeout || data.acceptanceTimer || 30,
-      acceptanceTimer: data.acceptanceTimer || data.acceptTimeout || 30,
-      acceptanceDeadline: data.acceptanceDeadline,
-      teamStats: data.teamStats,
-      balancingInfo: data.balancingInfo
-    };
-
-    // Processar dados específicos do tipo de partida
-    if (!this.populateMatchTeams(data, matchFoundData)) {
-      return null;
-    }
-
-    return matchFoundData;
-  }
-
-  // ✅ NOVO: Popular times da partida
-  private populateMatchTeams(data: any, matchFoundData: MatchFoundData): boolean {
-    if (data.teammates && data.enemies) {
-      return this.processStructuredMatchData(data, matchFoundData);
-    } else if (data.team1 && data.team2) {
-      return this.processBasicMatchData(data, matchFoundData);
-    } else {
-      console.error('🎮 [App] ❌ ERRO: Formato de dados não reconhecido');
-      console.log('🎮 [App] Dados recebidos:', data);
-      return false;
-    }
-  }
-
-  // ✅ NOVO: Processar dados estruturados do MatchmakingService
-  private processStructuredMatchData(data: any, matchFoundData: MatchFoundData): boolean {
-    console.log('🎮 [App] Usando dados estruturados do MatchmakingService');
-
-    const currentPlayerIdentifiers = this.getCurrentPlayerIdentifiers();
-    const isInTeammates = this.isPlayerInTeam(currentPlayerIdentifiers, data.teammates);
-
-    matchFoundData.playerSide = isInTeammates ? 'blue' : 'red';
-    matchFoundData.teammates = this.convertPlayersToPlayerInfo(data.teammates);
-    matchFoundData.enemies = this.convertPlayersToPlayerInfo(data.enemies);
-
-    // Usar teamStats do backend se disponível
-    if (data.teamStats) {
-      matchFoundData.averageMMR = {
-        yourTeam: isInTeammates ? data.teamStats.team1.averageMMR : data.teamStats.team2.averageMMR,
-        enemyTeam: isInTeammates ? data.teamStats.team2.averageMMR : data.teamStats.team1.averageMMR
-      };
-    }
-
-    return true;
-  }
-
-  // ✅ NOVO: Processar dados básicos team1/team2
-  private processBasicMatchData(data: any, matchFoundData: MatchFoundData): boolean {
-    console.log('🎮 [App] Usando dados básicos do MatchFoundService');
-
-    const currentPlayerIdentifiers = this.getCurrentPlayerIdentifiers();
-    const isInTeam1 = data.team1.some((name: string) =>
-      currentPlayerIdentifiers.some(id => this.namesMatch(id, name))
-    );
-
-    matchFoundData.playerSide = isInTeam1 ? 'blue' : 'red';
-    matchFoundData.teammates = this.convertBasicPlayersToPlayerInfo(isInTeam1 ? data.team1 : data.team2);
-    matchFoundData.enemies = this.convertBasicPlayersToPlayerInfo(isInTeam1 ? data.team2 : data.team1);
-
-    return true;
-  }
-
-  // ✅ NOVO: Finalizar configuração da partida
-  private finalizeMatchSetup(matchFoundData: MatchFoundData): void {
-    this.matchFoundData = matchFoundData;
-    this.isInQueue = false;
-
-    console.log('🎯 [App] === EXIBINDO MATCH FOUND ===');
-
-    // Modal só deve ser exibido para jogadores humanos
-    if (this.isCurrentPlayerBot()) {
-      console.log('🎯 [App] Jogador atual é bot - não exibindo modal');
-      return;
-    }
-
-    this.showMatchFound = true;
-    this.addNotification('success', 'Partida Encontrada!', 'Você tem 30 segundos para aceitar.');
-    this.playMatchFoundSound();
-
-    console.log('🎯 [App] Estado final:', {
-      showMatchFound: this.showMatchFound,
-      matchFoundData: !!this.matchFoundData,
-      isInQueue: this.isInQueue
-    });
-  }
-
-  // ✅ NOVO: Reproduzir som de notificação
-  private playMatchFoundSound(): void {
-    try {
-      const audio = new Audio('assets/sounds/match-found.mp3');
-      audio.play().catch(() => {
-        console.warn('⚠️ [App] Não foi possível reproduzir som de notificação');
-      });
-    } catch (error) {
-      console.warn('⚠️ [App] Erro ao criar elemento de áudio:', error);
-    }
-  }
-
-  // ✅ NOVO: Comparar se dois nomes coincidem (com diferentes formatos)
-  private namesMatch(name1: string, name2: string): boolean {
-    if (name1 === name2) return true;
-
-    // Comparação por gameName (ignorando tag)
-    if (name1.includes('#') && name2.includes('#')) {
-      const gameName1 = name1.split('#')[0];
-      const gameName2 = name2.split('#')[0];
-      return gameName1 === gameName2;
-    }
-
-    if (name1.includes('#')) {
-      const gameName1 = name1.split('#')[0];
-      return gameName1 === name2;
-    }
-
-    if (name2.includes('#')) {
-      const gameName2 = name2.split('#')[0];
-      return name1 === gameName2;
-    }
-
-    return false;
-  }
-
-  // ✅ NOVO: Converter jogadores básicos (apenas nomes) para PlayerInfo
-  private convertBasicPlayersToPlayerInfo(playerNames: string[]): any[] {
-    return playerNames.map((name: string, index: number) => ({
-      id: index,
-      summonerName: name,
-      mmr: 1200, // MMR padrão
-      primaryLane: 'fill',
-      secondaryLane: 'fill',
-      assignedLane: 'FILL',
-      teamIndex: index,
-      isAutofill: false,
-      riotIdGameName: name.includes('#') ? name.split('#')[0] : name,
-      riotIdTagline: name.includes('#') ? name.split('#')[1] : undefined,
-      profileIconId: 1
-    }));
-  }
-
-  // ✅ NOVO: Obter identificadores do jogador atual
-  private getCurrentPlayerIdentifiers(): string[] {
-    if (!this.currentPlayer) return [];
-
-    const identifiers = [];
-
-    // Adicionar todas as possíveis variações do nome
-    if (this.currentPlayer.displayName) {
-      identifiers.push(this.currentPlayer.displayName);
-    }
-    if (this.currentPlayer.summonerName) {
-      identifiers.push(this.currentPlayer.summonerName);
-    }
-    if (this.currentPlayer.gameName) {
-      identifiers.push(this.currentPlayer.gameName);
-      // Adicionar com tag se tiver
-      if (this.currentPlayer.tagLine) {
-        identifiers.push(`${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`);
-      }
-    }
-
-    // Remover duplicatas
-    return [...new Set(identifiers)];
-  }
-
-  // ✅ NOVO: Verificar se um jogador está em um time
-  private isPlayerInTeam(playerIdentifiers: string[], team: any[]): boolean {
-    if (!playerIdentifiers.length || !team.length) return false;
-
-    console.log('🔍 [App] Verificando se jogador está no time:', {
-      playerIdentifiers,
-      teamPlayers: team.map(p => p.summonerName || p.name)
-    });
-
-    return team.some(player => {
-      const playerName = player.summonerName || player.name || '';
-
-      // Verificar se algum identificador do jogador atual coincide
-      return playerIdentifiers.some((identifier: string) => {
-        // Comparação exata
-        if (identifier === playerName) {
-          console.log(`✅ [App] Match exato encontrado: ${identifier} === ${playerName}`);
-          return true;
-        }
-
-        // Comparação sem tag (gameName vs gameName#tagLine)
-        if (identifier.includes('#') && playerName.includes('#')) {
-          const identifierGameName = identifier.split('#')[0];
-          const playerGameName = playerName.split('#')[0];
-          if (identifierGameName === playerGameName) {
-            console.log(`✅ [App] Match por gameName encontrado: ${identifierGameName} === ${playerGameName}`);
-            return true;
-          }
-        }
-
-        // Comparação de gameName com nome completo
-        if (identifier.includes('#')) {
-          const identifierGameName = identifier.split('#')[0];
-          if (identifierGameName === playerName) {
-            console.log(`✅ [App] Match por gameName vs nome completo: ${identifierGameName} === ${playerName}`);
-            return true;
-          }
-        }
-
-        if (playerName.includes('#')) {
-          const playerGameName = playerName.split('#')[0];
-          if (identifier === playerGameName) {
-            console.log(`✅ [App] Match por nome vs gameName: ${identifier} === ${playerGameName}`);
-            return true;
-          }
-        }
-
-        return false;
-      });
-    });
-  }
-
-  // ✅ NOVO: Converter dados do backend para PlayerInfo
-  private convertPlayersToPlayerInfo(players: any[]): any[] {
-    console.log('🔄 [App] === CONVERTENDO PLAYERS PARA PLAYERINFO ===');
-    console.log('🔄 [App] Players recebidos:', players);
-    console.log('🔄 [App] Dados brutos dos players:', players.map(p => ({
-      summonerName: p.summonerName,
-      assignedLane: p.assignedLane,
-      primaryLane: p.primaryLane,
-      secondaryLane: p.secondaryLane,
-      teamIndex: p.teamIndex,
-      isAutofill: p.isAutofill,
-      mmr: p.mmr
-    })));
-
-    const convertedPlayers = players.map((player: any, index: number) => {
-      const playerInfo = {
-        id: player.teamIndex || index, // ✅ USAR teamIndex do backend
-        summonerName: player.summonerName,
-        mmr: player.mmr || 1200,
-        primaryLane: player.primaryLane || 'fill',
-        secondaryLane: player.secondaryLane || 'fill',
-        assignedLane: player.assignedLane || 'fill', // ✅ CORREÇÃO: Usar 'fill' em vez de 'FILL'
-        teamIndex: player.teamIndex || index, // ✅ Índice correto do backend
-        isAutofill: player.isAutofill || false,
-        riotIdGameName: player.gameName,
-        riotIdTagline: player.tagLine,
-        profileIconId: player.profileIconId
-      };
-
-      console.log(`🔄 [App] Player ${index} convertido:`, {
-        name: playerInfo.summonerName,
-        lane: playerInfo.assignedLane,
-        teamIndex: playerInfo.teamIndex,
-        autofill: playerInfo.isAutofill,
-        originalAssignedLane: player.assignedLane,
-        primaryLane: playerInfo.primaryLane,
-        secondaryLane: playerInfo.secondaryLane
-      });
-
-      return playerInfo;
-    });
-
-    console.log('🔄 [App] === RESULTADO DA CONVERSÃO ===');
-    console.log('🔄 [App] Players convertidos:', convertedPlayers.map(p => ({
-      name: p.summonerName,
-      assignedLane: p.assignedLane,
-      teamIndex: p.teamIndex,
-      isAutofill: p.isAutofill
-    })));
-
-    return convertedPlayers;
-  }
-
-  private handleAcceptanceProgress(data: any): void {
-    console.log('📊 [App] Progresso de aceitação:', data);
-    // Atualizar UI de progresso se necessário
-  }
-
-  private handleMatchFullyAccepted(data: any): void {
-    console.log('✅ [App] Partida totalmente aceita:', data);
-    this.addNotification('success', 'Partida Aceita!', 'Todos os jogadores aceitaram. Preparando draft...');
-  }
-
-  private handleDraftStarted(data: any): void {
-    console.log('🎯 [App] Iniciando draft:', data);
-    logApp('🎯 [App] DRAFT_STARTED', {
-      matchId: data?.matchId,
-      timestamp: new Date().toISOString()
-    });
-
-    // ✅ NOVO: Limpar controle de partida
-    this.lastMatchId = null;
-    this.showMatchFound = false;
-    this.matchFoundData = null;
-    this.inDraftPhase = true;
-    this.draftData = data;
-
-    // ✅ NOVO: Iniciar polling agressivo para sincronização durante o draft
-    this.startDraftPolling(data?.matchId);
-
-    console.log('🎯 [App] Estado limpo para draft');
-    this.addNotification('success', 'Draft Iniciado!', 'A fase de draft começou.');
-  }
-
-  // ✅ NOVO: Sistema de polling agressivo durante o draft
-  private draftPollingInterval: any = null;
-  private readonly DRAFT_POLLING_INTERVAL = 1000; // 1 segundo durante draft
-
-  private startDraftPolling(matchId: number): void {
-    if (this.draftPollingInterval) {
-      clearInterval(this.draftPollingInterval);
-    }
-
-    console.log('🔄 [App] Iniciando polling agressivo para draft:', matchId);
-    logApp('🔄 [App] DRAFT_POLLING_STARTED', {
-      matchId,
-      interval: this.DRAFT_POLLING_INTERVAL,
-      timestamp: new Date().toISOString()
-    });
-
-    this.draftPollingInterval = setInterval(() => {
-      if (this.inDraftPhase && this.draftData?.matchId === matchId && this.currentPlayer?.summonerName) {
-        console.log('🔄 [App] Polling de sincronização do draft...');
-
-        this.apiService.checkSyncStatus(this.currentPlayer.summonerName).subscribe({
-          next: (response: any) => {
-            if (response?.status === 'draft' && response?.matchId === matchId) {
-              // Verificar se há mudanças nos dados
-              const hasChanges = this.hasSignificantDraftChanges(response);
-              if (hasChanges) {
-                console.log('🔄 [App] Mudanças detectadas no polling - atualizando interface');
-                logApp('🔄 [App] DRAFT_POLLING_UPDATE', {
-                  matchId,
-                  totalActions: response.totalActions,
-                  currentAction: response.currentAction,
-                  timestamp: new Date().toISOString()
-                });
-                this.handleDraftDataSync(response);
-              }
-            }
+      this.apiService.onWebSocketReady()
+        .pipe(
+          take(1)
+        )
+        .subscribe({
+          next: () => {
+            clearTimeout(timeout);
+            console.log('✅ [App] WebSocket está pronto para comunicação');
+            // Iniciar telemetria do LCU apenas no Electron
+            this.startLcuTelemetry();
+            resolve();
           },
           error: (error: any) => {
-            console.error('❌ [App] Erro no polling do draft:', error);
+            clearTimeout(timeout);
+            reject(error instanceof Error ? error : new Error(String(error)));
           }
         });
-      } else {
-        console.log('🛑 [App] Parando polling - não estamos mais no draft');
-        this.stopDraftPolling();
+    });
+  }
+
+  private startLcuTelemetry(): void {
+    const electronAPI = (window as any).electronAPI;
+    if (!this.isElectron || !electronAPI?.lcu) {
+      console.log('ℹ️ [App] Telemetria LCU desabilitada (não-Electron ou sem conector)');
+      return;
+    }
+
+    if (this.lcuTelemetryInterval) {
+      clearInterval(this.lcuTelemetryInterval);
+    }
+
+    const tick = async () => {
+      try {
+        const [summoner, phase, session] = await Promise.all([
+          electronAPI.lcu.getCurrentSummoner().catch(() => null),
+          electronAPI.lcu.getGameflowPhase().catch(() => null),
+          electronAPI.lcu.getSession().catch(() => null)
+        ]);
+
+        const payload = {
+          timestamp: new Date().toISOString(),
+          phase,
+          session: session ? { gameId: session?.gameData?.gameId, mapId: session?.mapId, queueId: session?.gameData?.queue?.id } : null,
+          summoner: summoner ? {
+            gameName: summoner.gameName ?? summoner.displayName,
+            tagLine: summoner.tagLine,
+            puuid: summoner.puuid,
+            summonerId: summoner.summonerId,
+            summonerLevel: summoner.summonerLevel,
+            profileIconId: summoner.profileIconId
+          } : null
+        };
+
+        this.apiService.sendWebSocketMessage({ type: 'lcu_status', data: payload });
+      } catch (e) {
+        console.warn('⚠️ [App] Falha ao coletar telemetria LCU:', e);
       }
-    }, this.DRAFT_POLLING_INTERVAL);
+    };
+
+    // Disparar imediatamente e a cada N segundos
+    tick();
+    this.lcuTelemetryInterval = setInterval(tick, this.LCU_TELEMETRY_INTERVAL_MS);
+    console.log('📡 [App] Telemetria LCU iniciada');
+  }
+
+  // Simplificar para evitar referências indefinidas
+  private startGameInProgressFromSimulation(simulationData: any): void {
+    try {
+      const matchId = simulationData?.matchId ?? null;
+      const team1 = simulationData?.team1 ?? [];
+      const team2 = simulationData?.team2 ?? [];
+      this.gameData = {
+        matchId,
+        team1,
+        team2,
+        status: 'in_progress',
+        startedAt: new Date(),
+        estimatedDuration: 1800,
+        pickBanData: simulationData?.pickBanData ?? {}
+      };
+      this.inGamePhase = true;
+      this.inDraftPhase = false;
+      this.showMatchFound = false;
+      this.isInQueue = false;
+      this.lastMatchId = matchId;
+      this.addNotification('success', 'Jogo Iniciado!', 'A partida começou.');
+    } catch (e) {
+      console.error('❌ [App] Erro ao iniciar jogo pela simulação:', e);
+    }
+  }
+
+  // ===== Missing helper methods (minimal implementations) =====
+  private async loadPlayerDataWithRetry(): Promise<void> {
+    return new Promise((resolve) => {
+      this.loadPlayerData();
+      resolve();
+    });
+  }
+
+  private async identifyPlayerSafely(): Promise<void> {
+    if (!this.currentPlayer) return;
+    const data = {
+      type: 'identify_player',
+      playerData: {
+        displayName: this.currentPlayer.displayName || this.currentPlayer.summonerName,
+        summonerName: this.currentPlayer.summonerName,
+        gameName: this.currentPlayer.gameName,
+        tagLine: this.currentPlayer.tagLine,
+        id: this.currentPlayer.id,
+        puuid: this.currentPlayer.puuid,
+        region: this.currentPlayer.region,
+        profileIconId: this.currentPlayer.profileIconId,
+        summonerLevel: this.currentPlayer.summonerLevel
+      }
+    };
+    this.apiService.sendWebSocketMessage(data);
+  }
+
+  private startPeriodicUpdates(): void {
+    // Placeholder: atualizações periódicas podem ser adicionadas aqui
+  }
+
+  private handleInitializationError(error: any): void {
+    console.error('❌ [App] Erro na inicialização:', error);
+    this.addNotification('error', 'Erro de Inicialização', String(error?.message || error));
+  }
+
+  private handleBackendMessage(message: any): void {
+    // Processar mensagens básicas; expandir conforme necessário
+    if (!message || !message.type) return;
+    switch (message.type) {
+      case 'queue_status':
+        if (message.status) {
+          this.queueStatus = message.status;
+        }
+        break;
+      case 'backend_connection_success':
+        console.log('🔌 [App] Backend conectado');
+        break;
+      default:
+        // outras mensagens tratadas por componentes específicos
+        break;
+    }
   }
 
   private stopDraftPolling(): void {
-    if (this.draftPollingInterval) {
-      clearInterval(this.draftPollingInterval);
-      this.draftPollingInterval = null;
-      console.log('🛑 [App] Polling do draft parado');
-      logApp('🛑 [App] DRAFT_POLLING_STOPPED', {
-        timestamp: new Date().toISOString()
-      });
-    }
+    // Placeholder: implementar se houver polling específico do draft
   }
 
-  // ✅ NOVO: Verificar se há mudanças significativas nos dados do draft
-  private hasSignificantDraftChanges(newData: any): boolean {
-    if (!this.draftData) return true;
-
-    // Verificar mudanças importantes
-    const currentTotalActions = this.draftData.totalActions || 0;
-    const newTotalActions = newData.totalActions || 0;
-
-    const currentAction = this.draftData.currentAction || 0;
-    const newCurrentAction = newData.currentAction || 0;
-
-    const hasActionChange = currentTotalActions !== newTotalActions;
-    const hasCurrentActionChange = currentAction !== newCurrentAction;
-
-    // Verificar mudanças nos picks/bans
-    const currentLastSyncTime = this.draftData.lastSyncTime || 0;
-    const timeSinceLastSync = Date.now() - currentLastSyncTime;
-    const shouldSyncByTime = timeSinceLastSync > 3000; // Forçar sync a cada 3 segundos
-
-    return hasActionChange || hasCurrentActionChange || shouldSyncByTime;
+  private forceDraftSyncImmediate(_matchId: number, _reason: string): void {
+    // Placeholder: enviar uma mensagem ao backend se necessário
   }
 
-  private handleDraftCancelled(data: any): void {
-    console.log('🚫 [App] Draft cancelado pelo backend');
-    logApp('🚫 [App] === DRAFT CANCELADO ===', {
-      matchId: data?.matchId,
-      reason: data?.reason,
-      currentDraftData: !!this.draftData,
-      inDraftPhase: this.inDraftPhase,
-      timestamp: new Date().toISOString()
-    });
-
-    // ✅ NOVO: Parar polling do draft
-    this.stopDraftPolling();
-
-    // ✅ NOVO: Preservar dados do draft por 30 segundos para possível reconexão
-    if (this.draftData && data?.reason !== 'completed') {
-      logApp('🔄 [App] Preservando dados do draft por 30s para possível reconexão');
-
-      const preservedDraftData = { ...this.draftData };
-
-      setTimeout(() => {
-        // Só limpar se ainda não retornou ao draft
-        if (!this.inDraftPhase && this.draftData === preservedDraftData) {
-          logApp('⏰ [App] Timeout de preservação expirou - limpando dados do draft');
-          this.draftData = null;
-          this.cdr.detectChanges();
-        }
-      }, 30000);
-    } else {
-      // Limpar imediatamente se o draft foi completado ou não há dados
-      this.draftData = null;
-    }
-
-    // Sair da fase de draft mas manter dados temporariamente
-    this.inDraftPhase = false;
-    this.currentView = 'dashboard';
-
-    // Mostrar notificação com mais detalhes
-    const reason = data?.reason || 'O draft foi cancelado.';
-    const detailedReason = data?.matchId ? `Match ${data.matchId}: ${reason}` : reason;
-
-    this.addNotification('warning', 'Draft Cancelado', detailedReason);
-
-    logApp('✅ [App] handleDraftCancelled concluído', {
-      preservedData: !!this.draftData,
-      inDraftPhase: this.inDraftPhase,
-      currentView: this.currentView
-    });
+  private savePlayerData(player: any): void {
+    try { localStorage.setItem('currentPlayer', JSON.stringify(player)); } catch {}
   }
 
-
-
-  // ✅ NOVO: Handler específico para picks completados - atualização imediata
-  private handleDraftPickCompleted(data: any): void {
-    console.log('🎯 [App] === HANDLE DRAFT PICK COMPLETED ===');
-    console.log('🎯 [App] Pick completado no backend:', data);
-    logApp('🎯 [App] DRAFT_PICK_COMPLETED_HANDLER', {
-      matchId: data?.matchId,
-      playerId: data?.playerId,
-      championId: data?.championId,
-      action: data?.action,
-      currentAction: data?.currentAction,
-      timestamp: new Date().toISOString()
-    });
-
-    // Verificar se estamos na fase de draft
-    if (!this.inDraftPhase || !this.draftData) {
-      console.log('⚠️ [App] Pick completado ignorado - não estamos na fase de draft');
-      return;
-    }
-
-    // Verificar se é a partida correta
-    if (data.matchId && this.draftData.matchId !== data.matchId) {
-      console.log('⚠️ [App] Pick completado ignorado - partida diferente');
-      return;
-    }
-
-    console.log('✅ [App] Pick completado válido, atualizando interface imediatamente');
-
-    // ✅ FORÇAR SINCRONIZAÇÃO IMEDIATA após pick completado
-    this.forceDraftSyncImmediate(data.matchId, 'pick_completed');
-
-    // ✅ Notificar componente de draft sobre pick completado
-    if (this.draftComponentRef?.handleDraftAction) {
-      console.log('🎯 [App] Notificando componente de draft sobre pick completado');
-      try {
-        this.draftComponentRef.handleDraftAction(data);
-      } catch (error) {
-        console.error('❌ [App] Erro ao notificar componente sobre pick completado:', error);
-      }
-    }
-
-    // ✅ Emitir evento customizado para atualização imediata
-    const pickCompletedEvent = new CustomEvent('draftPickCompleted', {
-      detail: {
-        matchId: data.matchId,
-        playerId: data.playerId,
-        championId: data.championId,
-        action: data.action,
-        currentAction: data.currentAction,
-        timestamp: Date.now()
-      }
-    });
-    document.dispatchEvent(pickCompletedEvent);
-
-    // Forçar atualização da interface
-    this.cdr.detectChanges();
-    console.log('🎯 [App] Pick completado processado com atualização imediata');
+  private identifyCurrentPlayerOnConnect(): void {
+    this.identifyPlayerSafely().catch(() => {});
   }
 
-  // ✅ CORREÇÃO: Handler para atualizações do draft - APENAS EXIBIÇÃO
-  private handleDraftAction(data: any): void {
-    console.log('🔄 [App] === HANDLE DRAFT ACTION ===');
-    console.log('🔄 [App] Dados da ação do draft:', data);
-    logApp('🔄 [App] DRAFT_ACTION_HANDLER', {
-      matchId: data?.matchId,
-      currentAction: data?.currentAction,
-      lastAction: data?.lastAction,
-      championId: data?.championId,
-      action: data?.action,
-      playerId: data?.playerId,
-      timestamp: new Date().toISOString()
-    });
-
-    // ✅ CORREÇÃO: Verificar se data é válido
-    if (!data) {
-      console.error('❌ [App] handleDraftAction: data é null/undefined');
-      return;
-    }
-
-    // Verificar se estamos na fase de draft
-    if (!this.inDraftPhase || !this.draftData) {
-      console.log('⚠️ [App] Ação do draft ignorada - não estamos na fase de draft');
-      return;
-    }
-
-    // ✅ CORREÇÃO: Verificar se data.matchId existe antes de usar
-    if (data.matchId && this.draftData.matchId !== data.matchId) {
-      console.log('⚠️ [App] Ação do draft ignorada - partida diferente');
-      return;
-    }
-
-    console.log('✅ [App] Ação do draft válida, processando:', {
-      currentAction: data.currentAction,
-      lastAction: data.lastAction,
-      championId: data.championId,
-      action: data.action,
-      matchId: data.matchId
-    });
-
-    // ✅ CORREÇÃO: ATUALIZAR O DRAFTDATA COM OS DADOS DO BACKEND
-    this.draftData = {
-      ...this.draftData,
-      currentAction: data.currentAction,
-      lastAction: data.lastAction
-    };
-
-    // ✅ NOVO: Se há championId, forçar sincronização imediata para atualizar a tela
-    if (data.championId || data.action === 'pick' || data.action === 'ban') {
-      console.log('🎯 [App] Ação de pick/ban detectada - forçando sincronização imediata');
-      logApp('🎯 [App] PICK_BAN_ACTION_DETECTED', {
-        matchId: data.matchId,
-        championId: data.championId,
-        action: data.action,
-        currentAction: data.currentAction,
-        timestamp: new Date().toISOString()
-      });
-
-      // Forçar sincronização após pequeno delay para garantir que o backend salvou
-      setTimeout(() => {
-        this.forceDraftSync(data.matchId);
-      }, 200);
-    }
-
-    // ✅ CORREÇÃO: Enviar evento customizado para o componente de draft
-    const draftActionEvent = new CustomEvent('draft_action', {
-      detail: {
-        matchId: data.matchId,
-        currentAction: data.currentAction,
-        lastAction: data.lastAction,
-        championId: data.championId,
-        action: data.action,
-        playerId: data.playerId,
-        timestamp: Date.now()
-      }
-    });
-    document.dispatchEvent(draftActionEvent);
-    console.log('🔄 [App] Evento draft_action enviado:', draftActionEvent.detail);
-
-    // ✅ CORREÇÃO: Notificar componente de draft sobre ação
-    if (this.draftComponentRef?.handleDraftAction) {
-      console.log('🔄 [App] Notificando componente de draft sobre ação');
-      try {
-        this.draftComponentRef.handleDraftAction(data);
-        console.log('✅ [App] Componente de draft notificado com sucesso');
-      } catch (error) {
-        console.error('❌ [App] Erro ao notificar componente de draft:', error);
-      }
-    }
-
-    // Forçar atualização da interface
-    this.cdr.detectChanges();
-    console.log('🔄 [App] Ação do draft processada com sucesso');
+  private getCurrentPlayerIdentifiers(): string[] {
+    const ids: string[] = [];
+    if (this.currentPlayer?.displayName) ids.push(this.currentPlayer.displayName);
+    if (this.currentPlayer?.summonerName) ids.push(this.currentPlayer.summonerName);
+    if (this.currentPlayer?.gameName && this.currentPlayer?.tagLine) ids.push(`${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`);
+    return ids;
   }
 
-  // ✅ NOVO: Método para forçar sincronização imediata do draft
-  private async forceDraftSyncImmediate(matchId: number, reason: string = 'manual'): Promise<void> {
-    try {
-      console.log(`🔄 [App] === SINCRONIZAÇÃO IMEDIATA DO DRAFT (${reason}) ===`);
-      logApp('🔄 [App] FORCE_DRAFT_SYNC_IMMEDIATE', {
-        matchId,
-        reason,
-        currentPlayer: this.currentPlayer?.summonerName,
-        timestamp: new Date().toISOString()
-      });
-
-      // ✅ USAR método existente checkSyncStatus para forçar sincronização
-      if (!this.currentPlayer?.summonerName) {
-        console.warn('⚠️ [App] Não é possível sincronizar - jogador não identificado');
-        return;
-      }
-
-      this.apiService.checkSyncStatus(this.currentPlayer.summonerName).subscribe({
-        next: (response: any) => {
-          if (response?.status === 'draft' && response?.matchId === matchId) {
-            console.log('✅ [App] Sincronização imediata bem-sucedida:', response);
-            logApp('✅ [App] SYNC_SUCCESS', {
-              matchId,
-              reason,
-              totalActions: response.totalActions,
-              currentAction: response.currentAction,
-              timestamp: new Date().toISOString()
-            });
-
-            // Processar dados sincronizados
-            this.handleDraftDataSync(response);
-          } else {
-            console.warn('⚠️ [App] Sincronização retornou dados inesperados:', response);
-            logApp('⚠️ [App] SYNC_UNEXPECTED', {
-              matchId,
-              reason,
-              responseStatus: response?.status,
-              responseMatchId: response?.matchId,
-              timestamp: new Date().toISOString()
-            });
-          }
-        },
-        error: (error: any) => {
-          console.error('❌ [App] Erro na sincronização imediata:', error);
-          logApp('❌ [App] SYNC_ERROR', {
-            matchId,
-            reason,
-            error: error.message || error,
-            timestamp: new Date().toISOString()
-          });
-        }
-      });
-    } catch (error) {
-      console.error('❌ [App] Erro na sincronização imediata:', error);
-      logApp('❌ [App] SYNC_IMMEDIATE_ERROR', {
-        matchId,
-        reason,
-        error: error instanceof Error ? error.message : error,
-        timestamp: new Date().toISOString()
-      });
-    }
+  private namesMatch(a: string, b: string): boolean {
+    if (!a || !b) return false;
+    const norm = (s: string) => s.trim().toLowerCase();
+    if (norm(a) === norm(b)) return true;
+    // comparar apenas gameName se houver tag
+    const ga = a.includes('#') ? a.split('#')[0] : a;
+    const gb = b.includes('#') ? b.split('#')[0] : b;
+    return norm(ga) === norm(gb);
   }
 
-  // ✅ NOVO: Fallback para verificar status do draft
-  private checkDraftStatusFallback(matchId: number): void {
-    if (!this.currentPlayer?.summonerName) return;
-
-    this.apiService.checkSyncStatus(this.currentPlayer.summonerName).subscribe({
-      next: (response: any) => {
-        if (response?.status === 'draft' && response?.matchId === matchId) {
-          console.log('🔄 [App] Fallback de verificação bem-sucedido');
-          this.handleDraftDataSync(response);
-        }
-      },
-      error: (error: any) => {
-        console.error('❌ [App] Erro no fallback de verificação:', error);
-      }
-    });
+  private convertBasicPlayersToPlayerInfo(names: string[]): any[] {
+    if (!Array.isArray(names)) return [];
+    return names.map((n, idx) => ({
+      summonerName: n,
+      name: n,
+      id: null,
+      champion: null,
+      championName: null,
+      championId: null,
+      lane: 'unknown',
+      assignedLane: 'unknown',
+      teamIndex: idx,
+      mmr: 1000,
+      primaryLane: 'unknown',
+      secondaryLane: 'unknown',
+      isAutofill: false
+    }));
   }
-
-  // ✅ NOVO: Método para forçar sincronização do draft
-  private async forceDraftSync(matchId: number): Promise<void> {
-    try {
-      console.log('🔄 [App] Forçando sincronização do draft após ação de bot');
-
-      this.apiService.checkSyncStatus(this.currentPlayer?.summonerName || '').subscribe({
-        next: (response) => {
-          if (response && response.status === 'draft' && response.matchId === matchId) {
-            console.log('🔄 [App] Sincronização forçada bem-sucedida');
-            this.handleDraftDataSync(response);
-          }
-        },
-        error: (error) => {
-          console.error('❌ [App] Erro na sincronização forçada:', error);
-        }
-      });
-    } catch (error) {
-      console.error('❌ [App] Erro na sincronização forçada:', error);
-    }
-  }
-
-  // ✅ NOVO: Handler para sincronização de dados do draft
-  private handleDraftDataSync(data: any): void {
-    console.log('🔄 [App] Sincronizando dados do draft:', data);
-
-    // Verificar se estamos na fase de draft e se é a partida correta
-    if (!this.inDraftPhase || !this.draftData || this.draftData.matchId !== data.matchId) {
-      console.log('⚠️ [App] Sincronização ignorada - não estamos no draft desta partida');
-      return;
-    }
-
-    // Atualizar dados do draft com informações sincronizadas
-    if (data.pickBanData) {
-      console.log('🔄 [App] Atualizando pickBanData:', {
-        totalActions: data.totalActions,
-        totalPicks: data.totalPicks,
-        totalBans: data.totalBans,
-        lastAction: data.lastAction?.action || 'none'
-      });
-
-      // ✅ CORREÇÃO: Mapear team1/team2 para blueTeam/redTeam conforme esperado pelo frontend
-      const pickBanData = typeof data.pickBanData === 'string'
-        ? JSON.parse(data.pickBanData)
-        : data.pickBanData;
-
-      // Sempre: blueTeam = team1, redTeam = team2
-      this.draftData = {
-        ...this.draftData,
-        blueTeam: pickBanData.team1 || [],
-        redTeam: pickBanData.team2 || [],
-        phases: pickBanData.phases || this.draftData.phases || [],
-        currentAction: pickBanData.currentAction || this.draftData.currentAction || 0,
-        phase: pickBanData.phase || this.draftData.phase || 'bans',
-        actions: pickBanData.actions || this.draftData.actions || [],
-        team1Picks: pickBanData.team1Picks || this.draftData.team1Picks || [],
-        team1Bans: pickBanData.team1Bans || this.draftData.team1Bans || [],
-        team2Picks: pickBanData.team2Picks || this.draftData.team2Picks || [],
-        team2Bans: pickBanData.team2Bans || this.draftData.team2Bans || [],
-        totalActions: data.totalActions,
-        totalPicks: data.totalPicks,
-        totalBans: data.totalBans,
-        team1Stats: data.team1Stats,
-        team2Stats: data.team2Stats,
-        lastAction: data.lastAction,
-        lastSyncTime: Date.now()
-      };
-
-      // ✅ NOVO: Notificar componente de draft sobre a sincronização
-      if (this.draftComponentRef?.handleDraftDataSync) {
-        console.log('🔄 [App] Notificando componente de draft sobre sincronização');
-        this.draftComponentRef.handleDraftDataSync(data);
-      } else {
-        console.log('⚠️ [App] Componente de draft não encontrado ou não suporta sincronização');
-      }
-
-      // ✅ NOVO: Forçar atualização da interface
-      this.cdr.detectChanges();
-
-      console.log('✅ [App] Dados do draft sincronizados com sucesso');
-    }
-  }
-
-  // ✅ CORREÇÃO: Handler para atualizações de timer do draft - APENAS EXIBIÇÃO
-  private handleDraftTimerUpdate(data: any): void {
-    console.log('⏰ [App] === HANDLE DRAFT TIMER UPDATE ===');
-    console.log('⏰ [App] Dados do timer:', data);
-
-    // Verificar se estamos na fase de draft
-    if (!this.inDraftPhase || !this.draftData) {
-      console.log('⚠️ [App] Timer de draft ignorado - não estamos na fase de draft');
-      return;
-    }
-
-    // Verificar se é a partida correta
-    if (data.matchId && this.draftData.matchId !== data.matchId) {
-      console.log('⚠️ [App] Timer de draft ignorado - partida diferente');
-      return;
-    }
-
-    console.log('✅ [App] Timer de draft válido, processando:', {
-      timeRemaining: data.timeRemaining,
-      isUrgent: data.isUrgent,
-      matchId: data.matchId
-    });
-
-    // ✅ CORREÇÃO: APENAS ATUALIZAR O TIMER NO DRAFTDATA - sem lógica local
-    this.draftData = {
-      ...this.draftData,
-      timeRemaining: data.timeRemaining,
-      isUrgent: data.isUrgent
-      // ✅ IMPORTANTE: NÃO atualizar currentAction aqui - isso deve vir apenas do backend
-    };
-
-    // ✅ CORREÇÃO: Enviar evento customizado para o componente de draft
-    const timerUpdateEvent = new CustomEvent('draftTimerUpdate', {
-      detail: {
-        matchId: data.matchId,
-        timeRemaining: data.timeRemaining,
-        isUrgent: data.isUrgent,
-        timestamp: Date.now()
-      }
-    });
-    document.dispatchEvent(timerUpdateEvent);
-    console.log('⏰ [App] Evento draftTimerUpdate enviado:', timerUpdateEvent.detail);
-
-    // ✅ CORREÇÃO: Notificar componente de draft sobre atualização de timer
-    if (this.draftComponentRef?.updateTimerFromBackend) {
-      console.log('⏰ [App] Notificando componente de draft sobre atualização de timer');
-      try {
-        this.draftComponentRef.updateTimerFromBackend(data);
-        console.log('✅ [App] Componente de draft notificado com sucesso');
-      } catch (error) {
-        console.error('❌ [App] Erro ao notificar componente de draft:', error);
-      }
-    }
-
-    // Forçar atualização da interface
-    this.cdr.detectChanges();
-    console.log('⏰ [App] Timer de draft processado com sucesso');
-  }
-
-  // ✅ CORREÇÃO: Handler para mudanças de jogador do draft - APENAS EXIBIÇÃO
-  private handleDraftPlayerChange(data: any): void {
-    console.log('🔄 [App] === HANDLE DRAFT PLAYER CHANGE ===');
-    console.log('🔄 [App] Dados da mudança de jogador:', data);
-
-    // Verificar se estamos na fase de draft
-    if (!this.inDraftPhase || !this.draftData) {
-      console.log('⚠️ [App] Mudança de jogador ignorada - não estamos na fase de draft');
-      return;
-    }
-
-    // Verificar se é a partida correta
-    if (data.matchId && this.draftData.matchId !== data.matchId) {
-      console.log('⚠️ [App] Mudança de jogador ignorada - partida diferente');
-      return;
-    }
-
-    console.log('✅ [App] Mudança de jogador válida, processando:', {
-      currentAction: data.currentAction,
-      previousAction: data.previousAction,
-      matchId: data.matchId
-    });
-
-    // ✅ CORREÇÃO: NÃO atualizar currentAction aqui - deixar o backend ser a fonte de verdade
-    // this.draftData = {
-    //   ...this.draftData,
-    //   currentAction: data.currentAction
-    // };
-
-    // ✅ CORREÇÃO: Enviar evento customizado para o componente de draft
-    const playerChangeEvent = new CustomEvent('draftPlayerChange', {
-      detail: {
-        matchId: data.matchId,
-        currentAction: data.currentAction,
-        previousAction: data.previousAction,
-        timestamp: Date.now()
-      }
-    });
-    document.dispatchEvent(playerChangeEvent);
-    console.log('🔄 [App] Evento draftPlayerChange enviado:', playerChangeEvent.detail);
-
-    // ✅ CORREÇÃO: Notificar componente de draft sobre mudança de jogador
-    if (this.draftComponentRef?.handlePlayerChange) {
-      console.log('🔄 [App] Notificando componente de draft sobre mudança de jogador');
-      try {
-        this.draftComponentRef.handlePlayerChange(data);
-        console.log('✅ [App] Componente de draft notificado com sucesso');
-      } catch (error) {
-        console.error('❌ [App] Erro ao notificar componente de draft:', error);
-      }
-    }
-
-    // Forçar atualização da interface
-    this.cdr.detectChanges();
-    console.log('🔄 [App] Mudança de jogador processada com sucesso');
-  }
-
-  // ✅ NOVO: Método de teste para simular mensagens de timer do draft
-  testDraftTimerMessages(): void {
-    logApp('🧪 [App] === TESTE DE FUNÇÃO LOGAPP ===');
-    logApp('🧪 [App] Verificando se logApp está funcionando...');
-    logApp('🧪 [App] Timestamp:', new Date().toISOString());
-
-    console.log('🧪 [App] === TESTE DE MENSAGENS DE TIMER DO DRAFT ===');
-
-    // Simular mensagem de timer update
-    const timerUpdateMessage = {
-      type: 'draft_timer_update',
-      data: {
-        matchId: this.draftData?.matchId || 1066,
-        timeRemaining: 25,
-        isUrgent: false
-      }
-    };
-
-    console.log('🧪 [App] Simulando mensagem de timer update:', timerUpdateMessage);
-    this.handleBackendMessage(timerUpdateMessage);
-
-    // Simular mensagem de timeout
-    setTimeout(() => {
-      const timeoutMessage = {
-        type: 'draft_timeout',
-        data: {
-          matchId: this.draftData?.matchId || 1066,
-          playerId: this.currentPlayer?.puuid || this.currentPlayer?.summonerName || 'test_player',
-          timestamp: Date.now()
-        }
-      };
-
-      console.log('🧪 [App] Simulando mensagem de timeout:', timeoutMessage);
-      this.handleBackendMessage(timeoutMessage);
-    }, 2000);
-
-    console.log('🧪 [App] Teste de mensagens de timer concluído');
-  }
-
-  private handleDraftTimeout(data: any): void {
-    console.log('⏰ [App] === HANDLE DRAFT TIMEOUT ===');
-    console.log('⏰ [App] Dados do timeout:', data);
-    console.log('⏰ [App] Estado atual:', {
-      inDraftPhase: this.inDraftPhase,
-      hasDraftData: !!this.draftData,
-      draftMatchId: this.draftData?.matchId,
-      receivedMatchId: data?.matchId,
-      currentPlayerId: this.currentPlayer?.puuid || this.currentPlayer?.summonerName || this.currentPlayer?.displayName,
-      timeoutPlayerId: data?.playerId,
-      timestamp: new Date().toISOString()
-    });
-
-    // Verificar se estamos na fase de draft
-    if (!this.inDraftPhase || !this.draftData) {
-      console.log('⚠️ [App] Timeout de draft ignorado - não estamos na fase de draft');
-      return;
-    }
-
-    // Verificar se é a partida correta
-    if (data.matchId && this.draftData.matchId !== data.matchId) {
-      console.log('⚠️ [App] Timeout de draft ignorado - partida diferente');
-      console.log('⚠️ [App] Draft matchId:', this.draftData.matchId, 'Timeout matchId:', data.matchId);
-      return;
-    }
-
-    console.log('✅ [App] Timeout de draft válido, processando:', {
-      playerId: data.playerId,
-      matchId: data.matchId,
-      isCurrentPlayer: data.playerId === (this.currentPlayer?.displayName || this.currentPlayer?.summonerName)
-    });
-
-    // ✅ CORREÇÃO: Enviar evento customizado para o componente de draft
-    const timeoutEvent = new CustomEvent('draftTimeout', {
-      detail: {
-        matchId: data.matchId,
-        playerId: data.playerId,
-        timestamp: Date.now()
-      }
-    });
-    document.dispatchEvent(timeoutEvent);
-    console.log('⏰ [App] Evento draftTimeout enviado:', timeoutEvent.detail);
-
-    // ✅ CORREÇÃO: Notificar componente de draft sobre timeout
-    if (this.draftComponentRef?.handleDraftTimeout) {
-      console.log('⏰ [App] Notificando componente de draft sobre timeout');
-      try {
-        this.draftComponentRef.handleDraftTimeout(data);
-        console.log('✅ [App] Componente de draft notificado sobre timeout com sucesso');
-      } catch (error) {
-        console.error('❌ [App] Erro ao notificar componente de draft sobre timeout:', error);
-      }
-    } else {
-      console.warn('⚠️ [App] Componente de draft não encontrado ou método handleDraftTimeout não disponível');
-    }
-
-    // Verificar se é timeout para o jogador atual
-    const isTimeoutForCurrentPlayer = data.playerId && this.currentPlayer &&
-      (data.playerId === this.currentPlayer.displayName ||
-        data.playerId === this.currentPlayer.summonerName);
-
-    if (isTimeoutForCurrentPlayer) {
-      console.log('⏰ [App] Timeout para o jogador atual - fechando modais se necessário');
-      // O componente de draft irá lidar com o fechamento dos modais
-    } else {
-      console.log('⏰ [App] Timeout para outro jogador - mantendo interface');
-    }
-
-    // Forçar atualização da interface
-    this.cdr.detectChanges();
-
-    console.log('⏰ [App] Timeout de draft processado com sucesso');
-  }
-
-  private handleGameStarting(data: any): void {
-    console.log('🎮 [App] ========== INÍCIO DO handleGameStarting ==========');
-    console.log('🎮 [App] Jogo iniciando:', data);
-    console.log('🔍 [App] DEBUG - gameData originalMatchId:', data.originalMatchId);
-    console.log('🔍 [App] DEBUG - gameData matchId:', data.matchId);
-    console.log('🔍 [App] DEBUG - gameData completo:', JSON.stringify(data, null, 2));
-    console.log('🔍 [App] DEBUG - gameData.gameData:', data.gameData);
-    console.log('🔍 [App] DEBUG - gameData.gameData?.matchId:', data.gameData?.matchId);
-    console.log('🎮 [App] ========== FIM DO handleGameStarting ==========');
-
-    // ✅ CORREÇÃO: Verificar se os dados dos times estão presentes
-    if (!data.team1 || !data.team2) {
-      console.error('❌ [App] Dados dos times ausentes no evento game_starting:', {
-        hasTeam1: !!data.team1,
-        hasTeam2: !!data.team2,
-        team1Length: data.team1?.length || 0,
-        team2Length: data.team2?.length || 0,
-        dataKeys: Object.keys(data)
-      });
-    } else {
-      console.log('✅ [App] Dados dos times recebidos:', {
-        team1Length: data.team1.length,
-        team2Length: data.team2.length,
-        team1Players: data.team1.map((p: any) => p.summonerName || p.name),
-        team2Players: data.team2.map((p: any) => p.summonerName || p.name)
-      });
-    }
-
-    this.inDraftPhase = false;
-    this.draftData = null;
-    this.inGamePhase = true;
-    this.gameData = data;
-
-    this.addNotification('success', 'Jogo Iniciado!', 'A partida começou.');
-  }
-
-  // ✅ NOVO: Handler para mensagem game_started do WebSocket
-  private handleGameStarted(data: any): void {
-    console.log('🎮 [App] ===== GAME STARTED RECEBIDO =====');
-    console.log('🎮 [App] Dados recebidos:', data);
-
-    if (!data?.gameData) {
-      console.error('❌ [App] Dados inválidos para game_started:', data);
-      return;
-    }
-
-    // ✅ TRANSIÇÃO: Limpar estados anteriores
-    this.inDraftPhase = false;
-    this.draftData = null;
-    this.showMatchFound = false;
-    this.matchFoundData = null;
-    this.isInQueue = false;
-
-    // ✅ ATIVAR: Game in progress
-    this.inGamePhase = true;
-    // ✅ NORMALIZAR: Garantir que pickBanData esteja presente (mapeando de draftResults)
-    const incomingGameData = data.gameData || {};
-    const normalizedGameData = {
-      ...incomingGameData,
-      pickBanData: (() => {
-        try {
-          // Se já veio pronto
-          if (incomingGameData.pickBanData) {
-            return typeof incomingGameData.pickBanData === 'string'
-              ? JSON.parse(incomingGameData.pickBanData)
-              : incomingGameData.pickBanData;
-          }
-          // Fallback para draftResults enviado pelo backend
-          if (incomingGameData.draftResults) {
-            return typeof incomingGameData.draftResults === 'string'
-              ? JSON.parse(incomingGameData.draftResults)
-              : incomingGameData.draftResults;
-          }
-        } catch (e) {
-          console.warn('⚠️ [App] Erro ao parsear pickBanData/draftResults no gameStarted:', e);
-        }
-        return null;
-      })()
-    };
-
-    this.gameData = normalizedGameData;
-    this.lastMatchId = data.matchId || data.originalMatchId;
-
-    console.log('🎮 [App] Estado atualizado para game in progress:', {
-      matchId: this.lastMatchId,
-      inGamePhase: this.inGamePhase,
-      inDraftPhase: this.inDraftPhase,
-      showMatchFound: this.showMatchFound
-    });
-
-    console.log('🎯 [App] pickBanData normalizado disponível?', {
-      hasPickBanData: !!this.gameData?.pickBanData,
-      pickBanKeys: this.gameData?.pickBanData ? Object.keys(this.gameData.pickBanData) : []
-    });
-
-    this.addNotification('success', 'Jogo Iniciado!', 'A partida começou.');
-  }
-
-  private handleMatchCancelled(data: any): void {
-    console.log('❌ [App] Partida cancelada pelo backend');
-
-    // ✅ NOVO: Limpar controle de partida
-    this.lastMatchId = null;
-    this.showMatchFound = false;
-    this.matchFoundData = null;
-    this.inDraftPhase = false;
-    this.draftData = null;
-    this.isInQueue = true; // Voltar para fila
-
-    console.log('❌ [App] Estado limpo após cancelamento');
-    this.addNotification('info', 'Partida Cancelada', data.message || 'A partida foi cancelada.');
-  }
-
-  private handleMatchTimerUpdate(data: any): void {
-    console.log('⏰ [App] === handleMatchTimerUpdate ===');
-    console.log('⏰ [App] Timer atualizado:', data);
-    console.log('⏰ [App] Verificando condições:', {
-      showMatchFound: this.showMatchFound,
-      hasMatchFoundData: !!this.matchFoundData,
-      matchDataId: this.matchFoundData?.matchId,
-      timerDataId: data.matchId,
-      idsMatch: this.matchFoundData?.matchId === data.matchId
-    });
-
-    // ✅ CORREÇÃO: Verificar se devemos processar esta atualização
-    if (!this.showMatchFound || !this.matchFoundData) {
-      console.log('⏰ [App] Match não está visível - ignorando timer');
-      return;
-    }
-
-    if (this.matchFoundData.matchId !== data.matchId) {
-      console.log('⏰ [App] Timer para partida diferente - ignorando');
-      return;
-    }
-
-    // ✅ NOVO: Throttle para evitar atualizações excessivas
-    const now = Date.now();
-    const timeSinceLastUpdate = now - (this.lastTimerUpdate || 0);
-
-    if (timeSinceLastUpdate < 500) { // Máximo 2 atualizações por segundo
-      console.log('⏰ [App] Throttling timer update - muito frequente');
-      return;
-    }
-
-    this.lastTimerUpdate = now;
-
-    console.log('⏰ [App] Condições atendidas - emitindo evento para componente');
-
-    // ✅ CORREÇÃO: Emitir evento apenas quando necessário
-    try {
-      document.dispatchEvent(new CustomEvent('matchTimerUpdate', {
-        detail: {
-          matchId: data.matchId,
-          timeLeft: data.timeLeft,
-          isUrgent: data.isUrgent || data.timeLeft <= 10
-        }
-      }));
-      console.log('⏰ [App] Evento matchTimerUpdate emitido com sucesso');
-    } catch (error) {
-      console.error('❌ [App] Erro ao emitir evento matchTimerUpdate:', error);
-    }
-  }
-
-  private handleQueueUpdate(data: any): void {
-    // ✅ NOVO: Guarda de proteção para dados inválidos
-    if (!data) {
-      console.warn('⚠️ [App] handleQueueUpdate recebeu dados nulos, ignorando.');
-      return;
-    }
-
-    // ✅ VERIFICAR SE AUTO-REFRESH ESTÁ HABILITADO ANTES DE PROCESSAR
-    if (!this.autoRefreshEnabled) {
-      // Só processar atualizações críticas mesmo com auto-refresh desabilitado
-      const currentPlayerCount = this.queueStatus?.playersInQueue || 0;
-      const newPlayerCount = data?.playersInQueue || 0;
-      const isCriticalUpdate = newPlayerCount >= 10 && currentPlayerCount < 10; // Matchmaking threshold
-
-      if (!isCriticalUpdate && !data?.critical) {
-        // ✅ IGNORAR: Auto-refresh desabilitado e não é atualização crítica
-        const timeSinceLastIgnoreLog = Date.now() - (this.lastIgnoreLogTime || 0);
-        if (timeSinceLastIgnoreLog > 30000) { // Log apenas a cada 30 segundos
-          console.log('⏭️ [App] Atualizações da fila ignoradas - auto-refresh desabilitado');
-          this.lastIgnoreLogTime = Date.now();
-        }
-        return;
-      }
-    }
-
-    // ✅ FILTROS MÚLTIPLOS: Só atualizar em casos específicos e necessários
-    const currentPlayerCount = this.queueStatus?.playersInQueue || 0;
-    const newPlayerCount = data?.playersInQueue || 0;
-
-    // 1. Verificar se há mudança no número de jogadores
-    const hasPlayerCountChange = currentPlayerCount !== newPlayerCount;
-
-    // 2. Verificar se há mudança no status ativo da fila
-    const currentIsActive = this.queueStatus?.isActive || false;
-    const newIsActive = data?.isActive !== undefined ? data.isActive : currentIsActive;
-    const hasActiveStatusChange = currentIsActive !== newIsActive;
-
-    // 3. Verificar se é uma mudança crítica (10+ jogadores = matchmaking)
-    const isCriticalThreshold = newPlayerCount >= 10 && currentPlayerCount < 10;
-
-    // ✅ SÓ ATUALIZAR SE HOUVER MUDANÇAS SIGNIFICATIVAS
-    if (hasPlayerCountChange || hasActiveStatusChange || isCriticalThreshold) {
-      console.log(`📊 [App] Status da fila atualizado:`, {
-        playersInQueue: `${currentPlayerCount} → ${newPlayerCount}`,
-        isActive: `${currentIsActive} → ${newIsActive}`,
-        isCritical: isCriticalThreshold,
-        autoRefreshEnabled: this.autoRefreshEnabled
-      });
-      this.queueStatus = data;
-    } else {
-      // ✅ IGNORAR: Log apenas quando necessário, evitar spam
-      const timeSinceLastIgnoreLog = Date.now() - (this.lastIgnoreLogTime || 0);
-      if (timeSinceLastIgnoreLog > 5000) { // Log apenas a cada 5 segundos
-        console.log('⏭️ [App] Atualizações da fila ignoradas - sem mudanças significativas');
-        this.lastIgnoreLogTime = Date.now();
-      }
-    }
-  }
+  // ===== end of helper stubs =====
 
   ngOnDestroy(): void {
     this.destroy$.next();
@@ -2029,6 +496,11 @@ export class App implements OnInit, OnDestroy {
 
     // ✅ PARAR: Polling do draft
     this.stopDraftPolling();
+
+    if (this.lcuTelemetryInterval) {
+      clearInterval(this.lcuTelemetryInterval);
+      this.lcuTelemetryInterval = null;
+    }
   }
 
   // ✅ MANTIDO: Métodos de interface
@@ -3134,24 +1606,6 @@ export class App implements OnInit, OnDestroy {
     });
   }
 
-  onProfileIconError(event: Event): void {
-    console.warn('⚠️ [App] Erro ao carregar ícone de perfil:', event);
-  }
-
-  refreshPlayerData(): void {
-    console.log('🔄 [App] Atualizando dados do jogador');
-    this.currentPlayer = null; // Limpar dados antigos
-    this.loadPlayerData();
-    this.addNotification('info', 'Dados Atualizados', 'Dados do jogador foram recarregados do LCU');
-  }
-
-  clearPlayerData(): void {
-    console.log('🗑️ [App] Limpando dados do jogador');
-    this.currentPlayer = null;
-    localStorage.removeItem('currentPlayer');
-    this.addNotification('info', 'Dados Limpos', 'Dados do jogador foram removidos');
-  }
-
   updateRiotApiKey(): void {
     console.log('🔑 [App] Atualizando Riot API Key:', this.settingsForm.riotApiKey);
 
@@ -3361,7 +1815,7 @@ export class App implements OnInit, OnDestroy {
       lcuMatchData: match,
       playerIdentifier: playerIdentifier
     }).subscribe({
-      next: (createResponse) => {
+      next: (createResponse: any) => {
         logApp('[simular game] ✅ Partida customizada criada:', createResponse);
 
         this.addNotification('success', 'Simulação Criada',
@@ -3369,7 +1823,7 @@ export class App implements OnInit, OnDestroy {
 
         this.startGameInProgressFromSimulation(createResponse);
       },
-      error: (createError) => {
+      error: (createError: any) => {
         logApp('❌ [App] Erro ao criar partida customizada:', createError);
         this.addNotification('error', 'Erro na Simulação',
           'Não foi possível criar a partida customizada. Verifique se o LoL está aberto.');
@@ -3377,126 +1831,8 @@ export class App implements OnInit, OnDestroy {
     });
   }
 
-  // ✅ NOVO: Método para iniciar GameInProgress com dados da simulação
-  private startGameInProgressFromSimulation(simulationData: any): void {
-    logApp('[simular game] 🎮 Iniciando GameInProgress com dados da simulação:', simulationData);
-
-    try {
-      // Extrair dados da resposta da simulação
-      const matchId = simulationData.matchId;
-      const gameId = simulationData.gameId;
-      const participantsCount = simulationData.participantsCount;
-
-      // ✅ NOVO: Buscar dados completos da partida criada
-      const playerName = this.currentPlayer?.summonerName || '';
-      if (!playerName) {
-        this.addNotification('error', 'Erro na Simulação', 'Nome do jogador não disponível.');
-        return;
-      }
-
-      this.apiService.getCustomMatches(playerName, 0, 1).subscribe({
-        next: (matchesResponse) => {
-          logApp('[simular game] Dados da partida criada:', matchesResponse);
-          logApp('[simular game] Estrutura completa da resposta:', JSON.stringify(matchesResponse, null, 2));
-
-          const matches = matchesResponse.matches || [];
-          logApp('[simular game] Matches encontrados:', matches.length);
-
-          if (matches.length > 0) {
-            const latestMatch = matches[0]; // A partida mais recente (que acabamos de criar)
-            console.log('[simular game] Dados da partida mais recente:', latestMatch);
-            console.log('[simular game] Pick/ban data da partida:', latestMatch.pick_ban_data);
-
-            // ✅ NOVO: Preparar dados para o GameInProgress
-            // ✅ CORREÇÃO: Extrair pickBanData da partida real
-            let extractedPickBanData = {};
-            try {
-              if (latestMatch.pick_ban_data) {
-                extractedPickBanData = typeof latestMatch.pick_ban_data === 'string'
-                  ? JSON.parse(latestMatch.pick_ban_data)
-                  : latestMatch.pick_ban_data;
-                console.log('[simular game] Pick/ban data extraída da partida real:', extractedPickBanData);
-              }
-            } catch (parseError) {
-              console.warn('[simular game] Erro ao parsear pick_ban_data da partida real:', parseError);
-            }
-
-            const gameData = {
-              sessionId: `simulation_${matchId}`,
-              gameId: gameId?.toString() || `sim_${matchId}`,
-              team1: this.extractTeamFromMatchData(latestMatch, 1),
-              team2: this.extractTeamFromMatchData(latestMatch, 2),
-              startTime: new Date(),
-              pickBanData: extractedPickBanData, // ✅ CORREÇÃO: Usar dados reais da partida
-              isCustomGame: true,
-              originalMatchId: matchId,
-              originalMatchData: latestMatch,
-              riotId: this.currentPlayer?.summonerName || ''
-            };
-
-            console.log('[simular game] Dados preparados para GameInProgress:', gameData);
-
-            // ✅ NOVO: Iniciar fase de jogo
-            console.log('[simular game] Definindo inGamePhase = true');
-            this.inGamePhase = true;
-            console.log('[simular game] Definindo gameData:', gameData);
-            this.gameData = gameData;
-            console.log('[simular game] Definindo inDraftPhase = false');
-            this.inDraftPhase = false; // Garantir que não está em draft
-            this.draftData = null;
-            console.log('[simular game] Definindo currentView = dashboard');
-            this.currentView = 'dashboard'; // Garantir que estamos na view correta
-
-            // ✅ NOVO: Forçar detecção de mudanças
-            console.log('[simular game] Forçando detecção de mudanças...');
-            this.cdr.detectChanges();
-
-            // ✅ NOVO: Usar setTimeout para garantir que a mudança seja aplicada
-            setTimeout(() => {
-              console.log('[simular game] ⏰ Verificação após timeout:');
-              console.log('[simular game] - inGamePhase:', this.inGamePhase);
-              console.log('[simular game] - inDraftPhase:', this.inDraftPhase);
-              console.log('[simular game] - gameData existe:', !!this.gameData);
-              this.cdr.detectChanges();
-            }, 100);
-
-            console.log('[simular game] ✅ GameInProgress iniciado com sucesso:', {
-              inGamePhase: this.inGamePhase,
-              inDraftPhase: this.inDraftPhase,
-              hasGameData: !!this.gameData,
-              team1Length: this.gameData?.team1?.length || 0,
-              team2Length: this.gameData?.team2?.length || 0,
-              currentView: this.currentView
-            });
-
-            // ✅ NOVO: Verificar se as condições do template estão corretas
-            console.log('[simular game] 🔍 Verificação das condições do template:');
-            console.log('[simular game] - inGamePhase:', this.inGamePhase);
-            console.log('[simular game] - inDraftPhase:', this.inDraftPhase);
-            console.log('[simular game] - !inDraftPhase && !inGamePhase:', !this.inDraftPhase && !this.inGamePhase);
-            console.log('[simular game] - currentView:', this.currentView);
-            console.log('[simular game] - gameData existe:', !!this.gameData);
-
-            this.addNotification('success', 'Simulação Ativa',
-              `Partida simulada iniciada! ${participantsCount} jogadores, ${gameData.team1.length} vs ${gameData.team2.length}`);
-
-          } else {
-            console.error('❌ [App] Nenhuma partida encontrada após criação');
-            this.addNotification('error', 'Erro na Simulação', 'Partida criada mas não foi possível carregar os dados.');
-          }
-        },
-        error: (matchesError) => {
-          console.error('❌ [App] Erro ao buscar dados da partida criada:', matchesError);
-          this.addNotification('error', 'Erro na Simulação', 'Partida criada mas não foi possível carregar os dados.');
-        }
-      });
-
-    } catch (error) {
-      console.error('❌ [App] Erro ao preparar dados para GameInProgress:', error);
-      this.addNotification('error', 'Erro na Simulação', 'Erro interno ao preparar dados da partida.');
-    }
-  }
-
+  // REMOVIDO: Duplicata tardia de startGameInProgressFromSimulation para evitar TS2393
+  // private startGameInProgressFromSimulation(simulationData: any): void { ... }
   // ✅ NOVO: Método auxiliar para extrair dados dos times da partida
   private extractTeamFromMatchData(matchData: any, teamNumber: number): any[] {
     try {

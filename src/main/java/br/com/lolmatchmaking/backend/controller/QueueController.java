@@ -12,7 +12,7 @@ import java.util.Map;
 
 @Slf4j
 @RestController
-@RequestMapping("/queue")
+@RequestMapping("/api/queue")
 @RequiredArgsConstructor
 public class QueueController {
 

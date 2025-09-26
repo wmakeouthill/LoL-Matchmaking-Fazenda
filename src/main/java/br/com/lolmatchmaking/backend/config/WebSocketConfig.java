@@ -1,5 +1,6 @@
 package br.com.lolmatchmaking.backend.config;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.config.annotation.EnableWebSocket;
 import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
@@ -8,6 +9,7 @@ import org.springframework.lang.NonNull;
 
 import br.com.lolmatchmaking.backend.websocket.CoreWebSocketHandler;
 
+@Slf4j
 @Configuration
 @EnableWebSocket
 public class WebSocketConfig implements WebSocketConfigurer {
@@ -20,7 +22,14 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
     @Override
     public void registerWebSocketHandlers(@NonNull WebSocketHandlerRegistry registry) {
+        // ✅ CORREÇÃO COMPLETA: WebSocket simples sem SockJS que estava causando conflito
+        registry.addHandler(coreWebSocketHandler, "/api/ws")
+                .setAllowedOriginPatterns("*"); // Usar allowedOriginPatterns em vez de allowedOrigins
+
+        // ✅ OPCIONAL: WebSocket alternativo sem /api (se necessário)
         registry.addHandler(coreWebSocketHandler, "/ws")
-                .setAllowedOrigins("*");
+                .setAllowedOriginPatterns("*");
+
+        log.info("🔌 WebSocket registrado em: /api/ws e /ws");
     }
 }

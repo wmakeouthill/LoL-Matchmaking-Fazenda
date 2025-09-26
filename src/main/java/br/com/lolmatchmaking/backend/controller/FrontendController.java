@@ -3,7 +3,6 @@ package br.com.lolmatchmaking.backend.controller;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
 
 import jakarta.servlet.http.HttpServletRequest;
 
@@ -12,7 +11,7 @@ import jakarta.servlet.http.HttpServletRequest;
 public class FrontendController {
 
     /**
-     * Serve o index.html do frontend para todas as rotas que não são API
+     * Serve o index.html do frontend para rotas específicas do Angular
      */
     @GetMapping({"/", "/queue", "/draft", "/match/**", "/admin", "/config"})
     public String index(HttpServletRequest request) {
@@ -22,10 +21,12 @@ public class FrontendController {
     }
 
     /**
-     * Catch-all para SPAs - qualquer rota não capturada vai para o frontend
+     * ✅ NOVO: Redirect da rota /api/ para a raiz (melhora UX)
+     * Quando usuário acessa http://localhost:8080/api/ diretamente
      */
-    @RequestMapping(value = "/{path:[^\\.]*}")
-    public String catchAll() {
-        return "forward:/index.html";
+    @GetMapping("/api/")
+    public String redirectApiToRoot() {
+        log.debug("🔄 Redirecionando /api/ para raiz");
+        return "redirect:/";
     }
 }

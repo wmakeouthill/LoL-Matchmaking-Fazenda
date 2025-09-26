@@ -72,6 +72,39 @@ REM Deploy Google Cloud
 scripts\deploy-gcp.bat
 ```
 
+## 🖱️ Electron + Docker (Windows/macOS)
+
+O app Electron pode usar o backend no Docker (porta 8080) e acessar o LCU no host automaticamente.
+
+Pré-requisitos:
+- Backend no Docker ouvindo em http://localhost:8080 (docker-compose up -d)
+- League of Legends aberto (lockfile presente)
+
+Passos (Windows CMD):
+
+```cmd
+REM 1) Validar backend
+docker-compose ps
+docker-compose logs -f app
+
+REM 2) Iniciar Electron apontando para o backend
+cd /d "spring-backend\scripts"
+start-electron.bat
+```
+
+Dicas importantes:
+- O preload do Electron lê o lockfile local e envia para o backend via POST /api/lcu/configure.
+- O payload usa host="auto" por padrão; o backend tenta host.docker.internal e 127.0.0.1.
+- Se o LoL não estiver aberto, /api/lcu/configure pode responder 400; abra o LoL e tente novamente (o app tenta automaticamente por alguns segundos).
+- Para forçar um host específico do LCU, defina a variável antes de iniciar o Electron:
+
+```cmd
+set LCU_HOST=127.0.0.1
+scripts\start-electron.bat
+```
+
+macOS: host.docker.internal funciona nativamente. Linux pode exigir extra_hosts no docker-compose.
+
 ## 📋 Como Funciona
 
 ### ✅ Backend Serve o Frontend
@@ -141,6 +174,12 @@ cd frontend && npm run build:prod
 ### Problema: CORS errors
 - URLs do frontend e backend devem estar no mesmo domínio
 - No Docker/GCP, usar a mesma URL para frontend e backend
+
+### Problema: LCU não conecta (400 em /api/lcu/configure)
+- Verifique se o LoL está aberto (lockfile presente)
+- Confira se o container resolve host.docker.internal (Windows/macOS OK; Linux: use `extra_hosts: ['host.docker.internal:host-gateway']`)
+- Tente definir `LCU_HOST=127.0.0.1` ao iniciar o Electron (ver seção acima)
+- Veja os logs: `docker-compose logs -f app | findstr LCU`
 
 ## ⚡ Comandos de Uma Linha
 

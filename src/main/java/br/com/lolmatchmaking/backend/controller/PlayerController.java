@@ -3,51 +3,103 @@ package br.com.lolmatchmaking.backend.controller;
 import br.com.lolmatchmaking.backend.dto.PlayerDTO;
 import br.com.lolmatchmaking.backend.service.PlayerService;
 import br.com.lolmatchmaking.backend.service.RiotAPIService;
+import br.com.lolmatchmaking.backend.service.LCUService;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 @Slf4j
 @RestController
-@RequestMapping("/player")
+@RequestMapping("/api/player")
 @RequiredArgsConstructor
 public class PlayerController {
 
     private final PlayerService playerService;
     private final RiotAPIService riotAPIService;
+    private final LCUService lcuService;
 
     /**
      * GET /api/player/current-details
-     * Obtém detalhes do jogador atual
+     * Obtém detalhes do jogador atual via LCU
      */
     @GetMapping("/current-details")
-    public ResponseEntity<Map<String, Object>> getCurrentPlayerDetails() {
+    public CompletableFuture<ResponseEntity<Map<String, Object>>> getCurrentPlayerDetails() {
         try {
-            log.info("🔍 Obtendo detalhes do jogador atual");
+            log.info("🔍 Obtendo detalhes do jogador atual via LCU");
 
-            // Placeholder - implementar lógica real baseada no LCU
-            Map<String, Object> response = Map.of(
-                    "success", true,
-                    "player", Map.of(
-                            "summonerName", "TestPlayer",
-                            "region", "br1",
-                            "currentMmr", 1000,
-                            "peakMmr", 1200,
-                            "gamesPlayed", 0,
-                            "wins", 0,
-                            "losses", 0,
-                            "winRate", 0.0));
+            return lcuService.getCurrentSummoner()
+                    .thenApply(summonerData -> {
+                        Map<String, Object> response = new HashMap<>();
 
-            return ResponseEntity.ok(response);
+                        if (summonerData != null) {
+                            // Extrair dados do LCU
+                            String summonerName = summonerData.has("displayName") ?
+                                    summonerData.get("displayName").asText() : "Unknown";
+                            String gameName = summonerData.has("gameName") ?
+                                    summonerData.get("gameName").asText() : summonerName;
+                            String tagLine = summonerData.has("tagLine") ?
+                                    summonerData.get("tagLine").asText() : "";
+
+                            Map<String, Object> playerData = new HashMap<>();
+                            playerData.put("summonerName", summonerName);
+                            playerData.put("gameName", gameName);
+                            playerData.put("tagLine", tagLine);
+                            playerData.put("region", "br1"); // Assumir BR1 por padrão
+                            playerData.put("lcuConnected", true);
+
+                            // Adicionar dados do LCU se disponíveis
+                            if (summonerData.has("summonerId")) {
+                                playerData.put("summonerId", summonerData.get("summonerId").asText());
+                            }
+                            if (summonerData.has("puuid")) {
+                                playerData.put("puuid", summonerData.get("puuid").asText());
+                            }
+                            if (summonerData.has("summonerLevel")) {
+                                playerData.put("summonerLevel", summonerData.get("summonerLevel").asInt());
+                            }
+
+                            response.put("success", true);
+                            response.put("player", playerData);
+                            response.put("source", "LCU");
+
+                            return ResponseEntity.ok(response);
+                        } else {
+                            response.put("success", false);
+                            response.put("error", "LCU não conectado ou League of Legends não está aberto");
+                            response.put("lcuConnected", false);
+
+                            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(response);
+                        }
+                    })
+                    .exceptionally(ex -> {
+                        log.error("❌ Erro ao obter detalhes do jogador atual", ex);
+                        Map<String, Object> errorResponse = new HashMap<>();
+                        errorResponse.put("success", false);
+                        errorResponse.put("error", "Erro interno: " + ex.getMessage());
+                        errorResponse.put("lcuConnected", false);
+
+                        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+                    });
+
         } catch (Exception e) {
             log.error("❌ Erro ao obter detalhes do jogador atual", e);
-            return ResponseEntity.internalServerError()
-                    .body(Map.of("success", false, "error", e.getMessage()));
+
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("success", false);
+            errorResponse.put("error", e.getMessage());
+            errorResponse.put("lcuConnected", false);
+
+            return CompletableFuture.completedFuture(
+                    ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse)
+            );
         }
     }
 
@@ -141,7 +193,7 @@ public class PlayerController {
                 stats.setCustomGamesPlayed(serviceStats.getCustomGamesPlayed());
                 stats.setCustomWins(serviceStats.getCustomWins());
                 stats.setCustomLosses(serviceStats.getCustomLosses());
-                
+
                 return ResponseEntity.ok(Map.of(
                         "success", true,
                         "stats", stats));

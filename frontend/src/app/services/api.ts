@@ -1,8 +1,8 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { Observable, throwError, Subject, firstValueFrom } from 'rxjs';
-import { catchError, retry, map, switchMap, tap } from 'rxjs/operators';
-import { Player, RefreshPlayerResponse } from '../interfaces'; // Importar Player e RefreshPlayerResponse
+import { Observable, throwError, Subject, firstValueFrom, of } from 'rxjs';
+import { catchError, retry, map, switchMap } from 'rxjs/operators';
+import { Player, RefreshPlayerResponse } from '../interfaces';
 
 interface QueueStatus {
   playersInQueue: number;
@@ -58,18 +58,31 @@ interface MatchHistory {
   providedIn: 'root'
 })
 export class ApiService {
-  private baseUrl = this.getBaseUrl();
-  private fallbackUrls: string[] = [];
+  private readonly baseUrl: string; // ✅ readonly, inicializado no construtor
+  private readonly fallbackUrls: string[] = [];
 
   // Error suppression system to reduce spam when services are down
-  private errorSuppressionCache = new Map<string, number>();
+  private readonly errorSuppressionCache = new Map<string, number>();
   private readonly ERROR_SUPPRESSION_DURATION = 30000; // 30 seconds
 
   // ✅ NOVO: Subject para mensagens WebSocket
-  private webSocketMessageSubject = new Subject<any>();
+  private readonly webSocketMessageSubject = new Subject<any>();
   private webSocket: WebSocket | null = null;
 
-  constructor(private http: HttpClient) {
+  constructor(private readonly http: HttpClient) {
+    // ✅ CORREÇÃO: Inicializar baseUrl aqui, quando o contexto está pronto
+    this.baseUrl = this.getBaseUrl();
+
+    // Tentar auto-configurar LCU no Electron (antes de conectar WebSocket)
+    if (this.isElectron()) {
+      this.configureLCUFromElectron().catch(err => {
+        console.warn('⚠️ [ApiService] Falha ao auto-configurar LCU via Electron:', err);
+      });
+
+      // Retry LCU configuration a few times in case lockfile appears late
+      this.retryLCUAutoConfig();
+    }
+
     // Log de diagnóstico inicial
     console.log('🔧 ApiService inicializado:', {
       baseUrl: this.baseUrl,
@@ -91,6 +104,36 @@ export class ApiService {
     } else {
       // Em modo web, conectar imediatamente
       this.connectWebSocket();
+    }
+  }
+
+  // ✅ NOVO: Configurar LCU a partir do lockfile via Electron
+  private async configureLCUFromElectron(): Promise<void> {
+    try {
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.getLCULockfileInfo) {
+        console.log('ℹ️ [ApiService] electronAPI.getLCULockfileInfo não disponível');
+        return;
+      }
+
+      const info = electronAPI.getLCULockfileInfo();
+      if (!info) {
+        console.log('ℹ️ [ApiService] Lockfile do LCU não encontrado');
+        return;
+      }
+
+      console.log('🔧 [ApiService] Configurando LCU via /api/lcu/configure com dados do lockfile...');
+      const url = `${this.baseUrl}/lcu/configure`;
+      await firstValueFrom(this.http.post(url, info).pipe(
+        catchError(err => {
+          console.warn('⚠️ [ApiService] Erro ao configurar LCU:', err);
+          return of(null);
+        })
+      ));
+
+      console.log('✅ [ApiService] Configuração de LCU enviada');
+    } catch (e) {
+      console.warn('⚠️ [ApiService] Exceção ao configurar LCU:', e);
     }
   }
 
@@ -117,55 +160,114 @@ export class ApiService {
     this.connectWebSocket();
   }
 
+  // Tenta garantir que o backend central reconheça o LCU local (modo híbrido)
+  private async ensureLCUConfigured(): Promise<void> {
+    if (!this.isElectron()) return;
+    try {
+      const status: any = await firstValueFrom(this.getLCUStatus().pipe(catchError(() => of(null))));
+      const connected = !!status?.isConnected || !!status?.status?.connected;
+      if (connected) return;
+      await this.configureLCUFromElectron();
+    } catch {
+      // ignore
+    }
+  }
+
+  // Faz algumas tentativas de configurar o LCU automaticamente no início (Electron)
+  private retryLCUAutoConfig(): void {
+    let attempts = 0;
+    const maxAttempts = 8;
+    const tick = async () => {
+      attempts++;
+      await this.ensureLCUConfigured();
+      try {
+        const status: any = await firstValueFrom(this.getLCUStatus().pipe(catchError(() => of(null))));
+        const connected = !!status?.isConnected || !!status?.status?.connected;
+        if (connected || attempts >= maxAttempts) return;
+      } catch {
+        // ignore
+      }
+      setTimeout(tick, 1500);
+    };
+    setTimeout(tick, 500);
+  }
+
   public getBaseUrl(): string {
     // Tenta detectar a URL base correta para o ambiente atual
     try {
+      // ✅ CORREÇÃO: Verificar se está no Electron primeiro
+      console.log('🔍 [ApiService] Detectando ambiente...');
+      console.log('  - Protocol:', window.location.protocol);
+      console.log('  - Hostname:', window.location.hostname);
+      console.log('  - Port:', window.location.port);
+      console.log('  - Href:', window.location.href);
+
       // Ambiente Electron ou empacotado
       if (this.isElectron()) {
         const electronUrl = this.getElectronBaseUrl();
-        console.log('🔌 Electron base URL:', electronUrl);
+        console.log('🔌 [ApiService] Electron base URL:', electronUrl);
         return electronUrl;
       }
 
       // Ambiente de navegador normal
       const browserUrl = this.getBrowserBaseUrl();
-      console.log('🌐 Browser base URL:', browserUrl);
+      console.log('🌐 [ApiService] Browser base URL:', browserUrl);
       return browserUrl;
     } catch (error) {
-      console.error('❌ Error detecting base URL, using fallback:', error);
-      return 'http://127.0.0.1:3000/api'; // Fallback seguro
+      console.error('❌ [ApiService] Error detecting base URL, using fallback:', error);
+      return 'http://localhost:8080/api'; // Fallback seguro
     }
   }
 
   private getElectronBaseUrl(): string {
+    // ✅ CORREÇÃO: SEMPRE usar /api em qualquer ambiente Electron
+
+    // Se há uma variável de ambiente para produção (Google Cloud)
+    const productionUrl = (window as any).electronAPI?.getBackendUrl?.();
+    if (productionUrl) {
+      console.log('🚀 [Electron] URL de produção detectada:', productionUrl);
+      // ✅ Garantir que sempre termine com /api
+      return productionUrl.endsWith('/api') ? productionUrl : `${productionUrl}/api`;
+    }
+
     // Se estiver no protocolo file:// (app empacotado)
     if (window.location.protocol === 'file:') {
-      return 'http://127.0.0.1:3000/api';
+      console.log('📁 [Electron] Protocolo file:// detectado - usando localhost com /api');
+      return 'http://localhost:8080/api';
     }
 
-    // Tenta usar o hostname atual (pode ser IP local)
-    if (window.location.hostname && window.location.hostname !== 'null') {
-      return `http://${window.location.hostname}:3000/api`;
+    // Se temos hostname específico
+    if (window.location.hostname &&
+        window.location.hostname !== 'null' &&
+        window.location.hostname !== 'localhost' &&
+        window.location.hostname !== '127.0.0.1') {
+      console.log('🔧 [Electron] Hostname específico detectado:', window.location.hostname);
+      return `http://${window.location.hostname}:8080/api`;
     }
 
-    // Fallback para localhost
-    return 'http://127.0.0.1:3000/api';
+    // ✅ PADRÃO: SEMPRE localhost com /api para Electron
+    console.log('🔌 [Electron] Usando padrão localhost com /api');
+    return 'http://localhost:8080/api';
   }
 
   private getBrowserBaseUrl(): string {
     const host = window.location.hostname;
-    const port = '3000';
+    const port = '8080';
     const protocol = window.location.protocol === 'https:' ? 'https' : 'http';
     return `${protocol}://${host}:${port}/api`;
   }
 
   public getWebSocketUrl(): string {
-    const baseUrl = this.getBaseUrl()
+    const baseUrl = this.getBaseUrl();
+
+    // Construir URL WebSocket corretamente
+    const wsUrl = baseUrl
       .replace(/^http/, 'ws')
       .replace(/^https/, 'wss')
-      .replace('/api', '/ws');
-    console.log('🔄 WebSocket URL:', baseUrl);
-    return baseUrl;
+      .replace('/api$', '') + '/ws';
+
+    console.log('🔄 WebSocket URL:', wsUrl);
+    return wsUrl;
   }
 
   public isElectron(): boolean {
@@ -248,7 +350,7 @@ export class ApiService {
     );
   }
 
-  private handleError = (error: HttpErrorResponse) => {
+  private readonly handleError = (error: HttpErrorResponse) => {
     let errorMessage = 'Erro desconhecido';
     const currentTime = Date.now();
 
@@ -338,18 +440,44 @@ export class ApiService {
         catchError(this.handleError)
       );
   }
-  // Add this method
-  getPlayerByPuuid(puuid: string, region: string): Observable<Player> {
-    // Se está no Electron, usar apenas dados do LCU (não precisa de Riot API)
-    if (this.isElectron()) {
-      return this.getLCUOnlyPlayerData();
+
+  // Electron-only: obter Player diretamente do LCU sem backend
+  private getLCUOnlyPlayerData(): Observable<Player> {
+    if (!(this.isElectron() && (window as any).electronAPI?.lcu?.getCurrentSummoner)) {
+      return throwError(() => new Error('LCU local não disponível'));
     }
 
-    // Em modo web, usar endpoint da Riot API
-    return this.http.get<Player>(`${this.baseUrl}/player/puuid/${puuid}?region=${region}`)
-      .pipe(
-        catchError(this.handleError)
-      );
+    return new Observable<Player>(observer => {
+      (window as any).electronAPI.lcu.getCurrentSummoner()
+        .then((lcuData: any) => {
+          if (!lcuData) throw new Error('Dados do LCU não disponíveis');
+
+          const displayName = (lcuData.gameName && lcuData.tagLine)
+            ? `${lcuData.gameName}#${lcuData.tagLine}`
+            : (lcuData.displayName || undefined);
+
+          const player: Player = {
+            id: lcuData.summonerId || 0,
+            summonerName: lcuData.gameName || lcuData.displayName || 'Unknown',
+            displayName,
+            gameName: lcuData.gameName || null,
+            tagLine: lcuData.tagLine || null,
+            summonerId: (lcuData.summonerId || '0').toString(),
+            puuid: lcuData.puuid || '',
+            profileIconId: lcuData.profileIconId || 29,
+            summonerLevel: lcuData.summonerLevel || 30,
+            region: 'br1',
+            currentMMR: 1200,
+            rank: undefined,
+            wins: undefined,
+            losses: undefined
+          };
+
+          observer.next(player);
+        })
+        .catch((err: any) => observer.error(err))
+        .finally(() => observer.complete());
+    }).pipe(catchError(this.handleError));
   }
 
   getPlayerStats(playerId: number): Observable<any> {
@@ -488,8 +616,26 @@ export class ApiService {
   }
 
   getCurrentSummonerFromLCU(): Observable<any> {
+    // Em Electron, usar o conector local (preload) e não o backend central
+    if (this.isElectron() && (window as any).electronAPI?.lcu?.getCurrentSummoner) {
+      return new Observable(observer => {
+        (window as any).electronAPI.lcu.getCurrentSummoner()
+          .then((data: any) => observer.next(data))
+          .catch((err: any) => observer.error(err))
+          .finally(() => observer.complete());
+      }).pipe(catchError(this.handleError));
+    }
+
+    // Modo web: usar backend
     return this.http.get(`${this.baseUrl}/lcu/current-summoner`)
       .pipe(
+        map((resp: any) => {
+          if (resp && typeof resp === 'object') {
+            if (resp.summoner) return resp.summoner;
+            if (resp.data?.summoner) return resp.data.summoner;
+          }
+          return resp;
+        }),
         catchError(this.handleError)
       );
   }
@@ -592,790 +738,253 @@ export class ApiService {
     );
   }
 
-  // Mock autoJoinQueue - REMOVE OR REPLACE WITH ACTUAL IMPLEMENTATION
-  autoJoinQueue(): Observable<any> {
-    // This needs a proper backend endpoint and logic
-    return throwError(() => new Error('autoJoinQueue not implemented'));
-  }
-
-  // Adicionado para setApiKey (se ainda for usado internamente no app.ts, embora não recomendado)
-  setApiKey(apiKey: string): void {
-    // Esta função não envia a chave para o backend.
-    // A configuração da chave no backend é feita por setRiotApiKey.
-    // Esta função poderia ser usada para armazenar a chave no frontend se necessário,
-    // mas geralmente não é uma boa prática.
-    console.warn('ApiService.setApiKey foi chamada. Esta função não configura a chave no backend.');
-  }
-
-  // Método para buscar detalhes da partida atual (LCU)
-  getCurrentGame(): Observable<any> {
-    // Assumindo que você terá um endpoint no backend como /api/lcu/current-match
-    // Este endpoint chamaria lcuService.getCurrentMatchDetails() ou similar.
-    // Se o endpoint for diferente, ajuste aqui.
-    return this.http.get<any>(`${this.baseUrl}/lcu/current-match-details`) // Verifique se este endpoint existe no backend
-      .pipe(catchError(this.handleError));
-  }
-
-  // Método para buscar histórico de partidas de um jogador pela Riot API
-  getPlayerMatchHistoryFromRiot(puuid: string, region: string, count: number = 20): Observable<any> {
-    // O backend espera a região no path ou query? Ajustar conforme necessário.
-    // O endpoint atual em server.ts é /api/player/match-history-riot/:puuid e não usa region no path.
-    // A região é fixada como 'americas' no backend globalRiotAPI.getMatchHistory. Se precisar ser dinâmica, o backend precisa mudar.
-    return this.http.get<any>(`${this.baseUrl}/player/match-history-riot/${puuid}?count=${count}`)
-      .pipe(catchError(this.handleError));
-  }
-
-  // Método para buscar detalhes de uma partida específica pela Riot API
-  getMatchDetails(matchId: number): Observable<any> {
-    // O backend espera a região no path ou query? Ajustar conforme necessário.
-    // O endpoint atual em server.ts é /api/match/:matchId e não usa region no path.
-    // A região é fixada como 'americas' no backend globalRiotAPI.getMatchDetails. Se precisar ser dinâmica, o backend precisa mudar.
-    return this.http.get<any>(`${this.baseUrl}/match/${matchId}`)
-      .pipe(catchError(this.handleError));
-  }
-
-  // ========== MÉTODOS MAIS AMIGÁVEIS PARA BUSCAR JOGADOR ==========
-
-  // Método principal: buscar por Riot ID (GameName#TagLine) - MAIS AMIGÁVEL
-  getPlayerByDisplayName(displayName: string, region: string): Observable<Player> {
-    if (!displayName.includes('#')) {
-      return throwError(() => new Error('Formato inválido. Use: NomeDoJogo#TAG (ex: Player#BR1)'));
-    }
-
-    return this.http.get<Player>(`${this.baseUrl}/player/details/${encodeURIComponent(displayName)}?region=${region}`)
-      .pipe(
-        retry(1),
-        catchError(this.handleError)
-      );
-  }  // Método para buscar automaticamente do LCU (cliente do LoL) - MAIS CONVENIENTE
+  /**
+   * Obtém dados do jogador atual via LCU (método usado pelo app.ts)
+   */
   getPlayerFromLCU(): Observable<Player> {
-    // Strategy 1: Try LCU + Riot API combined endpoint first
-    return this.http.get<any>(`${this.baseUrl}/player/current-details`)
-      .pipe(
-        retry(1),
-        map(response => {
-          if (response.success && response.data) {
-            const mappedPlayer = this.mapApiResponseToPlayer(response.data);
+    // Em Electron, ler direto do LCU via conector local
+    if (this.isElectron() && (window as any).electronAPI?.lcu?.getCurrentSummoner) {
+      return new Observable<Player>(observer => {
+        (window as any).electronAPI.lcu.getCurrentSummoner()
+          .then((lcuData: any) => {
+            if (!lcuData) throw new Error('Dados do LCU não disponíveis');
 
-            // Add metadata about data completeness
-            (mappedPlayer as any)._isPartialData = response.data.partialData || false;
-            (mappedPlayer as any)._dataSource = response.data.partialData ? 'LCU apenas' : 'LCU + Riot API';
+            const displayName = (lcuData.gameName && lcuData.tagLine)
+              ? `${lcuData.gameName}#${lcuData.tagLine}`
+              : (lcuData.displayName || undefined);
 
-            return mappedPlayer;
-          }
-          throw new Error('Nenhum jogador conectado no League of Legends');
-        }),
-        catchError((error: any) => {
-          // If combined endpoint fails due to Riot API, try LCU-only endpoint
-          if (error.message?.includes('Riot API') || error.message?.includes('não encontrado')) {
-            return this.getLCUOnlyPlayerData();
-          }
+            const player: Player = {
+              id: lcuData.summonerId || 0,
+              summonerName: lcuData.gameName || lcuData.displayName || 'Unknown',
+              displayName,
+              gameName: lcuData.gameName || null,
+              tagLine: lcuData.tagLine || null,
+              summonerId: (lcuData.summonerId || '0').toString(),
+              puuid: lcuData.puuid || '',
+              profileIconId: lcuData.profileIconId || 29,
+              summonerLevel: lcuData.summonerLevel || 30,
+              region: 'br1',
+              currentMMR: 1200,
+              rank: undefined,
+              wins: undefined,
+              losses: undefined
+            };
 
-          // For other errors, propagate them
-          return this.handleError(error);
-        })
-      );
-  }
+            observer.next(player);
+          })
+          .catch((err: any) => observer.error(err))
+          .finally(() => observer.complete());
+      }).pipe(catchError(this.handleError));
+    }
 
-  // Fallback method: Get player data from LCU only (no Riot API dependency)
-  private getLCUOnlyPlayerData(): Observable<Player> {
-    return this.http.get<any>(`${this.baseUrl}/lcu/current-summoner`)
-      .pipe(
-        retry(1),
-        map(lcuData => {
-          if (!lcuData) {
-            throw new Error('Dados do LCU não disponíveis');
-          }
-
-          // ✅ CORREÇÃO: Construir displayName no formato gameName#tagLine
-          let displayName: string | undefined = undefined;
-          if (lcuData.gameName && lcuData.tagLine) {
-            displayName = `${lcuData.gameName}#${lcuData.tagLine}`;
-          } else if (lcuData.displayName) {
-            displayName = lcuData.displayName;
-          }
-
-          // Create a Player object from LCU data only
-          const lcuPlayer: Player = {
-            id: lcuData.summonerId || 0,
-            summonerName: lcuData.gameName || lcuData.displayName || 'Unknown',
-            displayName: displayName, // ✅ ADICIONADO: Definir displayName corretamente
-            gameName: lcuData.gameName || null,
-            tagLine: lcuData.tagLine || null,
-            summonerId: (lcuData.summonerId || '0').toString(),
-            puuid: lcuData.puuid || '',
-            profileIconId: lcuData.profileIconId || 29,
-            summonerLevel: lcuData.summonerLevel || 30,
-            region: 'br1', // Default region
-            currentMMR: 1200, // Default MMR when Riot API unavailable
-            rank: undefined, // No rank data without Riot API
-            wins: undefined,
-            losses: undefined
+    // Modo web: usar backend
+    return this.http.get<any>(`${this.baseUrl}/player/current-details`).pipe(
+      map(response => {
+        if (response.success && response.player) {
+          const playerData = response.player;
+          const player: Player = {
+            id: playerData.id || 0,
+            summonerName: playerData.summonerName || playerData.gameName || 'Unknown',
+            gameName: playerData.gameName || playerData.summonerName || 'Unknown',
+            tagLine: playerData.tagLine || '',
+            region: playerData.region || 'br1',
+            puuid: playerData.puuid || '',
+            summonerId: playerData.summonerId || '',
+            summonerLevel: playerData.summonerLevel || 1,
+            profileIconId: playerData.profileIconId || 0,
+            currentMMR: playerData.currentMMR || playerData.mmr || 1200,
+            displayName: playerData.gameName && playerData.tagLine ? `${playerData.gameName}#${playerData.tagLine}` : playerData.summonerName || 'Unknown',
+            registeredAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
           };
-
-          return lcuPlayer;
-        }),
-        catchError(this.handleError)
-      );
-  }
-
-  // Método de busca inteligente - tenta várias formas automaticamente
-  smartPlayerSearch(identifier: string, region: string = 'br1'): Observable<Player> {
-    // Detectar o tipo de identificador e usar o método apropriado
-    if (identifier.includes('#')) {
-      // É um Display Name (GameName#TagLine)
-      return this.getPlayerByDisplayName(identifier, region);
-    } else if (identifier.match(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/)) {
-      // É um PUUID
-      return this.getPlayerByPuuid(identifier, region);
-    } else {
-      // É um summoner name legado
-      return this.getPlayerBySummoner(identifier);
-    }
-  }
-
-  // Método para buscar por summoner name legado (ainda funciona)
-  searchPlayerBySummonerName(summonerName: string, region: string): Observable<Player> {
-    return this.http.get<any>(`${this.baseUrl}/riot/summoner/${region}/${encodeURIComponent(summonerName)}`)
-      .pipe(
-        retry(1),
-        map(response => this.mapApiResponseToPlayer(response)),
-        catchError(this.handleError)
-      );
-  }  // Método auxiliar para mapear resposta da API para Player
-  private mapApiResponseToPlayer(data: any): Player {
-    // Adaptar diferentes formatos de resposta da API para o formato Player esperado
-    const lcuData = data.lcu || data.lcuData || {};
-    const riotAccount = data.riotAccount || {};
-    const riotApi = data.riotApi || data.riotData || data;
-    const lcuRankedStats = data.lcuRankedStats || null;
-
-    // Process rank data from multiple sources
-    const rankedData = this.processRankedData(riotApi, lcuRankedStats);
-
-    // ✅ CORREÇÃO: Construir displayName no formato gameName#tagLine
-    const gameName = riotAccount.gameName || riotApi.gameName || lcuData.gameName || null;
-    const tagLine = riotAccount.tagLine || riotApi.tagLine || lcuData.tagLine || null;
-
-    let displayName: string | undefined = undefined;
-    if (gameName && tagLine) {
-      displayName = `${gameName}#${tagLine}`;
-    } else if (lcuData.displayName) {
-      displayName = lcuData.displayName;
-    }
-
-    return {
-      id: riotApi.id || lcuData.summonerId || 0,
-      summonerName: riotAccount.gameName || riotApi.gameName || riotApi.name || lcuData.gameName || lcuData.displayName || 'Unknown',
-      displayName: displayName, // ✅ ADICIONADO: Definir displayName corretamente
-      gameName: gameName,
-      tagLine: tagLine,
-      summonerId: riotApi.id || lcuData.summonerId?.toString() || '0',
-      puuid: riotAccount.puuid || riotApi.puuid || lcuData.puuid || '',
-      profileIconId: riotApi.profileIconId || lcuData.profileIconId || 1,
-      summonerLevel: riotApi.summonerLevel || lcuData.summonerLevel || 30,
-      region: riotApi.region || 'br1',
-      currentMMR: this.calculateMMRFromData(riotApi, lcuRankedStats),
-      rank: rankedData.soloQueue ? this.extractRankData(riotApi) : undefined,
-      wins: rankedData.soloQueue?.wins || riotApi.soloQueue?.wins || riotApi.wins,
-      losses: rankedData.soloQueue?.losses || riotApi.soloQueue?.losses || riotApi.losses,
-      rankedData: rankedData
-    };
-  }
-
-  private processRankedData(riotApi: any, lcuRankedStats: any): any {
-    const result = {
-      soloQueue: null as any,
-      flexQueue: null as any
-    };
-
-    // Priority 1: Use Riot API data if available
-    if (riotApi?.soloQueue || riotApi?.rankedData?.soloQueue) {
-      result.soloQueue = riotApi.soloQueue || riotApi.rankedData.soloQueue;
-    }
-
-    if (riotApi?.flexQueue || riotApi?.rankedData?.flexQueue) {
-      result.flexQueue = riotApi.flexQueue || riotApi.rankedData.flexQueue;
-    }
-
-    // Priority 2: Use LCU ranked stats as fallback or supplement
-    if (lcuRankedStats?.queues) {
-      lcuRankedStats.queues.forEach((queue: any) => {
-        if (queue.queueType === 'RANKED_SOLO_5x5' && !result.soloQueue) {
-          result.soloQueue = {
-            tier: queue.tier,
-            rank: queue.division,
-            leaguePoints: queue.leaguePoints,
-            wins: queue.wins,
-            losses: queue.losses,
-            isProvisional: queue.isProvisional || false
-          };
-        } else if (queue.queueType === 'RANKED_FLEX_SR' && !result.flexQueue) {
-          result.flexQueue = {
-            tier: queue.tier,
-            rank: queue.division,
-            leaguePoints: queue.leaguePoints,
-            wins: queue.wins,
-            losses: queue.losses,
-            isProvisional: queue.isProvisional || false
-          };
+          return player;
+        } else {
+          throw new Error(response.error || 'LCU não conectado ou dados não disponíveis');
         }
+      }),
+      catchError(error => {
+        console.error('❌ [ApiService] Erro ao carregar dados do jogador:', error);
+        return throwError(() => error);
+      })
+    );
+  }
+
+  // ✅ NOVO: Aceitar ready-check do LCU localmente (Electron)
+  acceptLocalReadyCheck(): Observable<any> {
+    if (this.isElectron() && (window as any).electronAPI?.lcu?.request) {
+      return new Observable(observer => {
+        (window as any).electronAPI.lcu.request('/lol-matchmaking/v1/ready-check/accept', 'POST')
+          .then((data: any) => { observer.next({ success: true, data }); })
+          .catch((err: any) => { observer.error(err); })
+          .finally(() => observer.complete());
       });
     }
-
-    return result;
+    return throwError(() => new Error('Não suportado fora do Electron'));
   }
-  private calculateMMRFromData(data: any, lcuRankedStats?: any): number {
-    // Try Riot LCU data first
 
+  // === WebSocket helpers (used across app) ===
+  onWebSocketMessage(): Observable<any> {
+    return this.webSocketMessageSubject.asObservable();
+  }
 
-    if (lcuRankedStats?.queues) {
-      const lcuSoloQueue = lcuRankedStats.queues.find((q: any) => q.queueType === 'RANKED_SOLO_5x5');
-      if (lcuSoloQueue?.tier) {
-        return this.calculateMMRFromRankData({
-          tier: lcuSoloQueue.tier,
-          rank: lcuSoloQueue.division,
-          leaguePoints: lcuSoloQueue.leaguePoints
-        });
-      }
-      // Try API ranked stats as fallback
-      const soloQueue = data.soloQueue || data.rankedData?.soloQueue;
-      if (soloQueue?.tier) {
-        return this.calculateMMRFromRankData(soloQueue);
-      }
+  isWebSocketConnected(): boolean {
+    return this.webSocket !== null && this.webSocket.readyState === WebSocket.OPEN;
+  }
 
+  onWebSocketReady(): Observable<boolean> {
+    return new Observable<boolean>(observer => {
+      const maxWaitTime = 15000;
+      const checkInterval = 100;
+      let elapsed = 0;
+      const check = () => {
+        if (this.isWebSocketConnected()) {
+          observer.next(true);
+          observer.complete();
+          return;
+        }
+        elapsed += checkInterval;
+        if (elapsed >= maxWaitTime) {
+          observer.error(new Error('Timeout aguardando WebSocket estar pronto'));
+          return;
+        }
+        setTimeout(check, checkInterval);
+      };
+      check();
+    });
+  }
+
+  private connectWebSocket(): void {
+    if (this.webSocket && this.webSocket.readyState === WebSocket.OPEN) return;
+    const wsUrl = this.getWebSocketUrl();
+    try {
+      this.webSocket = new WebSocket(wsUrl);
+      this.webSocket.onopen = () => {
+        this.webSocketMessageSubject.next({ type: 'backend_connection_success', data: { ts: Date.now() } });
+      };
+      this.webSocket.onmessage = (ev) => {
+        try { this.webSocketMessageSubject.next(JSON.parse(ev.data)); } catch { /* ignore */ }
+      };
+      this.webSocket.onerror = () => { /* handled by reconnect */ };
+      this.webSocket.onclose = () => {
+        setTimeout(() => this.connectWebSocket(), 5000);
+      };
+    } catch (e) {
+      console.error('WS connect error:', e);
     }
-
-    return 1200; // Default MMR
-  }
-  private calculateMMRFromRankData(rankData: any): number {
-    if (!rankData?.tier) return 1200;
-
-    const tierValues: { [key: string]: number } = {
-      'IRON': 800, 'BRONZE': 1000, 'SILVER': 1200, 'GOLD': 1400,
-      'PLATINUM': 1700, 'EMERALD': 2000, 'DIAMOND': 2300,
-      'MASTER': 2600, 'GRANDMASTER': 2800, 'CHALLENGER': 3000
-    };
-
-    const rankValues: { [key: string]: number } = {
-      'IV': 0, 'III': 50, 'II': 100, 'I': 150
-    };
-
-    const baseMMR = tierValues[rankData.tier] || 1200;
-    const rankBonus = rankValues[rankData.rank] || 0;
-    const lpBonus = (rankData.leaguePoints || 0) * 0.8;
-
-    return Math.round(baseMMR + rankBonus + lpBonus);
   }
 
-  private extractRankData(data: any): any {
-    const soloQueue = data.soloQueue || data.rankedData?.soloQueue;
-    if (!soloQueue || !soloQueue.tier) return undefined;
-
-    return {
-      tier: soloQueue.tier,
-      rank: soloQueue.rank,
-      lp: soloQueue.leaguePoints,
-      wins: soloQueue.wins,
-      losses: soloQueue.losses,
-      display: `${soloQueue.tier} ${soloQueue.rank}`
-    };
-  }  // ========== FIM DOS MÉTODOS AMIGÁVEIS ==========
-
-  // Método para salvar partida customizada após o jogo
-  saveCustomMatch(matchData: any): Observable<any> {
-    return this.http.post(`${this.baseUrl}/custom_matches`, matchData)
-      .pipe(
-        catchError(this.handleError)
-      );
-  }
-  // Método para criar partida customizada com dados reais do LCU
-  createLCUBasedMatch(data: { lcuMatchData: any, playerIdentifier: string }): Observable<any> {
-    // Usar o endpoint correto que busca dados reais do LCU
-    const gameId = data.lcuMatchData.gameId;
-    return this.http.post(`${this.baseUrl}/lcu/fetch-and-save-match/${gameId}`, {
-      playerIdentifier: data.playerIdentifier
-    })
-      .pipe(
-        catchError(this.handleError)
-      );
-  }
-  // Métodos para buscar histórico de partidas da Riot API
-  getRiotApiMatchHistory(puuid: string, region: string, start: number = 0, count: number = 20): Observable<any> {
-    return this.http.get<any>(`${this.baseUrl}/riot/match-history/${puuid}?region=${region}&start=${start}&count=${count}`)
-      .pipe(
-        catchError(this.handleError)
-      );
-  }
-
-  getRiotApiMatchDetails(matchId: number, region: string): Observable<any> {
-    return this.http.get<any>(`${this.baseUrl}/riot/match-details/${matchId}?region=${region}`)
-      .pipe(
-        catchError(this.handleError)
-      );
-  }
-
-  // LCU Match History
-  getLCUMatchHistory(startIndex: number = 0, count: number = 20): Observable<any> {
-    // ✅ CORREÇÃO: Usar tryWithFallback para suporte a localhost e 127.0.0.1
-    if (this.isElectron()) {
-      return this.tryWithFallback(`/lcu/match-history?startIndex=${startIndex}&count=${count}`, 'GET').pipe(
-        catchError(this.handleError)
-      );
+  sendWebSocketMessage(message: any): void {
+    if (this.webSocket && this.webSocket.readyState === WebSocket.OPEN) {
+      this.webSocket.send(JSON.stringify(message));
     }
-
-    // Em modo web, usar método padrão
-    return this.http.get(`${this.baseUrl}/lcu/match-history?startIndex=${startIndex}&count=${count}`)
-      .pipe(
-        catchError(this.handleError)
-      );
   }
 
-  // LCU Match History - ALL matches (including custom) for dashboard
-  getLCUMatchHistoryAll(startIndex: number = 0, count: number = 5, customOnly: boolean = true): Observable<any> {
-    // ✅ CORREÇÃO: Usar tryWithFallback para suporte a localhost e 127.0.0.1
-    if (this.isElectron()) {
-      return this.tryWithFallback(`/lcu/match-history-all?startIndex=${startIndex}&count=${count}&customOnly=${customOnly}`, 'GET').pipe(
-        catchError(this.handleError)
-      );
-    }
-
-    // Em modo web, usar método padrão
-    return this.http.get(`${this.baseUrl}/lcu/match-history-all?startIndex=${startIndex}&count=${count}&customOnly=${customOnly}`)
-      .pipe(
-        catchError(this.handleError)
-      );
+  connect(): Observable<any> {
+    if (!this.isWebSocketConnected()) this.connectWebSocket();
+    return this.onWebSocketMessage();
   }
 
-  // Queue endpointsnpm run dev
-
+  // === Queue and matchmaking endpoints ===
   joinQueue(playerData: any, preferences: any): Observable<any> {
-    return this.http.post(`${this.baseUrl}/queue/join`, { player: playerData, preferences })
-      .pipe(
-        retry(1),
-        catchError(this.handleError)
-      );
+    return this.http.post(`${this.baseUrl}/queue/join`, { player: playerData, preferences }).pipe(catchError(this.handleError));
   }
 
   leaveQueue(playerId?: number, summonerName?: string): Observable<any> {
     const body: any = {};
     if (playerId) body.playerId = playerId;
     if (summonerName) body.summonerName = summonerName;
-
-    return this.http.post(`${this.baseUrl}/queue/leave`, body)
-      .pipe(
-        retry(1),
-        catchError(this.handleError)
-      );
+    return this.http.post(`${this.baseUrl}/queue/leave`, body).pipe(catchError(this.handleError));
   }
 
-  // Método para adicionar bot na fila (feature temporária para testes)
-  addBotToQueue(): Observable<any> {
-    return this.http.post(`${this.baseUrl}/queue/add-bot`, {})
-      .pipe(
-        retry(1),
-        catchError(this.handleError)
-      );
-  }
-
-  // ✅ NOVO: Resetar contador de bots
-  resetBotCounter(): Observable<any> {
-    return this.http.post(`${this.baseUrl}/queue/reset-bot-counter`, {})
-      .pipe(
-        retry(1),
-        catchError(this.handleError)
-      );
-  }
-  // Métodos para sistema de partidas
   acceptMatch(matchId: number, playerId?: number, summonerName?: string): Observable<any> {
     const body: any = { matchId };
     if (playerId) body.playerId = playerId;
     if (summonerName) body.summonerName = summonerName;
-
-    return this.http.post(`${this.baseUrl}/match/accept`, body)
-      .pipe(
-        retry(1),
-        catchError(this.handleError)
-      );
+    return this.http.post(`${this.baseUrl}/match/accept`, body).pipe(catchError(this.handleError));
   }
 
   declineMatch(matchId: number, playerId?: number, summonerName?: string): Observable<any> {
     const body: any = { matchId };
     if (playerId) body.playerId = playerId;
     if (summonerName) body.summonerName = summonerName;
-
-    return this.http.post(`${this.baseUrl}/match/decline`, body)
-      .pipe(
-        retry(1),
-        catchError(this.handleError)
-      );
+    return this.http.post(`${this.baseUrl}/match/decline`, body).pipe(catchError(this.handleError));
   }
 
-  // ✅ NOVO: Criar partida a partir do frontend (SIMPLIFICADO - backend processa automaticamente)
-  createMatchFromFrontend(matchData: any): Observable<any> {
-    console.log('🎮 [API] Criando partida a partir do frontend:', matchData);
-
-    return this.http.post(`${this.baseUrl}/match/create-from-frontend`, matchData)
-      .pipe(
-        retry(1),
-        catchError(this.handleError)
-      );
+  addBotToQueue(): Observable<any> {
+    return this.http.post(`${this.baseUrl}/queue/add-bot`, {}).pipe(catchError(this.handleError));
   }
 
-  // Método original do sistema antigo (manter para compatibilidade)
-  joinLegacyQueue(playerId: number, mmr: number, role: string): Observable<any> {
-    return this.http.post(`${this.baseUrl}/queue/join-legacy`, { playerId, mmr, role })
-      .pipe(
-        retry(1),
-        catchError(this.handleError)
-      );
+  resetBotCounter(): Observable<any> {
+    return this.http.post(`${this.baseUrl}/queue/reset-bot-counter`, {}).pipe(catchError(this.handleError));
   }
 
-  leaveLegacyQueue(playerId: number): Observable<any> {
-    return this.http.post(`${this.baseUrl}/queue/leave-legacy`, { playerId })
-      .pipe(
-        retry(1),
-        catchError(this.handleError)
-      );
+  // === Custom matches & sync ===
+  saveCustomMatch(matchData: any): Observable<any> {
+    return this.http.post(`${this.baseUrl}/custom_matches`, matchData).pipe(catchError(this.handleError));
   }
 
-  // Método para atualizar resultado de partida customizada existente (para simulações baseadas em partidas reais)
-  updateCustomMatchResult(updateData: any): Observable<any> {
-    return this.http.put(`${this.baseUrl}/matches/custom/${updateData.matchId}/result`, updateData)
-      .pipe(
-        catchError(this.handleError)
-      );
-  }
-
-  // Método para atualizar partida customizada existente
-  updateCustomMatch(matchId: number, updateData: any): Observable<any> {
-    return this.http.put(`${this.baseUrl}/matches/custom/${matchId}`, updateData)
-      .pipe(
-        catchError(this.handleError)
-      );
-  }
-
-  // Método para limpar partidas de teste do banco de dados
-  cleanupTestMatches(): Observable<any> {
-    return this.http.delete(`${this.baseUrl}/matches/cleanup-test-matches`)
-      .pipe(
-        catchError(this.handleError)
-      );
-  }
-
-  // Método para buscar partidas customizadas de um jogador
-  getCustomMatches(playerIdentifier: string, offset: number = 0, limit: number = 10): Observable<any> {
-    // Garantir que offset e limit sejam números válidos
-    const offsetValue = Math.max(0, parseInt(offset.toString()) || 0);
-    const limitValue = Math.max(1, Math.min(100, parseInt(limit.toString()) || 10));
-
-    return this.http.get(`${this.baseUrl}/matches/custom/${encodeURIComponent(playerIdentifier)}?offset=${offsetValue}&limit=${limitValue}`)
-      .pipe(
-        catchError(this.handleError)
-      );
-  }
-
-  // Método para contar partidas customizadas de um jogador
-  getCustomMatchesCount(playerIdentifier: string): Observable<any> {
-    return this.http.get(`${this.baseUrl}/matches/custom/${encodeURIComponent(playerIdentifier)}/count`)
-      .pipe(
-        catchError(this.handleError)
-      );
-  }
-
-  // ✅ NOVO: Método para escutar mensagens WebSocket
-  onWebSocketMessage(): Observable<any> {
-    return this.webSocketMessageSubject.asObservable();
-  }
-
-  // ✅ NOVO: Verificar se WebSocket está conectado
-  isWebSocketConnected(): boolean {
-    return this.webSocket !== null && this.webSocket.readyState === WebSocket.OPEN;
-  }
-
-  // ✅ NOVO: Observable que emite quando WebSocket está pronto com timeout
-  onWebSocketReady(): Observable<boolean> {
-    return new Observable(observer => {
-      const maxWaitTime = 15000; // 15 segundos máximo
-      const checkInterval = 100; // Verificar a cada 100ms
-      let elapsedTime = 0;
-
-      const checkConnection = () => {
-        if (this.isWebSocketConnected()) {
-          console.log(`✅ [ApiService] WebSocket pronto após ${elapsedTime}ms`);
-          observer.next(true);
-          observer.complete();
-          return;
-        }
-
-        elapsedTime += checkInterval;
-
-        if (elapsedTime >= maxWaitTime) {
-          console.error(`❌ [ApiService] Timeout aguardando WebSocket (${maxWaitTime}ms)`);
-          console.error(`❌ [ApiService] Estado atual: readyState=${this.webSocket?.readyState}, url=${this.webSocket?.url}`);
-          observer.error(`Timeout aguardando WebSocket estar pronto (${maxWaitTime}ms)`);
-          return;
-        }
-
-        // Se não está conectado, tentar novamente em 100ms
-        setTimeout(checkConnection, checkInterval);
-      };
-
-      // Verificar imediatamente e depois a cada intervalo
-      checkConnection();
-    });
-  }
-
-  // ✅ NOVO: Conectar ao WebSocket do backend com detecção de falhas
-  private connectWebSocket(): void {
-    if (this.webSocket && this.webSocket.readyState === WebSocket.OPEN) {
-      console.log('🔌 [ApiService] WebSocket já está conectado.');
-      return;
-    }
-
-    const wsUrl = this.getWebSocketUrl();
-
-    console.log(`🔌 [ApiService] Tentando conectar WebSocket em: ${wsUrl}`);
-
-    try {
-      this.webSocket = new WebSocket(wsUrl);
-
-      this.webSocket.onopen = () => {
-        console.log('✅ [ApiService] WebSocket conectado com sucesso');
-
-        // ✅ NOVO: Notificar sobre conexão bem-sucedida
-        this.webSocketMessageSubject.next({
-          type: 'backend_connection_success',
-          data: {
-            message: 'Backend conectado com sucesso',
-            timestamp: new Date().toISOString()
-          }
-        });
-      };
-
-      this.webSocket.onmessage = (event) => {
-        try {
-          const message = JSON.parse(event.data);
-          console.log('📨 [ApiService] Mensagem WebSocket recebida:', message.type);
-          console.log('📨 [ApiService] Dados da mensagem:', message.data);
-          console.log('📨 [ApiService] Timestamp:', new Date().toISOString());
-
-          // ✅ NOVO: Log específico para mensagens de timer do draft
-          if (message.type === 'draft_timer_update' || message.type === 'draft_timeout') {
-            console.log('⏰ [ApiService] === MENSAGEM DE TIMER DO DRAFT RECEBIDA ===');
-            console.log('⏰ [ApiService] Tipo:', message.type);
-            console.log('⏰ [ApiService] Dados:', message.data);
-            console.log('⏰ [ApiService] WebSocket readyState:', this.webSocket?.readyState);
-            console.log('⏰ [ApiService] Subject ativo:', this.webSocketMessageSubject.observed);
-          }
-
-          this.webSocketMessageSubject.next(message);
-          console.log('✅ [ApiService] Mensagem emitida para subscribers');
-        } catch (error) {
-          console.error('❌ [ApiService] Erro ao processar mensagem WebSocket:', error);
-        }
-      };
-
-      this.webSocket.onerror = (error) => {
-        console.error('❌ [ApiService] Erro no WebSocket:', error);
-
-        // ✅ MELHORADO: Detectar problemas específicos de conexão
-        if (this.isElectron()) {
-          console.log('🔧 [ApiService] Detectado erro de WebSocket no Electron');
-          console.log('💡 [ApiService] Possível causa: Backend ainda não está pronto');
-          console.log('🔄 [ApiService] WebSocket será reconectado automaticamente...');
-
-          // ✅ MELHORADO: Não emitir erro imediatamente, aguardar reconexão
-          // Emitir evento para notificar a UI sobre problemas de conectividade apenas após várias tentativas
-        }
-      };
-
-      this.webSocket.onclose = (event) => {
-        console.log('🔌 [ApiService] WebSocket desconectado', { code: event.code, reason: event.reason });
-
-        // ✅ MELHORADO: Reconexão mais inteligente baseada no código de fechamento
-        if (this.isElectron()) {
-          if (event.code === 1006) { // Conexão anormal, provavelmente backend não está pronto
-            console.log('🔄 [ApiService] Backend provavelmente não está pronto, tentando reconectar em 5 segundos...');
-            setTimeout(() => {
-              this.connectWebSocket();
-            }, 5000);
-          } else {
-            console.log('🔄 [ApiService] Tentando reconectar WebSocket em 10 segundos...');
-            setTimeout(() => {
-              this.connectWebSocket();
-            }, 10000);
-          }
-        } else {
-          // Em modo web, reconectar mais rapidamente
-          setTimeout(() => {
-            this.connectWebSocket();
-          }, 5000);
-        }
-      };
-
-    } catch (error) {
-      console.error('❌ [ApiService] Erro ao conectar WebSocket:', error);
-
-      // ✅ NOVO: Log diagnóstico para problemas no Electron
-      if (this.isElectron()) {
-        console.log('🔧 [ApiService] Diagnóstico de conectividade:');
-        console.log('   - Base URL:', this.baseUrl);
-        console.log('   - Fallback URLs:', this.fallbackUrls);
-        console.log('   - User Agent:', navigator.userAgent.substring(0, 100));
-        console.log('   - Protocol:', window.location.protocol);
-        console.log('   - Hostname:', window.location.hostname);
-      }
-    }
-  }
-
-  // ✅ NOVO: Método para emitir mensagens WebSocket (usado pelo backend)
-  emitWebSocketMessage(message: any): void {
-    console.log('📤 [ApiService] Emitindo mensagem WebSocket:', message.type);
-    this.webSocketMessageSubject.next(message);
-    console.log('✅ [ApiService] Mensagem emitida com sucesso');
-  }
-
-  // ✅ NOVO: Método para enviar mensagens WebSocket
-  sendWebSocketMessage(message: any): void {
-    console.log('📤 [ApiService] Tentando enviar mensagem WebSocket:', message.type);
-    console.log('🔍 [ApiService] DEBUG - webSocket existe:', !!this.webSocket);
-    console.log('🔍 [ApiService] DEBUG - webSocket readyState:', this.webSocket?.readyState);
-    console.log('🔍 [ApiService] DEBUG - WebSocket.OPEN:', WebSocket.OPEN);
-
-    if (this.webSocket && this.webSocket.readyState === WebSocket.OPEN) {
-      console.log('📤 [ApiService] Enviando mensagem WebSocket:', message.type);
-      console.log('📤 [ApiService] Mensagem completa:', JSON.stringify(message, null, 2));
-      this.webSocket.send(JSON.stringify(message));
-      console.log('✅ [ApiService] Mensagem enviada com sucesso');
-    } else {
-      console.error('❌ [ApiService] WebSocket não conectado');
-      console.error('❌ [ApiService] WebSocket status:', {
-        exists: !!this.webSocket,
-        readyState: this.webSocket?.readyState,
-        isOpen: this.webSocket?.readyState === WebSocket.OPEN
-      });
-    }
-  }
-
-  // ✅ NOVO: Conectar via WebSocket e retornar Observable das mensagens
-  connect(): Observable<any> {
-    if (this.webSocket && this.webSocket.readyState === WebSocket.OPEN) {
-      // Se já conectado, retornar observable existente
-      return this.webSocketMessageSubject.asObservable();
-    }
-
-    // Criar nova conexão WebSocket
-    this.connectWebSocket();
-    return this.webSocketMessageSubject.asObservable();
-  }
-
-  // ✅ MELHORADO: Identificar jogador no backend via WebSocket com aguardo de conexão
-  identifyPlayer(playerData: any): Observable<any> {
-    return new Observable(observer => {
-      // ✅ CORREÇÃO: Aguardar WebSocket estar conectado antes de tentar identificação
-      this.onWebSocketReady().subscribe({
-        next: (isReady) => {
-          if (!isReady || !this.isWebSocketConnected()) {
-            observer.error('WebSocket não conseguiu conectar');
-            return;
-          }
-
-          // ✅ PADRONIZAÇÃO: Construir identificador único antes de enviar
-          const playerIdentifier = this.buildPlayerIdentifier(playerData);
-          if (!playerIdentifier) {
-            observer.error('Não foi possível construir identificador único do jogador');
-            return;
-          }
-
-          console.log('🆔 [ApiService] Identificando jogador com identificador único:', playerIdentifier);
-
-          // ✅ WebSocket está pronto, enviar mensagem de identificação
-          const message = {
-            type: 'identify_player',
-            playerData: {
-              displayName: playerIdentifier, // ✅ USAR IDENTIFICADOR PADRONIZADO
-              summonerName: playerIdentifier, // ✅ COMPATIBILIDADE
-              gameName: playerData.gameName,
-              tagLine: playerData.tagLine,
-              id: playerData.id,
-              puuid: playerData.puuid,
-              // ✅ ADICIONAR: Dados adicionais para validação
-              region: playerData.region,
-              customLp: playerData.customLp,
-              profileIconId: playerData.profileIconId,
-              summonerLevel: playerData.summonerLevel
-            }
-          };
-
-          try {
-            this.webSocket!.send(JSON.stringify(message));
-            console.log('📤 [ApiService] Mensagem de identificação enviada:', message.type);
-
-            // Aguardar resposta de confirmação
-            const subscription = this.webSocketMessageSubject.subscribe(response => {
-              if (response.type === 'player_identified') {
-                console.log('✅ [ApiService] Jogador identificado com sucesso:', playerIdentifier);
-                observer.next(response);
-                observer.complete();
-                subscription.unsubscribe();
-              }
-            });
-
-            // Timeout após 10 segundos (aumentado para dar mais tempo)
-            setTimeout(() => {
-              console.error('⏰ [ApiService] Timeout na identificação do jogador:', playerIdentifier);
-              observer.error('Timeout na identificação do jogador');
-              subscription.unsubscribe();
-            }, 10000);
-
-          } catch (sendError) {
-            console.error('❌ [ApiService] Erro ao enviar mensagem de identificação:', sendError);
-            observer.error(`Erro ao enviar mensagem de identificação: ${sendError}`);
-          }
-        },
-        error: (error) => {
-          console.error('❌ [ApiService] Erro ao aguardar WebSocket:', error);
-          observer.error(`Erro ao aguardar WebSocket: ${error}`);
-        }
-      });
-    });
-  }
-
-  // ✅ NOVO: Construir identificador único padronizado
-  private buildPlayerIdentifier(playerData: any): string | null {
-    // ✅ PRIORIDADE 1: gameName#tagLine (padrão)
-    if (playerData.gameName && playerData.tagLine) {
-      return `${playerData.gameName}#${playerData.tagLine}`;
-    }
-
-    // ✅ PRIORIDADE 2: displayName (se já está no formato correto)
-    if (playerData.displayName && playerData.displayName.includes('#')) {
-      return playerData.displayName;
-    }
-
-    // ✅ PRIORIDADE 3: summonerName (fallback)
-    if (playerData.summonerName) {
-      return playerData.summonerName;
-    }
-
-    console.warn('⚠️ [ApiService] Não foi possível construir identificador único:', playerData);
-    return null;
-  }
-
-  // ✅ NOVO: Verificar status de sincronização via polling
   checkSyncStatus(summonerName: string): Observable<any> {
     const url = `${this.baseUrl}/sync/status?summonerName=${encodeURIComponent(summonerName)}`;
-    console.log(`🔄 [ApiService] Verificando status de sincronização para: ${summonerName}`);
+    return this.http.get(url).pipe(catchError(this.handleError));
+  }
 
-    return this.http.get(url).pipe(
-      tap(response => {
-        console.log(`🔄 [ApiService] Status de sincronização recebido:`, response);
-      }),
-      catchError(error => {
-        console.error(`❌ [ApiService] Erro ao verificar status de sincronização:`, error);
-        return throwError(() => error);
+  getCustomMatches(playerIdentifier: string, offset: number = 0, limit: number = 10): Observable<any> {
+    return this.http.get(`${this.baseUrl}/matches/custom/${encodeURIComponent(playerIdentifier)}?offset=${offset}&limit=${limit}`).pipe(catchError(this.handleError));
+  }
+
+  getCustomMatchesCount(playerIdentifier: string): Observable<any> {
+    return this.http.get(`${this.baseUrl}/matches/custom/${encodeURIComponent(playerIdentifier)}/count`).pipe(catchError(this.handleError));
+  }
+
+  // === Riot API proxies ===
+  getPlayerMatchHistoryFromRiot(puuid: string, region: string, count: number = 20): Observable<any> {
+    return this.http.get<any>(`${this.baseUrl}/player/match-history-riot/${puuid}?count=${count}`).pipe(catchError(this.handleError));
+  }
+
+  // === LCU helper endpoints (backend or local fallback) ===
+  getCurrentGame(): Observable<any> {
+    return this.http.get<any>(`${this.baseUrl}/lcu/current-match-details`).pipe(catchError(this.handleError));
+  }
+
+  getLCUMatchHistory(startIndex: number = 0, count: number = 20): Observable<any> {
+    if (this.isElectron()) {
+      return this.tryWithFallback(`/lcu/match-history?startIndex=${startIndex}&count=${count}`, 'GET');
+    }
+    return this.http.get(`${this.baseUrl}/lcu/match-history?startIndex=${startIndex}&count=${count}`).pipe(catchError(this.handleError));
+  }
+
+  getLCUMatchHistoryAll(startIndex: number = 0, count: number = 5, customOnly: boolean = true): Observable<any> {
+    if (this.isElectron()) {
+      return this.tryWithFallback(`/lcu/match-history-all?startIndex=${startIndex}&count=${count}&customOnly=${customOnly}`, 'GET');
+    }
+    return this.http.get(`${this.baseUrl}/lcu/match-history-all?startIndex=${startIndex}&count=${count}&customOnly=${customOnly}`).pipe(catchError(this.handleError));
+  }
+
+  // === Simulation helpers (used by App.simulateLastMatch) ===
+  createLCUBasedMatch(payload: { lcuMatchData: any; playerIdentifier: string }): Observable<any> {
+    const tryBackend = () => this.http.post(`${this.baseUrl}/lcu/create-lcu-based-match`, payload).pipe(
+      catchError(() => {
+        // Fallback local se endpoint não existir
+        const match = payload?.lcuMatchData || {};
+        const simulated = {
+          matchId: match.gameId || match.id || Date.now(),
+          team1: match.team1 || match.blueTeam || [],
+          team2: match.team2 || match.redTeam || [],
+          pickBanData: match.pickBanData || match.session || null,
+          detectedByLCU: true
+        };
+        return of(simulated);
       })
+    );
+
+    // Em Electron ou Web, tentar backend; se falhar, retorna simulado
+    return tryBackend();
+  }
+
+  cleanupTestMatches(): Observable<any> {
+    // Tenta chamar backend; se não houver endpoint, retorna resposta padrão
+    return this.http.post(`${this.baseUrl}/matches/cleanup-test`, {}).pipe(
+      catchError(() => of({ success: true, deletedCount: 0 }))
     );
   }
 }

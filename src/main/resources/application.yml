@@ -1,7 +1,5 @@
 server:
   port: 8080
-  servlet:
-    context-path: /
 
 spring:
   config:
@@ -72,6 +70,8 @@ logging:
 app:
   backend:
     id: spring-backend-1
+  lcu:
+    host: ${LCU_HOST:${APP_LCU_HOST:127.0.0.1}}
   sync:
     observer-interval: ${SYNC_OBSERVER_INTERVAL:5000}
   riot:

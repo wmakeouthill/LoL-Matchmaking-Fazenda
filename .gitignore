@@ -30,7 +30,7 @@ release.properties
 /src/main/resources/application-secrets.properties
 /src/main/resources/*.secrets.properties
 .env
-.env.*
+.env
 .env.local
 
 # Logs

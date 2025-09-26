@@ -56,6 +56,7 @@ function createMainWindow(): void {
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
+            sandbox: false, // ✅ Garantir Node APIs no preload (require/fs)
             webSecurity: false, // Desabilitar para desenvolvimento
             allowRunningInsecureContent: true,
             experimentalFeatures: false,
@@ -72,8 +73,13 @@ function createMainWindow(): void {
     setupIpcHandlers();
 
     // Escolher URL do backend a partir de variáveis de ambiente (BACKEND_URL ou BACKEND_HOST/PORT), com fallback local
-    const startUrl = process.env['BACKEND_URL'] || (process.env['BACKEND_HOST'] ? `http://${process.env['BACKEND_HOST']}:${process.env['BACKEND_PORT'] || '8080'}` : 'http://localhost:8080');
-    safeLog('🔧 Backend URL selecionada:', startUrl);
+    const baseUrl = process.env['BACKEND_URL'] || (process.env['BACKEND_HOST'] ? `http://${process.env['BACKEND_HOST']}:${process.env['BACKEND_PORT'] || '8080'}` : 'http://localhost:8080');
+    const startUrl = `${baseUrl}/api/`; // ✅ CORREÇÃO: Adicionar /api/ pois o frontend é servido pelo backend nesta rota
+    safeLog('🔧 Backend URL base:', baseUrl);
+    safeLog('🔧 Frontend URL selecionada:', startUrl);
+
+    // ✅ NOVO: Definir variável de ambiente para o renderer process
+    process.env['BACKEND_URL'] = baseUrl;
 
     safeLog('🚀 Electron iniciando...');
     safeLog('📡 Carregando URL:', startUrl);
@@ -248,10 +254,14 @@ function loadFrontendWithRetry(url: string, attempt: number = 1, maxAttempts: nu
     safeLog(`🔄 Tentativa ${attempt}/${maxAttempts} de carregar: ${url}`);
 
     mainWindow.loadURL(url, {
-        userAgent: 'LOL-Matchmaking-Electron'
+        userAgent: 'LOL-Matchmaking-Electron Electron/1.0'
     }).then((): void => {
         safeLog('✅ Frontend carregado com sucesso!');
         showMainWindow();
+        // Pequeno teste para confirmar que preload expôs electronAPI
+        try {
+            mainWindow?.webContents.executeJavaScript(`console.log('🧪 electronAPI disponível:', !!window['electronAPI']);`).catch(()=>{});
+        } catch {}
     }).catch((error: Error): void => {
         safeLog(`❌ Erro na tentativa ${attempt}:`, error?.message || 'Erro desconhecido');
 

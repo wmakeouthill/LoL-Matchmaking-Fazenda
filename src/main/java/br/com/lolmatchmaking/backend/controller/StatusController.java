@@ -23,18 +23,6 @@ public class StatusController {
     @Value("${spring.application.name:lol-matchmaking}")
     private String applicationName;
 
-    @GetMapping
-    public ResponseEntity<Map<String, Object>> getStatus() {
-        Map<String, Object> status = Map.of(
-                "application", applicationName,
-                "backendId", backendId,
-                "status", "UP",
-                "timestamp", Instant.now(),
-                "version", "1.0.0");
-
-        return ResponseEntity.ok(status);
-    }
-
     @GetMapping("/health")
     public ResponseEntity<Map<String, Object>> getHealth() {
         Map<String, Object> health = Map.of(
@@ -45,5 +33,17 @@ public class StatusController {
                         "application", "UP"));
 
         return ResponseEntity.ok(health);
+    }
+
+    @GetMapping
+    public ResponseEntity<Map<String, Object>> getStatus() {
+        Map<String, Object> status = Map.of(
+                "application", applicationName,
+                "backendId", backendId,
+                "status", "UP",
+                "timestamp", Instant.now(),
+                "version", "1.0.0");
+
+        return ResponseEntity.ok(status);
     }
 }

@@ -6,10 +6,10 @@ services:
     image: mysql:8.0
     container_name: lol-matchmaking-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: password
-      MYSQL_DATABASE: lolmatchmaking
-      MYSQL_USER: loluser
-      MYSQL_PASSWORD: lolpass
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-lolmatchmaking}
+      MYSQL_USER: ${MYSQL_USER:-loluser}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-lolpass}
     ports:
       - "3306:3306"
     volumes:
@@ -30,14 +30,16 @@ services:
     container_name: lol-matchmaking-app
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      MYSQL_HOST: mysql
-      MYSQL_PORT: 3306
-      MYSQL_DATABASE: lolmatchmaking
-      MYSQL_USER: loluser
-      MYSQL_PASSWORD: lolpass
+      MYSQL_HOST: ${MYSQL_HOST:-mysql}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-lolmatchmaking}
+      MYSQL_USER: ${MYSQL_USER:-loluser}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-lolpass}
       # Configurações para WebSocket e CORS
-      BACKEND_URL: http://localhost:8080
-      FRONTEND_URL: http://localhost:3000
+      BACKEND_URL: ${BACKEND_URL:-http://localhost:8080}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
+      # Permitir que o container acesse o LCU no host (Windows/Mac)
+      LCU_HOST: ${LCU_HOST:-host.docker.internal}
     ports:
       - "8080:8080"
     depends_on:

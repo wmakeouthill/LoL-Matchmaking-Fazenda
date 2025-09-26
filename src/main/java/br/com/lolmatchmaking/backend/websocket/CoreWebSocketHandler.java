@@ -42,6 +42,8 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
 
     // sessionId -> player info (JSON raw)
     private final Map<String, JsonNode> identifiedPlayers = new ConcurrentHashMap<>();
+    // sessionId -> last LCU status
+    private final Map<String, JsonNode> lastLcuStatus = new ConcurrentHashMap<>();
 
     @Override
     public void afterConnectionEstablished(@NonNull WebSocketSession session) {
@@ -66,8 +68,22 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             case "draft_action" -> handleDraftAction(session, root);
             case "draft_confirm" -> handleDraftConfirm(session, root);
             case "draft_snapshot" -> handleDraftSnapshot(session, root);
+            case "lcu_status" -> handleLcuStatus(session, root);
             default -> session.sendMessage(new TextMessage("{\"error\":\"unknown_type\"}"));
         }
+    }
+
+    private void handleLcuStatus(WebSocketSession session, JsonNode root) throws IOException {
+        JsonNode data = root.path("data");
+        if (data.isMissingNode()) {
+            session.sendMessage(new TextMessage("{\"type\":\"lcu_status_ack\",\"success\":false,\"error\":\"data required\"}"));
+            return;
+        }
+        lastLcuStatus.put(session.getId(), data);
+        if (log.isDebugEnabled()) {
+            log.debug("[WS] LCU status from {}: {}", session.getId(), data.toString());
+        }
+        session.sendMessage(new TextMessage("{\"type\":\"lcu_status_ack\",\"success\":true}"));
     }
 
     private static final String FIELD_CUSTOM_LP = "customLp";
@@ -97,6 +113,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
     @Override
     public void afterConnectionClosed(@NonNull WebSocketSession session, @NonNull CloseStatus status) {
         identifiedPlayers.remove(session.getId());
+        lastLcuStatus.remove(session.getId());
         sessionRegistry.remove(session.getId());
         webSocketService.removeSession(session.getId());
         log.info("Cliente desconectado: {} - status {}", session.getId(), status);

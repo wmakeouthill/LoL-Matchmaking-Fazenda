@@ -1,43 +1,87 @@
-const { app, BrowserWindow, Menu, shell, dialog } = require('electron');
-
-const isDev = process.env.NODE_ENV === 'development';
-
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+const electron_1 = require("electron");
+const path = __importStar(require("path"));
+const isDev = process.env['NODE_ENV'] === 'development';
 let mainWindow;
 let isQuitting = false;
-
 // Função segura para logging que não falha com broken pipe
 function safeLog(...args) {
     // Validar se há argumentos para logar
     if (args.length === 0) {
         return; // Não fazer nada se não há argumentos
     }
-
     try {
         console.log(...args);
-    } catch (error) {
+    }
+    catch (error) {
         // Tratamento específico para erros de logging
         // EPIPE pode ocorrer quando o pipe de saída é fechado
-        if (!error || error.code !== 'EPIPE') {
+        const errorObj = error;
+        if (!errorObj || errorObj.code !== 'EPIPE') {
             // Em desenvolvimento, mostrar outros erros que não sejam EPIPE
             if (isDev) {
                 try {
-                    console.error('Erro no logging:', error?.message || 'Erro desconhecido');
-                } catch (secondaryError) {
-                    // Se nem console.error funcionar, não há mais o que fazer
-                    // Logging não é crítico para o funcionamento da aplicação
-                    // Não deixar catch vazio - documentar a razão
+                    console.error('Erro no logging:', errorObj?.message || 'Erro desconhecido');
+                }
+                catch (secondaryError) {
+                    // Se nem console.error funcionar, tentar fallback síncrono e registrar a falha
+                    try {
+                        const fs = require('fs');
+                        fs.writeSync(2, 'Erro secundário no logging: ' + (secondaryError?.message || String(secondaryError)) + '\n');
+                    }
+                    catch (fsErr) {
+                        // Registrar em global para ajudar debugar (última tentativa)
+                        try {
+                            globalThis.__loggingFailure = String(fsErr);
+                        }
+                        catch {
+                            // nada mais a fazer
+                        }
+                    }
                 }
             }
         }
         // Ignorar silenciosamente erros EPIPE - são esperados em algumas situações
     }
 }
-
 function createMainWindow() {
     safeLog('🚀 Criando janela principal do Electron...');
-
     // Criar a janela principal do Electron
-    mainWindow = new BrowserWindow({
+    mainWindow = new electron_1.BrowserWindow({
         width: 1400,
         height: 900,
         minWidth: 800,
@@ -45,25 +89,30 @@ function createMainWindow() {
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
-            enableRemoteModule: false,
             webSecurity: false, // Desabilitar para desenvolvimento
             allowRunningInsecureContent: true,
             experimentalFeatures: false,
-            backgroundThrottling: false
+            backgroundThrottling: false,
+            preload: path.join(__dirname, 'preload.js') // Adicionar preload script
         },
         show: false,
         titleBarStyle: 'default',
         title: 'LOL Matchmaking - Carregando...',
         backgroundColor: '#1e3c72'
     });
-
-    const startUrl = 'http://localhost:8080';
-
+    // Configurar handlers IPC
+    setupIpcHandlers();
+    // Escolher URL do backend a partir de variáveis de ambiente (BACKEND_URL ou BACKEND_HOST/PORT), com fallback local
+    const baseUrl = process.env['BACKEND_URL'] || (process.env['BACKEND_HOST'] ? `http://${process.env['BACKEND_HOST']}:${process.env['BACKEND_PORT'] || '8080'}` : 'http://localhost:8080');
+    const startUrl = `${baseUrl}/api/`; // ✅ CORREÇÃO: Adicionar /api/ pois o frontend é servido pelo backend nesta rota
+    safeLog('🔧 Backend URL base:', baseUrl);
+    safeLog('🔧 Frontend URL selecionada:', startUrl);
+    // ✅ NOVO: Definir variável de ambiente para o renderer process
+    process.env['BACKEND_URL'] = baseUrl;
     safeLog('🚀 Electron iniciando...');
     safeLog('📡 Carregando URL:', startUrl);
-
+    safeLog('🔧 Preload script:', path.join(__dirname, 'preload.js'));
     loadFrontendWithRetry(startUrl);
-
     // Event handlers com tratamento robusto de erros
     mainWindow.once('ready-to-show', () => {
         safeLog('📱 Janela pronta para exibir');
@@ -72,19 +121,19 @@ function createMainWindow() {
                 mainWindow.show();
                 mainWindow.focus();
                 mainWindow.setTitle('LOL Matchmaking');
-            } catch (showError) {
-                safeLog('❌ Erro ao mostrar janela:', showError.message);
+            }
+            catch (showError) {
+                const error = showError;
+                safeLog('❌ Erro ao mostrar janela:', error.message);
             }
         }
     });
-
     mainWindow.webContents.once('dom-ready', () => {
         safeLog('🌐 DOM carregado - conteúdo pronto!');
         if (mainWindow && !mainWindow.isDestroyed()) {
             try {
                 mainWindow.show();
                 mainWindow.focus();
-
                 mainWindow.webContents.executeJavaScript(`
                     console.log('🎮 Frontend carregado no Electron!');
                     console.log('URL atual:', window.location.href);
@@ -92,60 +141,59 @@ function createMainWindow() {
                 `).catch((jsError) => {
                     safeLog('⚠️ Erro ao executar JavaScript:', jsError.message);
                 });
-            } catch (domError) {
-                safeLog('❌ Erro no evento dom-ready:', domError.message);
+            }
+            catch (domError) {
+                const error = domError;
+                safeLog('❌ Erro no evento dom-ready:', error.message);
             }
         }
     });
-
     mainWindow.on('closed', () => {
         safeLog('🗂️ Janela fechada');
         mainWindow = null;
     });
-
     mainWindow.on('unresponsive', () => {
         safeLog('⚠️ Janela não está respondendo');
     });
-
     mainWindow.on('responsive', () => {
         safeLog('✅ Janela voltou a responder');
     });
-
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
         safeLog('🔗 Link externo detectado:', url);
-        shell.openExternal(url).catch((shellError) => {
+        // Usar Promise.resolve para tratar shell.openExternal corretamente
+        Promise.resolve(electron_1.shell.openExternal(url)).catch((shellError) => {
             safeLog('❌ Erro ao abrir link externo:', shellError.message);
         });
         return { action: 'deny' };
     });
-
     mainWindow.webContents.on('did-start-loading', () => {
         safeLog('⏳ Iniciando carregamento...');
     });
-
     mainWindow.webContents.on('did-finish-load', () => {
         safeLog('✅ Carregamento finalizado');
         if (mainWindow && !mainWindow.isDestroyed()) {
             try {
                 mainWindow.show();
-            } catch (showError) {
-                safeLog('❌ Erro ao mostrar janela após carregamento:', showError.message);
+            }
+            catch (showError) {
+                const error = showError;
+                safeLog('❌ Erro ao mostrar janela após carregamento:', error.message);
             }
         }
     });
-
-    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
         safeLog('❌ Falha no carregamento:', errorCode, errorDescription, validatedURL);
         const retryTimeout = setTimeout(() => {
             if (mainWindow && !mainWindow.isDestroyed()) {
                 try {
                     loadFrontendWithRetry(startUrl);
-                } catch (retryError) {
-                    safeLog('❌ Erro ao tentar recarregar:', retryError.message);
+                }
+                catch (retryError) {
+                    const error = retryError;
+                    safeLog('❌ Erro ao tentar recarregar:', error.message);
                 }
             }
         }, 3000);
-
         // Evitar vazamento de memória limpando timeout
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.once('closed', () => {
@@ -153,70 +201,68 @@ function createMainWindow() {
             });
         }
     });
-
-    mainWindow.webContents.on('crashed', (event, killed) => {
-        safeLog('💥 WebContents travou! Killed:', killed);
+    mainWindow.webContents.on('render-process-gone', (_event, details) => {
+        safeLog('💥 Render process gone:', details && details.reason, 'exitCode=', details && details.exitCode);
         if (!isQuitting && mainWindow && !mainWindow.isDestroyed()) {
             try {
-                const response = dialog.showMessageBoxSync(mainWindow, {
+                const response = electron_1.dialog.showMessageBoxSync(mainWindow, {
                     type: 'error',
                     title: 'Erro no Electron',
                     message: 'A aplicação travou. Deseja reiniciar?',
                     buttons: ['Reiniciar', 'Fechar']
                 });
-
                 if (response === 0) {
                     try {
                         mainWindow.reload();
-                    } catch (reloadError) {
-                        safeLog('❌ Erro ao recarregar após crash:', reloadError.message);
-                        app.quit();
                     }
-                } else {
-                    app.quit();
+                    catch (reloadError) {
+                        const error = reloadError;
+                        safeLog('❌ Erro ao recarregar após crash:', error.message);
+                        electron_1.app.quit();
+                    }
                 }
-            } catch (dialogError) {
-                safeLog('❌ Erro ao mostrar diálogo de crash:', dialogError.message);
-                app.quit();
+                else {
+                    electron_1.app.quit();
+                }
+            }
+            catch (dialogError) {
+                const error = dialogError;
+                safeLog('❌ Erro ao mostrar diálogo de crash:', error.message);
+                electron_1.app.quit();
             }
         }
     });
-
     mainWindow.webContents.on('devtools-opened', () => {
         safeLog('🔧 DevTools aberto');
     });
-
     mainWindow.webContents.on('devtools-closed', () => {
         safeLog('🔧 DevTools fechado');
     });
 }
-
 // Função auxiliar para mostrar janela com tratamento de erro
 function showMainWindow() {
     if (mainWindow && !mainWindow.isDestroyed()) {
         try {
             mainWindow.show();
             mainWindow.focus();
-        } catch (showError) {
-            safeLog('❌ Erro ao mostrar janela:', showError.message);
+        }
+        catch (showError) {
+            const error = showError;
+            safeLog('❌ Erro ao mostrar janela:', error.message);
         }
     }
 }
-
 function loadFrontendWithRetry(url, attempt = 1, maxAttempts = 5) {
     // Validar parâmetros de entrada
-    if (!url || typeof url !== 'string') {
+    if (!url) {
         safeLog('❌ URL inválida fornecida para carregamento');
         return;
     }
-
     if (!mainWindow || mainWindow.isDestroyed()) {
         safeLog('❌ Janela foi destruída, cancelando carregamento');
         return;
     }
-
     safeLog(`🔄 Tentativa ${attempt}/${maxAttempts} de carregar: ${url}`);
-
     mainWindow.loadURL(url, {
         userAgent: 'LOL-Matchmaking-Electron'
     }).then(() => {
@@ -224,40 +270,41 @@ function loadFrontendWithRetry(url, attempt = 1, maxAttempts = 5) {
         showMainWindow();
     }).catch((error) => {
         safeLog(`❌ Erro na tentativa ${attempt}:`, error?.message || 'Erro desconhecido');
-
         if (attempt < maxAttempts) {
             const delay = 2000;
             safeLog(`⏳ Tentando novamente em ${delay}ms...`);
             const retryTimeout = setTimeout(() => {
                 try {
                     loadFrontendWithRetry(url, attempt + 1, maxAttempts);
-                } catch (retryError) {
-                    safeLog('❌ Erro na nova tentativa:', retryError?.message || 'Erro desconhecido');
+                }
+                catch (retryError) {
+                    const err = retryError;
+                    safeLog('❌ Erro na nova tentativa:', err?.message || 'Erro desconhecido');
                 }
             }, delay);
-
             // Limpar timeout se janela for destruída
             if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.once('closed', () => {
                     clearTimeout(retryTimeout);
                 });
             }
-        } else {
+        }
+        else {
             safeLog('❌ Todas as tentativas falharam, carregando página de erro');
             try {
                 loadErrorPage();
-            } catch (errorPageError) {
-                safeLog('❌ Erro ao carregar página de erro:', errorPageError?.message || 'Erro desconhecido');
+            }
+            catch (errorPageError) {
+                const err = errorPageError;
+                safeLog('❌ Erro ao carregar página de erro:', err?.message || 'Erro desconhecido');
             }
         }
     });
 }
-
 function loadErrorPage() {
     if (!mainWindow || mainWindow.isDestroyed()) {
         return;
     }
-
     const errorHtml = `
     <!DOCTYPE html>
     <html lang="pt-BR">
@@ -338,8 +385,6 @@ function loadErrorPage() {
         </div>
         <script>
             function openExternalBrowser() {
-                // Removido uso inseguro de require('electron') no renderer
-                // O main process irá lidar com links externos automaticamente
                 console.log('Tentando abrir navegador externo...');
                 try {
                     window.open('http://localhost:8080', '_blank');
@@ -348,24 +393,20 @@ function loadErrorPage() {
                 }
             }
             
-            // Auto-retry a cada 10 segundos
             setTimeout(() => {
                 location.reload();
             }, 10000);
         </script>
     </body>
     </html>`;
-
     mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(errorHtml))
         .catch((loadError) => {
-            safeLog('❌ Erro ao carregar página de erro:', loadError.message);
-        });
-
+        safeLog('❌ Erro ao carregar página de erro:', loadError.message);
+    });
     if (!mainWindow.isDestroyed()) {
         mainWindow.show();
     }
 }
-
 // Configurar menu da aplicação
 function createAppMenu() {
     const template = [
@@ -391,11 +432,14 @@ function createAppMenu() {
                             try {
                                 if (mainWindow.webContents.isDevToolsOpened()) {
                                     mainWindow.webContents.closeDevTools();
-                                } else {
+                                }
+                                else {
                                     mainWindow.webContents.openDevTools({ mode: 'detach' });
                                 }
-                            } catch (error) {
-                                safeLog('❌ Erro ao abrir DevTools:', error.message);
+                            }
+                            catch (error) {
+                                const err = error;
+                                safeLog('❌ Erro ao abrir DevTools:', err.message);
                             }
                         }
                     }
@@ -406,7 +450,7 @@ function createAppMenu() {
                     accelerator: process.platform === 'darwin' ? 'Cmd+Q' : 'Alt+F4',
                     click: () => {
                         isQuitting = true;
-                        app.quit();
+                        electron_1.app.quit();
                     }
                 }
             ]
@@ -422,8 +466,10 @@ function createAppMenu() {
                             try {
                                 const currentZoom = mainWindow.webContents.getZoomLevel();
                                 mainWindow.webContents.setZoomLevel(currentZoom + 0.5);
-                            } catch (error) {
-                                safeLog('❌ Erro ao aumentar zoom:', error.message);
+                            }
+                            catch (error) {
+                                const err = error;
+                                safeLog('❌ Erro ao aumentar zoom:', err.message);
                             }
                         }
                     }
@@ -436,8 +482,10 @@ function createAppMenu() {
                             try {
                                 const currentZoom = mainWindow.webContents.getZoomLevel();
                                 mainWindow.webContents.setZoomLevel(currentZoom - 0.5);
-                            } catch (error) {
-                                safeLog('❌ Erro ao diminuir zoom:', error.message);
+                            }
+                            catch (error) {
+                                const err = error;
+                                safeLog('❌ Erro ao diminuir zoom:', err.message);
                             }
                         }
                     }
@@ -449,8 +497,10 @@ function createAppMenu() {
                         if (mainWindow && !mainWindow.isDestroyed()) {
                             try {
                                 mainWindow.webContents.setZoomLevel(0);
-                            } catch (error) {
-                                safeLog('❌ Erro ao resetar zoom:', error.message);
+                            }
+                            catch (error) {
+                                const err = error;
+                                safeLog('❌ Erro ao resetar zoom:', err.message);
                             }
                         }
                     }
@@ -458,15 +508,15 @@ function createAppMenu() {
             ]
         }
     ];
-
     try {
-        const menu = Menu.buildFromTemplate(template);
-        Menu.setApplicationMenu(menu);
-    } catch (error) {
-        safeLog('❌ Erro ao criar menu:', error.message);
+        const menu = electron_1.Menu.buildFromTemplate(template);
+        electron_1.Menu.setApplicationMenu(menu);
+    }
+    catch (error) {
+        const err = error;
+        safeLog('❌ Erro ao criar menu:', err.message);
     }
 }
-
 // Função para limpar recursos antes de sair
 function cleanup() {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -474,55 +524,54 @@ function cleanup() {
         mainWindow.webContents.removeAllListeners();
     }
 }
-
 // Eventos do aplicativo
-app.whenReady().then(() => {
+electron_1.app.whenReady().then(() => {
     safeLog('⚡ Electron App Ready!');
     try {
         createMainWindow();
         createAppMenu();
-    } catch (error) {
-        safeLog('❌ Erro ao inicializar aplicação:', error.message);
-        app.quit();
     }
-
-    app.on('activate', () => {
-        if (BrowserWindow.getAllWindows().length === 0) {
+    catch (error) {
+        const err = error;
+        safeLog('❌ Erro ao inicializar aplicação:', err.message);
+        electron_1.app.quit();
+    }
+    electron_1.app.on('activate', () => {
+        if (electron_1.BrowserWindow.getAllWindows().length === 0) {
             try {
                 createMainWindow();
-            } catch (error) {
-                safeLog('❌ Erro ao recriar janela:', error.message);
+            }
+            catch (error) {
+                const err = error;
+                safeLog('❌ Erro ao recriar janela:', err.message);
             }
         }
     });
 }).catch((error) => {
     safeLog('❌ Erro na inicialização do app:', error.message);
-    app.quit();
+    electron_1.app.quit();
 });
-
-app.on('window-all-closed', () => {
+electron_1.app.on('window-all-closed', () => {
     safeLog('🚪 Todas as janelas fechadas');
     cleanup();
     if (process.platform !== 'darwin') {
         isQuitting = true;
-        app.quit();
+        electron_1.app.quit();
     }
 });
-
-app.on('before-quit', () => {
+electron_1.app.on('before-quit', () => {
     safeLog('👋 Aplicação sendo encerrada...');
     isQuitting = true;
     cleanup();
 });
-
 // Prevenir múltiplas instâncias
-const gotTheLock = app.requestSingleInstanceLock();
-
+const gotTheLock = electron_1.app.requestSingleInstanceLock();
 if (!gotTheLock) {
     safeLog('❌ Já existe uma instância rodando - fechando esta instância');
-    app.quit();
-} else {
-    app.on('second-instance', () => {
+    electron_1.app.quit();
+}
+else {
+    electron_1.app.on('second-instance', () => {
         safeLog('🔍 Segunda instância detectada - focando janela principal');
         if (mainWindow && !mainWindow.isDestroyed()) {
             if (mainWindow.isMinimized()) {
@@ -532,7 +581,6 @@ if (!gotTheLock) {
         }
     });
 }
-
 // Tratamento de erros não capturados aprimorado
 process.on('uncaughtException', (error) => {
     if (error.code !== 'EPIPE') {
@@ -540,41 +588,84 @@ process.on('uncaughtException', (error) => {
         if (error.stack) {
             safeLog('Stack trace:', error.stack);
         }
-
         if (!isDev) {
             // Em produção, encerrar graciosamente
             try {
                 cleanup();
-                app.quit();
-            } catch (quitError) {
-                // Forçar saída se cleanup falhar
-                process.exit(1);
+                electron_1.app.quit();
+            }
+            catch (quitError) {
+                const qe = quitError;
+                safeLog('❌ Erro durante cleanup/quit:', qe?.message || String(quitError));
+                // tentar forçar saída se cleanup falhar
+                try {
+                    process.exit(1);
+                }
+                catch (exitErr) {
+                    safeLog('❌ Erro ao forçar exit:', String(exitErr));
+                }
             }
         }
     }
 });
-
-process.on('unhandledRejection', (reason, promise) => {
-    safeLog('💥 Promise rejeitada não tratada:', reason);
-    safeLog('Promise:', promise);
-
-    if (!isDev) {
-        // Em produção, registrar e considerar encerramento
-        safeLog('Aplicação continuará executando, mas isso deve ser investigado');
-    }
-});
-
 // Tratamento de sinal de interrupção (Ctrl+C)
 process.on('SIGINT', () => {
     safeLog('🛑 Sinal SIGINT recebido - encerrando aplicação...');
-    cleanup();
-    app.quit();
+    try {
+        cleanup();
+        electron_1.app.quit();
+    }
+    catch (sigErr) {
+        safeLog('❌ Erro ao tratar SIGINT:', String(sigErr));
+        try {
+            process.exit(1);
+        }
+        catch { }
+    }
 });
-
 process.on('SIGTERM', () => {
     safeLog('🛑 Sinal SIGTERM recebido - encerrando aplicação...');
-    cleanup();
-    app.quit();
+    try {
+        cleanup();
+        electron_1.app.quit();
+    }
+    catch (sigErr) {
+        safeLog('❌ Erro ao tratar SIGTERM:', String(sigErr));
+        try {
+            process.exit(1);
+        }
+        catch { }
+    }
 });
-
-safeLog('🚀 Electron main.js carregado com sucesso!');
+safeLog('🚀 Electron main.ts carregado com sucesso!');
+// Configurar handlers IPC para comunicação segura entre main e renderer
+function setupIpcHandlers() {
+    // Handler para abrir links externos
+    electron_1.ipcMain.handle('shell:openExternal', async (_event, url) => {
+        try {
+            await electron_1.shell.openExternal(url);
+            safeLog('🔗 Link externo aberto:', url);
+        }
+        catch (error) {
+            const err = error;
+            safeLog('❌ Erro ao abrir link externo:', err.message);
+            throw err;
+        }
+    });
+    // Handler para ping/pong de teste
+    electron_1.ipcMain.handle('app:ping', async () => {
+        safeLog('📡 Ping recebido do renderer');
+        return 'pong';
+    });
+    // Handler para obter informações do sistema
+    electron_1.ipcMain.handle('app:getSystemInfo', async () => {
+        return {
+            electronVersion: process.versions.electron,
+            nodeVersion: process.versions.node,
+            platform: process.platform,
+            arch: process.arch
+        };
+    });
+    safeLog('🔧 Handlers IPC configurados');
+}
+//# sourceMappingURL=main.js.map

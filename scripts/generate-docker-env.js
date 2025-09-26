@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 
 const secretsPath = path.join(__dirname, '..', 'src', 'main', 'resources', 'application-secrets.properties');
-const outPath = path.join(__dirname, '..', '.env.docker');
+const outPath = path.join(__dirname, '..', '.env');
 
 function parseProperties(content) {
   const lines = content.split(/\r?\n/);
@@ -56,7 +56,7 @@ if (!out['DATABASE_URL'] && out['MYSQL_HOST'] && out['MYSQL_DATABASE']) {
   out['DATABASE_URL'] = `jdbc:mysql://${host}:${port}/${out['MYSQL_DATABASE']}?useSSL=false&serverTimezone=UTC`;
 }
 
-// Write .env.docker with KEY=VALUE lines
+// Write .env with KEY=VALUE lines
 const lines = [];
 for (const k of Object.keys(out)) {
   lines.push(`${k}=${out[k]}`);
@@ -65,5 +65,5 @@ for (const k of Object.keys(out)) {
 fs.writeFileSync(outPath, lines.join('\n'));
 console.log('Gerado', outPath);
 console.log('Conteúdo não será mostrado aqui (contém segredos).');
-console.log('Use este arquivo no docker run: docker run --env-file .env.docker ...');
+console.log('Use este arquivo no docker run: docker run --env-file .env ...');
 

@@ -22,7 +22,10 @@ export interface Player {
   };
   wins?: number;
   losses?: number;
-  lastMatchDate?: Date; rankedData?: {
+  lastMatchDate?: Date;
+  registeredAt?: string; // Data de registro do jogador
+  updatedAt?: string; // Data da última atualização
+  rankedData?: {
     soloQueue?: any;
     flexQueue?: any;
   };
