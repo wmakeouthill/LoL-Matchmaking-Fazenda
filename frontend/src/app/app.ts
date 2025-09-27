@@ -340,6 +340,14 @@ export class App implements OnInit, OnDestroy {
           } : null
         };
 
+        // Atualizar localmente o status do LCU para a UI
+        this.lcuStatus = {
+          isConnected: !!(summoner || session || phase),
+          gameflowPhase: phase,
+          summoner: payload.summoner,
+          lobby: undefined
+        } as any;
+
         this.apiService.sendWebSocketMessage({ type: 'lcu_status', data: payload });
       } catch (e) {
         console.warn('⚠️ [App] Falha ao coletar telemetria LCU:', e);
@@ -882,6 +890,15 @@ export class App implements OnInit, OnDestroy {
     console.log('📞 [App] === FIM DA RECUSA DA PARTIDA ===');
   }
 
+  // Wrappers para eventos do template
+  onAcceptMatch(_event?: any): void {
+    this.acceptMatch().catch(() => {});
+  }
+
+  onDeclineMatch(_event?: any): void {
+    this.declineMatch().catch(() => {});
+  }
+
   // ✅ ENHANCED: Métodos de notificação com animações suaves
   private addNotification(type: 'success' | 'error' | 'warning' | 'info', title: string, message: string): void {
     const notification: Notification = {
@@ -1168,667 +1185,198 @@ export class App implements OnInit, OnDestroy {
   }
 
   private startLCUStatusCheck(): void {
-    setInterval(() => {
+    // Evitar criação de múltiplos intervals
+    if (this.lcuCheckInterval) {
+      clearInterval(this.lcuCheckInterval);
+    }
+    const intervalId = setInterval(() => {
       this.apiService.getLCUStatus().subscribe({
-        next: (status) => this.lcuStatus = status,
+        next: (status) => {
+          // status pode vir como { isConnected, status: {...} }
+          const isConnected = !!(status && (status as any).isConnected);
+          const details = (status as any).status || {};
+          this.lcuStatus = {
+            isConnected,
+            gameflowPhase: details.gameflowPhase || this.lcuStatus.gameflowPhase,
+            summoner: details.summoner || this.lcuStatus.summoner
+          } as any;
+        },
         error: () => this.lcuStatus = { isConnected: false }
       });
     }, 5000);
+    (this as any).lcuCheckInterval = intervalId;
   }
 
-  private checkBackendConnection(): void {
-    this.apiService.checkHealth().subscribe({
-      next: () => {
-        this.isConnected = true;
-        console.log('✅ [App] Conectado ao backend');
-      },
-      error: () => {
-        this.isConnected = false;
-        console.warn('❌ [App] Backend desconectado');
-      }
-    });
-  }
+  // ✅ NOVO: Método para simular partida personalizada
+  async simulateCustomMatch(): Promise<void> {
+    console.log('🎮 [App] Iniciando simulação de partida personalizada...');
 
-  private loadConfigFromDatabase(): void {
-    this.apiService.getConfigSettings().subscribe({
-      next: (config) => {
-        console.log('⚙️ [App] Configurações carregadas:', config);
-        if (config) {
-          this.settingsForm = { ...this.settingsForm, ...config };
-        }
-      },
-      error: (error) => {
-        console.warn('⚠️ [App] Erro ao carregar configurações:', error);
-      }
-    });
-  }
+    if (!this.currentPlayer) {
+      this.addNotification('error', 'Erro', 'Jogador não identificado');
+      return;
+    }
 
-  // ✅ MANTIDO: Métodos básicos de interface (MANUAL APENAS)
-  onRefreshData(): void {
-    console.log('🔄 [App] Refresh MANUAL solicitado pelo usuário');
-    this.refreshQueueStatus();
-    this.loadPlayerData();
-  }
+    // Criar dados de partida simulada
+    const simulatedMatch = this.createSimulatedMatchData(this.currentPlayer);
 
-  // ✅ NOVO: Método para o queue component informar sobre mudanças no auto-refresh
-  onAutoRefreshToggle(enabled: boolean): void {
-    this.autoRefreshEnabled = enabled;
-    console.log(`🔄 [App] Auto-refresh ${enabled ? 'habilitado' : 'desabilitado'} - atualizações de fila serão ${enabled ? 'processadas' : 'filtradas'}`);
-  }
-
-  // ✅ MANTIDO: Métodos auxiliares para bots (admin)
-  async addBotToQueue(): Promise<void> {
     try {
-      await firstValueFrom(this.apiService.addBotToQueue());
-      this.addNotification('success', 'Bot Adicionado', 'Bot adicionado à fila com sucesso');
+      // Enviar dados da partida simulada para o backend
+      await firstValueFrom(this.apiService.simulateMatch(simulatedMatch));
+      console.log('✅ [App] Partida simulada com sucesso');
+
+      this.addNotification('success', 'Simulação Completa', 'A partida personalizada foi simulada com sucesso');
     } catch (error) {
-      console.error('❌ [App] Erro ao adicionar bot:', error);
-      this.addNotification('error', 'Erro', 'Falha ao adicionar bot');
+      console.error('❌ [App] Erro ao simular partida:', error);
+      this.addNotification('error', 'Erro na Simulação', 'Não foi possível simular a partida');
     }
   }
 
-  // ✅ NOVO: Resetar contador de bots
-  async resetBotCounter(): Promise<void> {
-    try {
-      await firstValueFrom(this.apiService.resetBotCounter());
-      this.addNotification('success', 'Contador Resetado', 'Contador de bots resetado com sucesso');
-    } catch (error) {
-      console.error('❌ [App] Erro ao resetar contador de bots:', error);
-      this.addNotification('error', 'Erro', 'Falha ao resetar contador de bots');
-    }
-  }
+  // ✅ NOVO: Criar dados simulados para uma partida personalizada
+  private createSimulatedMatchData(player: Player): any {
+    const currentTime = new Date();
+    const matchId = `custom_${currentTime.getTime()}`;
 
-  // ✅ MANTIDO: Métodos do Electron
-  minimizeWindow(): void {
-    if (this.isElectron && (window as any).electronAPI) {
-      (window as any).electronAPI.minimizeWindow();
-    }
-  }
-
-  maximizeWindow(): void {
-    if (this.isElectron && (window as any).electronAPI) {
-      (window as any).electronAPI.maximizeWindow();
-    }
-  }
-
-  closeWindow(): void {
-    if (this.isElectron && (window as any).electronAPI) {
-      (window as any).electronAPI.closeWindow();
-    }
-  }
-
-  // ✅ ADICIONADO: Métodos faltantes para o template
-  onAcceptMatch(event: any): void {
-    this.acceptMatch();
-  }
-
-  onDeclineMatch(event: any): void {
-    this.declineMatch();
-  }
-
-  onPickBanComplete(event: any): void {
-    console.log('🎯 [App] Draft completado:', event);
-    console.log('🔍 [App] DEBUG - Criando gameData a partir do event:', JSON.stringify(event, null, 2));
-
-    // ✅ CORREÇÃO: Extrair picks de cada jogador das phases
-    const blueTeamWithChampions = this.assignChampionsToTeam(event.blueTeam || [], event.session, 'blue');
-    const redTeamWithChampions = this.assignChampionsToTeam(event.redTeam || [], event.session, 'red');
-
-    console.log('🔍 [App] Times com campeões atribuídos:', {
-      blueTeam: blueTeamWithChampions,
-      redTeam: redTeamWithChampions
-    });
-
-    // ✅ CORREÇÃO: Criar gameData corretamente a partir dos dados do draft
-    const gameData = {
-      sessionId: `game_${event.session?.id || Date.now()}`,
-      gameId: `custom_${event.session?.id || Date.now()}`,
-      team1: blueTeamWithChampions,
-      team2: redTeamWithChampions,
-      startTime: new Date(),
-      pickBanData: event.session || {},
-      isCustomGame: true,
-      originalMatchId: event.session?.id || null,
-      originalMatchData: event.session || null,
-      riotId: null
+    // Simular dados básicos
+    const simulatedData: any = {
+      matchId: matchId,
+      gameId: matchId,
+      region: player.region,
+      queueId: 440, // RANKED_FLEX_SR
+      playerCount: 10,
+      duration: 1800,
+      startTime: currentTime.toISOString(),
+      endTime: new Date(currentTime.getTime() + 1800 * 1000).toISOString(),
+      team1: [] as any[],
+      team2: [] as any[],
+      pickBanData: this.createSimulatedPickBanData(player)
     };
 
-    console.log('✅ [App] gameData criado com campeões:', gameData);
-
-    this.draftData = event;
-    this.gameData = gameData; // ✅ CORREÇÃO: Definir gameData
-    this.inDraftPhase = false;
-    this.inGamePhase = true;
-  }
-
-  // ✅ NOVO: Método para atribuir campeões aos jogadores baseado nas phases
-  private assignChampionsToTeam(team: any[], session: any, teamSide: 'blue' | 'red'): any[] {
-    if (!session?.phases || !Array.isArray(session.phases)) {
-      console.warn('⚠️ [App] Sessão não tem phases, retornando time original');
-      return team;
+    // Adicionar jogadores simulados (5v5)
+    for (let i = 0; i < 5; i++) {
+      simulatedData.team1.push(this.createSimulatedPlayerData(`blue_player${i + 1}`, 'blue', player.region));
+      simulatedData.team2.push(this.createSimulatedPlayerData(`red_player${i + 1}`, 'red', player.region));
     }
 
-    console.log(`🎯 [App] Atribuindo campeões ao time ${teamSide}:`, {
-      teamPlayersCount: team.length,
-      phasesCount: session.phases.length,
-      teamPlayers: team.map((p: any) => ({ name: p.summonerName || p.name, id: p.id }))
-    });
-
-    // Obter picks do time
-    const teamPicks = session.phases
-      .filter((phase: any) =>
-        phase.action === 'pick' &&
-        phase.team === teamSide &&
-        phase.champion &&
-        phase.locked
-      )
-      .map((phase: any) => ({
-        championId: phase.champion.id,
-        championName: phase.champion.name,
-        champion: phase.champion
-      }));
-
-    console.log(`✅ [App] Picks encontrados para time ${teamSide}:`, teamPicks);
-
-    // Atribuir campeões aos jogadores (assumindo ordem)
-    return team.map((player: any, index: number) => {
-      const pick = teamPicks[index]; // Por ordem (pode ser melhorado com lógica mais específica)
-
-      const playerWithChampion = {
-        ...player,
-        champion: pick?.champion || null,
-        championId: pick?.championId || null,
-        championName: pick?.championName || null
-      };
-
-      console.log(`🎯 [App] Jogador ${player.summonerName || player.name} recebeu campeão:`, {
-        championName: pick?.championName || 'Nenhum',
-        hasChampion: !!pick?.champion
-      });
-
-      return playerWithChampion;
-    });
+    return simulatedData;
   }
 
-  exitDraft(): void {
-    console.log('🚪 [App] Saindo do draft');
-
-    // ✅ CORREÇÃO: Notificar backend sobre cancelamento antes de limpar estado
-    if (this.draftData?.matchId) {
-      console.log(`📤 [App] Enviando cancelamento de draft para backend: ${this.draftData.matchId}`);
-
-      this.apiService.sendWebSocketMessage({
-        type: 'cancel_draft',
-        data: {
-          matchId: this.draftData.matchId,
-          reason: 'Cancelado pelo usuário'
+  // ✅ NOVO: Criar dados simulados de pick/ban para a partida
+  private createSimulatedPickBanData(player: Player): any {
+    return {
+      phases: [
+        {
+          id: 1,
+          type: 'ban',
+          team: 'blue',
+          champion: { id: 1, name: 'Champion1' },
+          player: player.summonerName,
+          timestamp: Date.now()
+        },
+        {
+          id: 2,
+          type: 'pick',
+          team: 'blue',
+          champion: { id: 2, name: 'Champion2' },
+          player: player.summonerName,
+          timestamp: Date.now() + 5000
+        },
+        {
+          id: 3,
+          type: 'ban',
+          team: 'red',
+          champion: { id: 3, name: 'Champion3' },
+          player: `red_player1`,
+          timestamp: Date.now() + 10000
+        },
+        {
+          id: 4,
+          type: 'pick',
+          team: 'red',
+          champion: { id: 4, name: 'Champion4' },
+          player: `red_player1`,
+          timestamp: Date.now() + 15000
         }
-      });
+      ]
+    };
+  }
+
+  // ✅ NOVO: Criar dados simulados para um jogador
+  private createSimulatedPlayerData(name: string, team: 'blue' | 'red', region: string): any {
+    return {
+      summonerName: name,
+      displayName: name,
+      puuid: `${name}-puuid`,
+      profileIconId: 29,
+      summonerLevel: 30,
+      region: region,
+      currentMMR: 1200,
+      customLp: 1200,
+      team: team
+    };
+  }
+
+  // ✅ NOVO: Método para simular partida personalizada com base em dados do LCU
+  async simulateLCUBasedMatch(): Promise<void> {
+    console.log('🎮 [App] Iniciando simulação de partida baseada no LCU...');
+
+    if (!this.currentPlayer) {
+      this.addNotification('error', 'Erro', 'Jogador não identificado');
+      return;
     }
-
-    // Limpar estado local
-    this.inDraftPhase = false;
-    this.draftData = null;
-    this.currentView = 'dashboard';
-
-    // Adicionar notificação
-    this.addNotification('info', 'Draft Cancelado', 'O draft foi cancelado e você retornará à fila.');
-  }
-
-  onGameComplete(event: any): void {
-    console.log('🏁 [App] Jogo completado:', event);
-    this.gameResult = event;
-
-    // ✅ NOVO: Salvar resultado no banco de dados
-    this.saveGameResultToDatabase(event);
-
-    // Limpar estado
-    this.inGamePhase = false;
-    this.gameData = null;
-    this.currentView = 'dashboard';
-    this.addNotification('success', 'Jogo Concluído!', 'Resultado salvo com sucesso');
-  }
-
-  // ✅ NOVO: Método para salvar resultado no banco
-  private saveGameResultToDatabase(gameResult: any): void {
-    console.log('💾 [App] Salvando resultado no banco:', gameResult);
 
     try {
-      // Preparar dados para salvar
-      // ✅ CORREÇÃO: Extrair lógica de ternário aninhado
-      let winnerTeam: number | null = null;
-      if (gameResult.winner === 'blue') {
-        winnerTeam = 1;
-      } else if (gameResult.winner === 'red') {
-        winnerTeam = 2;
+      // Buscar dados da última partida do LCU
+      const matchHistory = await firstValueFrom(this.apiService.getLCUMatchHistoryAll(0, 1, false));
+      const lastMatch = matchHistory?.matches?.[0];
+
+      if (!lastMatch) {
+        this.addNotification('error', 'Erro na Simulação', 'Nenhuma partida encontrada no histórico do LCU');
+        return;
       }
 
-      const matchData = {
-        title: gameResult.originalMatchId ? `Partida Simulada ${gameResult.originalMatchId}` : 'Partida Customizada',
-        description: gameResult.detectedByLCU ? 'Partida detectada via LCU' : 'Partida manual',
-        team1Players: gameResult.team1.map((p: any) => p.summonerName || p.name),
-        team2Players: gameResult.team2.map((p: any) => p.summonerName || p.name),
-        createdBy: this.currentPlayer?.summonerName || 'Sistema',
-        matchLeader: 'popcorn seller#coup', // ✅ SEMPRE popcorn seller#coup para partidas simuladas
-        gameMode: '5v5',
-        winnerTeam,
-        duration: gameResult.duration,
-        pickBanData: gameResult.pickBanData,
-        participantsData: gameResult.originalMatchData?.participants || [],
-        riotGameId: gameResult.originalMatchId?.toString(),
-        detectedByLCU: gameResult.detectedByLCU,
-        status: 'completed'
-      };
+      console.log('✅ [App] Última partida do LCU encontrada:', lastMatch);
 
-      console.log('💾 [App] Dados preparados para salvar:', matchData);
+      // Criar dados de partida simulada com base no último jogo
+      const simulatedMatch = this.createSimulatedMatchDataFromLCU(lastMatch, this.currentPlayer);
 
-      // Salvar via API
-      this.apiService.saveCustomMatch(matchData).subscribe({
-        next: (response) => {
-          console.log('✅ [App] Resultado salvo no banco:', response);
-          this.addNotification('success', 'Resultado Salvo', 'Dados da partida foram salvos no histórico');
-        },
-        error: (error) => {
-          console.error('❌ [App] Erro ao salvar resultado:', error);
-          this.addNotification('error', 'Erro ao Salvar', 'Não foi possível salvar o resultado da partida');
-        }
-      });
+      // Enviar dados da partida simulada para o backend
+      await firstValueFrom(this.apiService.simulateMatch(simulatedMatch));
+      console.log('✅ [App] Partida simulada com sucesso');
 
+      this.addNotification('success', 'Simulação Completa', 'A partida personalizada foi simulada com sucesso');
     } catch (error) {
-      console.error('❌ [App] Erro ao preparar dados para salvar:', error);
-      this.addNotification('error', 'Erro Interno', 'Erro ao processar dados da partida');
+      console.error('❌ [App] Erro ao simular partida:', error);
+      this.addNotification('error', 'Erro na Simulação', 'Não foi possível simular a partida');
     }
   }
 
-  onGameCancel(): void {
-    console.log('🚪 [App] ========== INÍCIO DO onGameCancel ==========');
-    console.log('🚪 [App] Jogo cancelado - MÉTODO CORRETO CHAMADO');
-    console.log('🚪 [App] ========== VERIFICANDO SE ESTE LOG APARECE ==========');
-    console.log('🔍 [App] DEBUG - gameData:', this.gameData);
-    console.log('🔍 [App] DEBUG - gameData.originalMatchId:', this.gameData?.originalMatchId);
-    console.log('🔍 [App] DEBUG - gameData.matchId:', this.gameData?.matchId);
-    console.log('🔍 [App] DEBUG - gameData.gameData:', this.gameData?.gameData);
-    console.log('🔍 [App] DEBUG - gameData.gameData?.matchId:', this.gameData?.gameData?.matchId);
-    console.log('🔍 [App] DEBUG - gameData.data:', this.gameData?.data);
-    console.log('🔍 [App] DEBUG - gameData.data?.matchId:', this.gameData?.data?.matchId);
-    console.log('🔍 [App] DEBUG - gameData completo:', JSON.stringify(this.gameData, null, 2));
+  // ✅ NOVO: Criar dados simulados para uma partida com base nos dados do LCU
+  private createSimulatedMatchDataFromLCU(matchData: any, player: Player): any {
+    const currentTime = new Date();
+    const matchId = `custom_${currentTime.getTime()}`;
 
-    // ✅ CORREÇÃO: Notificar backend sobre cancelamento ANTES de limpar estado
-    let matchIdToUse = null;
+    // Simular dados básicos
+    const simulatedData: any = {
+      matchId: matchId,
+      gameId: matchId,
+      region: player.region,
+      queueId: matchData.queueId,
+      playerCount: 10,
+      duration: matchData.duration || 1800,
+      startTime: currentTime.toISOString(),
+      endTime: new Date(currentTime.getTime() + (matchData.duration || 1800) * 1000).toISOString(),
+      team1: [] as any[],
+      team2: [] as any[],
+      pickBanData: matchData.pickBanData || this.createSimulatedPickBanData(player)
+    };
 
-    // ✅ PRIORIDADE 1: originalMatchId (mais confiável)
-    if (this.gameData?.originalMatchId) {
-      matchIdToUse = this.gameData.originalMatchId;
-      console.log(`📤 [App] Usando originalMatchId: ${matchIdToUse}`);
-    }
-    // ✅ PRIORIDADE 2: matchId direto
-    else if (this.gameData?.matchId) {
-      matchIdToUse = this.gameData.matchId;
-      console.log(`📤 [App] FALLBACK: Usando matchId: ${matchIdToUse}`);
-    }
-    // ✅ PRIORIDADE 3: matchId aninhado em gameData
-    else if (this.gameData?.gameData?.matchId) {
-      matchIdToUse = this.gameData.gameData.matchId;
-      console.log(`📤 [App] FALLBACK: Usando gameData.matchId: ${matchIdToUse}`);
-    }
-    // ✅ PRIORIDADE 4: matchId do gameData do backend
-    else if (this.gameData?.data?.matchId) {
-      matchIdToUse = this.gameData.data.matchId;
-      console.log(`📤 [App] FALLBACK: Usando data.matchId: ${matchIdToUse}`);
-    }
-    // ✅ PRIORIDADE 5: Busca profunda em todos os objetos aninhados
-    else {
-      console.log(`🔍 [App] Busca profunda por matchId...`);
-      const deepSearch = (obj: any, path: string = ''): any => {
-        if (!obj || typeof obj !== 'object') return null;
-
-        // Verificar se este objeto tem matchId
-        if (obj.matchId !== undefined) {
-          console.log(`🔍 [App] MatchId encontrado em ${path}: ${obj.matchId}`);
-          return obj.matchId;
-        }
-
-        // Verificar se este objeto tem id
-        if (obj.id !== undefined && typeof obj.id === 'number') {
-          console.log(`🔍 [App] ID encontrado em ${path}: ${obj.id}`);
-          return obj.id;
-        }
-
-        // Buscar recursivamente em todas as propriedades
-        for (const [key, value] of Object.entries(obj)) {
-          if (typeof value === 'object' && value !== null) {
-            const result = deepSearch(value, `${path}.${key}`);
-            if (result !== null) return result;
-          }
-        }
-
-        return null;
-      };
-
-      const deepMatchId = deepSearch(this.gameData, 'gameData');
-      if (deepMatchId !== null) {
-        matchIdToUse = deepMatchId;
-        console.log(`📤 [App] FALLBACK: Usando matchId da busca profunda: ${matchIdToUse}`);
-      }
+    // Adicionar jogadores simulados (5v5)
+    for (let i = 0; i < 5; i++) {
+      simulatedData.team1.push(this.createSimulatedPlayerData(`blue_player${i + 1}`, 'blue', player.region));
+      simulatedData.team2.push(this.createSimulatedPlayerData(`red_player${i + 1}`, 'red', player.region));
     }
 
-    if (matchIdToUse) {
-      console.log(`📤 [App] Enviando cancelamento de jogo para backend: ${matchIdToUse}`);
-
-      // ✅ CORREÇÃO: Enviar mensagem WebSocket para cancelar jogo
-      this.apiService.sendWebSocketMessage({
-        type: 'cancel_game_in_progress',
-        data: {
-          matchId: matchIdToUse,
-          reason: 'Cancelado pelo usuário'
-        }
-      });
-
-      console.log(`✅ [App] Mensagem de cancelamento enviada para backend`);
-    } else {
-      console.error('❌ [App] Nenhum ID de partida disponível para cancelamento');
-      console.error('❌ [App] gameData é null ou não tem IDs válidos');
-      console.error('❌ [App] Estrutura do gameData:', {
-        hasGameData: !!this.gameData,
-        hasOriginalMatchId: !!this.gameData?.originalMatchId,
-        hasMatchId: !!this.gameData?.matchId,
-        hasGameDataMatchId: !!this.gameData?.gameData?.matchId,
-        hasDataMatchId: !!this.gameData?.data?.matchId
-      });
-
-      // ✅ CORREÇÃO: Tentar usar o último matchId conhecido como fallback
-      if (this.lastMatchId) {
-        console.log(`📤 [App] FALLBACK FINAL: Usando lastMatchId: ${this.lastMatchId}`);
-        this.apiService.sendWebSocketMessage({
-          type: 'cancel_game_in_progress',
-          data: {
-            matchId: this.lastMatchId,
-            reason: 'Cancelado pelo usuário (fallback)'
-          }
-        });
-        console.log(`✅ [App] Mensagem de cancelamento enviada com fallback`);
-      } else {
-        this.addNotification('error', 'Erro', 'Não foi possível cancelar o jogo - ID da partida não encontrado');
-      }
-    }
-
-    // ✅ CORREÇÃO: Aguardar um pouco antes de limpar o estado para garantir que a mensagem seja enviada
-    setTimeout(() => {
-      // Limpar estado local
-      this.inGamePhase = false;
-      this.gameData = null;
-      this.currentView = 'dashboard';
-
-      // Adicionar notificação
-      this.addNotification('info', 'Jogo Cancelado', 'O jogo foi cancelado e você retornará à fila.');
-    }, 100);
-  }
-
-  refreshLCUConnection(): void {
-    console.log('🔄 [App] Atualizando conexão LCU');
-    this.startLCUStatusCheck();
-  }
-
-  savePlayerSettings(): void {
-    console.log('💾 [App] Salvando configurações do jogador:', this.settingsForm);
-
-    if (!this.currentPlayer) {
-      this.addNotification('warning', 'Nenhum Jogador', 'Carregue os dados do jogador primeiro');
-      return;
-    }
-
-    // Atualizar dados do jogador atual
-    if (this.settingsForm.summonerName) {
-      // Se o nome foi editado manualmente, usar como está
-      this.currentPlayer.summonerName = this.settingsForm.summonerName;
-    }
-
-    if (this.settingsForm.region) {
-      this.currentPlayer.region = this.settingsForm.region;
-    }
-
-    // Salvar configurações no backend
-    this.apiService.saveSettings({
-      summonerName: this.currentPlayer.summonerName,
-      region: this.currentPlayer.region,
-      gameName: this.currentPlayer.gameName,
-      tagLine: this.currentPlayer.tagLine
-    }).subscribe({
-      next: () => {
-        // Salvar no localStorage também
-        localStorage.setItem('currentPlayer', JSON.stringify(this.currentPlayer));
-        this.addNotification('success', 'Configurações Salvas', 'Suas preferências foram atualizadas no backend');
-      },
-      error: (error) => {
-        console.error('❌ [App] Erro ao salvar configurações:', error);
-        this.addNotification('error', 'Erro ao Salvar', 'Não foi possível salvar as configurações');
-      }
-    });
-  }
-
-  updateRiotApiKey(): void {
-    console.log('🔑 [App] Atualizando Riot API Key:', this.settingsForm.riotApiKey);
-
-    if (!this.settingsForm.riotApiKey || this.settingsForm.riotApiKey.trim() === '') {
-      this.addNotification('warning', 'API Key Vazia', 'Digite uma API Key válida');
-      return;
-    }
-
-    this.apiService.setRiotApiKey(this.settingsForm.riotApiKey).subscribe({
-      next: (response) => {
-        console.log('✅ [App] Riot API Key atualizada:', response);
-        this.addNotification('success', 'API Key Configurada', 'Riot API Key foi salva no backend');
-      },
-      error: (error) => {
-        console.error('❌ [App] Erro ao configurar API Key:', error);
-        this.addNotification('error', 'Erro API Key', 'Não foi possível salvar a API Key');
-      }
-    });
-  }
-
-  updateDiscordBotToken(): void {
-    console.log('🤖 [App] Atualizando Discord Bot Token:', this.settingsForm.discordBotToken);
-
-    if (!this.settingsForm.discordBotToken || this.settingsForm.discordBotToken.trim() === '') {
-      this.addNotification('warning', 'Token Vazio', 'Digite um token do Discord Bot válido');
-      return;
-    }
-
-    this.apiService.setDiscordBotToken(this.settingsForm.discordBotToken).subscribe({
-      next: (response) => {
-        console.log('✅ [App] Discord Bot Token atualizado:', response);
-        this.addNotification('success', 'Bot Configurado', 'Discord Bot Token foi salvo e o bot está sendo reiniciado');
-
-        // Atualizar status do Discord após um delay
-        setTimeout(() => {
-          this.setupDiscordStatusListener();
-        }, 3000);
-      },
-      error: (error) => {
-        console.error('❌ [App] Erro ao configurar Discord Bot:', error);
-        this.addNotification('error', 'Erro Discord Bot', 'Não foi possível salvar o token do bot');
-      }
-    });
-  }
-
-  updateDiscordChannel(): void {
-    console.log('📢 [App] Atualizando canal do Discord:', this.settingsForm.discordChannel);
-
-    if (!this.settingsForm.discordChannel || this.settingsForm.discordChannel.trim() === '') {
-      this.addNotification('warning', 'Canal Vazio', 'Digite o nome de um canal válido');
-      return;
-    }
-
-    this.apiService.setDiscordChannel(this.settingsForm.discordChannel).subscribe({
-      next: (response) => {
-        console.log('✅ [App] Canal do Discord atualizado:', response);
-        this.addNotification('success', 'Canal Configurado', `Canal '${this.settingsForm.discordChannel}' foi configurado para matchmaking`);
-      },
-      error: (error) => {
-        console.error('❌ [App] Erro ao configurar canal:', error);
-        this.addNotification('error', 'Erro Canal', 'Não foi possível configurar o canal');
-      }
-    });
-  }
-
-  isSpecialUser(): boolean {
-    // Usuários especiais que têm acesso às ferramentas de desenvolvimento
-    const specialUsers = [
-      'Admin',
-      'wcaco#BR1',
-      'developer#DEV',
-      'test#TEST',
-      'popcorn seller#coup',
-      'popcorn seller',  // Variação sem tag
-      'popcorn seller#COUP'  // Variação com tag maiúscula
-    ];
-
-    if (this.currentPlayer) {
-      // ✅ CORREÇÃO: Verificar múltiplas variações do nome
-      const playerIdentifiers = this.getCurrentPlayerIdentifiers();
-
-      const isSpecial = specialUsers.some(specialUser =>
-        playerIdentifiers.some(identifier => {
-          // Comparação exata
-          if (identifier === specialUser) return true;
-
-          // Comparação case-insensitive
-          if (identifier.toLowerCase() === specialUser.toLowerCase()) return true;
-
-          // Comparação por gameName (ignorando tag)
-          if (identifier.includes('#') && specialUser.includes('#')) {
-            const gameName1 = identifier.split('#')[0].toLowerCase();
-            const gameName2 = specialUser.split('#')[0].toLowerCase();
-            return gameName1 === gameName2;
-          }
-
-          // Comparação de gameName com nome completo
-          if (identifier.includes('#')) {
-            const gameName = identifier.split('#')[0].toLowerCase();
-            return gameName === specialUser.toLowerCase();
-          }
-
-          return false;
-        })
-      );
-
-      console.log(`🔍 [App] Verificação de usuário especial:`, {
-        currentPlayerName: this.currentPlayer.summonerName,
-        playerIdentifiers,
-        isSpecialUser: isSpecial,
-        specialUsers: specialUsers
-      });
-      return isSpecial;
-    }
-
-    return false;
-  }
-
-  simulateLastMatch(): void {
-    logApp('[simular game] 🎮 Iniciando simulação da última partida ranqueada');
-    logApp('[simular game] Current player:', this.currentPlayer);
-
-    if (!this.currentPlayer) {
-      this.addNotification('warning', 'Nenhum Jogador', 'Carregue os dados do jogador primeiro');
-      return;
-    }
-
-    // ✅ Buscar histórico e processar partida
-    this.fetchAndProcessMatchHistory();
-  }
-
-  // ✅ NOVO: Buscar histórico de partidas do LCU
-  private fetchAndProcessMatchHistory(): void {
-    logApp('[simular game] Chamando getLCUMatchHistoryAll com customOnly=false...');
-
-    this.apiService.getLCUMatchHistoryAll(0, 20, false).subscribe({
-      next: (response) => {
-        logApp('[simular game] Resposta completa do LCU Match History All:', JSON.stringify(response, null, 2));
-        this.processMatchHistoryResponse(response);
-      },
-      error: (error) => {
-        logApp('❌ [App] Erro ao buscar histórico de partidas:', error);
-        this.addNotification('error', 'Erro na Simulação', 'Não foi possível buscar o histórico de partidas');
-      }
-    });
-  }
-
-  // ✅ NOVO: Processar resposta do histórico de partidas
-  private processMatchHistoryResponse(response: any): void {
-    const matches = response?.matches || response?.games || [];
-    logApp('[simular game] Matches encontrados:', matches.length);
-
-    if (!matches || matches.length === 0) {
-      this.addNotification('warning', 'Nenhuma Partida', 'Nenhuma partida encontrada no histórico');
-      return;
-    }
-
-    // Buscar partida ranqueada ou usar a última disponível
-    const targetMatch = this.findBestMatchToSimulate(matches);
-    this.createSimulationFromMatch(targetMatch, matches.length);
-  }
-
-  // ✅ NOVO: Encontrar melhor partida para simular
-  private findBestMatchToSimulate(matches: any[]): any {
-    // Priorizar partidas ranqueadas
-    const rankedMatch = matches.find((game: any) =>
-      game.queueId === 440 || // RANKED_FLEX_SR
-      game.queueId === 420    // RANKED_SOLO_5x5
-    );
-
-    if (rankedMatch) {
-      logApp('[simular game] Partida ranqueada encontrada:', rankedMatch);
-      return rankedMatch;
-    }
-
-    // Fallback para última partida
-    const lastMatch = matches[0];
-    logApp('🎮 [App] Nenhuma partida ranqueada encontrada, usando última partida:', lastMatch);
-    return lastMatch;
-  }
-
-  // ✅ NOVO: Criar simulação a partir da partida escolhida
-  private createSimulationFromMatch(match: any, totalMatches: number): void {
-    const isRanked = match.queueId === 440 || match.queueId === 420;
-
-    // ✅ CORREÇÃO: Extrair lógica de ternário aninhado
-    let matchType: string;
-    if (isRanked) {
-      matchType = match.queueId === 440 ? 'Flex' : 'Solo/Duo';
-    } else {
-      matchType = 'Normal';
-    }
-
-    logApp(`[simular game] Simulando partida ${matchType} do LCU:`, match);
-    logApp(`[simular game] Total de partidas encontradas: ${totalMatches}`);
-
-    this.addNotification('info', 'Simulação Iniciada',
-      `Buscando dados da partida ${matchType} (ID: ${match.gameId})...`);
-
-    const playerIdentifier = this.currentPlayer?.summonerName || '';
-    if (!playerIdentifier) {
-      this.addNotification('error', 'Erro na Simulação', 'Nome do jogador não disponível.');
-      return;
-    }
-
-    this.apiService.createLCUBasedMatch({
-      lcuMatchData: match,
-      playerIdentifier: playerIdentifier
-    }).subscribe({
-      next: (createResponse: any) => {
-        logApp('[simular game] ✅ Partida customizada criada:', createResponse);
-
-        this.addNotification('success', 'Simulação Criada',
-          `Partida ${matchType} simulada com sucesso! Match ID: ${createResponse.matchId}`);
-
-        this.startGameInProgressFromSimulation(createResponse);
-      },
-      error: (createError: any) => {
-        logApp('❌ [App] Erro ao criar partida customizada:', createError);
-        this.addNotification('error', 'Erro na Simulação',
-          'Não foi possível criar a partida customizada. Verifique se o LoL está aberto.');
-      }
-    });
+    return simulatedData;
   }
 
   // REMOVIDO: Duplicata tardia de startGameInProgressFromSimulation para evitar TS2393
@@ -2458,6 +2006,26 @@ export class App implements OnInit, OnDestroy {
     if (!this.isInQueue) {
       this.isInQueue = true;
       console.log('🔄 [App] Voltando para fila');
+    }
+  }
+
+  // Stub seguro: carregar configurações do backend (opcional)
+  private loadConfigFromDatabase(): void {
+    try {
+      this.apiService.getConfigSettings().subscribe({
+        next: (cfg: any) => {
+          // Atualizar partes relevantes das configurações locais
+          if (cfg) {
+            this.settingsForm.riotApiKey = cfg.riotApiKey || this.settingsForm.riotApiKey;
+            this.settingsForm.discordChannel = cfg.discordChannel || this.settingsForm.discordChannel;
+          }
+        },
+        error: () => {
+          // Ignorar em ambientes onde endpoint não existe
+        }
+      });
+    } catch {
+      // ignore
     }
   }
 }

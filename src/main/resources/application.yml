@@ -70,6 +70,8 @@ logging:
 app:
   backend:
     id: spring-backend-1
+    sync:
+      enabled: false
   lcu:
     host: ${LCU_HOST:${APP_LCU_HOST:127.0.0.1}}
   sync:

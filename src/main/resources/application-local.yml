@@ -18,7 +18,11 @@ app:
       - "http://127.0.0.1:4200"
       - "http://127.0.0.1:3000"
 
+  logging:
+    frontend:
+      enabled: true
+
 logging:
   level:
-    br.com.lolmatchmaking: DEBUG
-    org.springframework.web: DEBUG
+    br.com.lolmatchmaking: INFO
+    org.springframework.web: INFO

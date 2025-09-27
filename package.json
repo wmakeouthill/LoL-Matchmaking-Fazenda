@@ -2,14 +2,14 @@
   "name": "lol-matchmaking-electron",
   "version": "1.0.0",
   "description": "League of Legends Matchmaking Desktop App",
-  "main": "dist/main.js",
+  "main": "electron/main.js",
   "scripts": {
     "build": "npx tsc",
     "build:frontend": "cd frontend && npm run build:prod",
     "build:all": "npm run build:frontend && npm run build",
     "dev:electron": "npm run build && npx electron .",
     "electron": "npm run build:all && npx electron .",
-    "electron:dev": "npm run build && npx electron . --dev",
+    "electron:dev": "cross-env ENABLE_ELECTRON_INTERCEPTORS=1 BACKEND_URL=http://127.0.0.1:8080 npm run build && cross-env ENABLE_ELECTRON_INTERCEPTORS=1 BACKEND_URL=http://127.0.0.1:8080 npx electron . --dev",
     "build:electron": "npm run build:all && npx electron-builder",
     "dist": "npm run build:all && npx electron-builder",
     "watch": "npx tsc --watch",
@@ -33,7 +33,8 @@
     "electron": "^28.0.0",
     "electron-builder": "^24.6.4",
     "typescript": "^5.0.0",
-    "@types/node": "^20.0.0"
+    "@types/node": "^20.0.0",
+    "cross-env": "^7.0.3"
   },
   "build": {
     "appId": "com.lolmatchmaking.app",

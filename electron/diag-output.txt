@@ -1,0 +1,166 @@
+
+[diag] Starting minimal diagnostic Electron
+[diag] did-start-loading
+[diag] console-message 1 🔍 [ApiService] Detectando ambiente... http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Protocol: http: http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Hostname: 127.0.0.1 http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Port: 8080 http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Href: http://127.0.0.1:8080/ http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔍 Electron detection: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🌐 [ApiService] Browser base URL: http://127.0.0.1:8080/api http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔍 Electron detection: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔍 Electron detection: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🖥️ Platform detection: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔧 ApiService inicializado: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔍 Electron detection: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔍 [ApiService] Detectando ambiente... http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Protocol: http: http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Hostname: 127.0.0.1 http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Port: 8080 http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Href: http://127.0.0.1:8080/ http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔍 Electron detection: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🌐 [ApiService] Browser base URL: http://127.0.0.1:8080/api http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔄 WebSocket URL: ws://127.0.0.1:8080/api/ws http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔄 QueueStateService inicializado com sincronização MySQL (tabela queue_players) http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔍 [ApiService] Detectando ambiente... http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Protocol: http: http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Hostname: 127.0.0.1 http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Port: 8080 http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Href: http://127.0.0.1:8080/ http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔍 Electron detection: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🌐 [ApiService] Browser base URL: http://127.0.0.1:8080/api http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔧 [DiscordService] Instância #1 criada (Total: 1) http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔧 [DiscordService #1] Usando WebSocket do ApiService http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 [App] Constructor http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🔍 [ApiService] Detectando ambiente... http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Protocol: http: http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Hostname: 127.0.0.1 http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Port: 8080 http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Href: http://127.0.0.1:8080/ http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔍 Electron detection: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🌐 [ApiService] Browser base URL: http://127.0.0.1:8080/api http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 [App] ElectronAPI não disponível, log apenas no console http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 [App] 🚀 [App] === INICIALIZAÇÃO DO APP === http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 [App] ElectronAPI não disponível, log apenas no console http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 [App] 🚀 [App] Verificando se logApp está funcionando... http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 [App] ElectronAPI não disponível, log apenas no console http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 [App] 🚀 [App] Timestamp: 2025-09-27T20:29:12.415Z http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 [App] ElectronAPI não disponível, log apenas no console http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 [App] 🚀 [App] Electron API disponível: false http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 [App] ElectronAPI não disponível, log apenas no console http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 [App] 🚀 [App] FS disponível: false http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 [App] ElectronAPI não disponível, log apenas no console http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 [App] 🚀 [App] Path disponível: false http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 [App] ElectronAPI não disponível, log apenas no console http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 [App] 🚀 [App] Process disponível: false http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🚀 [App] Inicializando frontend como interface para backend... http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🔄 [App] === INÍCIO DA SEQUÊNCIA DE INICIALIZAÇÃO === http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🔄 [App] Passo 1: Configurações básicas... http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🤖 [App] Discord status atualizado: false http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🔍 [DiscordService #1] Verificando conexão... http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 ⚠️ [DiscordService #1] WebSocket não conectado http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔄 [App] Passo 2: Verificando backend... http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🔍 Electron detection: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 [MatchFound] 🎯 [MatchFound] === updateSortedTeams CHAMADO === http://127.0.0.1:8080/main-R2OBBTHL.js:6
+[diag] console-message 1 [MatchFound] 🎯 [MatchFound] matchData presente: false http://127.0.0.1:8080/main-R2OBBTHL.js:6
+[diag] console-message 1 [MatchFound] 🎯 [MatchFound] matchData é null - limpando times http://127.0.0.1:8080/main-R2OBBTHL.js:6
+[diag] console-message 1 ✅ [App] Backend está pronto (tentativa 1/10) http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🔄 [App] Passo 3: Configurando WebSocket... http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🔗 [App] Configurando comunicação com backend... http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] did-finish-load -> http://127.0.0.1:8080/
+[diag] loadURL promise resolved
+[diag] did-stop-loading
+[diag] console-message 1 📨 [App] Mensagem do backend: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🔌 [App] Backend conectado http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 2 %cElectron Security Warning (Insecure Content-Security-Policy) font-weight: bold; This renderer process has either no Content Security
+  Policy set or a policy with "unsafe-eval" enabled. This exposes users of
+  this app to unnecessary security risks.
+
+For more information and help, consult
+https://electronjs.org/docs/tutorial/security.
+This warning will not show up
+once the app is packaged. node:electron/js2c/renderer_init:2
+[diag] console-message 1 ✅ [App] WebSocket está pronto para comunicação http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 ℹ️ [App] Telemetria LCU desabilitada (não-Electron ou sem conector) http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🔄 [App] Passo 4: Carregando dados do jogador... http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 👤 [App] Carregando dados do jogador... http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🔍 Electron detection: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔄 [App] Passo 5: Identificando jogador... http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🔄 [App] Passo 6: Buscando status da fila... http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 📊 [App] === REFRESH QUEUE STATUS === http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 📊 [App] refreshQueueStatus chamado: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🔄 [App] Passo 7: Carregando configurações... http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🔄 [App] Passo 8: Iniciando atualizações periódicas... http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🔄 [App] Passo 9: Iniciando polling inteligente... http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🔄 [App] Iniciando polling inteligente para sincronização... http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 ✅ [App] === INICIALIZAÇÃO COMPLETA === http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 3 ❌ [ApiService] Erro ao carregar dados do jogador: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 2 ⚠️ [App] Erro ao carregar do LCU: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🔄 [App] Tentando carregar do localStorage como fallback... http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 📊 [App] Status da fila recebido do backend: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 ⚠️ [App] Backend não retornou isCurrentPlayerInQueue - mantendo estado atual http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 📊 [App] Jogadores na fila: undefined http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 📊 [App] Lista de jogadores:  http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 📊 [App] === FIM DO REFRESH QUEUE STATUS === http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🤖 [App] Discord status atualizado: true http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🔍 [DiscordService #1] Solicitando status do Discord... http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 📤 [DiscordService #1] Enviando: get_discord_status http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 📤 [DiscordService #1] Enviando: get_discord_users_online http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 📨 [App] Mensagem do backend: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 📨 [App] Mensagem do backend: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 📨 [App] Mensagem do backend: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🔄 [App] Flag de backend recente limpa, permitindo atualizações do QueueStateService http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🧹 [DASHBOARD] Component destroyed and cleaned up (cache preserved) http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 3 ERROR TypeError: e.isSpecialUser is not a function http://127.0.0.1:8080/main-R2OBBTHL.js:4
+[diag] console-message 3 ERROR TypeError: e.isSpecialUser is not a function http://127.0.0.1:8080/main-R2OBBTHL.js:4
+[diag] console-message 3 ERROR TypeError: e.isSpecialUser is not a function http://127.0.0.1:8080/main-R2OBBTHL.js:4
+[diag] console-message 3 ERROR TypeError: e.isSpecialUser is not a function http://127.0.0.1:8080/main-R2OBBTHL.js:4
+[diag] console-message 1 🔍 [ApiService] Detectando ambiente... http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Protocol: http: http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Hostname: 127.0.0.1 http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Port: 8080 http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Href: http://127.0.0.1:8080/ http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔍 Electron detection: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🌐 [ApiService] Browser base URL: http://127.0.0.1:8080/api http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔍 [ApiService] Detectando ambiente... http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Protocol: http: http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Hostname: 127.0.0.1 http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Port: 8080 http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1   - Href: http://127.0.0.1:8080/ http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔍 Electron detection: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🌐 [ApiService] Browser base URL: http://127.0.0.1:8080/api http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 3 ❌ Erro ao carregar leaderboard: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔄 [Queue] QueueStatus atualizado: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🎯 [Queue] Estado isInQueue mudou: undefined → false http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🎯 [Queue] Estado atual do componente: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🎯 [Queue] Componente inicializado http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔗 [Queue] Configurando listeners Discord... http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔗 [Queue] Discord connection: true http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔍 [DiscordService #1] Verificando conexão... http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔍 [DiscordService #1] Solicitando status do Discord... http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 📤 [DiscordService #1] Enviando: get_discord_status http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 📤 [DiscordService #1] Enviando: get_discord_users_online http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔄 [Queue] Estado da fila atualizado via backend: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 3 ERROR TypeError: r.onAutoRefreshToggle is not a function http://127.0.0.1:8080/main-R2OBBTHL.js:4
+[diag] console-message 1 🔄 [Queue] Fazendo refresh inicial do estado da fila... http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 3 ERROR TypeError: o.onRefreshData is not a function http://127.0.0.1:8080/main-R2OBBTHL.js:4
+[diag] console-message 1 🔄 [Queue] Timer de atualização de tempos dos jogadores iniciado http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 📨 [App] Mensagem do backend: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 📨 [App] Mensagem do backend: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:36
+[diag] console-message 1 🛑 [Queue] Componente destruído http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🛑 [Queue] Timer de atualização de tempos dos jogadores parado http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 ✅ [Queue] Cleanup completo http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🧹 [DASHBOARD] Component destroyed and cleaned up (cache preserved) http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔄 [Queue] QueueStatus atualizado: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🎯 [Queue] Estado isInQueue mudou: undefined → false http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🎯 [Queue] Estado atual do componente: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🎯 [Queue] Componente inicializado http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔗 [Queue] Configurando listeners Discord... http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔗 [Queue] Discord connection: true http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔍 [DiscordService #1] Verificando conexão... http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 ⏱️ [DiscordService #1] Solicitação ignorada (throttling): 1135ms desde última solicitação http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 1 🔄 [Queue] Estado da fila atualizado via backend: [object Object] http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 3 ERROR TypeError: r.onAutoRefreshToggle is not a function http://127.0.0.1:8080/main-R2OBBTHL.js:4
+[diag] console-message 1 🔄 [Queue] Fazendo refresh inicial do estado da fila... http://127.0.0.1:8080/main-R2OBBTHL.js:5
+[diag] console-message 3 ERROR TypeError: o.onRefreshData is not a function http://127.0.0.1:8080/main-R2OBBTHL.js:4
+[diag] console-message 1 🔄 [Queue] Timer de atualização de tempos dos jogadores iniciado http://127.0.0.1:8080/main-R2OBBTHL.js:5

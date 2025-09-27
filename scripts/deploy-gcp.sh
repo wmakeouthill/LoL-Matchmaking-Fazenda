@@ -58,7 +58,7 @@ gcloud run deploy lol-matchmaking \
     --platform managed \
     --region us-central1 \
     --allow-unauthenticated \
-    --set-env-vars SPRING_PROFILES_ACTIVE=gcp \
+    --set-env-vars SPRING_PROFILES_ACTIVE=gcp,APP_BACKEND_SYNC_ENABLED=false \
     --memory 1Gi \
     --cpu 1 \
     --max-instances 10 \

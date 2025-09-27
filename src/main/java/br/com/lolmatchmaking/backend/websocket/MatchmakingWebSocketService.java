@@ -3,6 +3,7 @@ package br.com.lolmatchmaking.backend.websocket;
 import br.com.lolmatchmaking.backend.dto.MatchInfoDTO;
 import br.com.lolmatchmaking.backend.dto.QueuePlayerInfoDTO;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -12,10 +13,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.time.Instant;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
 @Slf4j
 @Component
@@ -26,14 +24,20 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
     private final Map<String, ClientInfo> clientInfo = new ConcurrentHashMap<>();
     private final Map<String, Instant> lastHeartbeat = new ConcurrentHashMap<>();
+    // Track scheduled heartbeat monitor tasks so they can be cancelled when session closes
+    private final Map<String, ScheduledFuture<?>> heartbeatTasks = new ConcurrentHashMap<>();
     private final Map<String, List<String>> pendingEvents = new ConcurrentHashMap<>();
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
+
+    // New: pending LCU requests by requestId
+    private final Map<String, CompletableFuture<JsonNode>> pendingLcuRequests = new ConcurrentHashMap<>();
 
     // Configurações
     private static final long HEARTBEAT_INTERVAL = 30000; // 30 segundos
     private static final long HEARTBEAT_TIMEOUT = 60000; // 60 segundos
     private static final int MAX_PENDING_EVENTS = 100;
+    private static final long LCU_RPC_TIMEOUT_MS = 5000; // timeout padrão para RPC LCU
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
@@ -61,7 +65,13 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         clientInfo.remove(sessionId);
         lastHeartbeat.remove(sessionId);
         pendingEvents.remove(sessionId);
-
+        // Cancel heartbeat monitoring task if present
+        try {
+            ScheduledFuture<?> f = heartbeatTasks.remove(sessionId);
+            if (f != null) f.cancel(true);
+        } catch (Exception e) {
+            log.warn("⚠️ Falha ao cancelar heartbeat task para {}", sessionId, e);
+        }
         log.info("🔌 Cliente desconectado: {} (Status: {})", sessionId, status);
     }
 
@@ -84,6 +94,14 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                 case "heartbeat":
                     handleHeartbeat(sessionId);
                     break;
+                case "ping":
+                    // Respond with pong to keep client alive
+                    try { sendMessage(sessionId, "pong", Map.of("ts", System.currentTimeMillis())); } catch (Exception e) { }
+                    break;
+                case "pong":
+                    // Client acknowledges a server ping; treat as heartbeat
+                    lastHeartbeat.put(sessionId, Instant.now());
+                    break;
                 case "identify":
                     handleIdentify(sessionId, jsonMessage);
                     break;
@@ -105,12 +123,72 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                 case "reconnect":
                     handleReconnect(sessionId, jsonMessage);
                     break;
+                case "lcu_response":
+                    handleLcuResponse(jsonMessage);
+                    break;
                 default:
                     log.warn("⚠️ Tipo de mensagem desconhecido: {}", messageType);
             }
         } catch (Exception e) {
             log.error("❌ Erro ao processar mensagem WebSocket", e);
             sendError(sessionId, "INVALID_MESSAGE", "Mensagem inválida");
+        }
+    }
+
+    private void handleLcuResponse(JsonNode jsonMessage) {
+        // Expected shape: { type: 'lcu_response', id: 'uuid', status: 200, body: {...} }
+        try {
+            String id = jsonMessage.has("id") ? jsonMessage.get("id").asText() : null;
+            if (id == null) {
+                log.warn("LCU response sem id");
+                return;
+            }
+            CompletableFuture<JsonNode> fut = pendingLcuRequests.remove(id);
+            if (fut == null) {
+                log.warn("Sem request pendente para LCU id={}", id);
+                return;
+            }
+            JsonNode status = jsonMessage.has("status") ? jsonMessage.get("status") : null;
+            JsonNode body = jsonMessage.has("body") ? jsonMessage.get("body") : null;
+            // Build a response node combining status and body
+            ObjectNode resp = objectMapper.createObjectNode();
+            if (status != null) resp.set("status", status);
+            if (body != null) resp.set("body", body);
+            fut.complete(resp);
+        } catch (Exception e) {
+            log.error("Erro ao processar lcu_response", e);
+        }
+    }
+
+    /**
+     * Envia uma request LCU para o cliente especificado e espera pela resposta (RPC)
+     */
+    public JsonNode requestLcu(String sessionId, String method, String path, JsonNode body, long timeoutMs) throws Exception {
+        WebSocketSession session = sessions.get(sessionId);
+        if (session == null || !session.isOpen()) {
+            throw new IllegalStateException("Sessão WebSocket não disponível: " + sessionId);
+        }
+        String id = UUID.randomUUID().toString();
+        ObjectNode req = objectMapper.createObjectNode();
+        req.put("type", "lcu_request");
+        req.put("id", id);
+        req.put("method", method == null ? "GET" : method);
+        req.put("path", path == null ? "/" : path);
+        if (body != null) req.set("body", body);
+
+        CompletableFuture<JsonNode> fut = new CompletableFuture<>();
+        pendingLcuRequests.put(id, fut);
+
+        session.sendMessage(new TextMessage(objectMapper.writeValueAsString(req)));
+
+        try {
+            JsonNode resp = fut.get(timeoutMs <= 0 ? LCU_RPC_TIMEOUT_MS : timeoutMs, TimeUnit.MILLISECONDS);
+            return resp;
+        } catch (TimeoutException te) {
+            pendingLcuRequests.remove(id);
+            throw new RuntimeException("Timeout aguardando resposta LCU do cliente", te);
+        } finally {
+            pendingLcuRequests.remove(id);
         }
     }
 
@@ -212,7 +290,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
      * Inicia monitoramento de heartbeat
      */
     private void startHeartbeatMonitoring(String sessionId) {
-        scheduler.scheduleAtFixedRate(() -> {
+        ScheduledFuture<?> future = scheduler.scheduleAtFixedRate(() -> {
             try {
                 Instant lastHeartbeatTime = lastHeartbeat.get(sessionId);
                 if (lastHeartbeatTime != null &&
@@ -221,10 +299,21 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                     log.warn("💔 Heartbeat timeout para cliente: {}", sessionId);
                     closeSession(sessionId);
                 }
+                else {
+                    // Probe client with a ping to elicit a pong/heartbeat response
+                    try {
+                        sendMessage(sessionId, "ping", Map.of("ts", System.currentTimeMillis()));
+                    } catch (Exception e) {
+                        log.debug("⚠️ Falha ao enviar ping para {}: {}", sessionId, e.getMessage());
+                    }
+                }
             } catch (Exception e) {
                 log.error("❌ Erro no monitoramento de heartbeat", e);
             }
         }, HEARTBEAT_INTERVAL, HEARTBEAT_INTERVAL, TimeUnit.MILLISECONDS);
+
+        // Keep reference so we can cancel on close
+        heartbeatTasks.put(sessionId, future);
     }
 
     /**
@@ -264,6 +353,13 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             } catch (Exception e) {
                 log.error("❌ Erro ao fechar sessão", e);
             }
+        }
+        // Also cancel heartbeat task if present
+        try {
+            ScheduledFuture<?> f = heartbeatTasks.remove(sessionId);
+            if (f != null) f.cancel(true);
+        } catch (Exception e) {
+            log.warn("⚠️ Erro ao cancelar heartbeat task no closeSession para {}", sessionId, e);
         }
     }
 
@@ -481,3 +577,4 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         }
     }
 }
+

@@ -49,6 +49,9 @@ if (props['MYSQL_HOST']) out['MYSQL_HOST'] = props['MYSQL_HOST'];
 if (props['MYSQL_PORT']) out['MYSQL_PORT'] = props['MYSQL_PORT'];
 if (props['MYSQL_DATABASE']) out['MYSQL_DATABASE'] = props['MYSQL_DATABASE'];
 
+// Ensure sync disabled by default in container-generated env
+out['APP_BACKEND_SYNC_ENABLED'] = 'false';
+
 // If DATABASE_URL not set but we have parts, build it
 if (!out['DATABASE_URL'] && out['MYSQL_HOST'] && out['MYSQL_DATABASE']) {
   const host = out['MYSQL_HOST'];

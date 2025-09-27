@@ -31,6 +31,9 @@ public class MultiBackendSyncService {
     @Value("${app.backend.id:backend-1}")
     private String backendId;
 
+    @Value("${app.backend.sync.enabled:true}")
+    private boolean syncEnabled;
+
     @Value("${app.backend.heartbeat-interval:30000}")
     private long heartbeatInterval;
 
@@ -47,6 +50,11 @@ public class MultiBackendSyncService {
      */
     public void initialize() {
         log.info("🔄 Inicializando MultiBackendSyncService...");
+        if (!syncEnabled) {
+            log.info("🔕 MultiBackendSyncService disabled by configuration (app.backend.sync.enabled=false)");
+            return;
+        }
+
         startHeartbeat();
         startEventProcessing();
         log.info("✅ MultiBackendSyncService inicializado");
@@ -165,6 +173,11 @@ public class MultiBackendSyncService {
     @Scheduled(fixedRate = 30000) // A cada 30 segundos
     @Async
     public void syncWithOtherBackends() {
+        if (!syncEnabled) {
+            log.debug("MultiBackendSyncService.syncWithOtherBackends skipped because sync is disabled");
+            return;
+        }
+
         for (String backendUrl : otherBackends) {
             try {
                 syncWithBackend(backendUrl);

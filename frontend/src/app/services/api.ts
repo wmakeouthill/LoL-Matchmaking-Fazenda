@@ -68,6 +68,17 @@ export class ApiService {
   // ✅ NOVO: Subject para mensagens WebSocket
   private readonly webSocketMessageSubject = new Subject<any>();
   private webSocket: WebSocket | null = null;
+  // Reconnection and heartbeat state
+  private wsReconnectAttempts = 0;
+  private wsMaxReconnectAttempts = 30; // cap attempts
+  private wsManualClose = false;
+  private wsReconnectTimer: any = null;
+  private wsHeartbeatTimer: any = null;
+  private wsHeartbeatIntervalMs = Number((window as any).WS_HEARTBEAT_MS || 30000);
+  private wsBaseBackoffMs = 1000; // 1s
+  private wsMaxBackoffMs = 30000; // 30s
+  private wsLastMessageAt = 0;
+  private wsMessageQueue: any[] = [];
 
   constructor(private readonly http: HttpClient) {
     // ✅ CORREÇÃO: Inicializar baseUrl aqui, quando o contexto está pronto
@@ -105,6 +116,10 @@ export class ApiService {
       // Em modo web, conectar imediatamente
       this.connectWebSocket();
     }
+
+    // call setupUnloadHandler once during service construction
+    // Ensure unload handler closes WS cleanly when the page/app is unloaded
+    try { this.setupUnloadHandler(); } catch { }
   }
 
   // ✅ NOVO: Configurar LCU a partir do lockfile via Electron
@@ -226,8 +241,12 @@ export class ApiService {
     const productionUrl = (window as any).electronAPI?.getBackendUrl?.();
     if (productionUrl) {
       console.log('🚀 [Electron] URL de produção detectada:', productionUrl);
-      // ✅ Garantir que sempre termine com /api
-      return productionUrl.endsWith('/api') ? productionUrl : `${productionUrl}/api`;
+      // ✅ Normalizar: remover barras finais e garantir exatamente um '/api'
+      let normalized = String(productionUrl).trim();
+      // Remover todas as barras à direita (ex.: 'http://x/api/' -> 'http://x/api')
+      normalized = normalized.replace(/\/+$/, '');
+      // Se já termina com '/api', usar como está; caso contrário, anexar '/api'
+      return normalized.endsWith('/api') ? normalized : `${normalized}/api`;
     }
 
     // Se estiver no protocolo file:// (app empacotado)
@@ -238,9 +257,9 @@ export class ApiService {
 
     // Se temos hostname específico
     if (window.location.hostname &&
-        window.location.hostname !== 'null' &&
-        window.location.hostname !== 'localhost' &&
-        window.location.hostname !== '127.0.0.1') {
+      window.location.hostname !== 'null' &&
+      window.location.hostname !== 'localhost' &&
+      window.location.hostname !== '127.0.0.1') {
       console.log('🔧 [Electron] Hostname específico detectado:', window.location.hostname);
       return `http://${window.location.hostname}:8080/api`;
     }
@@ -567,9 +586,46 @@ export class ApiService {
       .pipe(catchError(this.handleError));
   }
 
+  // New: join queue (used by app.ts)
+  joinQueue(player: Player, preferences?: any): Observable<any> {
+    const payload: any = {
+      playerId: player?.id || null,
+      summonerName: player?.displayName || player?.summonerName,
+      region: player?.region || 'br1',
+      customLp: preferences?.customLp || null,
+      primaryLane: preferences?.primaryLane || null,
+      secondaryLane: preferences?.secondaryLane || null
+    };
+
+    return this.http.post(`${this.baseUrl}/queue/join`, payload)
+      .pipe(catchError(this.handleError));
+  }
+
+  // New: leave queue (used by app.ts)
+  leaveQueue(playerId?: number | null, summonerName?: string): Observable<any> {
+    const payload: any = {
+      playerId: playerId || null,
+      summonerName: summonerName || null
+    };
+
+    return this.http.post(`${this.baseUrl}/queue/leave`, payload)
+      .pipe(catchError(this.handleError));
+  }
+
   forceMySQLSync(): Observable<any> {
     return this.http.post(`${this.baseUrl}/queue/force-sync`, {})
       .pipe(catchError(this.handleError));
+  }
+
+  // Match endpoints (accept/decline)
+  acceptMatch(matchId: number, playerId: number | null, playerName: string): Observable<any> {
+    const payload = { matchId, playerName };
+    return this.http.post(`${this.baseUrl}/match/accept`, payload).pipe(catchError(this.handleError));
+  }
+
+  declineMatch(matchId: number, playerId: number | null, playerName: string): Observable<any> {
+    const payload = { matchId, playerName };
+    return this.http.post(`${this.baseUrl}/match/decline`, payload).pipe(catchError(this.handleError));
   }
 
   getRecentMatches(): Observable<MatchHistory[]> {
@@ -594,6 +650,19 @@ export class ApiService {
       );
   }
 
+  // Simulation helpers (frontend triggers a simulated match payload to the backend)
+  simulateMatch(simulatedMatch: any): Observable<any> {
+    // If there's no dedicated endpoint, use /match/finish for simulation if payload fits.
+    // But backend doesn't expose a generic simulate endpoint; try /matches/simulate if exists, else /match/finish.
+    const simulateUrl = `${this.baseUrl}/matches/simulate`;
+    return this.http.post(simulateUrl, simulatedMatch).pipe(
+      catchError((err) => {
+        // Fallback to finish endpoint
+        return this.http.post(`${this.baseUrl}/match/finish`, simulatedMatch).pipe(catchError(this.handleError));
+      })
+    );
+  }
+
   // Riot API endpoints
   getSummonerData(region: string, summonerName: string): Observable<any> {
     return this.http.get(`${this.baseUrl}/riot/summoner/${region}/${summonerName}`)
@@ -613,6 +682,72 @@ export class ApiService {
       .pipe(
         catchError(this.handleError)
       );
+  }
+
+  // Get match history from LCU (single page)
+  getLCUMatchHistory(offset: number = 0, limit: number = 10): Observable<any> {
+    // Backend exposes /api/lcu/match-history which returns a CompletableFuture<ResponseEntity<Map>>
+    return this.http.get(`${this.baseUrl}/lcu/match-history`).pipe(catchError(this.handleError));
+  }
+
+  // Aggregate helper used by UI to request LCU history with pagination/flags
+  getLCUMatchHistoryAll(offset: number = 0, limit: number = 10, includePickBan: boolean = false): Observable<any> {
+    // The backend returns an object with matchHistory key; normalize to { success, matches }
+    return this.getLCUMatchHistory(offset, limit).pipe(
+      map((resp: any) => {
+        if (!resp) return { success: false, matches: [] };
+        // Support different shapes returned by controller (map with matchHistory or matchHistory.matchHistory)
+        const matches = resp.matchHistory || resp.matchHistory?.matchHistory || resp.matches || resp.matchIds || resp.data?.matchHistory || resp.matchHistory?.matches || resp.matchHistory;
+        return { success: true, matches: matches || [] };
+      }),
+      catchError(this.handleError)
+    );
+  }
+
+  // Cleanup test matches (admin/debug) - try multiple endpoints
+  cleanupTestMatches(): Observable<any> {
+    const url = `${this.baseUrl}/matches/cleanup`;
+    return this.http.post(url, {}).pipe(catchError((err) => {
+      // fallback to /matches/clear or /matches/reset
+      return this.http.post(`${this.baseUrl}/matches/clear`, {}).pipe(catchError(this.handleError));
+    }));
+  }
+
+  // Check sync status for a given player identifier
+  checkSyncStatus(identifier: string): Observable<any> {
+    const url = `${this.baseUrl}/sync/check?identifier=${encodeURIComponent(identifier)}`;
+    return this.http.get(url).pipe(catchError(this.handleError));
+  }
+
+  // Get current game data via LCU
+  getCurrentGame(): Observable<any> {
+    return this.http.get(`${this.baseUrl}/lcu/game-data`).pipe(
+      map((resp: any) => {
+        if (!resp) return { success: false };
+        // Normalize shapes
+        if (resp.gameData) return { success: true, ...resp.gameData };
+        if (resp.data?.gameData) return { success: true, ...resp.data.gameData };
+        return resp;
+      }),
+      catchError(this.handleError)
+    );
+  }
+
+  // Custom matches listing (used in dashboard/match-history)
+  getCustomMatches(identifier: string, offset: number = 0, limit: number = 20): Observable<any> {
+    const url = `${this.baseUrl}/matches/custom/${encodeURIComponent(identifier)}?offset=${offset}&limit=${limit}`;
+    return this.http.get<any>(url).pipe(catchError(this.handleError));
+  }
+
+  getCustomMatchesCount(identifier: string): Observable<any> {
+    const url = `${this.baseUrl}/matches/custom/${encodeURIComponent(identifier)}/count`;
+    return this.http.get<any>(url).pipe(catchError(this.handleError));
+  }
+
+  // Riot match history retrieval wrapper
+  getPlayerMatchHistoryFromRiot(puuid: string, region: string = 'br1', limit: number = 20): Observable<any> {
+    return this.http.get(`${this.baseUrl}/riot/matches/${encodeURIComponent(puuid)}?region=${encodeURIComponent(region)}&count=${limit}`)
+      .pipe(catchError(this.handleError));
   }
 
   getCurrentSummonerFromLCU(): Observable<any> {
@@ -854,28 +989,97 @@ export class ApiService {
   }
 
   private connectWebSocket(): void {
+    // Avoid attempts if we purposely closed the socket
+    if (this.wsManualClose) return;
+
     if (this.webSocket && this.webSocket.readyState === WebSocket.OPEN) return;
     const wsUrl = this.getWebSocketUrl();
     try {
+      // Clear any pending reconnect timer
+      if (this.wsReconnectTimer) { clearTimeout(this.wsReconnectTimer); this.wsReconnectTimer = null; }
+
       this.webSocket = new WebSocket(wsUrl);
+
       this.webSocket.onopen = () => {
+        this.wsReconnectAttempts = 0;
+        this.wsLastMessageAt = Date.now();
+        // Flush queued messages
+        while (this.webSocket && this.webSocket.readyState === WebSocket.OPEN && this.wsMessageQueue.length > 0) {
+          try { const m = this.wsMessageQueue.shift(); this.webSocket.send(JSON.stringify(m)); } catch { break; }
+        }
         this.webSocketMessageSubject.next({ type: 'backend_connection_success', data: { ts: Date.now() } });
+
+        // Start heartbeat
+        try {
+          if (this.wsHeartbeatTimer) clearInterval(this.wsHeartbeatTimer); this.wsHeartbeatTimer = setInterval(() => {
+            try {
+              // If we haven't received any message within 2x heartbeat, consider connection stale
+              const now = Date.now();
+              if (now - this.wsLastMessageAt > Math.max(this.wsHeartbeatIntervalMs * 2, 60000)) {
+                try { if (this.webSocket) this.webSocket.close(); } catch { };
+                return;
+              }
+              if (this.webSocket && this.webSocket.readyState === WebSocket.OPEN) {
+                try { this.webSocket.send(JSON.stringify({ type: 'ping', ts: new Date().toISOString() })); } catch { }
+              }
+            } catch { }
+          }, this.wsHeartbeatIntervalMs);
+        } catch { }
       };
+
       this.webSocket.onmessage = (ev) => {
-        try { this.webSocketMessageSubject.next(JSON.parse(ev.data)); } catch { /* ignore */ }
+        try {
+          this.wsLastMessageAt = Date.now();
+          let parsed: any = null;
+          try { parsed = JSON.parse(ev.data); } catch { parsed = ev.data; }
+          // Respond to pings if backend expects it (optional)
+          if (parsed && parsed.type === 'ping') {
+            try { if (this.webSocket && this.webSocket.readyState === WebSocket.OPEN) this.webSocket.send(JSON.stringify({ type: 'pong', ts: new Date().toISOString() })); } catch { }
+          }
+          this.webSocketMessageSubject.next(parsed);
+        } catch (err) { /* ignore */ }
       };
-      this.webSocket.onerror = () => { /* handled by reconnect */ };
-      this.webSocket.onclose = () => {
-        setTimeout(() => this.connectWebSocket(), 5000);
+
+      this.webSocket.onerror = (err) => {
+        try { console.warn('WS error', err); } catch { }
       };
+
+      this.webSocket.onclose = (ev) => {
+        try {
+          if (this.wsHeartbeatTimer) { clearInterval(this.wsHeartbeatTimer); this.wsHeartbeatTimer = null; }
+        } catch { }
+
+        // If manual close, don't reconnect
+        if (this.wsManualClose) return;
+
+        // Exponential backoff reconnect
+        this.wsReconnectAttempts = Math.min(this.wsReconnectAttempts + 1, this.wsMaxReconnectAttempts);
+        const backoff = Math.min(this.wsBaseBackoffMs * Math.pow(1.5, this.wsReconnectAttempts), this.wsMaxBackoffMs);
+        try { console.warn(`WS closed (code=${ev.code}) - reconnecting in ${backoff}ms`); } catch { }
+        this.wsReconnectTimer = setTimeout(() => { try { this.connectWebSocket(); } catch { } }, backoff);
+      };
+
     } catch (e) {
       console.error('WS connect error:', e);
+      // schedule next attempt
+      this.wsReconnectAttempts = Math.min(this.wsReconnectAttempts + 1, this.wsMaxReconnectAttempts);
+      const backoff = Math.min(this.wsBaseBackoffMs * Math.pow(1.5, this.wsReconnectAttempts), this.wsMaxBackoffMs);
+      if (this.wsReconnectTimer) clearTimeout(this.wsReconnectTimer);
+      this.wsReconnectTimer = setTimeout(() => this.connectWebSocket(), backoff);
     }
   }
 
   sendWebSocketMessage(message: any): void {
-    if (this.webSocket && this.webSocket.readyState === WebSocket.OPEN) {
-      this.webSocket.send(JSON.stringify(message));
+    try {
+      const payload = typeof message === 'string' ? message : JSON.stringify(message);
+      if (this.webSocket && this.webSocket.readyState === WebSocket.OPEN) {
+        this.webSocket.send(payload);
+        return;
+      }
+      // Queue the message to be sent when WS reconnects
+      this.wsMessageQueue.push(typeof message === 'string' ? message : JSON.parse(payload));
+    } catch (e) {
+      // swallow
     }
   }
 
@@ -884,107 +1088,34 @@ export class ApiService {
     return this.onWebSocketMessage();
   }
 
-  // === Queue and matchmaking endpoints ===
-  joinQueue(playerData: any, preferences: any): Observable<any> {
-    return this.http.post(`${this.baseUrl}/queue/join`, { player: playerData, preferences }).pipe(catchError(this.handleError));
+  // Graceful shutdown helper used by renderer to close WS before unload
+  private closeWebSocketGracefully(): void {
+    try {
+      this.wsManualClose = true;
+      if (this.wsReconnectTimer) { clearTimeout(this.wsReconnectTimer); this.wsReconnectTimer = null; }
+      if (this.wsHeartbeatTimer) { clearInterval(this.wsHeartbeatTimer); this.wsHeartbeatTimer = null; }
+      if (this.webSocket) {
+        try { if (this.webSocket.readyState === WebSocket.OPEN) this.webSocket.close(1000, 'app-shutdown'); } catch { };
+        try { this.webSocket.onopen = null; this.webSocket.onmessage = null; this.webSocket.onclose = null; this.webSocket.onerror = null; } catch { }
+        this.webSocket = null;
+      }
+    } catch { }
   }
 
-  leaveQueue(playerId?: number, summonerName?: string): Observable<any> {
-    const body: any = {};
-    if (playerId) body.playerId = playerId;
-    if (summonerName) body.summonerName = summonerName;
-    return this.http.post(`${this.baseUrl}/queue/leave`, body).pipe(catchError(this.handleError));
-  }
-
-  acceptMatch(matchId: number, playerId?: number, summonerName?: string): Observable<any> {
-    const body: any = { matchId };
-    if (playerId) body.playerId = playerId;
-    if (summonerName) body.summonerName = summonerName;
-    return this.http.post(`${this.baseUrl}/match/accept`, body).pipe(catchError(this.handleError));
-  }
-
-  declineMatch(matchId: number, playerId?: number, summonerName?: string): Observable<any> {
-    const body: any = { matchId };
-    if (playerId) body.playerId = playerId;
-    if (summonerName) body.summonerName = summonerName;
-    return this.http.post(`${this.baseUrl}/match/decline`, body).pipe(catchError(this.handleError));
-  }
-
-  addBotToQueue(): Observable<any> {
-    return this.http.post(`${this.baseUrl}/queue/add-bot`, {}).pipe(catchError(this.handleError));
-  }
-
-  resetBotCounter(): Observable<any> {
-    return this.http.post(`${this.baseUrl}/queue/reset-bot-counter`, {}).pipe(catchError(this.handleError));
-  }
-
-  // === Custom matches & sync ===
-  saveCustomMatch(matchData: any): Observable<any> {
-    return this.http.post(`${this.baseUrl}/custom_matches`, matchData).pipe(catchError(this.handleError));
-  }
-
-  checkSyncStatus(summonerName: string): Observable<any> {
-    const url = `${this.baseUrl}/sync/status?summonerName=${encodeURIComponent(summonerName)}`;
-    return this.http.get(url).pipe(catchError(this.handleError));
-  }
-
-  getCustomMatches(playerIdentifier: string, offset: number = 0, limit: number = 10): Observable<any> {
-    return this.http.get(`${this.baseUrl}/matches/custom/${encodeURIComponent(playerIdentifier)}?offset=${offset}&limit=${limit}`).pipe(catchError(this.handleError));
-  }
-
-  getCustomMatchesCount(playerIdentifier: string): Observable<any> {
-    return this.http.get(`${this.baseUrl}/matches/custom/${encodeURIComponent(playerIdentifier)}/count`).pipe(catchError(this.handleError));
-  }
-
-  // === Riot API proxies ===
-  getPlayerMatchHistoryFromRiot(puuid: string, region: string, count: number = 20): Observable<any> {
-    return this.http.get<any>(`${this.baseUrl}/player/match-history-riot/${puuid}?count=${count}`).pipe(catchError(this.handleError));
-  }
-
-  // === LCU helper endpoints (backend or local fallback) ===
-  getCurrentGame(): Observable<any> {
-    return this.http.get<any>(`${this.baseUrl}/lcu/current-match-details`).pipe(catchError(this.handleError));
-  }
-
-  getLCUMatchHistory(startIndex: number = 0, count: number = 20): Observable<any> {
-    if (this.isElectron()) {
-      return this.tryWithFallback(`/lcu/match-history?startIndex=${startIndex}&count=${count}`, 'GET');
-    }
-    return this.http.get(`${this.baseUrl}/lcu/match-history?startIndex=${startIndex}&count=${count}`).pipe(catchError(this.handleError));
-  }
-
-  getLCUMatchHistoryAll(startIndex: number = 0, count: number = 5, customOnly: boolean = true): Observable<any> {
-    if (this.isElectron()) {
-      return this.tryWithFallback(`/lcu/match-history-all?startIndex=${startIndex}&count=${count}&customOnly=${customOnly}`, 'GET');
-    }
-    return this.http.get(`${this.baseUrl}/lcu/match-history-all?startIndex=${startIndex}&count=${count}&customOnly=${customOnly}`).pipe(catchError(this.handleError));
-  }
-
-  // === Simulation helpers (used by App.simulateLastMatch) ===
-  createLCUBasedMatch(payload: { lcuMatchData: any; playerIdentifier: string }): Observable<any> {
-    const tryBackend = () => this.http.post(`${this.baseUrl}/lcu/create-lcu-based-match`, payload).pipe(
-      catchError(() => {
-        // Fallback local se endpoint não existir
-        const match = payload?.lcuMatchData || {};
-        const simulated = {
-          matchId: match.gameId || match.id || Date.now(),
-          team1: match.team1 || match.blueTeam || [],
-          team2: match.team2 || match.redTeam || [],
-          pickBanData: match.pickBanData || match.session || null,
-          detectedByLCU: true
-        };
-        return of(simulated);
-      })
-    );
-
-    // Em Electron ou Web, tentar backend; se falhar, retorna simulado
-    return tryBackend();
-  }
-
-  cleanupTestMatches(): Observable<any> {
-    // Tenta chamar backend; se não houver endpoint, retorna resposta padrão
-    return this.http.post(`${this.baseUrl}/matches/cleanup-test`, {}).pipe(
-      catchError(() => of({ success: true, deletedCount: 0 }))
-    );
+  // Ensure we close WS on page unload (Electron or browser)
+  private setupUnloadHandler(): void {
+    try {
+      if (typeof window !== 'undefined' && !(window as any).__apiUnloadHandlerInstalled) {
+        (window as any).__apiUnloadHandlerInstalled = true;
+        window.addEventListener('beforeunload', () => { this.closeWebSocketGracefully(); });
+        // In Electron, also listen to app-level shutdown via electronAPI if available
+        try {
+          const eAPI = (window as any).electronAPI;
+          if (eAPI && typeof eAPI.removeAllListeners === 'function') {
+            // no-op; renderer receives shutdown via main DOM/IPC
+          }
+        } catch { }
+      }
+    } catch { }
   }
 }

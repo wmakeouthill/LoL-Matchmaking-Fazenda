@@ -28,7 +28,7 @@ docker-compose logs -f app
 ```bash
 # Se já tem o JAR construído
 ./scripts/docker-build-local.sh
-docker run -p 8080:8080 --env SPRING_PROFILES_ACTIVE=local lol-matchmaking:local
+docker run -p 8080:8080 --name lol-matchmaking-local --env SPRING_PROFILES_ACTIVE=local lol-matchmaking:local
 
 # Acessar: http://localhost:8080
 ```

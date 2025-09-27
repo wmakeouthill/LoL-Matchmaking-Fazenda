@@ -30,6 +30,8 @@ services:
     container_name: lol-matchmaking-app
     environment:
       SPRING_PROFILES_ACTIVE: docker
+      # Disable multi-backend sync in containerized deployment
+      APP_BACKEND_SYNC_ENABLED: "false"
       MYSQL_HOST: ${MYSQL_HOST:-mysql}
       MYSQL_PORT: ${MYSQL_PORT:-3306}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-lolmatchmaking}

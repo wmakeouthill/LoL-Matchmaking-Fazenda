@@ -29,6 +29,9 @@ public class SyncObserver {
     @Value("${app.backend.id:backend-1}")
     private String backendId;
 
+    @Value("${app.backend.sync.enabled:true}")
+    private boolean syncEnabled;
+
     @Value("${app.sync.observer-interval:5000}")
     private long observerIntervalMs;
 
@@ -51,6 +54,11 @@ public class SyncObserver {
     @Scheduled(fixedRate = 5000) // A cada 5 segundos
     @Async
     public void startEventObservation() {
+        if (!syncEnabled) {
+            log.info("🔕 SyncObserver disabled by configuration (app.backend.sync.enabled=false)");
+            return;
+        }
+
         try {
             observeEvents();
         } catch (Exception e) {

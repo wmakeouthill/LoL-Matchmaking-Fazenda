@@ -100,16 +100,69 @@ public class LCUService {
     @Scheduled(fixedRate = 10000) // A cada 10 segundos
     @Async
     public void startLCUMonitoring() {
-        while (true) {
-            try {
-                checkLCUStatus();
-                Thread.sleep(10000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            } catch (Exception e) {
-                log.debug("LCU não disponível: {}", e.getMessage());
+        try {
+            checkLCUStatus();
+        } catch (Exception e) {
+            log.debug("LCU não disponível durante monitoramento: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Configura conexão com LCU em tempo de execução.
+     * Se host for "auto", tenta host.docker.internal e depois 127.0.0.1
+     */
+    public synchronized boolean configure(String host, int port, String protocol, String password) {
+        try {
+            // ✅ Garantir cliente inicializado
+            if (this.lcuClient == null) {
+                setupLCUClient();
             }
+
+            String[] hostsToTry;
+            if (host == null || host.isBlank() || "auto".equalsIgnoreCase(host)) {
+                hostsToTry = new String[] { "host.docker.internal", "127.0.0.1" };
+            } else {
+                hostsToTry = new String[] { host };
+            }
+
+            String originalHost = this.lcuHost;
+            int originalPort = this.lcuPort;
+            String originalProtocol = this.lcuProtocol;
+            String originalPassword = this.lcuPassword;
+
+            for (String h : hostsToTry) {
+                // If host.docker.internal, check if it resolves first to avoid delays
+                if ("host.docker.internal".equalsIgnoreCase(h)) {
+                    try {
+                        java.net.InetAddress addr = java.net.InetAddress.getByName(h);
+                        log.debug("host.docker.internal resolves to {}", addr.getHostAddress());
+                    } catch (Exception ex) {
+                        log.debug("host.docker.internal não resolvível: {} - pular tentativa", ex.getMessage());
+                        continue; // skip trying this host if it doesn't resolve
+                    }
+                }
+                this.lcuHost = h;
+                if (port > 0) this.lcuPort = port;
+                if (protocol != null && !protocol.isBlank()) this.lcuProtocol = protocol;
+                if (password != null) this.lcuPassword = password;
+
+                log.info("🔧 Configurando LCU manualmente: {}:{} ({})", this.lcuHost, this.lcuPort, this.lcuProtocol);
+                boolean ok = this.checkLCUStatus();
+                if (ok) {
+                    log.info("✅ LCU configurado com sucesso em {}:{}", this.lcuHost, this.lcuPort);
+                    return true;
+                }
+            }
+
+            // Restore if failed
+            this.lcuHost = originalHost;
+            this.lcuPort = originalPort;
+            this.lcuProtocol = originalProtocol;
+            this.lcuPassword = originalPassword;
+            return false;
+        } catch (Exception e) {
+            log.error("❌ Erro ao configurar LCU", e);
+            return false;
         }
     }
 
@@ -118,6 +171,11 @@ public class LCUService {
      */
     public boolean checkLCUStatus() {
         try {
+            // ✅ Garantir cliente inicializado
+            if (this.lcuClient == null) {
+                setupLCUClient();
+            }
+
             if (lcuPort == 0) {
                 // Tentar descobrir a porta automaticamente
                 discoverLCUPort();
@@ -164,31 +222,31 @@ public class LCUService {
      * Descobre a porta do LCU automaticamente
      */
     private void discoverLCUPort() {
-        // Tentar portas comuns do LCU
-        int[] commonPorts = { 2099, 2100, 2101, 2102, 2103, 2104, 2105, 2106, 2107, 2108, 2109, 2110 };
+         // Tentar portas comuns do LCU
+         int[] commonPorts = { 2099, 2100, 2101, 2102, 2103, 2104, 2105, 2106, 2107, 2108, 2109, 2110 };
 
-        for (int port : commonPorts) {
-            try {
-                String testUrl = lcuProtocol + "://" + lcuHost + ":" + port + "/lol-summoner/v1/current-summoner";
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(testUrl))
-                        .header("Authorization",
-                                "Basic " + Base64.getEncoder().encodeToString(("riot:" + lcuPassword).getBytes()))
-                        .timeout(Duration.ofSeconds(2))
-                        .build();
+         for (int port : commonPorts) {
+             try {
+                 String testUrl = lcuProtocol + "://" + lcuHost + ":" + port + "/lol-summoner/v1/current-summoner";
+                 HttpRequest request = HttpRequest.newBuilder()
+                         .uri(URI.create(testUrl))
+                         .header("Authorization",
+                                 "Basic " + Base64.getEncoder().encodeToString(("riot:" + lcuPassword).getBytes()))
+                         .timeout(Duration.ofSeconds(2))
+                         .build();
 
-                HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
+                 HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
 
-                if (response.statusCode() == 200) {
-                    lcuPort = port;
-                    log.info("🔍 Porta LCU descoberta em {}: {}", lcuHost, port);
-                    return;
-                }
-            } catch (Exception e) {
-                // Porta não disponível, continuar tentando
-            }
-        }
-    }
+                 if (response.statusCode() == 200) {
+                     lcuPort = port;
+                     log.info("🔍 Porta LCU descoberta em {}: {}", lcuHost, port);
+                     return;
+                 }
+             } catch (Exception e) {
+                 // Porta não disponível, continuar tentando
+             }
+         }
+     }
 
     /**
      * Obtém dados do invocador atual
@@ -205,6 +263,7 @@ public class LCUService {
                         .uri(URI.create(url))
                         .header("Authorization",
                                 "Basic " + Base64.getEncoder().encodeToString(("riot:" + lcuPassword).getBytes()))
+                        .timeout(Duration.ofSeconds(5))
                         .build();
 
                 HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
@@ -234,6 +293,7 @@ public class LCUService {
                         .uri(URI.create(url))
                         .header("Authorization",
                                 "Basic " + Base64.getEncoder().encodeToString(("riot:" + lcuPassword).getBytes()))
+                        .timeout(Duration.ofSeconds(5))
                         .build();
 
                 HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
@@ -263,6 +323,7 @@ public class LCUService {
                         .uri(URI.create(url))
                         .header("Authorization",
                                 "Basic " + Base64.getEncoder().encodeToString(("riot:" + lcuPassword).getBytes()))
+                        .timeout(Duration.ofSeconds(5))
                         .build();
 
                 HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
@@ -292,6 +353,7 @@ public class LCUService {
                         .uri(URI.create(url))
                         .header("Authorization",
                                 "Basic " + Base64.getEncoder().encodeToString(("riot:" + lcuPassword).getBytes()))
+                        .timeout(Duration.ofSeconds(5))
                         .build();
 
                 HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
@@ -335,7 +397,7 @@ public class LCUService {
                     requestBuilder.GET();
                 }
 
-                HttpRequest request = requestBuilder.build();
+                HttpRequest request = requestBuilder.timeout(Duration.ofSeconds(6)).build();
                 HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
 
                 return response.statusCode() >= 200 && response.statusCode() < 300;
@@ -375,50 +437,6 @@ public class LCUService {
     }
 
     /**
-     * Configura conexão com LCU em tempo de execução.
-     * Se host for "auto", tenta host.docker.internal e depois 127.0.0.1
-     */
-    public synchronized boolean configure(String host, int port, String protocol, String password) {
-        try {
-            String[] hostsToTry;
-            if (host == null || host.isBlank() || "auto".equalsIgnoreCase(host)) {
-                hostsToTry = new String[] { "host.docker.internal", "127.0.0.1" };
-            } else {
-                hostsToTry = new String[] { host };
-            }
-
-            String originalHost = this.lcuHost;
-            int originalPort = this.lcuPort;
-            String originalProtocol = this.lcuProtocol;
-            String originalPassword = this.lcuPassword;
-
-            for (String h : hostsToTry) {
-                this.lcuHost = h;
-                if (port > 0) this.lcuPort = port;
-                if (protocol != null && !protocol.isBlank()) this.lcuProtocol = protocol;
-                if (password != null) this.lcuPassword = password;
-
-                log.info("🔧 Configurando LCU manualmente: {}:{} ({})", this.lcuHost, this.lcuPort, this.lcuProtocol);
-                boolean ok = this.checkLCUStatus();
-                if (ok) {
-                    log.info("✅ LCU configurado com sucesso em {}:{}", this.lcuHost, this.lcuPort);
-                    return true;
-                }
-            }
-
-            // Restore if failed
-            this.lcuHost = originalHost;
-            this.lcuPort = originalPort;
-            this.lcuProtocol = originalProtocol;
-            this.lcuPassword = originalPassword;
-            return false;
-        } catch (Exception e) {
-            log.error("❌ Erro ao configurar LCU", e);
-            return false;
-        }
-    }
-
-    /**
      * Descobre informações do LCU via lockfile
      */
     private void discoverLCUFromLockfile() {
@@ -454,4 +472,3 @@ public class LCUService {
         }
     }
 }
-
