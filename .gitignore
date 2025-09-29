@@ -15,7 +15,7 @@ electron/node_modules
 *.war
 *.ear
 hs_err_pid*
-
+/old electron/
 # Maven
 .mvn/
 dependency-reduced-pom.xml
@@ -79,4 +79,11 @@ docker-compose.override.yaml
 
 # Keep config-example and other templates tracked
 # (don't ignore config-example.properties)
+
+# Local gateway token (do not commit)
+.gateway_token
+gateway.token
+
+/old frontend/
+/old backend/
 

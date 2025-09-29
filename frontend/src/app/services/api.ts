@@ -1,4 +1,4 @@
-import { Injectable } from '@angular/core';
+import { Injectable, Inject } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, throwError, Subject, firstValueFrom, of } from 'rxjs';
 import { catchError, retry, map, switchMap } from 'rxjs/operators';
@@ -70,17 +70,17 @@ export class ApiService {
   private webSocket: WebSocket | null = null;
   // Reconnection and heartbeat state
   private wsReconnectAttempts = 0;
-  private wsMaxReconnectAttempts = 30; // cap attempts
+  private readonly wsMaxReconnectAttempts = 30; // cap attempts
   private wsManualClose = false;
   private wsReconnectTimer: any = null;
   private wsHeartbeatTimer: any = null;
-  private wsHeartbeatIntervalMs = Number((window as any).WS_HEARTBEAT_MS || 30000);
-  private wsBaseBackoffMs = 1000; // 1s
-  private wsMaxBackoffMs = 30000; // 30s
+  private readonly wsHeartbeatIntervalMs = Number((window as any).WS_HEARTBEAT_MS || 60000); // 1 minuto
+  private readonly wsBaseBackoffMs = 1000; // 1s
+  private readonly wsMaxBackoffMs = 30000; // 30s
   private wsLastMessageAt = 0;
-  private wsMessageQueue: any[] = [];
+  private readonly wsMessageQueue: any[] = [];
 
-  constructor(private readonly http: HttpClient) {
+  constructor(@Inject(HttpClient) private readonly http: HttpClient) {
     // ✅ CORREÇÃO: Inicializar baseUrl aqui, quando o contexto está pronto
     this.baseUrl = this.getBaseUrl();
 
@@ -237,17 +237,16 @@ export class ApiService {
   private getElectronBaseUrl(): string {
     // ✅ CORREÇÃO: SEMPRE usar /api em qualquer ambiente Electron
 
-    // Se há uma variável de ambiente para produção (Google Cloud)
-    const productionUrl = (window as any).electronAPI?.getBackendUrl?.();
-    if (productionUrl) {
-      console.log('🚀 [Electron] URL de produção detectada:', productionUrl);
-      // ✅ Normalizar: remover barras finais e garantir exatamente um '/api'
-      let normalized = String(productionUrl).trim();
-      // Remover todas as barras à direita (ex.: 'http://x/api/' -> 'http://x/api')
-      normalized = normalized.replace(/\/+$/, '');
-      // Se já termina com '/api', usar como está; caso contrário, anexar '/api'
-      return normalized.endsWith('/api') ? normalized : `${normalized}/api`;
+    // Preferir explicitamente o 'getBackendApiUrl' exposto pelo preload (já contém /api)
+    const productionApiUrl = (window as any).electronAPI?.getBackendApiUrl?.();
+    if (productionApiUrl) {
+      console.log('🚀 [Electron] production API URL (from preload) detected:', productionApiUrl);
+      let normalizedApi = String(productionApiUrl).trim();
+      normalizedApi = normalizedApi.replace(/\/+$/, '');
+      return normalizedApi;
     }
+
+    // If getBackendApiUrl is not present, fall back to file:// / hostname heuristics below
 
     // Se estiver no protocolo file:// (app empacotado)
     if (window.location.protocol === 'file:') {
@@ -329,7 +328,10 @@ export class ApiService {
     return isWin;
   } private tryWithFallback<T>(endpoint: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET', body?: any): Observable<T> {
     const tryUrl = (url: string): Observable<T> => {
-      const fullUrl = `${url}${endpoint}`;
+      // Build full URL safely to avoid double slashes or missing slashes
+      const base = url.endsWith('/') ? url : `${url}/`;
+      const normalizedEndpoint = endpoint.replace(/^\/+/, '');
+      const fullUrl = new URL(normalizedEndpoint, base).toString();
       console.log(`🔄 Tentando requisição: ${method} ${fullUrl}`);
 
       switch (method) {
@@ -877,39 +879,85 @@ export class ApiService {
    * Obtém dados do jogador atual via LCU (método usado pelo app.ts)
    */
   getPlayerFromLCU(): Observable<Player> {
-    // Em Electron, ler direto do LCU via conector local
-    if (this.isElectron() && (window as any).electronAPI?.lcu?.getCurrentSummoner) {
-      return new Observable<Player>(observer => {
-        (window as any).electronAPI.lcu.getCurrentSummoner()
-          .then((lcuData: any) => {
-            if (!lcuData) throw new Error('Dados do LCU não disponíveis');
-
-            const displayName = (lcuData.gameName && lcuData.tagLine)
-              ? `${lcuData.gameName}#${lcuData.tagLine}`
-              : (lcuData.displayName || undefined);
+    // Em Electron, preferir o backend central (que pode usar gateway/RPC) e
+    // só cair para o conector local se o backend falhar. Isso mantém uma única
+    // fonte de verdade e garante que o formato retornado seja o mesmo do modo web.
+    if (this.isElectron()) {
+      return this.http.get<any>(`${this.baseUrl}/player/current-details`).pipe(
+        map(response => {
+          if (response && response.success && response.player) {
+            const playerData = response.player;
+            // Process ranked data from LCU (like old frontend)
+            const lcuRankedStats = playerData.lcuRankedStats || null;
+            console.log('🔍 [FRONTEND] LCU Ranked Stats received:', lcuRankedStats);
+            const rankedData = this.processRankedData(playerData, lcuRankedStats);
+            console.log('🔍 [FRONTEND] Processed ranked data:', rankedData);
 
             const player: Player = {
-              id: lcuData.summonerId || 0,
-              summonerName: lcuData.gameName || lcuData.displayName || 'Unknown',
-              displayName,
-              gameName: lcuData.gameName || null,
-              tagLine: lcuData.tagLine || null,
-              summonerId: (lcuData.summonerId || '0').toString(),
-              puuid: lcuData.puuid || '',
-              profileIconId: lcuData.profileIconId || 29,
-              summonerLevel: lcuData.summonerLevel || 30,
-              region: 'br1',
-              currentMMR: 1200,
-              rank: undefined,
-              wins: undefined,
-              losses: undefined
+              id: playerData.id || 0,
+              summonerName: playerData.summonerName || playerData.gameName || 'Unknown',
+              gameName: playerData.gameName || playerData.summonerName || 'Unknown',
+              tagLine: playerData.tagLine || '',
+              region: playerData.region || 'br1',
+              puuid: playerData.puuid || '',
+              summonerId: playerData.summonerId || '',
+              summonerLevel: playerData.summonerLevel || 1,
+              profileIconId: playerData.profileIconId || 0,
+              currentMMR: this.calculateMMRFromData(playerData, lcuRankedStats),
+              displayName: playerData.gameName && playerData.tagLine ? `${playerData.gameName}#${playerData.tagLine}` : playerData.summonerName || 'Unknown',
+              registeredAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              // ✅ ADICIONADO: Mapear dados de ranked processados do LCU
+              rank: rankedData.soloQueue ? this.extractRankData(rankedData.soloQueue) : { tier: 'UNRANKED', rank: '', lp: 0, wins: 0, losses: 0 },
+              wins: rankedData.soloQueue?.wins || playerData.wins || 0,
+              losses: rankedData.soloQueue?.losses || playerData.losses || 0,
+              // ✅ ADICIONADO: Campo rankedData para compatibilidade com dashboard
+              rankedData: rankedData
             };
+            return player;
+          }
 
-            observer.next(player);
-          })
-          .catch((err: any) => observer.error(err))
-          .finally(() => observer.complete());
-      }).pipe(catchError(this.handleError));
+          // If backend didn't provide player, fall through to local electron API
+          throw new Error(response?.error || 'Backend não retornou dados do jogador');
+        }),
+        catchError(err => {
+          // Fallback: try direct electronAPI (local LCU) to avoid blocking UI
+          if ((window as any).electronAPI?.lcu?.getCurrentSummoner) {
+            return new Observable<Player>(observer => {
+              (window as any).electronAPI.lcu.getCurrentSummoner()
+                .then((lcuData: any) => {
+                  if (!lcuData) throw new Error('Dados do LCU não disponíveis');
+
+                  const displayName = (lcuData.gameName && lcuData.tagLine)
+                    ? `${lcuData.gameName}#${lcuData.tagLine}`
+                    : (lcuData.displayName || undefined);
+
+                  const player: Player = {
+                    id: lcuData.summonerId || 0,
+                    summonerName: lcuData.gameName || lcuData.displayName || 'Unknown',
+                    displayName,
+                    gameName: lcuData.gameName || null,
+                    tagLine: lcuData.tagLine || null,
+                    summonerId: (lcuData.summonerId || '0').toString(),
+                    puuid: lcuData.puuid || '',
+                    profileIconId: lcuData.profileIconId || 29,
+                    summonerLevel: lcuData.summonerLevel || 30,
+                    region: 'br1',
+                    currentMMR: 1200,
+                    rank: undefined,
+                    wins: undefined,
+                    losses: undefined
+                  };
+
+                  observer.next(player);
+                })
+                .catch((e: any) => observer.error(e))
+                .finally(() => observer.complete());
+            }).pipe(catchError(this.handleError));
+          }
+          return throwError(() => err);
+        })
+      );
     }
 
     // Modo web: usar backend
@@ -963,7 +1011,13 @@ export class ApiService {
   }
 
   isWebSocketConnected(): boolean {
-    return this.webSocket !== null && this.webSocket.readyState === WebSocket.OPEN;
+    const connected = this.webSocket !== null && this.webSocket.readyState === WebSocket.OPEN;
+    if (connected) {
+      console.log('✅ [WebSocket] Status: Conectado');
+    } else {
+      console.log(`❌ [WebSocket] Status: Desconectado (readyState: ${this.webSocket?.readyState})`);
+    }
+    return connected;
   }
 
   onWebSocketReady(): Observable<boolean> {
@@ -1003,6 +1057,7 @@ export class ApiService {
       this.webSocket.onopen = () => {
         this.wsReconnectAttempts = 0;
         this.wsLastMessageAt = Date.now();
+        console.log('✅ [WebSocket] Conectado com sucesso');
         // Flush queued messages
         while (this.webSocket && this.webSocket.readyState === WebSocket.OPEN && this.wsMessageQueue.length > 0) {
           try { const m = this.wsMessageQueue.shift(); this.webSocket.send(JSON.stringify(m)); } catch { break; }
@@ -1013,9 +1068,9 @@ export class ApiService {
         try {
           if (this.wsHeartbeatTimer) clearInterval(this.wsHeartbeatTimer); this.wsHeartbeatTimer = setInterval(() => {
             try {
-              // If we haven't received any message within 2x heartbeat, consider connection stale
+              // If we haven't received any message within 3x heartbeat, consider connection stale
               const now = Date.now();
-              if (now - this.wsLastMessageAt > Math.max(this.wsHeartbeatIntervalMs * 2, 60000)) {
+              if (now - this.wsLastMessageAt > Math.max(this.wsHeartbeatIntervalMs * 3, 120000)) {
                 try { if (this.webSocket) this.webSocket.close(); } catch { };
                 return;
               }
@@ -1049,13 +1104,18 @@ export class ApiService {
           if (this.wsHeartbeatTimer) { clearInterval(this.wsHeartbeatTimer); this.wsHeartbeatTimer = null; }
         } catch { }
 
+        console.log(`🔌 [WebSocket] Desconectado (código: ${ev.code}, motivo: ${ev.reason})`);
+
         // If manual close, don't reconnect
-        if (this.wsManualClose) return;
+        if (this.wsManualClose) {
+          console.log('🔌 [WebSocket] Fechamento manual, não reconectando');
+          return;
+        }
 
         // Exponential backoff reconnect
         this.wsReconnectAttempts = Math.min(this.wsReconnectAttempts + 1, this.wsMaxReconnectAttempts);
         const backoff = Math.min(this.wsBaseBackoffMs * Math.pow(1.5, this.wsReconnectAttempts), this.wsMaxBackoffMs);
-        try { console.warn(`WS closed (code=${ev.code}) - reconnecting in ${backoff}ms`); } catch { }
+        console.log(`🔄 [WebSocket] Tentativa ${this.wsReconnectAttempts}/${this.wsMaxReconnectAttempts} de reconexão em ${backoff}ms`);
         this.wsReconnectTimer = setTimeout(() => { try { this.connectWebSocket(); } catch { } }, backoff);
       };
 
@@ -1117,5 +1177,105 @@ export class ApiService {
         } catch { }
       }
     } catch { }
+  }
+
+  // ========== MÉTODOS DE PROCESSAMENTO DE DADOS DE RANKED (do frontend antigo) ==========
+
+  private processRankedData(riotApi: any, lcuRankedStats: any): any {
+    const result = {
+      soloQueue: null as any,
+      flexQueue: null as any
+    };
+
+    // Priority 1: Use Riot API data if available
+    if (riotApi?.soloQueue || riotApi?.rankedData?.soloQueue) {
+      result.soloQueue = riotApi.soloQueue || riotApi.rankedData.soloQueue;
+    }
+
+    if (riotApi?.flexQueue || riotApi?.rankedData?.flexQueue) {
+      result.flexQueue = riotApi.flexQueue || riotApi.rankedData.flexQueue;
+    }
+
+    // Priority 2: Use LCU ranked stats as fallback or supplement
+    if (lcuRankedStats?.queues) {
+      lcuRankedStats.queues.forEach((queue: any) => {
+        if (queue.queueType === 'RANKED_SOLO_5x5' && !result.soloQueue) {
+          result.soloQueue = {
+            tier: queue.tier,
+            rank: queue.division,
+            leaguePoints: queue.leaguePoints,
+            wins: queue.wins,
+            losses: queue.losses,
+            isProvisional: queue.isProvisional || false
+          };
+        } else if (queue.queueType === 'RANKED_FLEX_SR' && !result.flexQueue) {
+          result.flexQueue = {
+            tier: queue.tier,
+            rank: queue.division,
+            leaguePoints: queue.leaguePoints,
+            wins: queue.wins,
+            losses: queue.losses,
+            isProvisional: queue.isProvisional || false
+          };
+        }
+      });
+    }
+
+    return result;
+  }
+
+  private calculateMMRFromData(data: any, lcuRankedStats?: any): number {
+    // Try Riot LCU data first
+    if (lcuRankedStats?.queues) {
+      const lcuSoloQueue = lcuRankedStats.queues.find((q: any) => q.queueType === 'RANKED_SOLO_5x5');
+      if (lcuSoloQueue?.tier) {
+        return this.calculateMMRFromRankData({
+          tier: lcuSoloQueue.tier,
+          rank: lcuSoloQueue.division,
+          leaguePoints: lcuSoloQueue.leaguePoints
+        });
+      }
+      // Try API ranked stats as fallback
+      const soloQueue = data.soloQueue || data.rankedData?.soloQueue;
+      if (soloQueue?.tier) {
+        return this.calculateMMRFromRankData(soloQueue);
+      }
+    }
+
+    return 1200; // Default MMR
+  }
+
+  private calculateMMRFromRankData(rankData: any): number {
+    if (!rankData?.tier) return 1200;
+
+    const tierValues: { [key: string]: number } = {
+      'IRON': 800, 'BRONZE': 1000, 'SILVER': 1200, 'GOLD': 1400,
+      'PLATINUM': 1700, 'EMERALD': 2000, 'DIAMOND': 2300,
+      'MASTER': 2600, 'GRANDMASTER': 2800, 'CHALLENGER': 3000
+    };
+
+    const rankValues: { [key: string]: number } = {
+      'IV': 0, 'III': 50, 'II': 100, 'I': 150
+    };
+
+    const baseMMR = tierValues[rankData.tier] || 1200;
+    const rankBonus = rankValues[rankData.rank] || 0;
+    const lpBonus = (rankData.leaguePoints || 0) * 0.8;
+
+    return Math.round(baseMMR + rankBonus + lpBonus);
+  }
+
+  private extractRankData(data: any): any {
+    const soloQueue = data.soloQueue || data.rankedData?.soloQueue;
+    if (!soloQueue || !soloQueue.tier) return undefined;
+
+    return {
+      tier: soloQueue.tier,
+      rank: soloQueue.rank,
+      lp: soloQueue.leaguePoints,
+      wins: soloQueue.wins,
+      losses: soloQueue.losses,
+      display: `${soloQueue.tier} ${soloQueue.rank}`
+    };
   }
 }

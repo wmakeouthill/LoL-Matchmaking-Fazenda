@@ -13,10 +13,10 @@ import java.time.Instant;
 @Builder
 public class Setting {
     @Id
-    @Column(name = "key", length = 191)
+    @Column(name = "`key`", length = 191)
     private String key;
 
-    @Column(name = "value", nullable = false, columnDefinition = "TEXT")
+    @Column(name = "`value`", nullable = false, columnDefinition = "TEXT")
     private String value;
 
     @Column(name = "created_at")

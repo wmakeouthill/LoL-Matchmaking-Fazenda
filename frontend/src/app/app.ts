@@ -135,7 +135,7 @@ export class App implements OnInit, OnDestroy {
   // ✅ NOVO: Sistema de polling inteligente para sincronização
   private pollingInterval: any = null;
   private lastPollingStatus: string | null = null;
-  private readonly POLLING_INTERVAL_MS = 2000; // 2 segundos - aguardar backend processar
+  private readonly POLLING_INTERVAL_MS = 10000; // 10 segundos - reduzir frequência
   private lastCacheInvalidation = 0; // ✅ NOVO: Controle de invalidação de cache
   private readonly CACHE_INVALIDATION_COOLDOWN = 3000; // ✅ NOVO: 3 segundos entre invalidações
   private lastBackendAction = 0; // ✅ NOVO: Controle de ações do backend
@@ -449,11 +449,11 @@ export class App implements OnInit, OnDestroy {
   }
 
   private savePlayerData(player: any): void {
-    try { localStorage.setItem('currentPlayer', JSON.stringify(player)); } catch {}
+    try { localStorage.setItem('currentPlayer', JSON.stringify(player)); } catch { }
   }
 
   private identifyCurrentPlayerOnConnect(): void {
-    this.identifyPlayerSafely().catch(() => {});
+    this.identifyPlayerSafely().catch(() => { });
   }
 
   private getCurrentPlayerIdentifiers(): string[] {
@@ -892,11 +892,11 @@ export class App implements OnInit, OnDestroy {
 
   // Wrappers para eventos do template
   onAcceptMatch(_event?: any): void {
-    this.acceptMatch().catch(() => {});
+    this.acceptMatch().catch(() => { });
   }
 
   onDeclineMatch(_event?: any): void {
-    this.declineMatch().catch(() => {});
+    this.declineMatch().catch(() => { });
   }
 
   // ✅ ENHANCED: Métodos de notificação com animações suaves

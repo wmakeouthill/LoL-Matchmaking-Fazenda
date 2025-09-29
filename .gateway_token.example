@@ -1,0 +1,3 @@
+# Place your gateway token in this file (single line, no quotes)
+# Copy to .gateway_token and replace with the real token
+REPLACE_WITH_SECURE_TOKEN

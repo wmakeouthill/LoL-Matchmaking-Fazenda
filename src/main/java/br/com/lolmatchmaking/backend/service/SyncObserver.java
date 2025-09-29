@@ -38,6 +38,8 @@ public class SyncObserver {
     // Cache de eventos processados para evitar duplicação
     private final Map<String, Instant> processedEvents = new ConcurrentHashMap<>();
     private final Map<String, Integer> eventCounts = new ConcurrentHashMap<>();
+    // Avoid spamming the logs when the observer is disabled
+    private volatile boolean disabledLogged = false;
 
     /**
      * Inicializa o observador de sincronização
@@ -55,9 +57,18 @@ public class SyncObserver {
     @Async
     public void startEventObservation() {
         if (!syncEnabled) {
-            log.info("🔕 SyncObserver disabled by configuration (app.backend.sync.enabled=false)");
+            // Log the disabled state only once to avoid polluting logs
+            if (!disabledLogged) {
+                log.info("🔕 SyncObserver disabled by configuration (app.backend.sync.enabled=false)");
+                disabledLogged = true;
+            } else {
+                // subsequent runs are intentionally silent
+                log.debug("SyncObserver still disabled; skipping observation");
+            }
             return;
         }
+        // Reset the one-time disabled flag when re-enabled at runtime
+        disabledLogged = false;
 
         try {
             observeEvents();

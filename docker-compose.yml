@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   # Banco de dados MySQL para desenvolvimento local
@@ -49,6 +49,8 @@ services:
         condition: service_healthy
     networks:
       - lol-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       # Para hot reload durante desenvolvimento (opcional)
       - ./target/classes:/app/BOOT-INF/classes

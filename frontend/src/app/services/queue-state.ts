@@ -54,7 +54,7 @@ export class QueueStateService {
 
   // Sistema de sincronização via polling para consultar a tabela queue_players
   private pollingInterval: any = null;
-  private readonly POLLING_INTERVAL_MS = 3000; // Polling a cada 3 segundos
+  private readonly POLLING_INTERVAL_MS = 15000; // Polling a cada 15 segundos
   private currentPlayerData: any = null;
   private lastIdentifiers: string[] = []; // ✅ NOVO: Para evitar spam de logs
 

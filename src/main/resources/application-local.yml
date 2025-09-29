@@ -1,28 +1,51 @@
-# Configurações para desenvolvimento local
-server:
-  port: 8080
+# Configurações para ambiente local/desenvolvimento
+# Gateway RPC deve ser preferido para comunicação com LCU via Electron
 
-# URLs e endpoints para ambiente local
+# Configurações customizadas do LCU (usando @ConfigurationProperties)
+# @spring-boot-ignore-property: app.lcu.*
 app:
-  frontend:
-    url: "http://localhost:4200"
-  backend:
-    url: "http://localhost:8080"
-    base-url: "http://localhost:8080"
-  websocket:
-    endpoint: "ws://localhost:8080/ws"
-  cors:
-    allowed-origins:
-      - "http://localhost:4200"
-      - "http://localhost:3000"
-      - "http://127.0.0.1:4200"
-      - "http://127.0.0.1:3000"
+  lcu:
+    prefer-gateway: true # Priorizar gateway RPC sobre HTTP direto
+    host: 127.0.0.1 # Para acesso local ao LCU
+    protocol: https
+    port: 0 # Será descoberto automaticamente via lockfile
+    password: "" # Será configurado via lockfile
 
-  logging:
-    frontend:
+# Configuração de banco para desenvolvimento local (H2 em memória)
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  h2:
+    console:
       enabled: true
+      path: /h2-console
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+    properties:
+      hibernate:
+        naming:
+          physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
+  liquibase:
+    enabled: false # Desabilitar Liquibase para H2 local
+  servlet:
+    context-path: /
+  websocket:
+    max-text-message-buffer-size: 4194304
+    max-binary-message-buffer-size: 4194304
 
+# Logs controlados para debugging
 logging:
   level:
-    br.com.lolmatchmaking: INFO
-    org.springframework.web: INFO
+    root: INFO
+    "[br.com.lolmatchmaking.backend.service.LCUService]": INFO
+    "[br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService]": INFO
+    "[org.hibernate.SQL]": WARN
+    "[org.hibernate.type.descriptor.sql.BasicBinder]": WARN
+    "[org.springframework.web]": WARN
+    "[org.springframework.security]": WARN

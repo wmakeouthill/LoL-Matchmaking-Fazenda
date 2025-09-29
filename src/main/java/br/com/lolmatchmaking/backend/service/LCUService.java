@@ -2,13 +2,17 @@ package br.com.lolmatchmaking.backend.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import br.com.lolmatchmaking.backend.config.AppProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+
+import jakarta.annotation.PostConstruct;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
@@ -20,7 +24,10 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.*;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -31,18 +38,18 @@ public class LCUService {
 
     private final ObjectMapper objectMapper;
     private final RestTemplate restTemplate;
+    private final AppProperties appProperties;
+    // Optional injection of websocket service to perform gateway RPCs from async
+    // threads - using @Lazy to break circular dependency
+    @Lazy
+    private final br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService websocketService;
 
-    @Value("${app.lcu.port:0}")
+    // Propriedades do LCU obtidas via AppProperties
     private int lcuPort;
-
-    @Value("${app.lcu.password:}")
     private String lcuPassword;
-
-    @Value("${app.lcu.protocol:https}")
     private String lcuProtocol;
-
-    @Value("${app.lcu.host:127.0.0.1}")
     private String lcuHost;
+    private boolean preferGatewayRPC;
 
     private String lcuBaseUrl;
     private HttpClient lcuClient;
@@ -50,6 +57,25 @@ public class LCUService {
     private String currentSummonerId;
     private String currentGameId;
     private final Map<String, Object> lcuStatus = new ConcurrentHashMap<>();
+    // Track last time a gateway (Electron) reported successful LCU activity
+    private Instant lastGatewaySeen = null;
+    // TTL (ms) to consider gateway-reported connection as valid before falling back
+    private static final long GATEWAY_CONNECTION_TTL_MS = 60_000; // 60 seconds
+
+    /**
+     * Inicializa as propriedades do LCU a partir do AppProperties
+     */
+    @PostConstruct
+    public void initProperties() {
+        this.lcuPort = appProperties.getLcu().getPort();
+        this.lcuPassword = appProperties.getLcu().getPassword();
+        this.lcuProtocol = appProperties.getLcu().getProtocol();
+        this.lcuHost = appProperties.getLcu().getHost();
+        this.preferGatewayRPC = appProperties.getLcu().isPreferGateway();
+
+        log.info("🔧 LCU Properties inicializadas: host={}, port={}, protocol={}, preferGateway={}",
+                lcuHost, lcuPort, lcuProtocol, preferGatewayRPC);
+    }
 
     /**
      * Inicializa o serviço LCU
@@ -60,6 +86,55 @@ public class LCUService {
         discoverLCUFromLockfile(); // Tentar descobrir via lockfile primeiro
         startLCUMonitoring();
         log.info("✅ LCUService inicializado");
+    }
+
+    /**
+     * Debug helper: perform a direct GET to /lol-summoner/v1/current-summoner and
+     * return a map with statusCode, headers and body or exception details. This
+     * is intended for debugging from the frontend/devtools.
+     */
+    public synchronized Map<String, Object> debugDirectCurrentSummoner() {
+        Map<String, Object> out = new HashMap<>();
+        try {
+            if (this.lcuClient == null) {
+                setupLCUClient();
+            }
+            if (lcuPort == 0) {
+                discoverLCUPort();
+            }
+
+            String url = (lcuProtocol != null ? lcuProtocol : "https") + "://"
+                    + (lcuHost != null ? lcuHost : "127.0.0.1") + ":" + lcuPort
+                    + "/lol-summoner/v1/current-summoner";
+
+            HttpRequest.Builder builder = createLcuRequestBuilder(url, null);
+            builder.timeout(Duration.ofSeconds(6));
+            HttpRequest request = builder.GET().build();
+
+            HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+            out.put("url", url);
+            out.put("statusCode", response.statusCode());
+            try {
+                out.put("headers", response.headers().map());
+            } catch (Exception ignored) {
+            }
+            out.put("body", response.body());
+            out.put("host", lcuHost);
+            out.put("port", lcuPort);
+            out.put("protocol", lcuProtocol);
+            return out;
+        } catch (Exception e) {
+            StringWriter sw = new StringWriter();
+            e.printStackTrace(new PrintWriter(sw));
+            out.put("error", true);
+            out.put("exception", sw.toString());
+            out.put("message", e.getMessage());
+            out.put("host", lcuHost);
+            out.put("port", lcuPort);
+            out.put("protocol", lcuProtocol);
+            return out;
+        }
     }
 
     /**
@@ -92,6 +167,48 @@ public class LCUService {
         } catch (Exception e) {
             log.error("❌ Erro ao configurar cliente LCU", e);
         }
+    }
+
+    /**
+     * Helper: cria um HttpRequest.Builder com Authorization e Host header ajustado.
+     * Quando estamos acessando via host.docker.internal, muitas vezes o LCU exige
+     * que o header Host seja 127.0.0.1:<port> — isso permite que a requisição
+     * seja aceita mesmo quando resolvida para outro IP.
+     */
+    private HttpRequest.Builder createLcuRequestBuilder(String targetUrl, Integer explicitPort) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder().uri(URI.create(targetUrl));
+        // Authorization
+        if (this.lcuPassword != null) {
+            builder.header("Authorization",
+                    "Basic " + Base64.getEncoder().encodeToString(("riot:" + this.lcuPassword).getBytes()));
+        }
+
+        // Host override to satisfy LCU which often expects Host: 127.0.0.1:<port>
+        try {
+            String hostHeader;
+            int portToUse = (explicitPort != null && explicitPort > 0) ? explicitPort : this.lcuPort;
+            if ("host.docker.internal".equalsIgnoreCase(this.lcuHost) && portToUse > 0) {
+                hostHeader = "127.0.0.1:" + portToUse;
+            } else if (this.lcuHost != null) {
+                hostHeader = this.lcuHost + (portToUse > 0 ? ":" + portToUse : "");
+            } else {
+                hostHeader = "127.0.0.1" + (portToUse > 0 ? ":" + portToUse : "");
+            }
+            builder.header("Host", hostHeader);
+            // Also set Origin when talking through host.docker.internal so the LCU accepts
+            // the request
+            if ("host.docker.internal".equalsIgnoreCase(this.lcuHost) && portToUse > 0) {
+                try {
+                    String origin = (this.lcuProtocol != null ? this.lcuProtocol : "https") + "://127.0.0.1:"
+                            + portToUse;
+                    builder.header("Origin", origin);
+                } catch (Exception ignored) {
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        return builder;
     }
 
     /**
@@ -142,9 +259,12 @@ public class LCUService {
                     }
                 }
                 this.lcuHost = h;
-                if (port > 0) this.lcuPort = port;
-                if (protocol != null && !protocol.isBlank()) this.lcuProtocol = protocol;
-                if (password != null) this.lcuPassword = password;
+                if (port > 0)
+                    this.lcuPort = port;
+                if (protocol != null && !protocol.isBlank())
+                    this.lcuProtocol = protocol;
+                if (password != null)
+                    this.lcuPassword = password;
 
                 log.info("🔧 Configurando LCU manualmente: {}:{} ({})", this.lcuHost, this.lcuPort, this.lcuProtocol);
                 boolean ok = this.checkLCUStatus();
@@ -181,16 +301,29 @@ public class LCUService {
                 discoverLCUPort();
             }
 
+            // If a gateway recently reported the LCU as connected, consider it connected
+            // for a short TTL to avoid flip-flopping while direct HTTP checks fail
+            if (lastGatewaySeen != null
+                    && Instant.now().isBefore(lastGatewaySeen.plusMillis(GATEWAY_CONNECTION_TTL_MS))) {
+                // Respect the gateway-reported connection
+                isConnected = true;
+                lcuStatus.put("connected", true);
+                if (currentSummonerId != null)
+                    lcuStatus.put("summonerId", currentSummonerId);
+                lcuStatus.put("port", lcuPort);
+                lcuStatus.put("host", lcuHost);
+                log.debug("LCU considered connected via gateway TTL ({} ms left)",
+                        GATEWAY_CONNECTION_TTL_MS - (System.currentTimeMillis() - lastGatewaySeen.toEpochMilli()));
+                return true;
+            }
+
             if (lcuPort > 0) {
                 lcuBaseUrl = lcuProtocol + "://" + lcuHost + ":" + lcuPort;
                 String statusUrl = lcuBaseUrl + "/lol-summoner/v1/current-summoner";
 
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(statusUrl))
-                        .header("Authorization",
-                                "Basic " + Base64.getEncoder().encodeToString(("riot:" + lcuPassword).getBytes()))
-                        .timeout(Duration.ofSeconds(5))
-                        .build();
+                HttpRequest.Builder builder = createLcuRequestBuilder(statusUrl, lcuPort);
+                builder.timeout(Duration.ofSeconds(5));
+                HttpRequest request = builder.GET().build();
 
                 HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
 
@@ -206,10 +339,21 @@ public class LCUService {
 
                     log.debug("✅ LCU conectado - {}:{} Summoner ID: {}", lcuHost, lcuPort, currentSummonerId);
                     return true;
+                } else {
+                    // Log status, headers and body to help debug 403/401 responses coming from the
+                    // LCU
+                    try {
+                        log.warn("LCU check returned non-200 status {} for {}. headers={} body={}",
+                                response.statusCode(), statusUrl, response.headers().map(), response.body());
+                    } catch (Exception ex) {
+                        log.warn("LCU check returned non-200 status {} for {} (failed to read body/headers)",
+                                response.statusCode(), statusUrl, ex);
+                    }
                 }
             }
         } catch (Exception e) {
-            log.debug("LCU não disponível: {}", e.getMessage());
+            // Log full stack for diagnostics
+            log.warn("LCU not available during status check", e);
         }
 
         isConnected = false;
@@ -219,91 +363,266 @@ public class LCUService {
     }
 
     /**
+     * Marca o LCU como conectado com informações vindas do gateway (Electron).
+     * Usado quando o gateway proxy responde com sucesso para uma requisição LCU.
+     */
+    public synchronized void markConnectedFromGateway(String host, int port, String protocol, String password,
+            String summonerId) {
+        try {
+            log.info("markConnectedFromGateway called with host={} port={} protocol={} summonerId={}", host, port,
+                    protocol, summonerId);
+            if (host != null && port > 0) {
+                this.lcuHost = host;
+                this.lcuPort = port;
+            }
+            if (protocol != null)
+                this.lcuProtocol = protocol;
+            if (password != null)
+                this.lcuPassword = password;
+            if (summonerId != null)
+                this.currentSummonerId = summonerId;
+
+            this.lcuBaseUrl = this.lcuProtocol + "://" + this.lcuHost + ":" + this.lcuPort;
+            this.isConnected = true;
+            // Record when a gateway last reported successful activity so checkLCUStatus
+            // can honor the gateway state for a short TTL
+            this.lastGatewaySeen = Instant.now();
+            lcuStatus.put("connected", true);
+            if (this.currentSummonerId != null)
+                lcuStatus.put("summonerId", this.currentSummonerId);
+            lcuStatus.put("port", this.lcuPort);
+            lcuStatus.put("host", this.lcuHost);
+            log.info("LCU marcado como conectado via gateway: {}:{} currentSummonerId={}", this.lcuHost, this.lcuPort,
+                    this.currentSummonerId);
+        } catch (Exception e) {
+            log.error("Erro ao marcar LCU conectado via gateway", e);
+        }
+    }
+
+    /**
      * Descobre a porta do LCU automaticamente
      */
     private void discoverLCUPort() {
-         // Tentar portas comuns do LCU
-         int[] commonPorts = { 2099, 2100, 2101, 2102, 2103, 2104, 2105, 2106, 2107, 2108, 2109, 2110 };
+        // Tentar portas comuns do LCU
+        int[] commonPorts = { 2099, 2100, 2101, 2102, 2103, 2104, 2105, 2106, 2107, 2108, 2109, 2110 };
 
-         for (int port : commonPorts) {
-             try {
-                 String testUrl = lcuProtocol + "://" + lcuHost + ":" + port + "/lol-summoner/v1/current-summoner";
-                 HttpRequest request = HttpRequest.newBuilder()
-                         .uri(URI.create(testUrl))
-                         .header("Authorization",
-                                 "Basic " + Base64.getEncoder().encodeToString(("riot:" + lcuPassword).getBytes()))
-                         .timeout(Duration.ofSeconds(2))
-                         .build();
+        for (int port : commonPorts) {
+            try {
+                String testUrl = lcuProtocol + "://" + lcuHost + ":" + port + "/lol-summoner/v1/current-summoner";
+                HttpRequest.Builder testBuilder = createLcuRequestBuilder(testUrl, port);
+                testBuilder.timeout(Duration.ofSeconds(2));
+                HttpRequest testRequest = testBuilder.GET().build();
 
-                 HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> testResponse = lcuClient.send(testRequest, HttpResponse.BodyHandlers.ofString());
 
-                 if (response.statusCode() == 200) {
-                     lcuPort = port;
-                     log.info("🔍 Porta LCU descoberta em {}: {}", lcuHost, port);
-                     return;
-                 }
-             } catch (Exception e) {
-                 // Porta não disponível, continuar tentando
-             }
-         }
-     }
+                if (testResponse.statusCode() == 200) {
+                    lcuPort = port;
+                    log.info("🔍 Porta LCU descoberta em {}: {}", lcuHost, port);
+                    return;
+                } else {
+                    log.debug("Port test {} returned {} headers={}", testUrl, testResponse.statusCode(),
+                            testResponse.headers().map());
+                    log.trace("LCU response body: {}", testResponse.body());
+                }
+            } catch (Exception e) {
+                log.debug("Port {} probe failed: {}", port, e.getMessage());
+            }
+        }
+    }
 
     /**
      * Obtém dados do invocador atual
+     * PRIORIDADE: Gateway RPC primeiro (para ambiente containerizado), HTTP direto
+     * como fallback
      */
     public CompletableFuture<JsonNode> getCurrentSummoner() {
-        if (!isConnected) {
-            return CompletableFuture.completedFuture(null);
-        }
-
         return CompletableFuture.supplyAsync(() -> {
+            // PRIORIDADE 1: Gateway RPC (principal para ambiente containerizado/Electron)
             try {
-                String url = lcuBaseUrl + "/lol-summoner/v1/current-summoner";
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(url))
-                        .header("Authorization",
-                                "Basic " + Base64.getEncoder().encodeToString(("riot:" + lcuPassword).getBytes()))
-                        .timeout(Duration.ofSeconds(5))
-                        .build();
-
-                HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
-
-                if (response.statusCode() == 200) {
-                    return objectMapper.readTree(response.body());
+                log.debug("Attempting gateway RPC for /lol-summoner/v1/current-summoner");
+                if (websocketService == null) {
+                    log.warn("WebsocketService not available for gateway RPC (null)");
+                } else {
+                    JsonNode r = websocketService.requestLcuFromAnyClient("GET", "/lol-summoner/v1/current-summoner",
+                            null,
+                            5000);
+                    if (r != null) {
+                        log.info("Gateway RPC succeeded for current-summoner");
+                        if (r.has("body"))
+                            return r.get("body");
+                        return r;
+                    }
+                    log.debug("Gateway RPC returned no result for current-summoner");
                 }
             } catch (Exception e) {
-                log.error("❌ Erro ao obter dados do invocador", e);
+                log.debug("Gateway RPC failed for current-summoner: {}", e.getMessage());
             }
+
+            // PRIORIDADE 2: HTTP direto (fallback para ambiente local)
+            if (isConnected) {
+                try {
+                    String url = lcuBaseUrl + "/lol-summoner/v1/current-summoner";
+                    HttpRequest.Builder builder = createLcuRequestBuilder(url, null);
+                    builder.timeout(Duration.ofSeconds(5));
+                    HttpRequest request = builder.GET().build();
+
+                    HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+                    if (response.statusCode() == 200) {
+                        log.info("LCU direct HTTP succeeded for current-summoner");
+                        return objectMapper.readTree(response.body());
+                    } else {
+                        log.warn("LCU direct current-summoner returned non-200 {} for {}. headers={}",
+                                response.statusCode(), url, response.headers().map());
+                        log.debug("LCU response body: {}", response.body());
+                    }
+                } catch (Exception e) {
+                    log.warn("LCU direct current-summoner failed: {}", e.getMessage());
+                }
+            }
+
+            log.warn("Both gateway RPC and direct HTTP failed for current-summoner");
             return null;
         });
     }
 
     /**
      * Obtém histórico de partidas
+     * PRIORIDADE: Gateway RPC primeiro (para ambiente containerizado), HTTP direto
+     * como fallback
      */
     public CompletableFuture<JsonNode> getMatchHistory() {
-        if (!isConnected || currentSummonerId == null) {
-            return CompletableFuture.completedFuture(null);
-        }
-
         return CompletableFuture.supplyAsync(() -> {
+            if (currentSummonerId == null) {
+                log.debug("No currentSummonerId available for match-history");
+                return null;
+            }
+            // Try several known match-history endpoints because different client versions
+            // expose history under different paths. We'll attempt them in order and
+            // return the first successful result.
+            List<String> endpoints = Arrays.asList(
+                    "/lol-match-history/v1/products/lol/current-summoner/matches?begIndex=0&endIndex=10",
+                    "/lol-match-history/v1/products/lol/current-summoner/matches",
+                    "/lol-match-history/v1/matches/current-summoner");
+
+            // PRIORIDADE 1: Gateway RPC (principal para ambiente containerizado/Electron)
             try {
-                String url = lcuBaseUrl + "/lol-match-history/v1/matches/" + currentSummonerId;
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(url))
-                        .header("Authorization",
-                                "Basic " + Base64.getEncoder().encodeToString(("riot:" + lcuPassword).getBytes()))
-                        .timeout(Duration.ofSeconds(5))
-                        .build();
-
-                HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
-
-                if (response.statusCode() == 200) {
-                    return objectMapper.readTree(response.body());
+                if (websocketService != null) {
+                    for (String ep : endpoints) {
+                        try {
+                            log.debug("LCU gateway RPC match-history trying {}", ep);
+                            JsonNode r = websocketService.requestLcuFromAnyClient("GET", ep, null, 8000);
+                            if (r != null) {
+                                log.info("LCU gateway RPC match-history succeeded for {}", ep);
+                                if (r.has("body"))
+                                    return r.get("body");
+                                return r;
+                            }
+                        } catch (Exception e) {
+                            log.debug("Gateway RPC attempt for {} failed: {}", ep, e.getMessage());
+                        }
+                    }
                 }
             } catch (Exception e) {
-                log.error("❌ Erro ao obter histórico de partidas", e);
+                log.debug("Gateway RPC match-history failed: {}", e.getMessage());
             }
+
+            // PRIORIDADE 2: HTTP direto (fallback para ambiente local)
+            if (isConnected) {
+                for (String ep : endpoints) {
+                    try {
+                        String url = lcuBaseUrl + ep;
+                        HttpRequest.Builder builder = createLcuRequestBuilder(url, null);
+                        builder.timeout(Duration.ofSeconds(5));
+                        HttpRequest request = builder.GET().build();
+
+                        log.debug("LCU direct match-history trying {}", url);
+                        HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+                        if (response.statusCode() == 200) {
+                            log.info("LCU direct match-history succeeded for {}", url);
+                            return objectMapper.readTree(response.body());
+                        } else {
+                            log.warn("LCU direct match-history returned non-200 {} for {}. headers={}",
+                                    response.statusCode(), url, response.headers().map());
+                            log.debug("LCU response body for {}: {}", url, response.body());
+                        }
+                    } catch (Exception e) {
+                        log.warn("LCU direct match-history attempt to {} failed: {}", ep, e.getMessage());
+                    }
+                }
+            }
+
+            log.warn("Both gateway RPC and direct HTTP failed for match-history");
+            return null;
+        });
+    }
+
+    /**
+     * Obtém dados de ranked do jogador atual
+     */
+    public CompletableFuture<JsonNode> getCurrentSummonerRanked() {
+        return CompletableFuture.supplyAsync(() -> {
+            if (currentSummonerId == null) {
+                log.debug("No currentSummonerId available for ranked stats");
+                return null;
+            }
+
+            List<String> endpoints = Arrays.asList(
+                    "/lol-ranked/v1/current-ranked-stats",
+                    "/lol-ranked/v1/current-summoner",
+                    "/lol-ranked/v1/ranked-stats/" + currentSummonerId);
+
+            // PRIORIDADE 1: Gateway RPC
+            try {
+                if (websocketService != null) {
+                    for (String ep : endpoints) {
+                        try {
+                            log.info("🔍 LCU gateway RPC ranked-stats trying {}", ep);
+                            JsonNode r = websocketService.requestLcuFromAnyClient("GET", ep, null, 5000);
+                            if (r != null) {
+                                log.info("✅ LCU gateway RPC ranked-stats succeeded for {}: {}", ep, r);
+                                if (r.has("body"))
+                                    return r.get("body");
+                                return r;
+                            } else {
+                                log.warn("❌ LCU gateway RPC ranked-stats returned null for {}", ep);
+                            }
+                        } catch (Exception e) {
+                            log.warn("❌ Gateway RPC attempt for {} failed: {}", ep, e.getMessage());
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("Gateway RPC ranked-stats failed: {}", e.getMessage());
+            }
+
+            // PRIORIDADE 2: HTTP direto
+            if (isConnected) {
+                for (String ep : endpoints) {
+                    try {
+                        String url = lcuBaseUrl + ep;
+                        HttpRequest.Builder builder = createLcuRequestBuilder(url, null);
+                        builder.timeout(Duration.ofSeconds(5));
+                        HttpRequest request = builder.GET().build();
+
+                        log.debug("LCU direct ranked-stats trying {}", url);
+                        HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+                        if (response.statusCode() == 200) {
+                            log.info("LCU direct ranked-stats succeeded for {}", url);
+                            return objectMapper.readTree(response.body());
+                        } else {
+                            log.warn("LCU direct ranked-stats returned non-200 {} for {}. headers={}",
+                                    response.statusCode(), url, response.headers().map());
+                        }
+                    } catch (Exception e) {
+                        log.warn("LCU direct ranked-stats attempt to {} failed: {}", ep, e.getMessage());
+                    }
+                }
+            }
+
+            log.warn("Both gateway RPC and direct HTTP failed for ranked-stats");
             return null;
         });
     }
@@ -319,17 +638,17 @@ public class LCUService {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 String url = lcuBaseUrl + "/lol-gameflow/v1/gameflow-phase";
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(url))
-                        .header("Authorization",
-                                "Basic " + Base64.getEncoder().encodeToString(("riot:" + lcuPassword).getBytes()))
-                        .timeout(Duration.ofSeconds(5))
-                        .build();
+                HttpRequest.Builder builder = createLcuRequestBuilder(url, null);
+                builder.timeout(Duration.ofSeconds(5));
+                HttpRequest request = builder.GET().build();
 
                 HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
 
                 if (response.statusCode() == 200) {
                     return objectMapper.readTree(response.body());
+                } else {
+                    log.warn("LCU getCurrentGameData unexpected status {} for {}", response.statusCode(), url);
+                    log.debug("LCU response body: {}", response.body());
                 }
             } catch (Exception e) {
                 log.error("❌ Erro ao obter status do jogo", e);
@@ -349,21 +668,75 @@ public class LCUService {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 String url = lcuBaseUrl + "/lol-gameflow/v1/session";
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(url))
-                        .header("Authorization",
-                                "Basic " + Base64.getEncoder().encodeToString(("riot:" + lcuPassword).getBytes()))
-                        .timeout(Duration.ofSeconds(5))
-                        .build();
+                HttpRequest.Builder builder = createLcuRequestBuilder(url, null);
+                builder.timeout(Duration.ofSeconds(5));
+                HttpRequest request = builder.GET().build();
 
                 HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
 
                 if (response.statusCode() == 200) {
                     return objectMapper.readTree(response.body());
+                } else {
+                    log.warn("LCU getCurrentGameData unexpected status {} for {}. headers={}", response.statusCode(),
+                            url, response.headers().map());
+                    log.debug("LCU response body: {}", response.body());
                 }
             } catch (Exception e) {
-                log.error("❌ Erro ao obter dados da partida", e);
+                log.warn("❌ Erro ao obter dados da partida", e);
             }
+            return null;
+        });
+    }
+
+    /**
+     * Obtém estatísticas ranked locais via LCU
+     * (/lol-ranked/v1/current-ranked-stats)
+     * PRIORIDADE: Gateway RPC primeiro (para ambiente containerizado), HTTP direto
+     * como fallback
+     */
+    public CompletableFuture<JsonNode> getRankedStats() {
+        return CompletableFuture.supplyAsync(() -> {
+            String ep = "/lol-ranked/v1/current-ranked-stats";
+
+            // PRIORIDADE 1: Gateway RPC (principal para ambiente containerizado/Electron)
+            try {
+                br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService ws = org.springframework.web.context.ContextLoader
+                        .getCurrentWebApplicationContext()
+                        .getBean(br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService.class);
+                JsonNode r = ws.requestLcuFromAnyClient("GET", ep, null, 4000);
+                if (r != null) {
+                    log.info("LCU gateway RPC ranked-stats succeeded");
+                    if (r.has("body"))
+                        return r.get("body");
+                    return r;
+                }
+            } catch (Exception e) {
+                log.debug("Gateway RPC ranked-stats failed: {}", e.getMessage());
+            }
+
+            // PRIORIDADE 2: HTTP direto (fallback para ambiente local)
+            if (isConnected) {
+                try {
+                    String url = lcuBaseUrl + ep;
+                    HttpRequest.Builder builder = createLcuRequestBuilder(url, null);
+                    builder.timeout(Duration.ofSeconds(5));
+                    HttpRequest request = builder.GET().build();
+
+                    log.debug("LCU direct ranked-stats trying {}", url);
+                    HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
+                    if (response.statusCode() == 200) {
+                        log.info("LCU direct ranked-stats succeeded for {}", url);
+                        return objectMapper.readTree(response.body());
+                    } else {
+                        log.warn("LCU direct ranked-stats returned non-200 {} for {}", response.statusCode(), url);
+                        log.debug("LCU response body for ranked-stats {}: {}", url, response.body());
+                    }
+                } catch (Exception e) {
+                    log.debug("LCU direct ranked-stats failed: {}", e.getMessage());
+                }
+            }
+
+            log.warn("Both gateway RPC and direct HTTP failed for ranked-stats");
             return null;
         });
     }
@@ -397,12 +770,35 @@ public class LCUService {
                     requestBuilder.GET();
                 }
 
-                HttpRequest request = requestBuilder.timeout(Duration.ofSeconds(6)).build();
+                // use createLcuRequestBuilder to ensure Host header is correct when going
+                // through host.docker.internal
+                HttpRequest.Builder builder = createLcuRequestBuilder(url, null);
+                // merge method and body
+                if ("POST".equals(method) && data != null) {
+                    String jsonData = objectMapper.writeValueAsString(data);
+                    builder.POST(HttpRequest.BodyPublishers.ofString(jsonData));
+                } else if ("PUT".equals(method) && data != null) {
+                    String jsonData = objectMapper.writeValueAsString(data);
+                    builder.PUT(HttpRequest.BodyPublishers.ofString(jsonData));
+                } else if ("DELETE".equals(method)) {
+                    builder.DELETE();
+                } else {
+                    builder.GET();
+                }
+
+                HttpRequest request = builder.timeout(Duration.ofSeconds(6)).build();
                 HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
 
-                return response.statusCode() >= 200 && response.statusCode() < 300;
+                if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                    return true;
+                } else {
+                    log.warn("LCU sendLCUCommand unexpected status {} for {}. headers={}", response.statusCode(), url,
+                            response.headers().map());
+                    log.debug("LCU response body: {}", response.body());
+                    return false;
+                }
             } catch (Exception e) {
-                log.error("❌ Erro ao enviar comando LCU", e);
+                log.warn("❌ Erro ao enviar comando LCU", e);
                 return false;
             }
         });
@@ -443,9 +839,9 @@ public class LCUService {
         try {
             // Caminhos comuns do lockfile do League of Legends
             String[] possiblePaths = {
-                System.getProperty("user.home") + "/AppData/Local/Riot Games/League of Legends/lockfile",
-                "C:/Riot Games/League of Legends/lockfile",
-                System.getenv("LOCALAPPDATA") + "/Riot Games/League of Legends/lockfile"
+                    System.getProperty("user.home") + "/AppData/Local/Riot Games/League of Legends/lockfile",
+                    "C:/Riot Games/League of Legends/lockfile",
+                    System.getenv("LOCALAPPDATA") + "/Riot Games/League of Legends/lockfile"
             };
 
             for (String path : possiblePaths) {

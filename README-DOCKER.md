@@ -9,7 +9,9 @@ Este guia contém comandos prontos para executar a aplicação LOL Matchmaking e
 ```bash
 # 1. Build completo (frontend + backend)
 ./scripts/build-all.sh
-
+./scripts/docker-build-local.sh
+docker run -p 8080:8080 --name lol-matchmaking-local --env SPRING_PROFILES_ACTIVE=local lol-matchmaking:local
+ 
 # 2. Build da imagem Docker local
 ./scripts/docker-build-local.sh
 
@@ -18,6 +20,9 @@ docker-compose up -d
 
 # 4. Verificar logs
 docker-compose logs -f app
+
+docker run -p 8080:8080 --name lol-matchmaking-local --env SPRING_PROFILES_ACTIVE=local lol-matchmaking:local
+
 
 # 5. Acessar aplicação
 # Frontend + Backend: http://localhost:8080
