@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { Player, QueueStatus, Match } from '../../interfaces';
 import { ApiService } from '../../services/api';
+import { ChampionService } from '../../services/champion.service';
 import { Subscription } from 'rxjs';
 
 @Component({
@@ -49,7 +50,7 @@ export class DashboardComponent implements OnInit, OnDestroy, OnChanges {
   customMatchesCount: number = 0;
   isLoadingCustomCount: boolean = false;
 
-  constructor(private apiService: ApiService, private cdr: ChangeDetectorRef) { }
+  constructor(private apiService: ApiService, private cdr: ChangeDetectorRef, private championService: ChampionService) { }
   // Detectar mudanças no player - APENAS quando o player muda pela primeira vez
   ngOnChanges(): void {
     // ✅ CORREÇÃO CRÍTICA: Evitar processamento se já está processando
@@ -433,15 +434,32 @@ export class DashboardComponent implements OnInit, OnDestroy, OnChanges {
           }
         }
 
-        // Determinar o modo de jogo (para partidas personalizadas usar gameType)
+        // Determinar o modo de jogo: preferir queueId quando disponível
         let gameMode = match.gameMode || 'CLASSIC';
         if (match.gameType === 'CUSTOM_GAME') {
           gameMode = 'CUSTOM';
         }
+        let gameModeLabel = '';
+        const queueId = match.queueId || match.queue || match.queueType;
+        if (typeof queueId === 'number') {
+          // Mapeamento por queueId (LCU/Riot)
+          switch (queueId) {
+            case 420: gameModeLabel = 'Ranked Solo'; break;
+            case 440: gameModeLabel = 'Ranked Flex'; break;
+            case 400: gameModeLabel = 'Normal Draft'; break;
+            case 430: gameModeLabel = 'Normal Blind'; break;
+            case 450: gameModeLabel = 'ARAM'; break;
+            case 700: gameModeLabel = 'Clash'; break;
+            case 1900: gameModeLabel = 'URF'; break;
+            default: gameModeLabel = this.formatGameMode(gameMode); break;
+          }
+        } else {
+          gameModeLabel = this.formatGameMode(gameMode);
+        }
 
         // Tentar pegar o championId do participante principal
         const championId = currentParticipant?.championId || playerStats?.championId;
-        const championName = championId ? `Champion${championId}` : 'Unknown';
+        const championName = championId ? (this.championService.getChampionName(championId) || `Champion${championId}`) : 'Unknown';
 
         // Buscar o nome do jogador
         const playerName = currentPlayerIdentity?.player?.gameName ||
@@ -453,11 +471,12 @@ export class DashboardComponent implements OnInit, OnDestroy, OnChanges {
           timestamp: match.gameCreation || match.gameStartTime || Date.now(),
           isVictory: isVictory,
           duration: match.gameDuration || match.gameLength || 1800,
-          mmrChange: this.calculateMMRChange(isVictory),
-          gameMode: this.formatGameMode(gameMode),
+          mmrChange: null, // LCU não provê LP/PDL; ocultar no dashboard
+          gameMode: gameModeLabel,
           champion: championName || 'Unknown',
           playerName: playerName,
-          kda: `${playerStats?.kills || 0}/${playerStats?.deaths || 0}/${playerStats?.assists || 0}`
+          kda: `${playerStats?.kills || 0}/${playerStats?.deaths || 0}/${playerStats?.assists || 0}`,
+          isCustomMatch: false
         };
 
         return processedMatch;
@@ -899,7 +918,8 @@ export class DashboardComponent implements OnInit, OnDestroy, OnChanges {
 
             // Convert custom matches to dashboard format
             const customMatchesForDashboard = this.convertCustomMatchesToDashboard(response.matches);
-            this.recentMatches = customMatchesForDashboard.slice(0, 3);
+            // Marcar matches customizadas para exibir MMR/LP
+            this.recentMatches = customMatchesForDashboard.slice(0, 3).map(m => ({ ...m, isCustomMatch: true }));
 
             console.log('🎯 [DASHBOARD] Recent matches from database:', this.recentMatches.length);
             this.isLoadingMatches = false;
