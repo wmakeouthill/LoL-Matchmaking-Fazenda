@@ -514,6 +514,22 @@ export class App implements OnInit, OnDestroy {
   // ✅ MANTIDO: Métodos de interface
   setCurrentView(view: 'dashboard' | 'queue' | 'history' | 'leaderboard' | 'settings'): void {
     this.currentView = view;
+    // Ao entrar em Configurações, garantir que os dados do jogador estejam carregados via Electron gateway
+    if (view === 'settings' && !this.currentPlayer) {
+      // Usa o mesmo caminho do dashboard (gateway Electron) – sem backend falar direto com LCU
+      this.apiService.getPlayerFromLCU().subscribe({
+        next: (player: Player) => {
+          this.currentPlayer = player;
+          this.savePlayerData(player);
+          this.updateSettingsForm();
+          this.cdr.detectChanges();
+        },
+        error: () => {
+          // tentar detalhes como fallback (ainda via gateway)
+          this.tryGetCurrentPlayerDetails();
+        }
+      });
+    }
   }
 
   // ✅ SIMPLIFICADO: Apenas comunicar com backend

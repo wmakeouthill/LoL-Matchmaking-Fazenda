@@ -51,6 +51,14 @@ export class DashboardComponent implements OnInit, OnDestroy, OnChanges {
   isLoadingCustomCount: boolean = false;
 
   constructor(private apiService: ApiService, private cdr: ChangeDetectorRef, private championService: ChampionService) { }
+
+  private ensureChampionsLoaded(next: () => void): void {
+    if (this.championService.isLoaded()) {
+      next();
+      return;
+    }
+    this.championService.preloadChampions().subscribe({ next: () => next(), error: () => next() });
+  }
   // Detectar mudanças no player - APENAS quando o player muda pela primeira vez
   ngOnChanges(): void {
     // ✅ CORREÇÃO CRÍTICA: Evitar processamento se já está processando
@@ -116,12 +124,14 @@ export class DashboardComponent implements OnInit, OnDestroy, OnChanges {
     if (!this.dataLoaded || !this.fallbackCompleted) {
       console.log('📊 [DASHBOARD] Loading data for player:', currentPlayerIdentifier);
 
-      // Carregar dados de forma assíncrona
-      setTimeout(() => {
-        this.loadAllData();
-        this.dataLoaded = true;
-        this.processingPlayer = false; // ✅ UNLOCK
-      }, 100); // Delay mínimo para evitar chamadas simultâneas
+      // Garantir champions carregados antes da primeira renderização
+      this.ensureChampionsLoaded(() => {
+        setTimeout(() => {
+          this.loadAllData();
+          this.dataLoaded = true;
+          this.processingPlayer = false; // ✅ UNLOCK
+        }, 100);
+      });
     } else {
       this.processingPlayer = false; // ✅ UNLOCK
     }
@@ -713,10 +723,12 @@ export class DashboardComponent implements OnInit, OnDestroy, OnChanges {
     this.matchHistoryError = null;
   }
   ngOnInit(): void {
-    // Se já temos dados do player, carregar imediatamente
+    // Se já temos dados do player, carregar imediatamente após champions
     if (this.player && !this.dataLoaded) {
-      this.loadAllData();
-      this.dataLoaded = true;
+      this.ensureChampionsLoaded(() => {
+        this.loadAllData();
+        this.dataLoaded = true;
+      });
     }
   }
 
