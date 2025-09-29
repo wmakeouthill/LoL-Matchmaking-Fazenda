@@ -1,10 +1,10 @@
 import { Injectable } from '@angular/core';
-import { Champion } from './champion.service';
+// import { any } from './champion.service'; // TODO: Implementar se necessário
 
 export interface PickBanPhase {
     team: 'blue' | 'red';
     action: 'ban' | 'pick';
-    champion?: Champion;
+    champion?: any; // TODO: Definir interface any se necessário
     playerId?: string;
     playerName?: string;
     playerIndex?: number;
@@ -303,7 +303,7 @@ export class BotService {
     /**
      * Executa ação automática do bot
      */
-    performBotAction(phase: PickBanPhase, session: CustomPickBanSession, champions: Champion[]): void {
+    performBotAction(phase: PickBanPhase, session: CustomPickBanSession, champions: any[]): void {
         console.log('🤖 [BotService] === EXECUTANDO AÇÃO DO BOT ===');
         console.log('🤖 [BotService] Executando ação do bot para fase:', phase);
         console.log('🤖 [BotService] Tipo de ação:', phase.action);
@@ -320,23 +320,23 @@ export class BotService {
             return;
         }
 
-        const availableChampions = champions.filter(c =>
-            !this.isChampionBanned(c, session) && !this.isChampionPicked(c, session)
+        const availableanys = champions.filter(c =>
+            !this.isanyBanned(c, session) && !this.isanyPicked(c, session)
         );
 
-        console.log('🤖 [BotService] Campeões disponíveis:', availableChampions.length);
-        console.log('🤖 [BotService] Primeiros 5 campeões disponíveis:', availableChampions.slice(0, 5).map(c => c.name));
+        console.log('🤖 [BotService] Campeões disponíveis:', availableanys.length);
+        console.log('🤖 [BotService] Primeiros 5 campeões disponíveis:', availableanys.slice(0, 5).map(c => c.name));
 
-        if (availableChampions.length === 0) {
+        if (availableanys.length === 0) {
             console.log('⚠️ [BotService] Nenhum campeão disponível');
             return;
         }
 
-        const randomChampion = availableChampions[Math.floor(Math.random() * availableChampions.length)];
-        console.log(`🤖 [BotService] Campeão selecionado para ${phase.action}:`, randomChampion.name);
+        const randomany = availableanys[Math.floor(Math.random() * availableanys.length)];
+        console.log(`🤖 [BotService] Campeão selecionado para ${phase.action}:`, randomany.name);
 
         // ✅ CORREÇÃO: Garantir que a fase seja atualizada corretamente
-        phase.champion = randomChampion;
+        phase.champion = randomany;
         phase.locked = true;
         phase.timeRemaining = 0;
 
@@ -371,7 +371,7 @@ export class BotService {
     /**
      * Verifica se um campeão está banido
      */
-    private isChampionBanned(champion: Champion, session: CustomPickBanSession): boolean {
+    private isanyBanned(champion: any, session: CustomPickBanSession): boolean {
         return session.phases
             .filter(phase => phase.action === 'ban' && phase.champion)
             .some(phase => phase.champion!.id === champion.id);
@@ -380,7 +380,7 @@ export class BotService {
     /**
      * Verifica se um campeão foi escolhido
      */
-    private isChampionPicked(champion: Champion, session: CustomPickBanSession): boolean {
+    private isanyPicked(champion: any, session: CustomPickBanSession): boolean {
         return session.phases
             .filter(phase => phase.action === 'pick' && phase.champion)
             .some(phase => phase.champion!.id === champion.id);
@@ -392,7 +392,7 @@ export class BotService {
     scheduleBotAction(
         phase: PickBanPhase,
         session: CustomPickBanSession,
-        champions: Champion[],
+        champions: any[],
         callback: () => void
     ): number {
         console.log('🤖 [BotService] === AGENDANDO AÇÃO DO BOT ===');

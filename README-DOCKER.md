@@ -54,7 +54,7 @@ docker run -p 8080:8080 --env SPRING_PROFILES_ACTIVE=docker lol-matchmaking:late
 # Deploy automático para Google Cloud
 ./scripts/deploy-gcp.sh
 # (Digite o PROJECT_ID quando solicitado)
-
+mvn spring-boot:run -Dspring-boot.run.profiles=local
 # Depois configurar URLs:
 gcloud run services update lol-matchmaking \
   --set-env-vars BACKEND_URL=https://SEU-SERVICO.run.app \

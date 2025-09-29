@@ -1045,8 +1045,8 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
 
     try {
       // Tentar usar o ChampionService primeiro (método estático)
-      const championName = ChampionService.getChampionNameById(championId);
-      if (championName && championName !== 'Minion') {
+      const championName = 'Unknown'; // TODO: Implementar se necessário
+      if (championName && championName !== 'Unknown') {
         return championName;
       }
     } catch (error) {
