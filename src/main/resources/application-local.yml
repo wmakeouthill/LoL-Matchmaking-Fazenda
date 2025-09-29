@@ -11,33 +11,40 @@ app:
     port: 0 # Será descoberto automaticamente via lockfile
     password: "" # Será configurado via lockfile
 
-# Configuração de banco para desenvolvimento local (H2 em memória)
+# Configuração de banco para desenvolvimento local (MySQL online)
 spring:
   datasource:
-    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
-    driver-class-name: org.h2.Driver
-    username: sa
-    password:
-  h2:
-    console:
-      enabled: true
-      path: /h2-console
+    # Usar MySQL online para desenvolvimento (mesmo que produção)
+    url: ${DATABASE_URL:jdbc:mysql://${MYSQL_HOST:${DB_HOST:localhost}}:${MYSQL_PORT:${DB_PORT:3306}}/${MYSQL_DATABASE:${DB_NAME:lolmatchmaking}}?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&useUnicode=true&characterEncoding=utf8&autoReconnect=true&connectTimeout=30000&socketTimeout=30000&zeroDateTimeBehavior=convertToNull}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: ${MYSQL_USER:${DB_USER:root}}
+    password: ${MYSQL_PASSWORD:${DB_PASSWORD:password}}
   jpa:
-    database-platform: org.hibernate.dialect.H2Dialect
+    database-platform: org.hibernate.dialect.MySQLDialect
     hibernate:
-      ddl-auto: create-drop
+      ddl-auto: none # Usar Liquibase para migrações
     show-sql: false
     properties:
       hibernate:
         naming:
           physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
   liquibase:
-    enabled: false # Desabilitar Liquibase para H2 local
+    enabled: false # Desabilitar temporariamente para testar Discord
+    change-log: classpath:db/changelog/db.changelog-master.yaml
   servlet:
     context-path: /
   websocket:
     max-text-message-buffer-size: 4194304
     max-binary-message-buffer-size: 4194304
+
+# Configurações do DevTools para evitar restarts desnecessários
+spring:
+  devtools:
+    restart:
+      enabled: false # Desabilitar restart automático
+    livereload:
+      enabled: true # Manter LiveReload para frontend
+    additional-paths: src/main/java # Monitorar apenas mudanças em Java
 
 # Logs controlados para debugging
 logging:

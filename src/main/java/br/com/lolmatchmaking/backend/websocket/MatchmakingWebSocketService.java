@@ -46,9 +46,21 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         return applicationContext.getBean(LCUService.class);
     }
 
+    /**
+     * Obtém o DiscordService quando necessário
+     */
+    private Object getDiscordService() {
+        try {
+            return applicationContext.getBean("discordService");
+        } catch (Exception e) {
+            log.warn("DiscordService não disponível: {}", e.getMessage());
+            return null;
+        }
+    }
+
     // Configurações
-    private static final long HEARTBEAT_INTERVAL = 30000; // 30 segundos
-    private static final long HEARTBEAT_TIMEOUT = 60000; // 60 segundos
+    private static final long HEARTBEAT_INTERVAL = 60000; // 60 segundos - menos agressivo
+    private static final long HEARTBEAT_TIMEOUT = 120000; // 120 segundos - mais tolerante
     private static final int MAX_PENDING_EVENTS = 100;
     private static final long LCU_RPC_TIMEOUT_MS = 5000; // timeout padrão para RPC LCU
 
@@ -145,6 +157,17 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                     break;
                 case "lcu_status":
                     handleLcuStatus(sessionId, jsonMessage);
+                    break;
+                case "discord_users":
+                    // Discord users update - just acknowledge, no special handling needed
+                    log.debug("📡 Discord users update received for session: {}", sessionId);
+                    break;
+                case "discord_users_online":
+                    // Discord users online update - just acknowledge, no special handling needed
+                    log.debug("📡 Discord users online update received for session: {}", sessionId);
+                    break;
+                case "get_discord_users":
+                    handleGetDiscordUsers(sessionId);
                     break;
                 default:
                     log.warn("⚠️ Tipo de mensagem desconhecido: {}", messageType);
@@ -879,6 +902,61 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
 
         public void setLcuPassword(String lcuPassword) {
             this.lcuPassword = lcuPassword;
+        }
+    }
+
+    /**
+     * Envia mensagem para todos os clientes conectados (broadcast)
+     */
+    public void broadcastMessage(String type, Object data) {
+        log.debug("📡 Broadcasting message type: {} to {} sessions", type, sessions.size());
+
+        for (Map.Entry<String, WebSocketSession> entry : sessions.entrySet()) {
+            WebSocketSession session = entry.getValue();
+            if (session != null && session.isOpen()) {
+                try {
+                    Map<String, Object> message = new HashMap<>();
+                    message.put("type", type);
+                    message.put("timestamp", System.currentTimeMillis());
+                    if (data != null) {
+                        message.put("data", data);
+                    }
+
+                    String jsonMessage = objectMapper.writeValueAsString(message);
+                    session.sendMessage(new TextMessage(jsonMessage));
+                } catch (Exception e) {
+                    log.error("❌ Erro ao enviar broadcast para sessão {}", entry.getKey(), e);
+                }
+            }
+        }
+    }
+
+    /**
+     * Handle get_discord_users request from frontend
+     */
+    private void handleGetDiscordUsers(String sessionId) {
+        try {
+            log.debug("📡 [WebSocket] Handling get_discord_users request from session: {}", sessionId);
+
+            Object discordService = getDiscordService();
+            if (discordService == null) {
+                log.warn("⚠️ [WebSocket] DiscordService não disponível");
+                sendMessage(sessionId, "discord_users", Collections.emptyList());
+                return;
+            }
+
+            // Usar reflection para chamar o método getUsersInChannel
+            java.lang.reflect.Method getUsersMethod = discordService.getClass().getMethod("getUsersInChannel");
+            Object users = getUsersMethod.invoke(discordService);
+
+            log.debug("📡 [WebSocket] Sending {} Discord users to session: {}",
+                    users instanceof List ? ((List<?>) users).size() : "unknown", sessionId);
+
+            sendMessage(sessionId, "discord_users", Map.of("users", users));
+
+        } catch (Exception e) {
+            log.error("❌ [WebSocket] Erro ao obter usuários Discord", e);
+            sendMessage(sessionId, "discord_users", Collections.emptyList());
         }
     }
 }

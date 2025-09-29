@@ -1335,6 +1335,16 @@ export class App implements OnInit, OnDestroy {
 
     // Solicitar status inicial UMA VEZ apenas
     this.discordService.checkConnection();
+    
+    // ✅ NOVO: Forçar verificação inicial do status do Discord
+    setTimeout(() => {
+      this.discordService.requestDiscordStatus();
+    }, 2000);
+    
+    // ✅ NOVO: Verificação periódica do status do Discord
+    setInterval(() => {
+      this.discordService.requestDiscordStatus();
+    }, 30000); // A cada 30 segundos
   }
 
   private startLCUStatusCheck(): void {

@@ -12,12 +12,12 @@ export class DiscordIntegrationService {
   private isInDiscordChannel = false;
 
   // Observables para componentes
-  private usersSubject = new BehaviorSubject<any[]>([]);
-  private connectionSubject = new BehaviorSubject<boolean>(false);
+  private readonly usersSubject = new BehaviorSubject<any[]>([]);
+  private readonly connectionSubject = new BehaviorSubject<boolean>(false);
 
   // Contador de instâncias para debug
   private static instanceCount = 0;
-  private instanceId: number;
+  private readonly instanceId: number;
 
   // Throttling simplificado - apenas proteção básica contra spam
   private lastStatusRequest = 0;
@@ -29,8 +29,8 @@ export class DiscordIntegrationService {
   private lastAutoUpdate = 0;
 
   // ✅ NOVO: Referência para o ApiService para repassar mensagens
-  private apiService: ApiService;
-  private baseUrl: string;
+  private readonly apiService: ApiService;
+  private readonly baseUrl: string;
 
   constructor(apiService: ApiService) {
     this.apiService = apiService;
@@ -39,18 +39,25 @@ export class DiscordIntegrationService {
     this.instanceId = DiscordIntegrationService.instanceCount;
     console.log(`🔧 [DiscordService] Instância #${this.instanceId} criada (Total: ${DiscordIntegrationService.instanceCount})`);
 
+    // ✅ NOVO: Recuperar dados persistidos na inicialização
+    this.restoreDiscordData();
+
     // ✅ CORREÇÃO: Usar WebSocket do ApiService em vez de criar conexões conflitantes
     console.log(`🔧 [DiscordService #${this.instanceId}] Usando WebSocket do ApiService`);
 
     // Escutar mensagens WebSocket do ApiService
     this.apiService.onWebSocketMessage().subscribe({
-      next: (message) => {
+      next: (message: any) => {
         const t = (message && typeof message.type === 'string') ? message.type : '';
+        console.log(`🔍 [DiscordService #${this.instanceId}] Mensagem WebSocket recebida:`, t, message);
         if (t && (t.startsWith('discord_') || t.includes('user'))) {
+          console.log(`✅ [DiscordService #${this.instanceId}] Mensagem passou pelo filtro, processando...`);
           this.handleBotMessage(message);
+        } else {
+          console.log(`⚠️ [DiscordService #${this.instanceId}] Mensagem filtrada:`, t);
         }
       },
-      error: (error) => {
+      error: (error: any) => {
         console.error(`❌ [DiscordService #${this.instanceId}] Erro no WebSocket:`, error);
         this.isBackendConnected = false;
         this.connectionSubject.next(false);
@@ -71,11 +78,14 @@ export class DiscordIntegrationService {
     console.log(`🔍 [DiscordService #${this.instanceId}] Processando mensagem:`, data.type, data);
 
     switch (data.type) {
-      case 'discord_users_online':
-        console.log(`👥 [DiscordService #${this.instanceId}] Usuários Discord online recebidos:`, data.users?.length || 0, 'usuários');
+      case 'discord_users':
+        console.log(`👥 [DiscordService #${this.instanceId}] Usuários Discord recebidos:`, data.users?.length || 0, 'usuários');
         this.discordUsersOnline = data.users || [];
         this.usersSubject.next(this.discordUsersOnline);
         this.lastAutoUpdate = Date.now();
+
+        // ✅ NOVO: Persistir dados no localStorage para sobreviver a reconexões
+        this.persistDiscordData();
 
         if (data.critical) {
           console.log(`🚨 [DiscordService #${this.instanceId}] Broadcast CRÍTICO recebido - atualização imediata`);
@@ -84,6 +94,8 @@ export class DiscordIntegrationService {
         if (data.currentUser) {
           console.log(`👤 [DiscordService #${this.instanceId}] Usuário atual recebido via WebSocket:`, data.currentUser);
           this.currentDiscordUser = data.currentUser;
+          // ✅ NOVO: Persistir usuário atual também
+          this.persistCurrentUser();
         }
         break;
 
@@ -125,11 +137,6 @@ export class DiscordIntegrationService {
 
   // Solicitar status atual do Discord (com throttling e validação)
   requestDiscordStatus() {
-    if (!this.apiService.isWebSocketConnected()) {
-      console.warn(`⚠️ [DiscordService #${this.instanceId}] WebSocket não está conectado, não é possível solicitar status`);
-      return;
-    }
-
     const now = Date.now();
     if (now - this.lastStatusRequest < this.STATUS_REQUEST_COOLDOWN) {
       console.log(`⏱️ [DiscordService #${this.instanceId}] Solicitação ignorada (throttling): ${now - this.lastStatusRequest}ms desde última solicitação`);
@@ -137,24 +144,58 @@ export class DiscordIntegrationService {
     }
 
     this.lastStatusRequest = now;
-    console.log(`🔍 [DiscordService #${this.instanceId}] Solicitando status do Discord...`);
+    console.log(`🔍 [DiscordService #${this.instanceId}] Solicitando status do Discord via backend...`);
 
     try {
-      const messages = [
-        { type: 'get_discord_status' },
-        { type: 'get_discord_users_online' }
-      ];
+      // Use backend REST API instead of gateway
+      this.apiService.getDiscordStatus().subscribe({
+        next: (status: any) => {
+          console.log(`🎮 [DiscordService #${this.instanceId}] Status do Discord recebido via backend:`, status);
+          this.isBackendConnected = status.isConnected || false;
+          this.connectionSubject.next(this.isBackendConnected);
 
-      messages.forEach(msg => {
-        if (this.apiService.isWebSocketConnected()) {
-          console.log(`📤 [DiscordService #${this.instanceId}] Enviando:`, msg.type);
-          this.apiService.sendWebSocketMessage(msg);
-        } else {
-          console.warn(`⚠️ [DiscordService #${this.instanceId}] WebSocket desconectou durante envio de ${msg.type}`);
+          // Solicitar usuários também
+          this.requestDiscordUsers();
+        },
+        error: (err: any) => {
+          console.error(`❌ [DiscordService #${this.instanceId}] Erro ao obter status via backend:`, err);
+        }
+      });
+
+      this.apiService.getDiscordUsers().subscribe({
+        next: (response: any) => {
+          const users = response.users || response.data || [];
+          console.log(`👥 [DiscordService #${this.instanceId}] Usuários Discord recebidos via backend:`, users.length, 'usuários');
+          this.discordUsersOnline = users;
+          this.usersSubject.next(this.discordUsersOnline);
+          this.lastAutoUpdate = Date.now();
+        },
+        error: (err: any) => {
+          console.error(`❌ [DiscordService #${this.instanceId}] Erro ao obter usuários via backend:`, err);
         }
       });
     } catch (error) {
-      console.error(`❌ [DiscordService #${this.instanceId}] Erro ao enviar solicitações de status:`, error);
+      console.error(`❌ [DiscordService #${this.instanceId}] Erro ao solicitar status via backend:`, error);
+    }
+  }
+
+  // ✅ NOVO: Método para solicitar usuários do Discord via REST
+  requestDiscordUsers() {
+    try {
+      this.apiService.getDiscordUsers().subscribe({
+        next: (response: any) => {
+          const users = response.users || response.data || [];
+          console.log(`👥 [DiscordService #${this.instanceId}] Usuários Discord recebidos via REST:`, users.length, 'usuários');
+
+          this.discordUsersOnline = users;
+          this.usersSubject.next(this.discordUsersOnline);
+        },
+        error: (error: any) => {
+          console.error(`❌ [DiscordService #${this.instanceId}] Erro ao obter usuários via REST:`, error);
+        }
+      });
+    } catch (error) {
+      console.error(`❌ [DiscordService #${this.instanceId}] Erro ao solicitar usuários:`, error);
     }
   }
 
@@ -300,6 +341,57 @@ export class DiscordIntegrationService {
 
     this.apiService.sendWebSocketMessage(message);
     return true;
+  }
+
+  // ✅ NOVO: Métodos de persistência de dados
+  private persistDiscordData(): void {
+    try {
+      const data = {
+        users: this.discordUsersOnline,
+        timestamp: Date.now()
+      };
+      localStorage.setItem('discord_users_cache', JSON.stringify(data));
+      console.log(`💾 [DiscordService #${this.instanceId}] Dados do Discord persistidos:`, this.discordUsersOnline.length, 'usuários');
+    } catch (error) {
+      console.warn(`⚠️ [DiscordService #${this.instanceId}] Falha ao persistir dados do Discord:`, error);
+    }
+  }
+
+  private persistCurrentUser(): void {
+    try {
+      if (this.currentDiscordUser) {
+        localStorage.setItem('discord_current_user', JSON.stringify(this.currentDiscordUser));
+        console.log(`💾 [DiscordService #${this.instanceId}] Usuário atual persistido:`, this.currentDiscordUser);
+      }
+    } catch (error) {
+      console.warn(`⚠️ [DiscordService #${this.instanceId}] Falha ao persistir usuário atual:`, error);
+    }
+  }
+
+  private restoreDiscordData(): void {
+    try {
+      // Restaurar usuários do Discord
+      const usersData = localStorage.getItem('discord_users_cache');
+      if (usersData) {
+        const parsed = JSON.parse(usersData);
+        const age = Date.now() - parsed.timestamp;
+        // Só usar dados com menos de 5 minutos
+        if (age < 300000 && parsed.users) {
+          this.discordUsersOnline = parsed.users;
+          this.usersSubject.next(this.discordUsersOnline);
+          console.log(`🔄 [DiscordService #${this.instanceId}] Dados do Discord restaurados:`, this.discordUsersOnline.length, 'usuários');
+        }
+      }
+
+      // Restaurar usuário atual
+      const currentUserData = localStorage.getItem('discord_current_user');
+      if (currentUserData) {
+        this.currentDiscordUser = JSON.parse(currentUserData);
+        console.log(`🔄 [DiscordService #${this.instanceId}] Usuário atual restaurado:`, this.currentDiscordUser);
+      }
+    } catch (error) {
+      console.warn(`⚠️ [DiscordService #${this.instanceId}] Falha ao restaurar dados do Discord:`, error);
+    }
   }
 
   // Cleanup

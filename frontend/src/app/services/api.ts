@@ -74,9 +74,9 @@ export class ApiService {
   private wsManualClose = false;
   private wsReconnectTimer: any = null;
   private wsHeartbeatTimer: any = null;
-  private readonly wsHeartbeatIntervalMs = Number((window as any).WS_HEARTBEAT_MS || 60000); // 1 minuto
-  private readonly wsBaseBackoffMs = 1000; // 1s
-  private readonly wsMaxBackoffMs = 30000; // 30s
+  private readonly wsHeartbeatIntervalMs = Number((window as any).WS_HEARTBEAT_MS || 45000); // 45 segundos
+  private readonly wsBaseBackoffMs = 2000; // 2s
+  private readonly wsMaxBackoffMs = 60000; // 60s
   private wsLastMessageAt = 0;
   private readonly wsMessageQueue: any[] = [];
 
@@ -929,6 +929,80 @@ export class ApiService {
       );
   }
 
+  // Método para obter usuários do Discord
+  getDiscordUsers(): Observable<any> {
+    return this.http.get(`${this.baseUrl}/discord/users`)
+      .pipe(
+        catchError(this.handleError)
+      );
+  }
+
+  // Método para registrar comandos slash do Discord
+  registerDiscordCommands(): Observable<any> {
+    return this.http.post(`${this.baseUrl}/discord/register-commands`, {})
+      .pipe(
+        catchError(this.handleError)
+      );
+  }
+
+  // Métodos para Discord via Electron Gateway
+  getDiscordStatusFromGateway(): Observable<any> {
+    if (this.isElectron() && (window as any).electronAPI?.lcu?.request) {
+      return new Observable(observer => {
+        // Send WebSocket message to gateway
+        this.sendWebSocketMessage({ type: 'get_discord_status' });
+
+        // Listen for response
+        const subscription = this.onWebSocketMessage().subscribe({
+          next: (message) => {
+            if (message.type === 'discord_status') {
+              observer.next(message.data);
+              observer.complete();
+              subscription.unsubscribe();
+            }
+          },
+          error: (err) => {
+            observer.error(err);
+            subscription.unsubscribe();
+          }
+        });
+      });
+    }
+
+    // Fallback to HTTP
+    return this.getDiscordStatus();
+  }
+
+  getDiscordUsersFromGateway(): Observable<any> {
+    if (this.isElectron() && (window as any).electronAPI?.lcu?.request) {
+      return new Observable(observer => {
+        // Send WebSocket message to gateway
+        this.sendWebSocketMessage({ type: 'get_discord_users' });
+
+        // Listen for response
+        const subscription = this.onWebSocketMessage().subscribe({
+          next: (message) => {
+            if (message.type === 'discord_users') {
+              observer.next(message.users || []);
+              observer.complete();
+              subscription.unsubscribe();
+            }
+          },
+          error: (err) => {
+            observer.error(err);
+            subscription.unsubscribe();
+          }
+        });
+      });
+    }
+
+    // Fallback to HTTP
+    return this.http.get(`${this.baseUrl}/discord/users`)
+      .pipe(
+        catchError(this.handleError)
+      );
+  }
+
   // Método para buscar configurações do banco de dados
   getConfigSettings(): Observable<any> {
     return this.http.get(`${this.baseUrl}/config/settings`)
@@ -1211,11 +1285,27 @@ export class ApiService {
           return;
         }
 
-        // Exponential backoff reconnect
+        // ✅ NOVO: Lógica de reconexão mais inteligente
+        const shouldReconnect = this.shouldAttemptReconnect(ev.code, this.wsReconnectAttempts);
+        if (!shouldReconnect) {
+          console.log('🛑 [WebSocket] Não tentando reconectar devido a condições específicas');
+          return;
+        }
+
+        // Exponential backoff reconnect com jitter
         this.wsReconnectAttempts = Math.min(this.wsReconnectAttempts + 1, this.wsMaxReconnectAttempts);
-        const backoff = Math.min(this.wsBaseBackoffMs * Math.pow(1.5, this.wsReconnectAttempts), this.wsMaxBackoffMs);
-        console.log(`🔄 [WebSocket] Tentativa ${this.wsReconnectAttempts}/${this.wsMaxReconnectAttempts} de reconexão em ${backoff}ms`);
-        this.wsReconnectTimer = setTimeout(() => { try { this.connectWebSocket(); } catch { } }, backoff);
+        const baseBackoff = Math.min(this.wsBaseBackoffMs * Math.pow(1.5, this.wsReconnectAttempts), this.wsMaxBackoffMs);
+        const jitter = Math.random() * 1000; // Adicionar até 1s de jitter
+        const backoff = baseBackoff + jitter;
+        
+        console.log(`🔄 [WebSocket] Tentativa ${this.wsReconnectAttempts}/${this.wsMaxReconnectAttempts} de reconexão em ${Math.round(backoff)}ms`);
+        this.wsReconnectTimer = setTimeout(() => { 
+          try { 
+            this.connectWebSocket(); 
+          } catch (e) {
+            console.warn('⚠️ [WebSocket] Erro na tentativa de reconexão:', e);
+          }
+        }, backoff);
       };
 
     } catch (e) {
@@ -1245,6 +1335,31 @@ export class ApiService {
   connect(): Observable<any> {
     if (!this.isWebSocketConnected()) this.connectWebSocket();
     return this.onWebSocketMessage();
+  }
+
+  // ✅ NOVO: Lógica inteligente para decidir se deve tentar reconectar
+  private shouldAttemptReconnect(closeCode: number, attemptCount: number): boolean {
+    // Não reconectar se excedeu o limite de tentativas
+    if (attemptCount >= this.wsMaxReconnectAttempts) {
+      console.log('🛑 [WebSocket] Limite de tentativas de reconexão excedido');
+      return false;
+    }
+
+    // Não reconectar para códigos de erro específicos
+    const nonRetryableCodes = [1002, 1003, 1006, 1011, 1012, 1013, 1014, 1015];
+    if (nonRetryableCodes.includes(closeCode)) {
+      console.log(`🛑 [WebSocket] Código de fechamento ${closeCode} não permite reconexão`);
+      return false;
+    }
+
+    // Não reconectar se a página está sendo descarregada
+    if (document.visibilityState === 'hidden') {
+      console.log('🛑 [WebSocket] Página oculta, não reconectando');
+      return false;
+    }
+
+    // Reconectar para outros casos (1000, 1001, 1005, etc.)
+    return true;
   }
 
   // Graceful shutdown helper used by renderer to close WS before unload

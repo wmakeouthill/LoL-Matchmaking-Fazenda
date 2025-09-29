@@ -4,12 +4,9 @@ import br.com.lolmatchmaking.backend.domain.entity.Player;
 import br.com.lolmatchmaking.backend.dto.PlayerDTO;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
-import org.mapstruct.factory.Mappers;
 
 @Mapper(componentModel = "spring")
 public interface PlayerMapper {
-
-    PlayerMapper INSTANCE = Mappers.getMapper(PlayerMapper.class);
 
     @Mapping(target = "tier", ignore = true) // Será preenchido externamente
     @Mapping(target = "rank", ignore = true) // Será preenchido externamente

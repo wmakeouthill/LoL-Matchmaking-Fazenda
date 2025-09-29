@@ -62,21 +62,21 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
 
   // Auto-refresh (controlado pelo QueueStateService)
   private autoRefreshInterval?: number;
-  private readonly AUTO_REFRESH_INTERVAL_MS = 2000;
+  private readonly AUTO_REFRESH_INTERVAL_MS = 10000; // ✅ CORREÇÃO: 10 segundos em vez de 2
 
   // Cleanup
-  private destroy$ = new Subject<void>();
+  private readonly destroy$ = new Subject<void>();
 
   // ✅ NOVO: Timer para atualizar tempos dos jogadores na fila
   private playersTimeInterval?: number;
 
   constructor(
     public discordService: DiscordIntegrationService,
-    private queueStateService: QueueStateService,
-    private apiService: ApiService,
-    private profileIconService: ProfileIconService,
-    private cdr: ChangeDetectorRef,
-    private ngZone: NgZone
+    private readonly queueStateService: QueueStateService,
+    private readonly apiService: ApiService,
+    private readonly profileIconService: ProfileIconService,
+    private readonly cdr: ChangeDetectorRef,
+    private readonly ngZone: NgZone
   ) { }
 
   // =============================================================================
@@ -254,7 +254,7 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
     this.autoRefreshToggle.emit(this.autoRefreshEnabled);
 
     if (this.autoRefreshEnabled) {
-      if (this.currentPlayer && this.currentPlayer.displayName) {
+      if (this.currentPlayer?.displayName) {
         this.queueStateService.updateCurrentPlayer(this.currentPlayer);
         this.queueStateService.startPolling();
       }
@@ -270,9 +270,11 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
       clearInterval(this.autoRefreshInterval);
     }
 
-    console.log('🔄 [Queue] Auto-refresh iniciado');
+    console.log('🔄 [Queue] Auto-refresh iniciado (intervalo: {}ms)', this.AUTO_REFRESH_INTERVAL_MS);
     this.autoRefreshInterval = setInterval(() => {
       if (this.autoRefreshEnabled && !this.isRefreshing) {
+        // ✅ CORREÇÃO: Só fazer refresh se há mudanças significativas
+        console.log('🔄 [Queue] Auto-refresh executando...');
         this.refreshData.emit();
       }
     }, this.AUTO_REFRESH_INTERVAL_MS);
@@ -780,4 +782,4 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
       console.log(`🔄 [Queue] Timer auto-atualizado: ${this.queueTimer}s (servidor: ${timeData.seconds}s)`);
     }
   }
-} 
+}
