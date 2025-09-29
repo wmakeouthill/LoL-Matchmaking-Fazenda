@@ -688,17 +688,61 @@ export class ApiService {
 
   // Get match history from LCU (single page)
   getLCUMatchHistory(offset: number = 0, limit: number = 10): Observable<any> {
-    // Backend exposes /api/lcu/match-history which returns a CompletableFuture<ResponseEntity<Map>>
+    console.log('🔍 [API] getLCUMatchHistory called, isElectron:', this.isElectron());
+    console.log('🔍 [API] electronAPI available:', !!(window as any).electronAPI);
+    console.log('🔍 [API] electronAPI.lcu available:', !!(window as any).electronAPI?.lcu);
+    console.log('🔍 [API] electronAPI.lcu.getMatchHistory available:', !!(window as any).electronAPI?.lcu?.getMatchHistory);
+
+    // Use Electron gateway WebSocket for LCU communication (like dashboard does)
+    if (this.isElectron() && (window as any).electronAPI?.lcu?.getMatchHistory) {
+      console.log('🔍 [API] Using electronAPI.lcu.getMatchHistory');
+      return new Observable(observer => {
+        (window as any).electronAPI.lcu.getMatchHistory()
+          .then((response: any) => {
+            console.log('🔍 [API] electronAPI.lcu.getMatchHistory success:', response);
+            observer.next(response);
+            observer.complete();
+          })
+          .catch((error: any) => {
+            console.error('❌ [ElectronAPI] Erro ao obter histórico do LCU:', error);
+            observer.error(error);
+          });
+      });
+    }
+
+    console.log('🔍 [API] Using HTTP fallback');
+    // Fallback: Backend exposes /api/lcu/match-history which returns a CompletableFuture<ResponseEntity<Map>>
     return this.http.get(`${this.baseUrl}/lcu/match-history`).pipe(catchError(this.handleError));
   }
 
   // Aggregate helper used by UI to request LCU history with pagination/flags
   getLCUMatchHistoryAll(offset: number = 0, limit: number = 10, includePickBan: boolean = false): Observable<any> {
-    // The backend returns an object with matchHistory key; normalize to { success, matches }
     return this.getLCUMatchHistory(offset, limit).pipe(
       map((resp: any) => {
         if (!resp) return { success: false, matches: [] };
-        // Support different shapes returned by controller (map with matchHistory or matchHistory.matchHistory)
+
+        // If using Electron gateway, resp is direct LCU data
+        if (this.isElectron() && (window as any).electronAPI?.lcu?.getMatchHistory) {
+          // Electron returns LCU data directly - extract games array from the correct structure
+          console.log('🔍 [API] Processing LCU response structure:', resp);
+          let games = [];
+
+          if (resp.games && resp.games.games && Array.isArray(resp.games.games)) {
+            // Structure: { games: { games: [...] } }
+            games = resp.games.games;
+          } else if (resp.games && Array.isArray(resp.games)) {
+            // Structure: { games: [...] }
+            games = resp.games;
+          } else if (Array.isArray(resp)) {
+            // Structure: [...]
+            games = resp;
+          }
+
+          console.log('🔍 [API] Extracted games array:', games.length, 'matches');
+          return { success: true, matches: games };
+        }
+
+        // Backend returns an object with matchHistory key; normalize to { success, matches }
         const matches = resp.matchHistory || resp.matchHistory?.matchHistory || resp.matches || resp.matchIds || resp.data?.matchHistory || resp.matchHistory?.matches || resp.matchHistory;
         return { success: true, matches: matches || [] };
       }),

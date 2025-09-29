@@ -103,16 +103,23 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
     if (matches.length === 0) return '0.0';
     const wins = matches.filter(m => m.playerStats?.isWin).length;
     return ((wins / matches.length) * 100).toFixed(1);
-  } loadRiotMatches(): void {
+  }
+
+  loadRiotMatches(): void {
+    console.log('🔍 [MATCH-HISTORY] loadRiotMatches called');
     if (!this.player) {
+      console.log('🔍 [MATCH-HISTORY] No player available');
       // console.warn('⚠️ Nenhum player disponível para carregar partidas');
       return;
-    } this.loading = true;
+    }
+    console.log('🔍 [MATCH-HISTORY] Player available:', this.player.summonerName);
+    this.loading = true;
     this.error = null;
+    console.log('🔍 [MATCH-HISTORY] Calling getLCUMatchHistoryAll');
     this.apiService.getLCUMatchHistoryAll(0, 20, false).subscribe({
       next: (lcuResponse: any) => {
         if (lcuResponse && lcuResponse.success && lcuResponse.matches && lcuResponse.matches.length > 0) {
-          this.processLCUMatches(lcuResponse.matches);
+          this.processLCUMatches(lcuResponse);
         } else {
           this.riotMatches = [];
           this.error = 'Nenhuma partida encontrada no histórico do League of Legends. Certifique-se de que o LoL está aberto e você jogou partidas recentemente.';
@@ -133,13 +140,17 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
         this.loading = false;
       }
     });
-  } loadCustomMatches(): void {
+  }
+
+  loadCustomMatches(): void {
     if (!this.player) {
       return;
     }
 
     this.loading = true;
-    this.error = null; try {
+    this.error = null;
+    
+    try {
       // Usar gameName#tagLine como identificador principal, com fallbacks
       const playerIdentifier = this.player.gameName && this.player.tagLine
         ? `${this.player.gameName}#${this.player.tagLine}`
@@ -150,7 +161,8 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
           if (response && response.success && response.matches && response.matches.length > 0) {
 
             this.customMatches = this.mapApiMatchesToModel(response.matches);
-            this.totalMatches = response.pagination.total;            // Logs para detecção de mudanças no Angular            // Forçar detecção de mudanças
+            this.totalMatches = response.pagination.total;
+            // Forçar detecção de mudanças
             this.cdr.detectChanges();
           } else {
             this.customMatches = [];
@@ -315,7 +327,8 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
   // A aba "Riot API" usa exclusivamente dados do League of Legends Client (LCU)
 
   private mapRiotMatchesToModel(riotMatches: any[]): Match[] {
-    return riotMatches.map(matchData => {      // Validar estrutura dos dados
+    return riotMatches.map(matchData => {
+      // Validar estrutura dos dados
       if (!matchData?.info?.participants || !Array.isArray(matchData.info.participants)) {
         // console.warn('⚠️ Dados de partida inválidos:', matchData);
         return this.createDefaultMatch();
@@ -408,7 +421,9 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
         isWin: false
       }
     };
-  } private mapApiMatchesToModel(apiMatches: any[]): Match[] {
+  }
+
+  private mapApiMatchesToModel(apiMatches: any[]): Match[] {
     return apiMatches.map((match, index) => {
       // Parse JSON fields safely
       let team1Players: any[] = [];
@@ -432,7 +447,9 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
         team1Players = [];
         team2Players = [];
         pickBanData = null;
-      }      // Verificar se temos dados reais dos participantes
+      }
+      
+      // Verificar se temos dados reais dos participantes
       const hasRealData = match.participants_data && Array.isArray(match.participants_data) && match.participants_data.length > 0;
 
       // Debug: Log dos dados para verificar se estão chegando corretamente
@@ -1690,15 +1707,28 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
   }
 
   // New method to process LCU match data
-  private processLCUMatches(lcuMatches: any[]): void {
-    const mappedMatches = lcuMatches.map(match => {
-      return this.mapLCUMatchToModel(match);
-    }).filter(match => match !== null) as Match[];
+  private processLCUMatches(response: any): void {
+    // A estrutura do LCU agora retorna { success: true, matches: [...] }
+    let games = null;
 
-    this.riotMatches = mappedMatches;
-    this.totalMatches = this.riotMatches.length;
-    if (this.riotMatches.length === 0) {
-      // console.warn('⚠️ Nenhuma partida foi mapeada com sucesso');
+    if (response && response.success && Array.isArray(response.matches)) {
+      games = response.matches;
+    } else if (response && Array.isArray(response.games)) {
+      games = response.games;
+    } else if (response && Array.isArray(response)) {
+      games = response;
+    }
+
+    if (games && games.length > 0) {
+      const mappedMatches = games.map((match: any) => {
+        return this.mapLCUMatchToModel(match);
+      }).filter((match: any) => match !== null) as Match[];
+
+      this.riotMatches = mappedMatches;
+      this.totalMatches = this.riotMatches.length;
+    } else {
+      this.riotMatches = [];
+      this.totalMatches = 0;
     }
   }
   // New method to map LCU match data to our Match model

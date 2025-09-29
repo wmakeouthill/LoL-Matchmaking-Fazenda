@@ -363,13 +363,17 @@ function startWebSocketGateway(backendBase) {
         if (json.type === 'lcu_request') {
           safeLog('ws gateway received lcu_request', json.id, json.method, json.path);
           try {
+            safeLog('ws gateway calling performLcuRequest for', json.path);
             const result = await performLcuRequest(json.method || 'GET', json.path, json.body);
+            safeLog('ws gateway performLcuRequest success for', json.path, 'result type:', typeof result);
             const resp = { type: 'lcu_response', id: json.id, status: 200, body: result };
             wsClient.send(JSON.stringify(resp));
+            safeLog('ws gateway sent lcu_response for', json.id);
           } catch (err) {
             safeLog('lcu_request handler error', String(err));
             const resp = { type: 'lcu_response', id: json.id, status: 500, error: String(err) };
             wsClient.send(JSON.stringify(resp));
+            safeLog('ws gateway sent lcu_response error for', json.id);
           }
         }
       } catch (e) {
