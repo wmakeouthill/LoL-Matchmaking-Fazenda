@@ -768,6 +768,43 @@ export class ApiService {
     );
   }
 
+  // Special User Tools - Admin/Debug endpoints
+  addBotToQueue(): Observable<any> {
+    const url = `${this.baseUrl}/queue/add-bot`;
+    return this.http.post(url, {}).pipe(
+      catchError((err) => {
+        console.warn('⚠️ [API] Falha no endpoint /queue/add-bot:', err);
+        return this.http.post(`${this.baseUrl}/admin/add-bot`, {}).pipe(
+          catchError(() => this.http.post(`${this.baseUrl}/debug/add-bot`, {}).pipe(catchError(this.handleError)))
+        );
+      })
+    );
+  }
+
+  resetBotCounter(): Observable<any> {
+    const url = `${this.baseUrl}/queue/reset-bot-counter`;
+    return this.http.post(url, {}).pipe(
+      catchError((err) => {
+        console.warn('⚠️ [API] Falha no endpoint /queue/reset-bot-counter:', err);
+        return this.http.post(`${this.baseUrl}/admin/reset-bot-counter`, {}).pipe(
+          catchError(() => this.http.post(`${this.baseUrl}/debug/reset-bot-counter`, {}).pipe(catchError(this.handleError)))
+        );
+      })
+    );
+  }
+
+  simulateLastMatch(): Observable<any> {
+    const url = `${this.baseUrl}/matches/simulate-last`;
+    return this.http.post(url, {}).pipe(
+      catchError((err) => {
+        console.warn('⚠️ [API] Falha no endpoint /matches/simulate-last:', err);
+        return this.http.post(`${this.baseUrl}/admin/simulate-last-match`, {}).pipe(
+          catchError(() => this.http.post(`${this.baseUrl}/debug/simulate-last-match`, {}).pipe(catchError(this.handleError)))
+        );
+      })
+    );
+  }
+
   // Cleanup test matches (admin/debug) - try multiple endpoints
   cleanupTestMatches(): Observable<any> {
     const url = `${this.baseUrl}/matches/cleanup`;

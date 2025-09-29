@@ -47,6 +47,38 @@ export class ProfileIconService {
     }
 
     private fetchProfileIcon(summonerIdentifier: string): Observable<number | null> {
+        // Tentar buscar via LCU primeiro (para o jogador atual)
+        if (this.apiService.isElectron() && (window as any).electronAPI?.lcu?.request) {
+            return new Observable<number | null>(observer => {
+                (window as any).electronAPI.lcu.request('/lol-summoner/v1/current-summoner', 'GET')
+                    .then((lcuData: any) => {
+                        if (lcuData && lcuData.profileIconId) {
+                            // Verificar se é o jogador correto
+                            const lcuDisplayName = lcuData.gameName && lcuData.tagLine ?
+                                `${lcuData.gameName}#${lcuData.tagLine}` :
+                                lcuData.displayName;
+
+                            if (lcuDisplayName && lcuDisplayName.toLowerCase().trim() === summonerIdentifier.toLowerCase().trim()) {
+                                const profileIconId = lcuData.profileIconId;
+                                const currentCache = this.profileIconCache$.getValue();
+                                currentCache.set(summonerIdentifier, profileIconId);
+                                this.profileIconCache$.next(currentCache);
+                                this.saveProfileIconsCache();
+                                observer.next(profileIconId);
+                                return;
+                            }
+                        }
+                        observer.next(null);
+                    })
+                    .catch((err: any) => {
+                        console.warn(`Erro ao buscar profile icon via LCU para ${summonerIdentifier}:`, err);
+                        observer.next(null);
+                    })
+                    .finally(() => observer.complete());
+            });
+        }
+
+        // Fallback: tentar endpoint do backend (se existir)
         const endpoint = `${this.baseUrl}/summoner/profile-icon/${encodeURIComponent(summonerIdentifier)}`;
         return this.http.get<any>(endpoint).pipe(
             map(response => {
@@ -62,7 +94,7 @@ export class ProfileIconService {
             }),
             catchError(error => {
                 if (error.status === 404) {
-                    console.log(`ℹ️ Jogador ${summonerIdentifier} não encontrado`);
+                    console.log(`ℹ️ Profile icon não encontrado para ${summonerIdentifier} - usando padrão`);
                 } else {
                     console.warn(`Erro ao buscar profile icon para ${summonerIdentifier}:`, error);
                 }
@@ -134,4 +166,4 @@ export class ProfileIconService {
         localStorage.removeItem(this.profileIconsCacheKey);
         console.log('🗑️ Cache de ícones limpo');
     }
-} 
+}

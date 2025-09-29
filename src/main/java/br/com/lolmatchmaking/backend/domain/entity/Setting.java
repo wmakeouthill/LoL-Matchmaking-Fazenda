@@ -13,7 +13,7 @@ import java.time.Instant;
 @Builder
 public class Setting {
     @Id
-    @Column(name = "`key`", length = 191)
+    @Column(name = "`settings_key`", length = 191)
     private String key;
 
     @Column(name = "`value`", nullable = false, columnDefinition = "TEXT")
