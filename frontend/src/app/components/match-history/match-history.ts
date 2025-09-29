@@ -1251,8 +1251,108 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
     const matchIdString = matchId.toString();
     if (this.expandedMatches.has(matchIdString)) {
       this.expandedMatches.delete(matchIdString);
-    } else {
-      this.expandedMatches.add(matchIdString);
+      return;
+    }
+
+    this.expandedMatches.add(matchIdString);
+
+    // Fetch LCU game details if teams look incomplete
+    const currentMatches = this.getCurrentMatches();
+    const match = currentMatches.find(m => m.id?.toString() === matchIdString);
+    if (!match) return;
+
+    const team1Count = Array.isArray(match.team1) ? match.team1.length : 0;
+    const team2Count = Array.isArray(match.team2) ? match.team2.length : 0;
+    const needsDetails = team1Count < 5 || team2Count < 5;
+
+    if (!needsDetails) return;
+
+    try {
+      const gameId = match.id;
+      this.apiService.getLCUGameDetails(gameId).subscribe({
+        next: (details: any) => {
+          if (!details) return;
+
+          // Normalize participants similar to mapLCUMatchToModel
+          const participants = (details.participants || []).map((p: any) => {
+            const identity = details.participantIdentities?.find((id: any) => id.participantId === p.participantId);
+            const displayName = identity?.player?.gameName && identity?.player?.tagLine
+              ? `${identity.player.gameName}#${identity.player.tagLine}`
+              : (identity?.player?.summonerName || `Player ${p.participantId}`);
+
+            return {
+              ...p,
+              summonerName: displayName,
+              puuid: identity?.player?.puuid || '',
+              championName: this.championService.getChampionName(p.championId),
+              teamId: (p.teamId === 1 ? 100 : (p.teamId === 2 ? 200 : p.teamId)),
+              // Flatten stats for template compatibility
+              kills: p.stats?.kills ?? p.kills ?? 0,
+              deaths: p.stats?.deaths ?? p.deaths ?? 0,
+              assists: p.stats?.assists ?? p.assists ?? 0,
+              champLevel: p.stats?.champLevel ?? p.champLevel ?? 1,
+              firstBloodKill: p.stats?.firstBloodKill ?? p.firstBloodKill ?? false,
+              goldEarned: p.stats?.goldEarned ?? p.goldEarned ?? 0,
+              totalDamageDealt: p.stats?.totalDamageDealt ?? p.totalDamageDealt ?? 0,
+              totalDamageDealtToChampions: p.stats?.totalDamageDealtToChampions ?? p.totalDamageDealtToChampions ?? 0,
+              totalDamageTaken: p.stats?.totalDamageTaken ?? p.totalDamageTaken ?? 0,
+              totalMinionsKilled: p.stats?.totalMinionsKilled ?? p.totalMinionsKilled ?? 0,
+              neutralMinionsKilled: p.stats?.neutralMinionsKilled ?? p.neutralMinionsKilled ?? 0,
+              visionScore: p.stats?.visionScore ?? p.visionScore ?? 0,
+              wardsPlaced: p.stats?.wardsPlaced ?? p.wardsPlaced ?? 0,
+              wardsKilled: p.stats?.wardsKilled ?? p.wardsKilled ?? 0,
+              item0: p.stats?.item0 ?? p.item0 ?? 0,
+              item1: p.stats?.item1 ?? p.item1 ?? 0,
+              item2: p.stats?.item2 ?? p.item2 ?? 0,
+              item3: p.stats?.item3 ?? p.item3 ?? 0,
+              item4: p.stats?.item4 ?? p.item4 ?? 0,
+              item5: p.stats?.item5 ?? p.item5 ?? 0,
+              summoner1Id: p.spell1Id ?? p.stats?.spell1Id ?? 0,
+              summoner2Id: p.spell2Id ?? p.stats?.spell2Id ?? 0
+            };
+          });
+
+          // Determine blue/red team IDs robustly
+          const normalizeWin = (v: any) => v === true || v === 'Win' || v === 'WIN' || v === 'Victory' || v === 'VITÓRIA';
+          const blueTeamEntry = details.teams?.find((t: any) => t.teamId === 100 || t.teamId === 1 || t.side === 'blue' || t.teamName === 'BLUE');
+          const redTeamEntry = details.teams?.find((t: any) => t.teamId === 200 || t.teamId === 2 || t.side === 'red' || t.teamName === 'RED');
+          let blueTeamId = 100;
+          let redTeamId = 200;
+          if (blueTeamEntry && redTeamEntry) {
+            // Normalize possibly 1/2 into 100/200
+            blueTeamId = (blueTeamEntry.teamId === 1 ? 100 : (blueTeamEntry.teamId === 2 ? 200 : blueTeamEntry.teamId)) || 100;
+            redTeamId = (redTeamEntry.teamId === 1 ? 100 : (redTeamEntry.teamId === 2 ? 200 : redTeamEntry.teamId)) || 200;
+          } else if (participants.every((p: any) => typeof p.participantId === 'number')) {
+            // Fallback by participant order
+            blueTeamId = 100; redTeamId = 200;
+          }
+
+          const team1 = participants.filter((p: any) => p.teamId === blueTeamId).slice(0, 5);
+          const team2 = participants.filter((p: any) => p.teamId === redTeamId).slice(0, 5);
+
+          // Update the match object in-place
+          (match as any).participants = participants;
+          (match as any).team1 = team1;
+          (match as any).team2 = team2;
+
+          // Try to recompute winner if missing
+          if (!match.winner || match.winner === 0) {
+            const rawBlue = details.teams?.find((t: any) => (t.teamId === 100 || t.teamId === 1 || t.side === 'blue'));
+            const rawRed = details.teams?.find((t: any) => (t.teamId === 200 || t.teamId === 2 || t.side === 'red'));
+            const blueWon = rawBlue ? normalizeWin(rawBlue.win) : undefined;
+            const redWon = rawRed ? normalizeWin(rawRed.win) : undefined;
+            if (blueWon === true) (match as any).winner = 1; else if (redWon === true) (match as any).winner = 2;
+          }
+
+          // Trigger change detection
+          this.cdr.detectChanges();
+        },
+        error: (err: any) => {
+          console.warn('⚠️ [MATCH-HISTORY] Falha ao buscar detalhes do LCU:', err?.message || err);
+        }
+      });
+    } catch (e) {
+      // ignore
     }
   }
 
@@ -1969,13 +2069,34 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
           item4: p.stats?.item4 || 0,
           item5: p.stats?.item5 || 0,
           isCurrentPlayer: isCurrentPlayer,
-          teamId: p.teamId // Preservar teamId para separação das equipes
+          // Preservar/derivar teamId para separação das equipes
+          teamId: (p.teamId !== undefined && p.teamId !== null)
+            ? p.teamId
+            : (typeof p.participantId === 'number' ? (p.participantId <= 5 ? 100 : 200) : undefined)
         };
       }) || [];
 
+      // Normalize teamId values (some sources use 1/2 instead of 100/200)
+      const normalizeTeamId = (tid: any) => {
+        if (tid === 1) return 100;
+        if (tid === 2) return 200;
+        return tid;
+      };
+
+      const normalizedParticipants = enhancedParticipants.map((p: any) => ({
+        ...p,
+        teamId: normalizeTeamId(p.teamId ?? (typeof p.participantId === 'number' ? (p.participantId <= 5 ? 100 : 200) : undefined))
+      }));
+
       // Separate into teams - ensure we have exactly 5 players per team
-      const team1 = enhancedParticipants.filter((p: any) => p.teamId === 100).slice(0, 5);
-      const team2 = enhancedParticipants.filter((p: any) => p.teamId === 200).slice(0, 5);
+      let team1 = normalizedParticipants.filter((p: any) => p.teamId === 100).slice(0, 5);
+      let team2 = normalizedParticipants.filter((p: any) => p.teamId === 200).slice(0, 5);
+
+      // Fallback: if teams are empty due to missing teamId, infer by participant order
+      if (team1.length === 0 && team2.length === 0 && normalizedParticipants.length === 10) {
+        team1 = normalizedParticipants.filter((p: any) => p.participantId && p.participantId <= 5);
+        team2 = normalizedParticipants.filter((p: any) => p.participantId && p.participantId > 5);
+      }
 
       // Check for duplicates within teams
       const team1Puuids = team1.map((p: any) => p.puuid);
@@ -2021,7 +2142,27 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
       });
 
       // Find current player data
-      const currentPlayerData = enhancedParticipants.find((p: any) => p.isCurrentPlayer) || playerData;
+      const currentPlayerData = normalizedParticipants.find((p: any) => p.isCurrentPlayer) || playerData;
+
+      // Determine winner robustly
+      const rawBlue = lcuMatch.teams?.find((t: any) => t.teamId === 100 || t.teamId === 1 || t.side === 'blue' || t.teamName === 'BLUE');
+      const rawRed = lcuMatch.teams?.find((t: any) => t.teamId === 200 || t.teamId === 2 || t.side === 'red' || t.teamName === 'RED');
+      const normalizeWin = (v: any) => v === true || v === 'Win' || v === 'WIN' || v === 'Victory' || v === 'VITÓRIA';
+      const blueWon = rawBlue ? normalizeWin(rawBlue.win) : undefined;
+      const redWon = rawRed ? normalizeWin(rawRed.win) : undefined;
+
+      let computedWinner = 0;
+      if (blueWon === true) computedWinner = 1;
+      else if (redWon === true) computedWinner = 2;
+      else if (currentPlayerData && typeof currentPlayerData.teamId !== 'undefined') {
+        // Derive from current player's perspective if team win not available
+        const playerWin = currentPlayerData.stats?.win === true || currentPlayerData.win === true;
+        if (playerWin) {
+          computedWinner = normalizeTeamId(currentPlayerData.teamId) === 100 ? 1 : 2;
+        } else if (playerWin === false) {
+          computedWinner = normalizeTeamId(currentPlayerData.teamId) === 100 ? 2 : 1;
+        }
+      }
 
       // Ensure we have valid participants
       if (!enhancedParticipants || enhancedParticipants.length === 0) {
@@ -2036,11 +2177,11 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
         gameMode: lcuMatch.gameMode,
         gameVersion: lcuMatch.gameVersion,
         mapId: lcuMatch.mapId,
-        participants: enhancedParticipants,
+        participants: normalizedParticipants,
         teams: lcuMatch.teams,
         team1: team1,
         team2: team2,
-        winner: lcuMatch.teams?.find((t: any) => t.win)?.teamId === 100 ? 1 : 2,
+        winner: computedWinner,
         playerStats: {
           // Usar championName já processado pelo backend
           champion: currentPlayerData.championName || this.championService.getChampionName(currentPlayerData.championId),

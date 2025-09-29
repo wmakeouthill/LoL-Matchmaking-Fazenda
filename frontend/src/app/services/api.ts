@@ -715,6 +715,24 @@ export class ApiService {
     return this.http.get(`${this.baseUrl}/lcu/match-history`).pipe(catchError(this.handleError));
   }
 
+  // NEW: Get LCU game details by gameId (via Electron gateway when available)
+  getLCUGameDetails(gameId: number | string): Observable<any> {
+    // Prefer Electron local gateway if available
+    if (this.isElectron() && (window as any).electronAPI?.lcu?.request) {
+      return new Observable(observer => {
+        (window as any).electronAPI.lcu.request(`/lol-match-history/v1/games/${gameId}`, 'GET')
+          .then((data: any) => { observer.next(data); })
+          .catch((err: any) => { observer.error(err); })
+          .finally(() => observer.complete());
+      }).pipe(catchError(this.handleError));
+    }
+
+    // HTTP fallback through backend proxy if exposed
+    return this.tryWithFallback(`/lcu/games/${gameId}`, 'GET').pipe(
+      catchError(this.handleError)
+    );
+  }
+
   // Aggregate helper used by UI to request LCU history with pagination/flags
   getLCUMatchHistoryAll(offset: number = 0, limit: number = 10, includePickBan: boolean = false): Observable<any> {
     return this.getLCUMatchHistory(offset, limit).pipe(
