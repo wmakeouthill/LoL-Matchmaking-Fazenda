@@ -117,6 +117,7 @@
       <button class="tab-btn" [class.active]="activeTab === 'lobby'" (click)="setActiveTab('lobby')">
         <i class="fab fa-discord"></i>
         <span>Lobby Discord ({{ discordUsersOnline.length }})</span>
+        <span *ngIf="isDataStale" class="stale-indicator" title="Dados em cache durante reconexão">⚠️</span>
       </button>
       <button class="tab-btn" [class.active]="activeTab === 'all'" (click)="setActiveTab('all')">
         <i class="fas fa-users"></i>

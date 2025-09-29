@@ -55,6 +55,9 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
   isDiscordConnected = false;
   discordUsersOnline: any[] = [];
 
+  // ✅ NOVO: Indicador de dados stale
+  isDataStale = false;
+
   // UI state
   activeTab: 'queue' | 'lobby' | 'all' = 'all';
   isRefreshing = false;
@@ -84,6 +87,12 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
   // =============================================================================
   ngOnInit(): void {
     console.log('🎯 [Queue] Componente inicializado');
+
+    // ✅ NOVO: Verificar e conectar WebSocket se necessário
+    if (!this.apiService.isWebSocketConnected()) {
+      console.log('🔄 [Queue] WebSocket não conectado, forçando conexão...');
+      this.apiService.connect().subscribe();
+    }
 
     this.setupDiscordListeners();
     this.setupQueueStateListener();
@@ -241,6 +250,13 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
         this.cdr.detectChanges();
       }
     });
+
+    // ✅ NOVO: Verificar dados stale periodicamente
+    setInterval(() => {
+      this.isDataStale = this.discordService.isDataStaleIndicator();
+      this.discordUsersOnline = this.discordService.getUsersWithFallback();
+      this.cdr.detectChanges();
+    }, 5000); // Verificar a cada 5 segundos
 
     this.discordService.checkConnection();
   }

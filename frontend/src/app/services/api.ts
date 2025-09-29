@@ -1217,10 +1217,19 @@ export class ApiService {
 
   private connectWebSocket(): void {
     // Avoid attempts if we purposely closed the socket
-    if (this.wsManualClose) return;
+    if (this.wsManualClose) {
+      console.log('🛑 [WebSocket] Conexão manualmente fechada, não reconectando');
+      return;
+    }
 
-    if (this.webSocket && this.webSocket.readyState === WebSocket.OPEN) return;
+    if (this.webSocket && this.webSocket.readyState === WebSocket.OPEN) {
+      console.log('✅ [WebSocket] Já conectado, ignorando nova tentativa');
+      return;
+    }
+    
     const wsUrl = this.getWebSocketUrl();
+    console.log('🔄 [WebSocket] Tentando conectar em:', wsUrl);
+    
     try {
       // Clear any pending reconnect timer
       if (this.wsReconnectTimer) { clearTimeout(this.wsReconnectTimer); this.wsReconnectTimer = null; }
@@ -1269,7 +1278,7 @@ export class ApiService {
       };
 
       this.webSocket.onerror = (err) => {
-        try { console.warn('WS error', err); } catch { }
+        console.error('❌ [WebSocket] Erro na conexão:', err);
       };
 
       this.webSocket.onclose = (ev) => {
