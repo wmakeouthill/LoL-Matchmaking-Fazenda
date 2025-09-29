@@ -146,34 +146,48 @@ public class ConfigController {
     @PostMapping("/discord-channel")
     public ResponseEntity<Map<String, Object>> setDiscordChannel(@RequestBody Map<String, String> request) {
         try {
+            log.info("🎯 [DISCORD-CHANNEL] Recebida requisição: {}", request);
+
             String channelId = request.get("channelId");
             String guildId = request.get("guildId");
 
+            log.info("🎯 [DISCORD-CHANNEL] ChannelId: {}, GuildId: {}", channelId, guildId);
+
             if (channelId == null || channelId.trim().isEmpty()) {
+                log.warn("🎯 [DISCORD-CHANNEL] ChannelId vazio ou nulo");
                 return ResponseEntity.badRequest().body(Map.of(
                         "success", false,
                         "message", "ID do canal é obrigatório"));
             }
 
+            log.info("🎯 [DISCORD-CHANNEL] Buscando configuração existente...");
             // Salvar canal
             Setting channelSetting = settingRepository.findByKey("discord_channel_id")
                     .orElse(new Setting());
+
+            log.info("🎯 [DISCORD-CHANNEL] Configuração encontrada: {}", channelSetting);
+
             channelSetting.setKey("discord_channel_id");
             channelSetting.setValue(channelId);
             channelSetting.setUpdatedAt(Instant.now());
-            settingRepository.save(channelSetting);
+
+            log.info("🎯 [DISCORD-CHANNEL] Salvando configuração...");
+            Setting savedChannel = settingRepository.save(channelSetting);
+            log.info("🎯 [DISCORD-CHANNEL] Configuração salva: {}", savedChannel);
 
             // Salvar guild se fornecido
             if (guildId != null && !guildId.trim().isEmpty()) {
+                log.info("🎯 [DISCORD-CHANNEL] Salvando guild ID...");
                 Setting guildSetting = settingRepository.findByKey("discord_guild_id")
                         .orElse(new Setting());
                 guildSetting.setKey("discord_guild_id");
                 guildSetting.setValue(guildId);
                 guildSetting.setUpdatedAt(Instant.now());
-                settingRepository.save(guildSetting);
+                Setting savedGuild = settingRepository.save(guildSetting);
+                log.info("🎯 [DISCORD-CHANNEL] Guild salvo: {}", savedGuild);
             }
 
-            log.info("🎯 Canal do Discord configurado: {}", channelId);
+            log.info("🎯 Canal do Discord configurado com sucesso: {}", channelId);
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "message", "Canal do Discord configurado com sucesso",
@@ -182,9 +196,10 @@ public class ConfigController {
 
         } catch (Exception e) {
             log.error("❌ Erro ao configurar canal do Discord", e);
+            log.error("❌ [DISCORD-CHANNEL] Stack trace completo:", e);
             return ResponseEntity.internalServerError().body(Map.of(
                     "success", false,
-                    "message", "Erro interno do servidor"));
+                    "message", "Erro interno do servidor: " + e.getMessage()));
         }
     }
 

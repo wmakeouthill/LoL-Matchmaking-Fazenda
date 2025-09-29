@@ -616,6 +616,7 @@
           </div>
 
           <!-- Discord Bot Configuration Card -->
+          @if (isSpecialUser()) {
           <div
             style="
               background: linear-gradient(135deg, #1e2328 0%, #0f1419 100%);
@@ -793,6 +794,7 @@
             </div>
             }
           </div>
+          }
 
           <!-- Development Tools Card -->
           @if (isSpecialUser()) {

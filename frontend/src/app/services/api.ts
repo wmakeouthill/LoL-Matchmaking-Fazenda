@@ -914,8 +914,8 @@ export class ApiService {
       );
   }
 
-  setDiscordChannel(channelName: string): Observable<any> {
-    return this.http.post(`${this.baseUrl}/config/discord-channel`, { channelName })
+  setDiscordChannel(channelId: string): Observable<any> {
+    return this.http.post(`${this.baseUrl}/config/discord-channel`, { channelId })
       .pipe(
         catchError(this.handleError)
       );
