@@ -105,6 +105,8 @@ export class App implements OnInit, OnDestroy {
     discordBotToken: '',
     discordChannel: ''
   };
+  // Lista de usuários especiais carregada do backend (settings.special_users)
+  private specialUsers: string[] = [];
   discordStatus = {
     isConnected: false,
     botUsername: '',
@@ -464,6 +466,13 @@ export class App implements OnInit, OnDestroy {
     return ids;
   }
 
+  // ===== Helpers: Profile icon URL for settings preview (same strategy as dashboard) =====
+  getCurrentPlayerProfileIconUrl(): string {
+    const iconId = this.currentPlayer?.profileIconId || 29;
+    // Prefer Community Dragon (stable)
+    return `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/profile-icons/${iconId}.jpg`;
+  }
+
   private namesMatch(a: string, b: string): boolean {
     if (!a || !b) return false;
     const norm = (s: string) => s.trim().toLowerCase();
@@ -514,22 +523,111 @@ export class App implements OnInit, OnDestroy {
   // ✅ MANTIDO: Métodos de interface
   setCurrentView(view: 'dashboard' | 'queue' | 'history' | 'leaderboard' | 'settings'): void {
     this.currentView = view;
-    // Ao entrar em Configurações, garantir que os dados do jogador estejam carregados via Electron gateway
-    if (view === 'settings' && !this.currentPlayer) {
-      // Usa o mesmo caminho do dashboard (gateway Electron) – sem backend falar direto com LCU
-      this.apiService.getPlayerFromLCU().subscribe({
-        next: (player: Player) => {
-          this.currentPlayer = player;
-          this.savePlayerData(player);
-          this.updateSettingsForm();
-          this.cdr.detectChanges();
+    // Ao entrar em Configurações, sempre sincronizar os dados via gateway Electron (como no dashboard)
+    if (view === 'settings') {
+      // 1) Priorizar gateway Electron (LCU local) para resposta imediata
+      this.apiService.getCurrentSummonerFromLCU().subscribe({
+        next: (lcuData: any) => {
+          if (lcuData) {
+            const displayName = (lcuData.gameName && lcuData.tagLine)
+              ? `${lcuData.gameName}#${lcuData.tagLine}`
+              : (lcuData.displayName || undefined);
+            const player: Player = {
+              id: lcuData.summonerId || 0,
+              summonerName: lcuData.gameName || lcuData.displayName || 'Unknown',
+              displayName,
+              gameName: lcuData.gameName || null,
+              tagLine: lcuData.tagLine || null,
+              summonerId: (lcuData.summonerId || '0').toString(),
+              puuid: lcuData.puuid || '',
+              profileIconId: lcuData.profileIconId || 29,
+              summonerLevel: lcuData.summonerLevel || 30,
+              region: 'br1',
+              currentMMR: 1200,
+              rank: undefined,
+              wins: undefined,
+              losses: undefined
+            };
+            this.currentPlayer = player;
+            this.savePlayerData(player);
+            this.updateSettingsForm();
+            this.cdr.detectChanges();
+          }
         },
-        error: () => {
-          // tentar detalhes como fallback (ainda via gateway)
-          this.tryGetCurrentPlayerDetails();
+        error: () => { },
+        complete: () => {
+          // 2) Em seguida, sincronizar com backend (mesmo fluxo do dashboard)
+          this.apiService.getPlayerFromLCU().subscribe({
+            next: (player: Player) => {
+              this.currentPlayer = player;
+              this.savePlayerData(player);
+              this.updateSettingsForm();
+              this.cdr.detectChanges();
+            },
+            error: () => {
+              // tentar detalhes como fallback (ainda via gateway)
+              this.tryGetCurrentPlayerDetails();
+            }
+          });
         }
       });
+
+      // Carregar lista de special users do backend para habilitar ferramentas
+      this.loadSpecialUsersFromSettings();
     }
+  }
+
+  // Carrega a lista de special users da tabela settings (key/value)
+  private loadSpecialUsersFromSettings(): void {
+    this.apiService.getConfigSettings().subscribe({
+      next: (resp: any) => {
+        try {
+          // resp pode ser { settings: [{key, value}, ...] } ou array direto
+          const entries: any[] = Array.isArray(resp) ? resp : (resp?.settings || resp?.data || []);
+          const special = entries.find((e: any) => (e?.key || e?.name) === 'special_users');
+          if (special && typeof special.value === 'string') {
+            const parsed = JSON.parse(special.value);
+            if (Array.isArray(parsed)) {
+              this.specialUsers = parsed.map((s: any) => String(s).toLowerCase().trim());
+            }
+          }
+          // fallback: se backend devolver objeto com special_users direto
+          if (!this.specialUsers.length && resp?.special_users) {
+            const arr = Array.isArray(resp.special_users) ? resp.special_users : [];
+            this.specialUsers = arr.map((s: any) => String(s).toLowerCase().trim());
+          }
+          this.cdr.detectChanges();
+        } catch (err) {
+          console.warn('⚠️ [App] Falha ao parsear special_users:', err);
+        }
+      },
+      error: (err) => {
+        console.warn('⚠️ [App] Falha ao carregar settings:', err);
+      }
+    });
+  }
+
+  // Checa se o jogador atual está na lista de special users (gameName#tagLine)
+  isSpecialUser(): boolean {
+    const id = this.normalizePlayerIdentifier(this.currentPlayer);
+    return !!id && this.specialUsers.includes(id);
+  }
+
+  private normalizePlayerIdentifier(playerInfo: any): string {
+    if (!playerInfo) return '';
+    if (playerInfo.gameName && playerInfo.tagLine) {
+      return `${playerInfo.gameName}#${playerInfo.tagLine}`.toLowerCase().trim();
+    }
+    if (playerInfo.displayName && playerInfo.displayName.includes('#')) {
+      return String(playerInfo.displayName).toLowerCase().trim();
+    }
+    if (playerInfo.summonerName) {
+      return String(playerInfo.summonerName).toLowerCase().trim();
+    }
+    if ((playerInfo as any).name) {
+      return String((playerInfo as any).name).toLowerCase().trim();
+    }
+    return '';
   }
 
   // ✅ SIMPLIFICADO: Apenas comunicar com backend

@@ -2,397 +2,973 @@
   <header class="app-header">
     <h1>⚔️ LoL Matchmaking</h1>
     <div class="status-indicators">
-      <span class="status" [class.connected]="isConnected" [class.disconnected]="!isConnected">
+      <span
+        class="status"
+        [class.connected]="isConnected"
+        [class.disconnected]="!isConnected"
+      >
         🔗 {{ isConnected ? 'Conectado' : 'Desconectado' }}
       </span>
-      <span class="status" [class.connected]="lcuStatus.isConnected" [class.disconnected]="!lcuStatus.isConnected">
+      <span
+        class="status"
+        [class.connected]="lcuStatus.isConnected"
+        [class.disconnected]="!lcuStatus.isConnected"
+      >
         🎮 {{ lcuStatus.isConnected ? 'LoL Cliente' : 'LoL Offline' }}
-      </span> <span class="status" [class.connected]="discordStatus.isConnected"
-        [class.disconnected]="!discordStatus.isConnected">
+      </span>
+      <span
+        class="status"
+        [class.connected]="discordStatus.isConnected"
+        [class.disconnected]="!discordStatus.isConnected"
+      >
         🤖 {{ discordStatus.isConnected ? 'Discord Bot' : 'Discord Off' }}
       </span>
     </div>
   </header>
   <!-- Navigation -->
   <nav class="nav-buttons">
-    <button [class.active]="currentView === 'dashboard'" (click)="setCurrentView('dashboard')">
+    <button
+      [class.active]="currentView === 'dashboard'"
+      (click)="setCurrentView('dashboard')"
+    >
       🏠 Dashboard
-    </button> <button [class.active]="currentView === 'queue'" (click)="setCurrentView('queue')">
+    </button>
+    <button
+      [class.active]="currentView === 'queue'"
+      (click)="setCurrentView('queue')"
+    >
       ⏱️ Fila ({{ (queueStatus && queueStatus.playersInQueue) || 0 }})
     </button>
-    <button [class.active]="currentView === 'history'" (click)="setCurrentView('history')">
+    <button
+      [class.active]="currentView === 'history'"
+      (click)="setCurrentView('history')"
+    >
       📊 Histórico
     </button>
-    <button [class.active]="currentView === 'leaderboard'" (click)="setCurrentView('leaderboard')">
+    <button
+      [class.active]="currentView === 'leaderboard'"
+      (click)="setCurrentView('leaderboard')"
+    >
       🏆 Leaderboard
     </button>
-    <button [class.active]="currentView === 'settings'" (click)="setCurrentView('settings')">
+    <button
+      [class.active]="currentView === 'settings'"
+      (click)="setCurrentView('settings')"
+    >
       ⚙️ Configurações
     </button>
   </nav>
   <!-- Content -->
-  <main class="content"> <!-- Draft Phase -->
+  <main class="content">
+    <!-- Draft Phase -->
     @if (inDraftPhase) {
-      <div class="view-container draft-view">
-        <!-- Use the new modular Draft Components -->
-        <app-draft-pick-ban [matchData]="currentMatchData" [currentPlayer]="currentPlayer"
-          (onPickBanComplete)="onPickBanComplete($event)" (onPickBanCancel)="exitDraft()">
-        </app-draft-pick-ban>
-      </div>
+    <div class="view-container draft-view">
+      <!-- Use the new modular Draft Components -->
+      <app-draft-pick-ban
+        [matchData]="currentMatchData"
+        [currentPlayer]="currentPlayer"
+        (onPickBanComplete)="onPickBanComplete($event)"
+        (onPickBanCancel)="exitDraft()"
+      >
+      </app-draft-pick-ban>
+    </div>
     }
 
     <!-- Game In Progress Phase -->
     @if (inGamePhase) {
-      <div class="view-container game-view">
-        <app-game-in-progress [gameData]="gameData" [currentPlayer]="currentPlayer"
-          (onGameComplete)="onGameComplete($event)" (onGameCancel)="onGameCancel()">
-        </app-game-in-progress>
-      </div>
+    <div class="view-container game-view">
+      <app-game-in-progress
+        [gameData]="gameData"
+        [currentPlayer]="currentPlayer"
+        (onGameComplete)="onGameComplete($event)"
+        (onGameCancel)="onGameCancel()"
+      >
+      </app-game-in-progress>
+    </div>
     }
 
     <!-- Normal Views -->
-    @if (!inDraftPhase && !inGamePhase) {
-      @switch (currentView) {
-        <!-- Dashboard -->
-        @case ('dashboard') {
-          <div class="view-container">
-            <app-dashboard [player]="currentPlayer" [queueStatus]="queueStatus" (joinQueue)="setCurrentView('queue')"
-              (viewHistory)="setCurrentView('history')" (openSettings)="setCurrentView('settings')">
-            </app-dashboard>
+    @if (!inDraftPhase && !inGamePhase) { @switch (currentView) {
+    <!-- Dashboard -->
+    @case ('dashboard') {
+    <div class="view-container">
+      <app-dashboard
+        [player]="currentPlayer"
+        [queueStatus]="queueStatus"
+        (joinQueue)="setCurrentView('queue')"
+        (viewHistory)="setCurrentView('history')"
+        (openSettings)="setCurrentView('settings')"
+      >
+      </app-dashboard>
+    </div>
+    }<!-- Queue -->
+    @case ('queue') {
+    <div class="view-container">
+      <app-queue
+        [isInQueue]="isInQueue"
+        [queueStatus]="queueStatus"
+        [currentPlayer]="currentPlayer"
+        (joinQueue)="joinQueue($event)"
+        (leaveQueue)="leaveQueue()"
+        (joinDiscordQueueWithFullData)="joinDiscordQueueWithFullData($event)"
+        (refreshData)="onRefreshData()"
+        (autoRefreshToggle)="onAutoRefreshToggle($event)"
+      >
+      </app-queue>
+    </div>
+    }
+    <!-- History -->
+    @case ('history') {
+    <div class="view-container">
+      <app-match-history [player]="currentPlayer"></app-match-history>
+    </div>
+    }
+
+    <!-- Leaderboard -->
+    @case ('leaderboard') {
+    <div class="view-container">
+      <app-leaderboard></app-leaderboard>
+    </div>
+    }
+    <!-- Settings -->
+    @case ('settings') {
+    <div class="view-container">
+      <div style="max-width: 800px; margin: 0 auto; padding: 20px">
+        <h2
+          style="
+            text-align: center;
+            color: #c9aa71;
+            margin-bottom: 2rem;
+            font-size: 2rem;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+          "
+        >
+          ⚙️ Configurações
+        </h2>
+
+        <!-- Settings Grid -->
+        <div style="display: grid; gap: 2rem; grid-template-columns: 1fr">
+          <!-- Auto Detection Card -->
+          <div
+            style="
+              background: linear-gradient(135deg, #1e2328 0%, #0f1419 100%);
+              border: 2px solid #463714;
+              border-radius: 12px;
+              padding: 1.5rem;
+              box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            "
+          >
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                margin-bottom: 1rem;
+              "
+            >
+              <span style="font-size: 1.5rem">🤖</span>
+              <h3 style="color: #c9aa71; margin: 0; font-size: 1.25rem">
+                Detecção Automática
+              </h3>
+            </div>
+            <p style="color: #cdbe91; margin-bottom: 1.5rem; line-height: 1.5">
+              O aplicativo pode detectar automaticamente suas informações do
+              League of Legends
+            </p>
+
+            <button
+              type="button"
+              (click)="refreshLCUConnection()"
+              [disabled]="!isConnected"
+              style="
+                background: linear-gradient(135deg, #c89b3c 0%, #f0e6d2 100%);
+                color: #0f1419;
+                border: none;
+                padding: 12px 24px;
+                border-radius: 8px;
+                font-weight: bold;
+                cursor: pointer;
+                transition: all 0.3s ease;
+                box-shadow: 0 4px 12px rgba(200, 155, 60, 0.3);
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                font-size: 1rem;
+              "
+              [style.opacity]="!isConnected ? '0.5' : '1'"
+              [style.cursor]="!isConnected ? 'not-allowed' : 'pointer'"
+            >
+              🔄 Detectar do LoL Cliente
+            </button>
+
+            <!-- ✅ NOVO: Botão de teste para mensagens de timer do draft -->
+            <button
+              type="button"
+              (click)="testDraftTimerMessages()"
+              [disabled]="!inDraftPhase"
+              style="
+                background: linear-gradient(135deg, #2196f3 0%, #64b5f6 100%);
+                color: #0f1419;
+                border: none;
+                padding: 12px 24px;
+                border-radius: 8px;
+                font-weight: bold;
+                cursor: pointer;
+                transition: all 0.3s ease;
+                box-shadow: 0 4px 12px rgba(33, 150, 243, 0.3);
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                font-size: 1rem;
+                margin-top: 1rem;
+              "
+              [style.opacity]="!inDraftPhase ? '0.5' : '1'"
+              [style.cursor]="!inDraftPhase ? 'not-allowed' : 'pointer'"
+            >
+              🧪 Testar Timer do Draft
+            </button>
+
+            @if (lcuStatus.isConnected) {
+            <div
+              style="
+                margin-top: 1rem;
+                padding: 1rem;
+                background: rgba(0, 150, 136, 0.1);
+                border: 1px solid rgba(0, 150, 136, 0.3);
+                border-radius: 8px;
+              "
+            >
+              <p
+                style="color: #4caf50; margin: 0 0 0.5rem 0; font-weight: bold"
+              >
+                ✅ Cliente do LoL conectado
+              </p>
+              @if (currentPlayer) {
+              <p style="color: #cdbe91; margin: 0">
+                Jogador detectado:
+                <strong style="color: #c9aa71"
+                  >{{ currentPlayer.summonerName }}</strong
+                >
+              </p>
+              }
+            </div>
+            }
           </div>
-        }<!-- Queue -->
-        @case ('queue') {
-          <div class="view-container"> <app-queue [isInQueue]="isInQueue"
-              [queueStatus]="queueStatus" [currentPlayer]="currentPlayer" (joinQueue)="joinQueue($event)"
-              (leaveQueue)="leaveQueue()" (joinDiscordQueueWithFullData)="joinDiscordQueueWithFullData($event)"
-              (refreshData)="onRefreshData()" (autoRefreshToggle)="onAutoRefreshToggle($event)">
-            </app-queue>
+
+          <!-- Manual Configuration Card -->
+          @if (!currentPlayer) {
+          <div
+            style="
+              background: linear-gradient(135deg, #1e2328 0%, #0f1419 100%);
+              border: 2px solid #463714;
+              border-radius: 12px;
+              padding: 1.5rem;
+              box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            "
+          >
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                margin-bottom: 1rem;
+              "
+            >
+              <span style="font-size: 1.5rem">📝</span>
+              <h3 style="color: #c9aa71; margin: 0; font-size: 1.25rem">
+                Configuração Manual
+              </h3>
+            </div>
+            <p style="color: #cdbe91; margin-bottom: 1.5rem; line-height: 1.5">
+              Se a detecção automática não funcionar, configure manualmente
+            </p>
+
+            <form style="display: flex; flex-direction: column; gap: 1rem">
+              <div>
+                <label
+                  for="summonerName"
+                  style="
+                    display: block;
+                    color: #c9aa71;
+                    font-weight: bold;
+                    margin-bottom: 0.5rem;
+                  "
+                >
+                  Nome do Invocador:
+                </label>
+                <input
+                  id="summonerName"
+                  type="text"
+                  [(ngModel)]="settingsForm.summonerName"
+                  placeholder="Seu nome no LoL"
+                  name="summonerName"
+                  style="
+                    width: 100%;
+                    padding: 12px;
+                    border: 2px solid #463714;
+                    border-radius: 8px;
+                    background: rgba(15, 20, 25, 0.8);
+                    color: #cdbe91;
+                    font-size: 1rem;
+                    transition: border-color 0.3s ease;
+                  "
+                  onfocus="this.style.borderColor='#c9aa71'"
+                  onblur="this.style.borderColor='#463714'"
+                />
+              </div>
+
+              <div>
+                <label
+                  for="region"
+                  style="
+                    display: block;
+                    color: #c9aa71;
+                    font-weight: bold;
+                    margin-bottom: 0.5rem;
+                  "
+                >
+                  Região:
+                </label>
+                <select
+                  id="region"
+                  [(ngModel)]="settingsForm.region"
+                  name="region"
+                  style="
+                    width: 100%;
+                    padding: 12px;
+                    border: 2px solid #463714;
+                    border-radius: 8px;
+                    background: rgba(15, 20, 25, 0.8);
+                    color: #cdbe91;
+                    font-size: 1rem;
+                    cursor: pointer;
+                    transition: border-color 0.3s ease;
+                  "
+                  onfocus="this.style.borderColor='#c9aa71'"
+                  onblur="this.style.borderColor='#463714'"
+                >
+                  <option value="br1">Brasil</option>
+                  <option value="na1">América do Norte</option>
+                  <option value="euw1">Europa Oeste</option>
+                  <option value="eun1">Europa Nordeste</option>
+                </select>
+              </div>
+
+              <button
+                type="button"
+                (click)="savePlayerSettings()"
+                style="
+                  background: linear-gradient(135deg, #c89b3c 0%, #f0e6d2 100%);
+                  color: #0f1419;
+                  border: none;
+                  padding: 12px 24px;
+                  border-radius: 8px;
+                  font-weight: bold;
+                  cursor: pointer;
+                  transition: all 0.3s ease;
+                  box-shadow: 0 4px 12px rgba(200, 155, 60, 0.3);
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  gap: 0.5rem;
+                  font-size: 1rem;
+                  margin-top: 0.5rem;
+                "
+              >
+                💾 Salvar Configurações
+              </button>
+            </form>
           </div>
-        } <!-- History -->
-        @case ('history') {
-          <div class="view-container">
-            <app-match-history [player]="currentPlayer"></app-match-history>
-          </div>
-        }
+          }
 
-        <!-- Leaderboard -->
-        @case ('leaderboard') {
-          <div class="view-container">
-            <app-leaderboard></app-leaderboard>
-          </div>
-        } <!-- Settings -->
-        @case ('settings') {
-          <div class="view-container">
-            <div style="max-width: 800px; margin: 0 auto; padding: 20px;">
-              <h2
-                style="text-align: center; color: #c9aa71; margin-bottom: 2rem; font-size: 2rem; text-shadow: 0 2px 4px rgba(0,0,0,0.5);">
-                ⚙️ Configurações
-              </h2>
+          <!-- Current Configuration Card -->
+          @if (currentPlayer) {
+          <div
+            style="
+              background: linear-gradient(135deg, #1e2328 0%, #0f1419 100%);
+              border: 2px solid #463714;
+              border-radius: 12px;
+              padding: 1.5rem;
+              box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            "
+          >
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                margin-bottom: 1rem;
+              "
+            >
+              <span style="font-size: 1.5rem">👤</span>
+              <h3 style="color: #c9aa71; margin: 0; font-size: 1.25rem">
+                Configuração Atual
+              </h3>
+            </div>
 
-              <!-- Settings Grid -->
-              <div style="display: grid; gap: 2rem; grid-template-columns: 1fr;">
-
-                <!-- Auto Detection Card -->
-                <div
-                  style="background: linear-gradient(135deg, #1e2328 0%, #0f1419 100%); border: 2px solid #463714; border-radius: 12px; padding: 1.5rem; box-shadow: 0 8px 32px rgba(0,0,0,0.4);">
-                  <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
-                    <span style="font-size: 1.5rem;">🤖</span>
-                    <h3 style="color: #c9aa71; margin: 0; font-size: 1.25rem;">Detecção Automática</h3>
-                  </div>
-                  <p style="color: #cdbe91; margin-bottom: 1.5rem; line-height: 1.5;">
-                    O aplicativo pode detectar automaticamente suas informações do League of Legends
-                  </p>
-
-                  <button type="button" (click)="refreshLCUConnection()" [disabled]="!isConnected"
-                    style="background: linear-gradient(135deg, #c89b3c 0%, #f0e6d2 100%); color: #0f1419; border: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(200, 155, 60, 0.3); display: flex; align-items: center; gap: 0.5rem; font-size: 1rem;"
-                    [style.opacity]="!isConnected ? '0.5' : '1'" [style.cursor]="!isConnected ? 'not-allowed' : 'pointer'">
-                    🔄 Detectar do LoL Cliente
-                  </button>
-
-                  <!-- ✅ NOVO: Botão de teste para mensagens de timer do draft -->
-                  <button type="button" (click)="testDraftTimerMessages()" [disabled]="!inDraftPhase"
-                    style="background: linear-gradient(135deg, #2196f3 0%, #64b5f6 100%); color: #0f1419; border: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(33, 150, 243, 0.3); display: flex; align-items: center; gap: 0.5rem; font-size: 1rem; margin-top: 1rem;"
-                    [style.opacity]="!inDraftPhase ? '0.5' : '1'"
-                    [style.cursor]="!inDraftPhase ? 'not-allowed' : 'pointer'">
-                    🧪 Testar Timer do Draft
-                  </button>
-
-                  @if (lcuStatus.isConnected) {
-                    <div
-                      style="margin-top: 1rem; padding: 1rem; background: rgba(0, 150, 136, 0.1); border: 1px solid rgba(0, 150, 136, 0.3); border-radius: 8px;">
-                      <p style="color: #4caf50; margin: 0 0 0.5rem 0; font-weight: bold;">✅ Cliente do LoL conectado</p>
-                      @if (currentPlayer) {
-                        <p style="color: #cdbe91; margin: 0;">
-                          Jogador detectado: <strong style="color: #c9aa71;">{{ currentPlayer.summonerName }}</strong>
-                        </p>
-                      }
-                    </div>
-                  }
-                </div>
-
-                <!-- Manual Configuration Card -->
-                @if (!currentPlayer) {
-                  <div
-                    style="background: linear-gradient(135deg, #1e2328 0%, #0f1419 100%); border: 2px solid #463714; border-radius: 12px; padding: 1.5rem; box-shadow: 0 8px 32px rgba(0,0,0,0.4);">
-                    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
-                      <span style="font-size: 1.5rem;">📝</span>
-                      <h3 style="color: #c9aa71; margin: 0; font-size: 1.25rem;">Configuração Manual</h3>
-                    </div>
-                    <p style="color: #cdbe91; margin-bottom: 1.5rem; line-height: 1.5;">
-                      Se a detecção automática não funcionar, configure manualmente
-                    </p>
-
-                    <form style="display: flex; flex-direction: column; gap: 1rem;">
-                      <div>
-                        <label for="summonerName"
-                          style="display: block; color: #c9aa71; font-weight: bold; margin-bottom: 0.5rem;">
-                          Nome do Invocador:
-                        </label>
-                        <input id="summonerName" type="text" [(ngModel)]="settingsForm.summonerName"
-                          placeholder="Seu nome no LoL" name="summonerName"
-                          style="width: 100%; padding: 12px; border: 2px solid #463714; border-radius: 8px; background: rgba(15, 20, 25, 0.8); color: #cdbe91; font-size: 1rem; transition: border-color 0.3s ease;"
-                          onfocus="this.style.borderColor='#c9aa71'" onblur="this.style.borderColor='#463714'">
-                      </div>
-
-                      <div>
-                        <label for="region" style="display: block; color: #c9aa71; font-weight: bold; margin-bottom: 0.5rem;">
-                          Região:
-                        </label>
-                        <select id="region" [(ngModel)]="settingsForm.region" name="region"
-                          style="width: 100%; padding: 12px; border: 2px solid #463714; border-radius: 8px; background: rgba(15, 20, 25, 0.8); color: #cdbe91; font-size: 1rem; cursor: pointer; transition: border-color 0.3s ease;"
-                          onfocus="this.style.borderColor='#c9aa71'" onblur="this.style.borderColor='#463714'">
-                          <option value="br1">Brasil</option>
-                          <option value="na1">América do Norte</option>
-                          <option value="euw1">Europa Oeste</option>
-                          <option value="eun1">Europa Nordeste</option>
-                        </select>
-                      </div>
-
-                      <button type="button" (click)="savePlayerSettings()"
-                        style="background: linear-gradient(135deg, #c89b3c 0%, #f0e6d2 100%); color: #0f1419; border: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(200, 155, 60, 0.3); display: flex; align-items: center; justify-content: center; gap: 0.5rem; font-size: 1rem; margin-top: 0.5rem;">
-                        💾 Salvar Configurações
-                      </button>
-                    </form>
-                  </div>
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                gap: 1rem;
+                padding: 1rem;
+                background: rgba(200, 155, 60, 0.1);
+                border: 1px solid rgba(200, 155, 60, 0.3);
+                border-radius: 8px;
+                margin-bottom: 1.5rem;
+              "
+            >
+              <img
+                [src]="getCurrentPlayerProfileIconUrl()"
+                alt="Profile Icon"
+                style="
+                  width: 60px;
+                  height: 60px;
+                  border-radius: 50%;
+                  border: 2px solid #c9aa71;
+                  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+                "
+                loading="lazy"
+                (error)="$any($event.target).src = 'https://ddragon.leagueoflegends.com/cdn/15.14.1/img/profileicon/' + (currentPlayer?.profileIconId || 29) + '.png'"
+              />
+              <div style="flex: 1">
+                <h4
+                  style="
+                    color: #f0e6d2;
+                    margin: 0 0 0.5rem 0;
+                    font-size: 1.1rem;
+                  "
+                >
+                  {{ currentPlayer.summonerName }}{{ currentPlayer.tagLine ? '#'
+                  + currentPlayer.tagLine : '' }}
+                </h4>
+                <p
+                  style="
+                    color: #cdbe91;
+                    margin: 0 0 0.25rem 0;
+                    font-size: 0.9rem;
+                  "
+                >
+                  Nível {{ currentPlayer.summonerLevel || 'N/A' }} • Região: {{
+                  currentPlayer.region }}
+                </p>
+                <p
+                  style="
+                    color: #c9aa71;
+                    margin: 0 0 0.25rem 0;
+                    font-weight: bold;
+                  "
+                >
+                  MMR: {{ currentPlayer.currentMMR }}
+                </p>
+                @if (currentPlayer.rank) {
+                <p style="color: #cdbe91; margin: 0; font-size: 0.9rem">
+                  Ranqueada: {{ currentPlayer.rank.tier }} {{
+                  currentPlayer.rank.rank }} ({{ currentPlayer.rank.lp }} LP)
+                </p>
                 }
-
-                <!-- Current Configuration Card -->
-                @if (currentPlayer) {
-                  <div
-                    style="background: linear-gradient(135deg, #1e2328 0%, #0f1419 100%); border: 2px solid #463714; border-radius: 12px; padding: 1.5rem; box-shadow: 0 8px 32px rgba(0,0,0,0.4);">
-                    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
-                      <span style="font-size: 1.5rem;">👤</span>
-                      <h3 style="color: #c9aa71; margin: 0; font-size: 1.25rem;">Configuração Atual</h3>
-                    </div>
-
-                    <div
-                      style="display: flex; align-items: center; gap: 1rem; padding: 1rem; background: rgba(200, 155, 60, 0.1); border: 1px solid rgba(200, 155, 60, 0.3); border-radius: 8px; margin-bottom: 1.5rem;">
-                      <img
-                        [src]="'https://ddragon.leagueoflegends.com/cdn/15.12.1/img/profileicon/' + (currentPlayer.profileIconId || 29) + '.png'"
-                        alt="Profile Icon"
-                        style="width: 60px; height: 60px; border-radius: 50%; border: 2px solid #c9aa71; box-shadow: 0 2px 8px rgba(0,0,0,0.3);"
-                        loading="lazy">
-                      <div style="flex: 1;">
-                        <h4 style="color: #f0e6d2; margin: 0 0 0.5rem 0; font-size: 1.1rem;">
-                          {{ currentPlayer.summonerName }}{{ currentPlayer.tagLine ? '#' + currentPlayer.tagLine : '' }}
-                        </h4>
-                        <p style="color: #cdbe91; margin: 0 0 0.25rem 0; font-size: 0.9rem;">
-                          Nível {{ currentPlayer.summonerLevel || 'N/A' }} • Região: {{ currentPlayer.region }}
-                        </p>
-                        <p style="color: #c9aa71; margin: 0 0 0.25rem 0; font-weight: bold;">
-                          MMR: {{ currentPlayer.currentMMR }}
-                        </p>
-                        @if (currentPlayer.rank) {
-                          <p style="color: #cdbe91; margin: 0; font-size: 0.9rem;">
-                            Ranqueada: {{ currentPlayer.rank.tier }} {{ currentPlayer.rank.rank }} ({{ currentPlayer.rank.lp }}
-                            LP)
-                          </p>
-                        }
-                      </div>
-                    </div>
-
-                    <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
-                      <button type="button" (click)="refreshPlayerData()"
-                        style="background: linear-gradient(135deg, #c89b3c 0%, #f0e6d2 100%); color: #0f1419; border: none; padding: 10px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(200, 155, 60, 0.3); display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; flex: 1; justify-content: center;">
-                        🔄 Atualizar Dados
-                      </button>
-                      <button type="button" (click)="clearPlayerData()"
-                        style="background: linear-gradient(135deg, #3c3c41 0%, #5bc0de 20%); color: #f0e6d2; border: none; padding: 10px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(60, 60, 65, 0.3); display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; flex: 1; justify-content: center;">
-                        🗑️ Limpar Dados
-                      </button>
-                    </div>
-                  </div>
-                }
-
-                <!-- Riot API Configuration Card -->
-                <div
-                  style="background: linear-gradient(135deg, #1e2328 0%, #0f1419 100%); border: 2px solid #463714; border-radius: 12px; padding: 1.5rem; box-shadow: 0 8px 32px rgba(0,0,0,0.4);">
-                  <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
-                    <span style="font-size: 1.5rem;">🔑</span>
-                    <h3 style="color: #c9aa71; margin: 0; font-size: 1.25rem;">Configuração da Riot API</h3>
-                  </div>
-                  <p style="color: #cdbe91; margin-bottom: 1.5rem; line-height: 1.5;">
-                    Para acessar dados completos do Riot Games, configure sua API key
-                  </p>
-
-                  <div style="margin-bottom: 1rem;">
-                    <label for="riotApiKey"
-                      style="display: block; color: #c9aa71; font-weight: bold; margin-bottom: 0.5rem;">
-                      Riot API Key:
-                    </label>
-                    <input type="password" id="riotApiKey" [(ngModel)]="settingsForm.riotApiKey" name="riotApiKey"
-                      placeholder="RGAPI-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                      style="width: 100%; padding: 12px; border: 2px solid #463714; border-radius: 8px; background: rgba(15, 20, 25, 0.8); color: #cdbe91; font-size: 1rem; margin-bottom: 0.5rem; transition: border-color 0.3s ease;"
-                      onfocus="this.style.borderColor='#c9aa71'" onblur="this.style.borderColor='#463714'">
-                    <small style="color: #a09b8c; font-size: 0.8rem;">
-                      Obtenha sua API key em:
-                      <a href="https://developer.riotgames.com" target="_blank"
-                        style="color: #c9aa71; text-decoration: none;">
-                        developer.riotgames.com
-                      </a>
-                    </small>
-                  </div>
-
-                  <button type="button" (click)="updateRiotApiKey()"
-                    style="background: linear-gradient(135deg, #c89b3c 0%, #f0e6d2 100%); color: #0f1419; border: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(200, 155, 60, 0.3); display: flex; align-items: center; gap: 0.5rem; font-size: 1rem;">
-                    🔑 Configurar API Key
-                  </button>
-                </div>
-
-                <!-- Discord Bot Configuration Card -->
-                <div
-                  style="background: linear-gradient(135deg, #1e2328 0%, #0f1419 100%); border: 2px solid #463714; border-radius: 12px; padding: 1.5rem; box-shadow: 0 8px 32px rgba(0,0,0,0.4);">
-                  <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
-                    <span style="font-size: 1.5rem;">🤖</span>
-                    <h3 style="color: #c9aa71; margin: 0; font-size: 1.25rem;">Discord Bot</h3>
-                  </div>
-                  <p style="color: #cdbe91; margin-bottom: 1.5rem; line-height: 1.5;">
-                    Configure o bot do Discord para automação de filas e matchmaking
-                  </p>
-
-                  <div style="margin-bottom: 1rem;">
-                    <label for="discordBotToken"
-                      style="display: block; color: #c9aa71; font-weight: bold; margin-bottom: 0.5rem;">
-                      Discord Bot Token:
-                    </label>
-                    <input type="password" id="discordBotToken" [(ngModel)]="settingsForm.discordBotToken"
-                      name="discordBotToken" placeholder="MTxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                      style="width: 100%; padding: 12px; border: 2px solid #463714; border-radius: 8px; background: rgba(15, 20, 25, 0.8); color: #cdbe91; font-size: 1rem; margin-bottom: 0.5rem; transition: border-color 0.3s ease;"
-                      onfocus="this.style.borderColor='#c9aa71'" onblur="this.style.borderColor='#463714'">
-                    <small style="color: #a09b8c; font-size: 0.8rem;">
-                      Crie um bot Discord em:
-                      <a href="https://discord.com/developers/applications" target="_blank"
-                        style="color: #c9aa71; text-decoration: none;">
-                        discord.com/developers/applications
-                      </a>
-                    </small>
-                  </div>
-
-                  <div style="margin-bottom: 1rem;">
-                    <label for="discordChannel"
-                      style="display: block; color: #c9aa71; font-weight: bold; margin-bottom: 0.5rem;">
-                      Canal do Discord:
-                    </label>
-                    <input type="text" id="discordChannel" [(ngModel)]="settingsForm.discordChannel" name="discordChannel"
-                      placeholder="lol-matchmaking"
-                      style="width: 100%; padding: 12px; border: 2px solid #463714; border-radius: 8px; background: rgba(15, 20, 25, 0.8); color: #cdbe91; font-size: 1rem; margin-bottom: 0.5rem; transition: border-color 0.3s ease;"
-                      onfocus="this.style.borderColor='#c9aa71'" onblur="this.style.borderColor='#463714'">
-                    <small style="color: #a09b8c; font-size: 0.8rem;">
-                      Nome do canal de voz que será monitorado para matchmaking
-                    </small>
-                  </div>
-
-                  <button type="button" (click)="updateDiscordBotToken()"
-                    style="background: linear-gradient(135deg, #5865f2 0%, #7289da 100%); color: #ffffff; border: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(88, 101, 242, 0.3); display: flex; align-items: center; gap: 0.5rem; font-size: 1rem; margin-bottom: 0.5rem;">
-                    🤖 Configurar Discord Bot
-                  </button>
-
-                  <button type="button" (click)="updateDiscordChannel()"
-                    style="background: linear-gradient(135deg, #5865f2 0%, #7289da 100%); color: #ffffff; border: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(88, 101, 242, 0.3); display: flex; align-items: center; gap: 0.5rem; font-size: 1rem;">
-                    🎯 Configurar Canal
-                  </button>
-
-                  @if (discordStatus?.isConnected) {
-                    <div
-                      style="margin-top: 1rem; padding: 1rem; background: rgba(88, 101, 242, 0.1); border: 1px solid rgba(88, 101, 242, 0.3); border-radius: 8px;">
-                      <p style="color: #5865f2; margin: 0 0 0.5rem 0; font-weight: bold;">✅ Discord Bot conectado</p>
-                      <p style="color: #cdbe91; margin: 0;">
-                        Bot: <strong style="color: #c9aa71;">{{ discordStatus.botUsername || 'LoL Matchmaking Bot' }}</strong>
-                      </p>
-                    </div>
-                  }
-                </div>
-
-                <!-- Development Tools Card -->
-                @if (isSpecialUser()) {
-                  <div
-                    style="background: linear-gradient(135deg, #1e2328 0%, #0f1419 100%); border: 2px solid #463714; border-radius: 12px; padding: 1.5rem; box-shadow: 0 8px 32px rgba(0,0,0,0.4);">
-                    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
-                      <span style="font-size: 1.5rem;">🛠️</span>
-                      <h3 style="color: #c9aa71; margin: 0; font-size: 1.25rem;">Ferramentas de Desenvolvimento</h3>
-                    </div>
-                    <p style="color: #cdbe91; margin-bottom: 1.5rem; line-height: 1.5;">
-                      Ferramentas avançadas para desenvolvimento e testes do sistema
-                    </p>
-
-                    <div style="display: flex; flex-direction: column; gap: 1rem;">
-                      <button type="button" (click)="addBotToQueue()"
-                        style="background: linear-gradient(135deg, #c89b3c 0%, #f0e6d2 100%); color: #0f1419; border: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(200, 155, 60, 0.3); display: flex; align-items: center; gap: 0.5rem; font-size: 1rem;">
-                        🤖 Adicionar Bot à Fila
-                      </button>
-
-                      <button type="button" (click)="resetBotCounter()"
-                        style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); color: #ffffff; border: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(155, 89, 182, 0.3); display: flex; align-items: center; gap: 0.5rem; font-size: 1rem;">
-                        🔄 Resetar Contador de Bots
-                      </button>
-
-                      <button type="button" (click)="simulateLastMatch()"
-                        style="background: linear-gradient(135deg, #5865f2 0%, #7289da 100%); color: #ffffff; border: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(88, 101, 242, 0.3); display: flex; align-items: center; gap: 0.5rem; font-size: 1rem;">
-                        🎮 Simular Última Partida Ranqueada
-                      </button>
-
-                      <button type="button" (click)="cleanupTestMatches()"
-                        style="background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%); color: #ffffff; border: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(231, 76, 60, 0.3); display: flex; align-items: center; gap: 0.5rem; font-size: 1rem;">
-                        🧹 Limpar Partidas de Teste
-                      </button>
-                    </div>
-
-                    <div
-                      style="margin-top: 1rem; padding: 1rem; background: rgba(200, 155, 60, 0.1); border: 1px solid rgba(200, 155, 60, 0.3); border-radius: 8px;">
-                      <p style="color: #c9aa71; margin: 0 0 0.5rem 0; font-weight: bold;">⚠️ Aviso</p>
-                      <p style="color: #cdbe91; margin: 0; font-size: 0.9rem;">
-                        Estas ferramentas são destinadas apenas para desenvolvimento e testes. Use com cuidado.
-                      </p>
-                    </div>
-                  </div>
-                }
-
               </div>
             </div>
+
+            <div style="display: flex; gap: 1rem; flex-wrap: wrap">
+              <button
+                type="button"
+                (click)="refreshPlayerData()"
+                style="
+                  background: linear-gradient(135deg, #c89b3c 0%, #f0e6d2 100%);
+                  color: #0f1419;
+                  border: none;
+                  padding: 10px 20px;
+                  border-radius: 8px;
+                  font-weight: bold;
+                  cursor: pointer;
+                  transition: all 0.3s ease;
+                  box-shadow: 0 4px 12px rgba(200, 155, 60, 0.3);
+                  display: flex;
+                  align-items: center;
+                  gap: 0.5rem;
+                  font-size: 0.9rem;
+                  flex: 1;
+                  justify-content: center;
+                "
+              >
+                🔄 Atualizar Dados
+              </button>
+              <button
+                type="button"
+                (click)="clearPlayerData()"
+                style="
+                  background: linear-gradient(135deg, #3c3c41 0%, #5bc0de 20%);
+                  color: #f0e6d2;
+                  border: none;
+                  padding: 10px 20px;
+                  border-radius: 8px;
+                  font-weight: bold;
+                  cursor: pointer;
+                  transition: all 0.3s ease;
+                  box-shadow: 0 4px 12px rgba(60, 60, 65, 0.3);
+                  display: flex;
+                  align-items: center;
+                  gap: 0.5rem;
+                  font-size: 0.9rem;
+                  flex: 1;
+                  justify-content: center;
+                "
+              >
+                🗑️ Limpar Dados
+              </button>
+            </div>
           </div>
-        }
-      }
-    }
+          }
+
+          <!-- Riot API Configuration Card -->
+          <div
+            style="
+              background: linear-gradient(135deg, #1e2328 0%, #0f1419 100%);
+              border: 2px solid #463714;
+              border-radius: 12px;
+              padding: 1.5rem;
+              box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            "
+          >
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                margin-bottom: 1rem;
+              "
+            >
+              <span style="font-size: 1.5rem">🔑</span>
+              <h3 style="color: #c9aa71; margin: 0; font-size: 1.25rem">
+                Configuração da Riot API
+              </h3>
+            </div>
+            <p style="color: #cdbe91; margin-bottom: 1.5rem; line-height: 1.5">
+              Para acessar dados completos do Riot Games, configure sua API key
+            </p>
+
+            <div style="margin-bottom: 1rem">
+              <label
+                for="riotApiKey"
+                style="
+                  display: block;
+                  color: #c9aa71;
+                  font-weight: bold;
+                  margin-bottom: 0.5rem;
+                "
+              >
+                Riot API Key:
+              </label>
+              <input
+                type="password"
+                id="riotApiKey"
+                [(ngModel)]="settingsForm.riotApiKey"
+                name="riotApiKey"
+                placeholder="RGAPI-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                style="
+                  width: 100%;
+                  padding: 12px;
+                  border: 2px solid #463714;
+                  border-radius: 8px;
+                  background: rgba(15, 20, 25, 0.8);
+                  color: #cdbe91;
+                  font-size: 1rem;
+                  margin-bottom: 0.5rem;
+                  transition: border-color 0.3s ease;
+                "
+                onfocus="this.style.borderColor='#c9aa71'"
+                onblur="this.style.borderColor='#463714'"
+              />
+              <small style="color: #a09b8c; font-size: 0.8rem">
+                Obtenha sua API key em:
+                <a
+                  href="https://developer.riotgames.com"
+                  target="_blank"
+                  style="color: #c9aa71; text-decoration: none"
+                >
+                  developer.riotgames.com
+                </a>
+              </small>
+            </div>
+
+            <button
+              type="button"
+              (click)="updateRiotApiKey()"
+              style="
+                background: linear-gradient(135deg, #c89b3c 0%, #f0e6d2 100%);
+                color: #0f1419;
+                border: none;
+                padding: 12px 24px;
+                border-radius: 8px;
+                font-weight: bold;
+                cursor: pointer;
+                transition: all 0.3s ease;
+                box-shadow: 0 4px 12px rgba(200, 155, 60, 0.3);
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                font-size: 1rem;
+              "
+            >
+              🔑 Configurar API Key
+            </button>
+          </div>
+
+          <!-- Discord Bot Configuration Card -->
+          <div
+            style="
+              background: linear-gradient(135deg, #1e2328 0%, #0f1419 100%);
+              border: 2px solid #463714;
+              border-radius: 12px;
+              padding: 1.5rem;
+              box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            "
+          >
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                margin-bottom: 1rem;
+              "
+            >
+              <span style="font-size: 1.5rem">🤖</span>
+              <h3 style="color: #c9aa71; margin: 0; font-size: 1.25rem">
+                Discord Bot
+              </h3>
+            </div>
+            <p style="color: #cdbe91; margin-bottom: 1.5rem; line-height: 1.5">
+              Configure o bot do Discord para automação de filas e matchmaking
+            </p>
+
+            <div style="margin-bottom: 1rem">
+              <label
+                for="discordBotToken"
+                style="
+                  display: block;
+                  color: #c9aa71;
+                  font-weight: bold;
+                  margin-bottom: 0.5rem;
+                "
+              >
+                Discord Bot Token:
+              </label>
+              <input
+                type="password"
+                id="discordBotToken"
+                [(ngModel)]="settingsForm.discordBotToken"
+                name="discordBotToken"
+                placeholder="MTxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                style="
+                  width: 100%;
+                  padding: 12px;
+                  border: 2px solid #463714;
+                  border-radius: 8px;
+                  background: rgba(15, 20, 25, 0.8);
+                  color: #cdbe91;
+                  font-size: 1rem;
+                  margin-bottom: 0.5rem;
+                  transition: border-color 0.3s ease;
+                "
+                onfocus="this.style.borderColor='#c9aa71'"
+                onblur="this.style.borderColor='#463714'"
+              />
+              <small style="color: #a09b8c; font-size: 0.8rem">
+                Crie um bot Discord em:
+                <a
+                  href="https://discord.com/developers/applications"
+                  target="_blank"
+                  style="color: #c9aa71; text-decoration: none"
+                >
+                  discord.com/developers/applications
+                </a>
+              </small>
+            </div>
+
+            <div style="margin-bottom: 1rem">
+              <label
+                for="discordChannel"
+                style="
+                  display: block;
+                  color: #c9aa71;
+                  font-weight: bold;
+                  margin-bottom: 0.5rem;
+                "
+              >
+                Canal do Discord:
+              </label>
+              <input
+                type="text"
+                id="discordChannel"
+                [(ngModel)]="settingsForm.discordChannel"
+                name="discordChannel"
+                placeholder="lol-matchmaking"
+                style="
+                  width: 100%;
+                  padding: 12px;
+                  border: 2px solid #463714;
+                  border-radius: 8px;
+                  background: rgba(15, 20, 25, 0.8);
+                  color: #cdbe91;
+                  font-size: 1rem;
+                  margin-bottom: 0.5rem;
+                  transition: border-color 0.3s ease;
+                "
+                onfocus="this.style.borderColor='#c9aa71'"
+                onblur="this.style.borderColor='#463714'"
+              />
+              <small style="color: #a09b8c; font-size: 0.8rem">
+                Nome do canal de voz que será monitorado para matchmaking
+              </small>
+            </div>
+
+            <button
+              type="button"
+              (click)="updateDiscordBotToken()"
+              style="
+                background: linear-gradient(135deg, #5865f2 0%, #7289da 100%);
+                color: #ffffff;
+                border: none;
+                padding: 12px 24px;
+                border-radius: 8px;
+                font-weight: bold;
+                cursor: pointer;
+                transition: all 0.3s ease;
+                box-shadow: 0 4px 12px rgba(88, 101, 242, 0.3);
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                font-size: 1rem;
+                margin-bottom: 0.5rem;
+              "
+            >
+              🤖 Configurar Discord Bot
+            </button>
+
+            <button
+              type="button"
+              (click)="updateDiscordChannel()"
+              style="
+                background: linear-gradient(135deg, #5865f2 0%, #7289da 100%);
+                color: #ffffff;
+                border: none;
+                padding: 12px 24px;
+                border-radius: 8px;
+                font-weight: bold;
+                cursor: pointer;
+                transition: all 0.3s ease;
+                box-shadow: 0 4px 12px rgba(88, 101, 242, 0.3);
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                font-size: 1rem;
+              "
+            >
+              🎯 Configurar Canal
+            </button>
+
+            @if (discordStatus?.isConnected) {
+            <div
+              style="
+                margin-top: 1rem;
+                padding: 1rem;
+                background: rgba(88, 101, 242, 0.1);
+                border: 1px solid rgba(88, 101, 242, 0.3);
+                border-radius: 8px;
+              "
+            >
+              <p
+                style="color: #5865f2; margin: 0 0 0.5rem 0; font-weight: bold"
+              >
+                ✅ Discord Bot conectado
+              </p>
+              <p style="color: #cdbe91; margin: 0">
+                Bot:
+                <strong style="color: #c9aa71"
+                  >{{ discordStatus.botUsername || 'LoL Matchmaking Bot'
+                  }}</strong
+                >
+              </p>
+            </div>
+            }
+          </div>
+
+          <!-- Development Tools Card -->
+          @if (isSpecialUser()) {
+          <div
+            style="
+              background: linear-gradient(135deg, #1e2328 0%, #0f1419 100%);
+              border: 2px solid #463714;
+              border-radius: 12px;
+              padding: 1.5rem;
+              box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            "
+          >
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                margin-bottom: 1rem;
+              "
+            >
+              <span style="font-size: 1.5rem">🛠️</span>
+              <h3 style="color: #c9aa71; margin: 0; font-size: 1.25rem">
+                Ferramentas de Desenvolvimento
+              </h3>
+            </div>
+            <p style="color: #cdbe91; margin-bottom: 1.5rem; line-height: 1.5">
+              Ferramentas avançadas para desenvolvimento e testes do sistema
+            </p>
+
+            <div style="display: flex; flex-direction: column; gap: 1rem">
+              <button
+                type="button"
+                (click)="addBotToQueue()"
+                style="
+                  background: linear-gradient(135deg, #c89b3c 0%, #f0e6d2 100%);
+                  color: #0f1419;
+                  border: none;
+                  padding: 12px 24px;
+                  border-radius: 8px;
+                  font-weight: bold;
+                  cursor: pointer;
+                  transition: all 0.3s ease;
+                  box-shadow: 0 4px 12px rgba(200, 155, 60, 0.3);
+                  display: flex;
+                  align-items: center;
+                  gap: 0.5rem;
+                  font-size: 1rem;
+                "
+              >
+                🤖 Adicionar Bot à Fila
+              </button>
+
+              <button
+                type="button"
+                (click)="resetBotCounter()"
+                style="
+                  background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%);
+                  color: #ffffff;
+                  border: none;
+                  padding: 12px 24px;
+                  border-radius: 8px;
+                  font-weight: bold;
+                  cursor: pointer;
+                  transition: all 0.3s ease;
+                  box-shadow: 0 4px 12px rgba(155, 89, 182, 0.3);
+                  display: flex;
+                  align-items: center;
+                  gap: 0.5rem;
+                  font-size: 1rem;
+                "
+              >
+                🔄 Resetar Contador de Bots
+              </button>
+
+              <button
+                type="button"
+                (click)="simulateLastMatch()"
+                style="
+                  background: linear-gradient(135deg, #5865f2 0%, #7289da 100%);
+                  color: #ffffff;
+                  border: none;
+                  padding: 12px 24px;
+                  border-radius: 8px;
+                  font-weight: bold;
+                  cursor: pointer;
+                  transition: all 0.3s ease;
+                  box-shadow: 0 4px 12px rgba(88, 101, 242, 0.3);
+                  display: flex;
+                  align-items: center;
+                  gap: 0.5rem;
+                  font-size: 1rem;
+                "
+              >
+                🎮 Simular Última Partida Ranqueada
+              </button>
+
+              <button
+                type="button"
+                (click)="cleanupTestMatches()"
+                style="
+                  background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+                  color: #ffffff;
+                  border: none;
+                  padding: 12px 24px;
+                  border-radius: 8px;
+                  font-weight: bold;
+                  cursor: pointer;
+                  transition: all 0.3s ease;
+                  box-shadow: 0 4px 12px rgba(231, 76, 60, 0.3);
+                  display: flex;
+                  align-items: center;
+                  gap: 0.5rem;
+                  font-size: 1rem;
+                "
+              >
+                🧹 Limpar Partidas de Teste
+              </button>
+            </div>
+
+            <div
+              style="
+                margin-top: 1rem;
+                padding: 1rem;
+                background: rgba(200, 155, 60, 0.1);
+                border: 1px solid rgba(200, 155, 60, 0.3);
+                border-radius: 8px;
+              "
+            >
+              <p
+                style="color: #c9aa71; margin: 0 0 0.5rem 0; font-weight: bold"
+              >
+                ⚠️ Aviso
+              </p>
+              <p style="color: #cdbe91; margin: 0; font-size: 0.9rem">
+                Estas ferramentas são destinadas apenas para desenvolvimento e
+                testes. Use com cuidado.
+              </p>
+            </div>
+          </div>
+          }
+        </div>
+      </div>
+    </div>
+    } } }
   </main>
 
   <!-- Match Found Modal -->
-  <app-match-found [matchData]="matchFoundData" [isVisible]="showMatchFound" (acceptMatch)="onAcceptMatch($event)"
-    (declineMatch)="onDeclineMatch($event)">
+  <app-match-found
+    [matchData]="matchFoundData"
+    [isVisible]="showMatchFound"
+    (acceptMatch)="onAcceptMatch($event)"
+    (declineMatch)="onDeclineMatch($event)"
+  >
   </app-match-found>
 
   <!-- Enhanced Notifications -->
   <div class="notifications-container">
     @for (notification of notifications; track notification.id) {
-      <div class="notification"
-        [class]="notification.type" [class.show]="notification.isVisible" [class.hide]="notification.isHiding">
-        <div class="notification-content">
-          <div class="title">{{ notification.title }}</div>
-          <div class="message">{{ notification.message }}</div>
-        </div>
-        <button (click)="dismissNotification(notification.id)" class="notification-close" title="Fechar">
-          ✕
-        </button>
+    <div
+      class="notification"
+      [class]="notification.type"
+      [class.show]="notification.isVisible"
+      [class.hide]="notification.isHiding"
+    >
+      <div class="notification-content">
+        <div class="title">{{ notification.title }}</div>
+        <div class="message">{{ notification.message }}</div>
       </div>
+      <button
+        (click)="dismissNotification(notification.id)"
+        class="notification-close"
+        title="Fechar"
+      >
+        ✕
+      </button>
+    </div>
     }
   </div>
 </div>
