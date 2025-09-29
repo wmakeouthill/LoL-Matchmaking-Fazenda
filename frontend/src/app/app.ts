@@ -574,6 +574,9 @@ export class App implements OnInit, OnDestroy {
 
       // Carregar lista de special users do backend para habilitar ferramentas
       this.loadSpecialUsersFromSettings();
+
+      // Carregar configurações do Discord
+      this.loadDiscordSettings();
     }
   }
 
@@ -1730,6 +1733,121 @@ export class App implements OnInit, OnDestroy {
       error: (error) => {
         console.error('❌ [App] Erro ao limpar partidas de teste:', error);
         this.addNotification('error', 'Erro Limpeza', 'Não foi possível limpar as partidas de teste');
+      }
+    });
+  }
+
+  // Métodos para configuração do Discord Bot
+  updateDiscordBotToken(): void {
+    if (!this.settingsForm.discordBotToken?.trim()) {
+      this.addNotification('warning', 'Token Vazio', 'Por favor, insira um token do Discord Bot válido');
+      return;
+    }
+
+    console.log('🤖 [App] Configurando token do Discord Bot...');
+
+    this.apiService.setDiscordBotToken(this.settingsForm.discordBotToken.trim()).subscribe({
+      next: (response) => {
+        console.log('✅ [App] Token do Discord Bot configurado:', response);
+        this.addNotification('success', 'Token Configurado', 'Token do Discord Bot foi configurado com sucesso');
+        this.loadDiscordSettings(); // Recarregar configurações
+      },
+      error: (error) => {
+        console.error('❌ [App] Erro ao configurar token do Discord Bot:', error);
+        this.addNotification('error', 'Erro na Configuração', 'Falha ao configurar token do Discord Bot');
+      }
+    });
+  }
+
+  updateDiscordChannel(): void {
+    if (!this.settingsForm.discordChannel?.trim()) {
+      this.addNotification('warning', 'Canal Vazio', 'Por favor, insira um nome de canal válido');
+      return;
+    }
+
+    console.log('🎯 [App] Configurando canal do Discord...');
+
+    this.apiService.setDiscordChannel(this.settingsForm.discordChannel.trim()).subscribe({
+      next: (response) => {
+        console.log('✅ [App] Canal do Discord configurado:', response);
+        this.addNotification('success', 'Canal Configurado', 'Canal do Discord foi configurado com sucesso');
+        this.loadDiscordSettings(); // Recarregar configurações
+      },
+      error: (error) => {
+        console.error('❌ [App] Erro ao configurar canal do Discord:', error);
+
+        // Verificar se o erro é um 500 - pode ser um "falso positivo" se o dado foi salvo
+        if (error.status === 500) {
+          console.log('🔄 [App] Erro 500 - verificando se canal foi salvo no banco...');
+
+          // Salvar o valor que tentamos enviar para comparação
+          const attemptedChannelId = this.settingsForm.discordChannel.trim();
+
+          // Aguardar um pouco e tentar recarregar as configurações
+          setTimeout(() => {
+            this.loadDiscordSettings();
+
+            // Verificar se o canal foi carregado corretamente
+            setTimeout(() => {
+              const currentChannelId = this.settingsForm.discordChannel;
+              console.log('🔍 [App] Verificação pós-erro 500:', {
+                attempted: attemptedChannelId,
+                loaded: currentChannelId,
+                match: attemptedChannelId === currentChannelId
+              });
+
+              if (currentChannelId && currentChannelId === attemptedChannelId) {
+                console.log('✅ [App] Canal foi salvo corretamente apesar do erro 500');
+                this.addNotification('success', 'Canal Configurado', 'Canal foi configurado com sucesso (salvo no banco)');
+              } else {
+                console.log('❌ [App] Canal não foi salvo - erro real');
+                this.addNotification('error', 'Erro na Configuração', 'Falha ao configurar canal do Discord. Tente novamente.');
+              }
+            }, 1500);
+          }, 1000);
+        } else {
+          this.addNotification('error', 'Erro na Configuração', 'Falha ao configurar canal do Discord');
+        }
+      }
+    });
+  }
+
+  // Carrega configurações do Discord do backend
+  private loadDiscordSettings(): void {
+    console.log('🤖 [App] Carregando configurações do Discord...');
+
+    this.apiService.getConfigSettings().subscribe({
+      next: (resp: any) => {
+        try {
+          if (resp?.settings) {
+            const oldToken = this.settingsForm.discordBotToken;
+            const oldChannel = this.settingsForm.discordChannel;
+
+            // Carregar token do Discord (se existir)
+            if (resp.settings['discord_token']) {
+              this.settingsForm.discordBotToken = resp.settings['discord_token'];
+            }
+
+            // Carregar canal do Discord (se existir)
+            if (resp.settings['discord_channel_id']) {
+              this.settingsForm.discordChannel = resp.settings['discord_channel_id'];
+            }
+
+            console.log('🤖 [App] Configurações do Discord carregadas:', {
+              hasToken: !!resp.settings['discord_token'],
+              hasChannel: !!resp.settings['discord_channel_id'],
+              tokenChanged: oldToken !== this.settingsForm.discordBotToken,
+              channelChanged: oldChannel !== this.settingsForm.discordChannel,
+              currentChannel: this.settingsForm.discordChannel
+            });
+          }
+          this.cdr.detectChanges();
+        } catch (err) {
+          console.warn('⚠️ [App] Erro ao carregar configurações do Discord:', err);
+        }
+      },
+      error: (err) => {
+        console.warn('⚠️ [App] Falha ao carregar configurações do Discord:', err);
       }
     });
   }
