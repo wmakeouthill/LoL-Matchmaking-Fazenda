@@ -56,6 +56,18 @@ public class DiscordService extends ListenerAdapter {
 
         if (discordToken != null && !discordToken.trim().isEmpty()) {
             connectToDiscord();
+
+            // ✅ NOVO: Timer para atualizações periódicas do estado do Discord
+            scheduler.scheduleAtFixedRate(() -> {
+                try {
+                    if (isConnected && monitoredChannel != null) {
+                        updateDiscordUsers();
+                        sendDiscordStatus();
+                    }
+                } catch (Exception e) {
+                    log.warn("⚠️ [DiscordService] Erro na atualização periódica: {}", e.getMessage());
+                }
+            }, 120, 120, TimeUnit.SECONDS); // A cada 2 minutos - menos agressivo
         } else {
             log.warn("⚠️ [DiscordService] Token do Discord não configurado");
         }
@@ -343,6 +355,67 @@ public class DiscordService extends ListenerAdapter {
         List<DiscordUser> users = new ArrayList<>(usersInChannel.values());
         webSocketService.broadcastMessage("discord_users", Map.of("users", users));
         log.info("📡 [DiscordService] {} usuários enviados via WebSocket", users.size());
+    }
+
+    // ✅ NOVO: Método para atualizar usuários do Discord
+    private void updateDiscordUsers() {
+        if (monitoredChannel == null) {
+            log.debug("🔍 [DiscordService] Nenhum canal monitorado para atualizar usuários");
+            return;
+        }
+
+        try {
+            List<Member> members = monitoredChannel.getMembers();
+            Map<String, DiscordUser> currentUsers = new ConcurrentHashMap<>();
+
+            for (Member member : members) {
+                if (!member.getUser().isBot()) {
+                    DiscordUser user = createDiscordUser(member);
+                    currentUsers.put(member.getId(), user);
+                }
+            }
+
+            // ✅ CORREÇÃO: Atualizar incrementalmente sem limpar todos os usuários
+            final boolean[] hasChanges = { false };
+
+            // Adicionar novos usuários
+            for (Map.Entry<String, DiscordUser> entry : currentUsers.entrySet()) {
+                if (!usersInChannel.containsKey(entry.getKey())) {
+                    usersInChannel.put(entry.getKey(), entry.getValue());
+                    hasChanges[0] = true;
+                    log.debug("➕ [DiscordService] Usuário adicionado: {}", entry.getValue().getUsername());
+                }
+            }
+
+            // Remover usuários que saíram
+            usersInChannel.entrySet().removeIf(entry -> {
+                if (!currentUsers.containsKey(entry.getKey())) {
+                    log.debug("➖ [DiscordService] Usuário removido: {}", entry.getValue().getUsername());
+                    hasChanges[0] = true;
+                    return true;
+                }
+                return false;
+            });
+
+            if (hasChanges[0]) {
+                notifyUsersUpdate();
+                log.debug("🔄 [DiscordService] Usuários do Discord atualizados: {} usuários", usersInChannel.size());
+            }
+        } catch (Exception e) {
+            log.warn("⚠️ [DiscordService] Erro ao atualizar usuários do Discord: {}", e.getMessage());
+        }
+    }
+
+    // ✅ NOVO: Método para enviar status do Discord
+    private void sendDiscordStatus() {
+        Map<String, Object> status = new HashMap<>();
+        status.put("botUsername", botUsername);
+        status.put("isConnected", isConnected);
+        status.put("channelName", channelName);
+        status.put("usersCount", usersInChannel.size());
+
+        webSocketService.broadcastMessage("discord_status", status);
+        log.debug("📡 [DiscordService] Status periódico enviado via WebSocket: {}", status);
     }
 
     // Public methods

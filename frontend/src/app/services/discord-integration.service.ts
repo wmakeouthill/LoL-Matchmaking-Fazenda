@@ -28,6 +28,11 @@ export class DiscordIntegrationService {
   private readonly AUTO_UPDATE_INTERVAL = 60000;
   private lastAutoUpdate = 0;
 
+  // ✅ NOVO: Sistema de dados "stale" para evitar perda durante reconexões
+  private isDataStale = false;
+  private lastDataUpdate = 0;
+  private readonly STALE_DATA_THRESHOLD = 30000; // 30 segundos
+
   // ✅ NOVO: Referência para o ApiService para repassar mensagens
   private readonly apiService: ApiService;
   private readonly baseUrl: string;
@@ -64,12 +69,25 @@ export class DiscordIntegrationService {
       }
     });
 
-    // Verificar se ApiService WebSocket está conectado
+    // ✅ NOVO: Forçar conexão WebSocket se não estiver conectado
     setTimeout(() => {
       if (this.apiService.isWebSocketConnected()) {
         this.isBackendConnected = true;
         this.connectionSubject.next(true);
         this.requestDiscordStatus();
+      } else {
+        console.log(`🔄 [DiscordService #${this.instanceId}] WebSocket não conectado, forçando conexão...`);
+        this.apiService.connect().subscribe({
+          next: () => {
+            console.log(`✅ [DiscordService #${this.instanceId}] WebSocket conectado via força`);
+            this.isBackendConnected = true;
+            this.connectionSubject.next(true);
+            this.requestDiscordStatus();
+          },
+          error: (err) => {
+            console.warn(`⚠️ [DiscordService #${this.instanceId}] Erro ao conectar WebSocket:`, err);
+          }
+        });
       }
     }, 1000);
   }
@@ -80,9 +98,22 @@ export class DiscordIntegrationService {
     switch (data.type) {
       case 'discord_users':
         console.log(`👥 [DiscordService #${this.instanceId}] Usuários Discord recebidos:`, data.users?.length || 0, 'usuários');
-        this.discordUsersOnline = data.users || [];
-        this.usersSubject.next(this.discordUsersOnline);
+        
+        // ✅ CORREÇÃO: Mesclar dados em vez de substituir completamente
+        if (data.users && data.users.length > 0) {
+          this.discordUsersOnline = data.users;
+          this.usersSubject.next(this.discordUsersOnline);
+          console.log(`✅ [DiscordService #${this.instanceId}] Usuários atualizados:`, this.discordUsersOnline.length, 'usuários');
+        } else {
+          // Só limpar se explicitamente indicado (ex: canal vazio)
+          console.log(`⚠️ [DiscordService #${this.instanceId}] Lista vazia recebida, mantendo dados existentes`);
+        }
+        
         this.lastAutoUpdate = Date.now();
+        
+        // ✅ NOVO: Marcar dados como atualizados e não stale
+        this.lastDataUpdate = Date.now();
+        this.isDataStale = false;
 
         // ✅ NOVO: Persistir dados no localStorage para sobreviver a reconexões
         this.persistDiscordData();
@@ -375,11 +406,11 @@ export class DiscordIntegrationService {
       if (usersData) {
         const parsed = JSON.parse(usersData);
         const age = Date.now() - parsed.timestamp;
-        // Só usar dados com menos de 5 minutos
-        if (age < 300000 && parsed.users) {
+        // ✅ CORREÇÃO: Usar dados mesmo se forem mais antigos (até 1 hora) para evitar perda durante reconexões
+        if (age < 3600000 && parsed.users) {
           this.discordUsersOnline = parsed.users;
           this.usersSubject.next(this.discordUsersOnline);
-          console.log(`🔄 [DiscordService #${this.instanceId}] Dados do Discord restaurados:`, this.discordUsersOnline.length, 'usuários');
+          console.log(`🔄 [DiscordService #${this.instanceId}] Dados do Discord restaurados:`, this.discordUsersOnline.length, 'usuários (idade:', Math.round(age / 1000), 's)');
         }
       }
 
@@ -392,6 +423,40 @@ export class DiscordIntegrationService {
     } catch (error) {
       console.warn(`⚠️ [DiscordService #${this.instanceId}] Falha ao restaurar dados do Discord:`, error);
     }
+  }
+
+  // ✅ NOVO: Verificar se os dados estão stale e implementar fallback
+  private checkDataStaleness(): void {
+    const now = Date.now();
+    const timeSinceLastUpdate = now - this.lastDataUpdate;
+
+    if (timeSinceLastUpdate > this.STALE_DATA_THRESHOLD && !this.isDataStale) {
+      this.isDataStale = true;
+      console.log(`⚠️ [DiscordService #${this.instanceId}] Dados marcados como stale (${Math.round(timeSinceLastUpdate / 1000)}s sem atualização)`);
+
+      // Tentar restaurar dados do cache se não há conexão
+      if (!this.isBackendConnected) {
+        this.restoreDiscordData();
+      }
+    }
+  }
+
+  // ✅ NOVO: Obter usuários com fallback para dados stale
+  getUsersWithFallback(): any[] {
+    this.checkDataStaleness();
+
+    // Se há dados stale mas não há conexão, mostrar dados cached
+    if (this.isDataStale && !this.isBackendConnected && this.discordUsersOnline.length > 0) {
+      console.log(`🔄 [DiscordService #${this.instanceId}] Usando dados cached (stale) durante reconexão`);
+      return this.discordUsersOnline;
+    }
+
+    return this.discordUsersOnline;
+  }
+
+  // ✅ NOVO: Verificar se deve mostrar indicador de dados stale
+  isDataStaleIndicator(): boolean {
+    return this.isDataStale && !this.isBackendConnected;
   }
 
   // Cleanup
