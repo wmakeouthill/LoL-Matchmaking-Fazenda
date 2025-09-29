@@ -738,7 +738,11 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
     if (typeof user.linkedNickname === 'object' &&
       user.linkedNickname.gameName &&
       user.linkedNickname.tagLine) {
-      return `${user.linkedNickname.gameName}#${user.linkedNickname.tagLine}`;
+      // ✅ CORREÇÃO: Verificar se tagLine já contém # para evitar duplicação
+      const tagLine = user.linkedNickname.tagLine.startsWith('#')
+        ? user.linkedNickname.tagLine
+        : `#${user.linkedNickname.tagLine}`;
+      return `${user.linkedNickname.gameName}${tagLine}`;
     }
 
     // Verificar se tem linkedDisplayName (novo formato)
