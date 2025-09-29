@@ -52,8 +52,10 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      # Para hot reload durante desenvolvimento (opcional)
+      # Para hot reload durante desenvolvimento
       - ./target/classes:/app/BOOT-INF/classes
+      - ./src/main/java:/app/src/main/java
+      - ./src/main/resources:/app/src/main/resources
     restart: unless-stopped
 
 volumes:

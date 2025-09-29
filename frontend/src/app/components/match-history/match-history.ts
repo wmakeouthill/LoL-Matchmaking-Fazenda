@@ -1,4 +1,4 @@
-import { Component, Input, OnInit, OnDestroy, ChangeDetectorRef } from '@angular/core';
+import { Component, Input, OnInit, OnDestroy, ChangeDetectorRef, Inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ApiService } from '../../services/api';
 import { Player, Match } from '../../interfaces';
@@ -37,10 +37,10 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
   gamePhase = '';
 
   private refreshInterval: Subscription | null = null;
-  private destroy$ = new Subject<void>();
+  private readonly destroy$ = new Subject<void>();
 
   // Strategy objects for different data sources
-  private dataStrategies = {
+  private readonly dataStrategies = {
     riot: {
       loadMethod: () => this.loadRiotMatches(),
       getMatches: () => this.riotMatches,
@@ -65,7 +65,11 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
     }
   };
 
-  constructor(private apiService: ApiService, private cdr: ChangeDetectorRef) { }  // ========== UNIFIED LOADING METHODS ==========
+  constructor(
+    private readonly apiService: ApiService,
+    @Inject(ChangeDetectorRef) private readonly cdr: ChangeDetectorRef,
+    private readonly championService: ChampionService
+  ) { }  // ========== UNIFIED LOADING METHODS ==========
 
   /**
    * Loads matches for the current active tab using Strategy Pattern
@@ -149,7 +153,7 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
 
     this.loading = true;
     this.error = null;
-    
+
     try {
       // Usar gameName#tagLine como identificador principal, com fallbacks
       const playerIdentifier = this.player.gameName && this.player.tagLine
@@ -230,6 +234,15 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit() {
+    // Preload champion data from Data Dragon
+    this.championService.preloadChampions().subscribe(loaded => {
+      if (loaded) {
+        console.log('🔍 [MATCH-HISTORY] Champion data loaded successfully');
+      } else {
+        console.warn('⚠️ [MATCH-HISTORY] Failed to load champion data');
+      }
+    });
+
     // NO MORE MOCK DATA BY DEFAULT - only load real data
     // Only show mock data if explicitly needed for demo purposes
 
@@ -448,7 +461,7 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
         team2Players = [];
         pickBanData = null;
       }
-      
+
       // Verificar se temos dados reais dos participantes
       const hasRealData = match.participants_data && Array.isArray(match.participants_data) && match.participants_data.length > 0;
 
@@ -486,7 +499,7 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
 
             if (realPlayerData) {
               currentPlayerTeam = realPlayerData.teamId === 100 ? 1 : 2;
-              playerChampion = ChampionService.getChampionNameById(realPlayerData.championId) || 'Unknown';
+              playerChampion = this.championService.getChampionName(realPlayerData.championId) || 'Unknown';
             }
           }
 
@@ -541,7 +554,7 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
         // Se temos dados reais, usar o campeão real
         if (playerRealData && playerRealData.championId) {
           // Usar championName processado pelo backend se disponível, senão converter ID
-          playerChampion = playerRealData.championName || ChampionService.getChampionNameById(playerRealData.championId) || playerChampion;
+          playerChampion = playerRealData.championName || this.championService.getChampionName(playerRealData.championId) || playerChampion;
           currentPlayerTeam = playerRealData.teamId === 100 ? 1 : 2;
         }
       }
@@ -634,7 +647,7 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
           const realData = getRealDataForPlayer(playerId.toString(), 100);
           if (realData) {
             // Se temos dados reais, usar eles como fonte principal
-            championName = realData.championName || ChampionService.getChampionNameById(realData.championId) || 'Unknown';
+            championName = realData.championName || this.championService.getChampionName(realData.championId) || 'Unknown';
             playerName = realData.summonerName || 'Unknown Player';
           } else {
             // Fallback para dados de pick/ban se não temos dados reais
@@ -699,7 +712,7 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
           const realData = getRealDataForPlayer(playerId.toString(), 200);
           if (realData) {
             // Se temos dados reais, usar eles como fonte principal
-            championName = realData.championName || ChampionService.getChampionNameById(realData.championId) || 'Unknown';
+            championName = realData.championName || this.championService.getChampionName(realData.championId) || 'Unknown';
             playerName = realData.summonerName || 'Unknown Player';
           } else {
             // Fallback para dados de pick/ban se não temos dados reais
@@ -1149,11 +1162,16 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
   } getChampionImageUrl(championName?: string): string {
     if (!championName) return '';
 
-    // Usar a versão mais recente do Data Dragon (igual ao backend)
-    const version = '15.14.1';
+    // Se championName é um número (championId), usar o serviço de campeões
+    const championId = parseInt(championName);
+    if (!isNaN(championId)) {
+      return this.championService.getChampionImageUrl(championId);
+    }
 
-    // O nome do campeão já vem normalizado do backend, então usar diretamente
-    return `https://ddragon.leagueoflegends.com/cdn/15.14.1/img/champion/${championName}.png`;
+    // Se championName é uma string, tentar encontrar o campeão pelo nome
+    // Para compatibilidade com dados antigos
+    const version = '15.19.1';
+    return `https://ddragon.leagueoflegends.com/cdn/${version}/img/champion/${championName}.png`;
   }
 
   getItemImageUrl(itemId: number): string {
@@ -1247,9 +1265,9 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
     return (this.currentPage + 1) * this.matchesPerPage < this.totalMatches;
   }
 
-  async loadMoreMatches() {
+  loadMoreMatches() {
     this.currentPage++;
-    await this.loadCurrentTabMatches();
+    this.loadCurrentTabMatches();
   }
 
   getMostPlayedChampion(): string {
@@ -1306,6 +1324,16 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
     // Determinar lane baseado em teamPosition ou lane
     const lane = participant.teamPosition || participant.lane || 'UNKNOWN';
     const role = participant.role || 'UNKNOWN';
+
+    console.log('🔍 [getParticipantLane] Analyzing participant:', {
+      summonerName: participant.summonerName,
+      championName: participant.championName,
+      participantId: participant.participantId,
+      teamPosition: participant.teamPosition,
+      lane: participant.lane,
+      role: participant.role,
+      individualPosition: participant.individualPosition
+    });
 
     // Mapear para lanes do LoL
     switch (lane) {
@@ -1423,26 +1451,55 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
     const championName = participant.championName;
     const participantId = participant.participantId;
 
+    console.log('🔍 [detectLaneByChampionAndOrder] Fallback detection for:', {
+      summonerName: participant.summonerName,
+      championName,
+      participantId
+    });
+
     // Common role detection based on champion types
     const junglers = ['Graves', 'Nidalee', 'Kindred', 'KhaZix', 'Rengar', 'Ekko', 'Diana', 'Kayn', 'Viego', 'Belveth'];
     const supports = ['Thresh', 'Leona', 'Braum', 'Nautilus', 'Alistar', 'Lulu', 'Nami', 'Soraka', 'Janna', 'Sona', 'Yuumi'];
     const adcs = ['Jinx', 'Caitlyn', 'Ashe', 'Vayne', 'Ezreal', 'Kaisa', 'Jhin', 'Xayah', 'Tristana', 'Sivir', 'Draven'];
 
-    if (junglers.includes(championName)) return 'JUNGLE';
-    if (supports.includes(championName)) return 'SUPPORT';
-    if (adcs.includes(championName)) return 'ADC';
+    if (junglers.includes(championName)) {
+      console.log('✅ [detectLaneByChampionAndOrder] Detected JUNGLE by champion:', championName);
+      return 'JUNGLE';
+    }
+    if (supports.includes(championName)) {
+      console.log('✅ [detectLaneByChampionAndOrder] Detected SUPPORT by champion:', championName);
+      return 'SUPPORT';
+    }
+    if (adcs.includes(championName)) {
+      console.log('✅ [detectLaneByChampionAndOrder] Detected ADC by champion:', championName);
+      return 'ADC';
+    }
 
     // Fallback by participant order (common in LCU data)
     // Usually: 1-TOP, 2-JUNGLE, 3-MID, 4-ADC, 5-SUPPORT per team
-    const order = (participantId - 1) % 5;
-    switch (order) {
-      case 0: return 'TOP';
-      case 1: return 'JUNGLE';
-      case 2: return 'MIDDLE';
-      case 3: return 'ADC';
-      case 4: return 'SUPPORT';
-      default: return 'UNKNOWN';
+    // But we need to be more careful with participantId mapping
+    const teamId = participant.teamId;
+    let order = 0;
+
+    if (teamId === 100) {
+      // Team 1: participantId 1-5
+      order = participantId - 1;
+    } else if (teamId === 200) {
+      // Team 2: participantId 6-10
+      order = participantId - 6;
     }
+
+    const lanes = ['TOP', 'JUNGLE', 'MIDDLE', 'ADC', 'SUPPORT'];
+    const detectedLane = lanes[order] || 'UNKNOWN';
+
+    console.log('✅ [detectLaneByChampionAndOrder] Detected lane by order:', {
+      participantId,
+      teamId,
+      order,
+      detectedLane
+    });
+
+    return detectedLane;
   } organizeTeamByLanes(team: any[] | undefined): { [lane: string]: any } {
     const organizedTeam: { [lane: string]: any } = {
       'TOP': null,
@@ -1453,32 +1510,90 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
     };
 
     if (!team || !Array.isArray(team)) {
+      console.warn('⚠️ [MATCH-HISTORY] organizeTeamByLanes: Invalid team data:', team);
       return organizedTeam;
-    }    // First pass: assign players to their detected lanes
+    }
+
+    console.log('🔍 [MATCH-HISTORY] organizeTeamByLanes: Processing team with', team.length, 'participants:',
+      team.map(p => ({
+        summonerName: p.summonerName,
+        championName: p.championName,
+        lane: p.lane,
+        role: p.role,
+        teamPosition: p.teamPosition,
+        participantId: p.participantId,
+        puuid: p.puuid
+      })));
+
+    // First pass: assign players to their detected lanes
+    const assignedPlayers = new Set();
     team.forEach((participant, index) => {
       const lane = this.getParticipantLane(participant);
 
-      if (organizedTeam[lane] === null) {
+      if (organizedTeam[lane] === null && !assignedPlayers.has(participant.puuid)) {
         organizedTeam[lane] = participant;
+        assignedPlayers.add(participant.puuid);
+        console.log('✅ [organizeTeamByLanes] Assigned player to lane:', {
+          player: participant.summonerName,
+          champion: participant.championName,
+          lane: lane,
+          puuid: participant.puuid
+        });
+      } else if (organizedTeam[lane] !== null) {
+        console.log('⚠️ [organizeTeamByLanes] Lane already occupied:', {
+          lane: lane,
+          existingPlayer: organizedTeam[lane]?.summonerName,
+          newPlayer: participant.summonerName
+        });
+      } else if (assignedPlayers.has(participant.puuid)) {
+        console.log('⚠️ [organizeTeamByLanes] Player already assigned:', {
+          player: participant.summonerName,
+          puuid: participant.puuid
+        });
       }
     });
 
     // Second pass: fill empty lanes with remaining players
-    const unassignedPlayers = team.filter(participant => {
-      const lane = this.getParticipantLane(participant);
-      return organizedTeam[lane] !== participant;
-    }); const emptyLanes = Object.keys(organizedTeam).filter(lane => organizedTeam[lane] === null);
+    const unassignedPlayers = team.filter(participant => !assignedPlayers.has(participant.puuid));
+    const emptyLanes = Object.keys(organizedTeam).filter(lane => organizedTeam[lane] === null);
 
     unassignedPlayers.forEach((participant, index) => {
       if (index < emptyLanes.length) {
         organizedTeam[emptyLanes[index]] = participant;
+        assignedPlayers.add(participant.puuid);
       }
-    });    // Final pass: ensure all players are assigned (force assignment if needed)
+    });
+
+    // Final pass: ensure all players are assigned (force assignment if needed)
     const lanes = ['TOP', 'JUNGLE', 'MIDDLE', 'ADC', 'SUPPORT'];
     lanes.forEach((lane, index) => {
       if (organizedTeam[lane] === null && team.length > index) {
-        organizedTeam[lane] = team[index];
+        const playerToAssign = team[index];
+        if (!assignedPlayers.has(playerToAssign.puuid)) {
+          organizedTeam[lane] = playerToAssign;
+          assignedPlayers.add(playerToAssign.puuid);
+          console.log('✅ [organizeTeamByLanes] Force assigned player to empty lane:', {
+            player: playerToAssign.summonerName,
+            champion: playerToAssign.championName,
+            lane: lane,
+            puuid: playerToAssign.puuid
+          });
+        } else {
+          console.log('⚠️ [organizeTeamByLanes] Player already assigned, skipping:', {
+            player: playerToAssign.summonerName,
+            puuid: playerToAssign.puuid
+          });
+        }
       }
+    });
+
+    console.log('🎯 [organizeTeamByLanes] Final result:', {
+      team: team.map(p => p.summonerName),
+      organizedLanes: Object.keys(organizedTeam).map(lane => ({
+        lane,
+        player: organizedTeam[lane]?.summonerName || 'EMPTY',
+        champion: organizedTeam[lane]?.championName || 'N/A'
+      }))
     });
 
     return organizedTeam;
@@ -1552,7 +1667,7 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
       // Encontrar a lane com maior pontuação
       const bestLane = Object.entries(laneScores).reduce((a, b) =>
         laneScores[a[0]] > laneScores[b[0]] ? a : b
-      )[0];
+        , ['UNKNOWN', 0])[0];
 
       // Se a melhor pontuação for 0, usar fallback
       if (laneScores[bestLane] === 0) {
@@ -1595,21 +1710,26 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
     }));
 
     // Organizar por lanes detectadas
+    const assignedPlayers = new Set();
     participantsWithLanes.forEach(participant => {
       const lane = participant.detectedLane;
 
-      if (lane !== 'UNKNOWN' && !organizedTeam[lane]) {
+      if (lane !== 'UNKNOWN' && !organizedTeam[lane] && !assignedPlayers.has(participant.summonerName)) {
         organizedTeam[lane] = participant;
+        assignedPlayers.add(participant.summonerName);
       }
     });
 
     // Para participantes não classificados, usar ordem sequencial
-    const remainingParticipants = participantsWithLanes.filter(p => p.detectedLane === 'UNKNOWN');
+    const remainingParticipants = participantsWithLanes.filter(p =>
+      p.detectedLane === 'UNKNOWN' && !assignedPlayers.has(p.summonerName)
+    );
     const availableLanes = ['TOP', 'JUNGLE', 'MIDDLE', 'ADC', 'SUPPORT'].filter(lane => !organizedTeam[lane]);
 
     remainingParticipants.forEach((participant, index) => {
       if (index < availableLanes.length) {
         organizedTeam[availableLanes[index]] = participant;
+        assignedPlayers.add(participant.summonerName);
       }
     });
 
@@ -1621,7 +1741,9 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
       // Buscar jogadores que podem ser redistribuídos
       const allParticipants = participantsWithLanes;
       const usedParticipants = Object.values(organizedTeam).filter(p => p !== null);
-      const unusedParticipants = allParticipants.filter(p => !usedParticipants.includes(p));
+      const unusedParticipants = allParticipants.filter(p =>
+        !usedParticipants.includes(p) && !assignedPlayers.has(p.summonerName)
+      );
 
       console.log('🔍 [organizeCustomTeamByLanes] Jogadores não utilizados:', unusedParticipants.map(p => p.summonerName || p.name));
 
@@ -1629,6 +1751,7 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
       unusedParticipants.forEach((participant, index) => {
         if (index < emptyLanes.length) {
           organizedTeam[emptyLanes[index]] = participant;
+          assignedPlayers.add(participant.summonerName);
           console.log('✅ [organizeCustomTeamByLanes] Redistribuído:', {
             player: participant.summonerName || participant.name,
             champion: participant.championName || participant.champion,
@@ -1739,13 +1862,22 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
       const currentPlayerPuuid = this.player?.puuid;
       const currentPlayerName = this.player?.summonerName?.toLowerCase();
 
+      console.log('🔍 [mapLCUMatchToModel] Current player info:', {
+        puuid: currentPlayerPuuid,
+        summonerName: currentPlayerName,
+        fullPlayer: this.player
+      });
+
       // Strategy 1: Match by PUUID in participants directly
       if (currentPlayerPuuid) {
         playerData = lcuMatch.participants?.find((p: any) => p.puuid === currentPlayerPuuid);
+        console.log('🔍 [mapLCUMatchToModel] Strategy 1 result:', playerData ? 'FOUND' : 'NOT FOUND');
       }
 
       // Strategy 2: Match by participantIdentities
       if (!playerData && lcuMatch.participantIdentities) {
+        console.log('🔍 [mapLCUMatchToModel] Trying Strategy 2 with participantIdentities:', lcuMatch.participantIdentities.length);
+
         if (currentPlayerPuuid) {
           const identity = lcuMatch.participantIdentities.find((id: any) =>
             id.player?.puuid === currentPlayerPuuid
@@ -1754,6 +1886,7 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
             playerData = lcuMatch.participants?.find((p: any) =>
               p.participantId === identity.participantId
             );
+            console.log('🔍 [mapLCUMatchToModel] Strategy 2a result (by PUUID):', playerData ? 'FOUND' : 'NOT FOUND');
           }
         }
 
@@ -1767,12 +1900,9 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
             playerData = lcuMatch.participants?.find((p: any) =>
               p.participantId === identity.participantId
             );
+            console.log('🔍 [mapLCUMatchToModel] Strategy 2b result (by name):', playerData ? 'FOUND' : 'NOT FOUND');
           }
         }
-      }
-
-      if (!playerData) {
-        return null;
       }
 
       // Map participants with complete information
@@ -1796,15 +1926,26 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
             displayName = `${player.gameName}#${player.tagLine}`;
           } else if (player.summonerName) {
             displayName = player.summonerName;
-          } else if (player.gameName) {
-            displayName = player.gameName;
           }
+        }
+
+        if (isCurrentPlayer) {
+          console.log('🔍 [mapLCUMatchToModel] Current player found in participant:', {
+            participantId: p.participantId,
+            summonerName: displayName,
+            championName: p.championName,
+            teamId: p.teamId,
+            isCurrentPlayerByPuuid,
+            isCurrentPlayerByName,
+            identity: identity?.player
+          });
         }
 
         return {
           ...p,
-          // Usar championName já processado pelo backend, com fallback para o ID
-          championName: p.championName || `Champion${p.championId}`,
+          // Usar championName do Data Dragon, com fallback para o ID
+          championName: this.championService.getChampionName(p.championId) || `Champion${p.championId}`,
+          championId: p.championId, // Manter o ID para uso nas imagens
           summonerName: displayName,
           puuid: identity?.player?.puuid || '',
           kills: p.stats?.kills || 0,
@@ -1827,16 +1968,66 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
           item3: p.stats?.item3 || 0,
           item4: p.stats?.item4 || 0,
           item5: p.stats?.item5 || 0,
-          isCurrentPlayer: isCurrentPlayer
+          isCurrentPlayer: isCurrentPlayer,
+          teamId: p.teamId // Preservar teamId para separação das equipes
         };
       }) || [];
 
-      // Separate into teams
-      const team1 = enhancedParticipants.filter((p: any) => p.teamId === 100);
-      const team2 = enhancedParticipants.filter((p: any) => p.teamId === 200);
+      // Separate into teams - ensure we have exactly 5 players per team
+      const team1 = enhancedParticipants.filter((p: any) => p.teamId === 100).slice(0, 5);
+      const team2 = enhancedParticipants.filter((p: any) => p.teamId === 200).slice(0, 5);
+
+      // Check for duplicates within teams
+      const team1Puuids = team1.map((p: any) => p.puuid);
+      const team2Puuids = team2.map((p: any) => p.puuid);
+      const team1Duplicates = team1Puuids.filter((puuid: any, index: any) => team1Puuids.indexOf(puuid) !== index);
+      const team2Duplicates = team2Puuids.filter((puuid: any, index: any) => team2Puuids.indexOf(puuid) !== index);
+
+      if (team1Duplicates.length > 0) {
+        console.warn('⚠️ [mapLCUMatchToModel] Team 1 has duplicate PUUIDs:', team1Duplicates);
+      }
+      if (team2Duplicates.length > 0) {
+        console.warn('⚠️ [mapLCUMatchToModel] Team 2 has duplicate PUUIDs:', team2Duplicates);
+      }
+
+      console.log('🔍 [MATCH-HISTORY] Team separation:', {
+        totalParticipants: enhancedParticipants.length,
+        team1Count: team1.length,
+        team2Count: team2.length,
+        team1Participants: team1.map((p: any) => ({
+          summonerName: p.summonerName,
+          championName: p.championName,
+          teamId: p.teamId,
+          participantId: p.participantId,
+          puuid: p.puuid,
+          isCurrentPlayer: p.isCurrentPlayer
+        })),
+        team2Participants: team2.map((p: any) => ({
+          summonerName: p.summonerName,
+          championName: p.championName,
+          teamId: p.teamId,
+          participantId: p.participantId,
+          puuid: p.puuid,
+          isCurrentPlayer: p.isCurrentPlayer
+        })),
+        allParticipants: enhancedParticipants.map((p: any) => ({
+          summonerName: p.summonerName,
+          championName: p.championName,
+          teamId: p.teamId,
+          participantId: p.participantId,
+          puuid: p.puuid,
+          isCurrentPlayer: p.isCurrentPlayer
+        }))
+      });
 
       // Find current player data
       const currentPlayerData = enhancedParticipants.find((p: any) => p.isCurrentPlayer) || playerData;
+
+      // Ensure we have valid participants
+      if (!enhancedParticipants || enhancedParticipants.length === 0) {
+        console.warn('⚠️ [MATCH-HISTORY] No valid participants found for match:', lcuMatch.gameId);
+        return null;
+      }
 
       return {
         id: lcuMatch.gameId || lcuMatch.gameCreation,
@@ -1852,7 +2043,7 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
         winner: lcuMatch.teams?.find((t: any) => t.win)?.teamId === 100 ? 1 : 2,
         playerStats: {
           // Usar championName já processado pelo backend
-          champion: currentPlayerData.championName || `Champion${currentPlayerData.championId}`,
+          champion: currentPlayerData.championName || this.championService.getChampionName(currentPlayerData.championId),
           kills: currentPlayerData.stats?.kills || currentPlayerData.kills || 0,
           deaths: currentPlayerData.stats?.deaths || currentPlayerData.deaths || 0,
           assists: currentPlayerData.stats?.assists || currentPlayerData.assists || 0,

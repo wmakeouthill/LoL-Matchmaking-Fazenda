@@ -26,6 +26,7 @@
         <netty-socketio.version>1.7.19</netty-socketio.version>
         <jda.version>5.0.0-beta.24</jda.version>
         <resilience4j.version>2.2.0</resilience4j.version>
+        <angular.build.config>production</angular.build.config>
     </properties>
 
     <dependencies>
@@ -120,6 +121,7 @@
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
             <version>2.5.0</version>
         </dependency>
+
 
         <!-- Tests -->
         <dependency>
@@ -263,4 +265,8 @@
             </plugin>
         </plugins>
     </build>
+
+    <!-- Perfis para diferentes ambientes -->
+    <profiles>
+    </profiles>
 </project>

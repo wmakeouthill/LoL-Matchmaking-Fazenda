@@ -1,6 +1,6 @@
 import { Component, Input, Output, EventEmitter, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ChampionService, Champion } from '../../services/champion.service';
+import { ChampionService } from '../../services/champion.service';
 
 function logConfirmationModal(...args: any[]) {
   const fs = (window as any).electronAPI?.fs;
@@ -19,7 +19,7 @@ function logConfirmationModal(...args: any[]) {
 interface PickBanPhase {
   team: 'blue' | 'red';
   action: 'ban' | 'pick';
-  champion?: Champion;
+  champion?: any;
   playerId?: string;
   playerName?: string;
   locked: boolean;
@@ -40,7 +40,7 @@ interface CustomPickBanSession {
 
 interface TeamSlot {
   player: any;
-  champion?: Champion;
+  champion?: any;
   phaseIndex: number;
 }
 
@@ -67,9 +67,9 @@ export class DraftConfirmationModalComponent implements OnChanges {
   confirmationMessage: string = '';
 
   // PROPRIEDADES PARA CACHE
-  private _cachedBannedChampions: Champion[] | null = null;
-  private _cachedBlueTeamPicks: Champion[] | null = null;
-  private _cachedRedTeamPicks: Champion[] | null = null;
+  private _cachedBannedanys: any[] | null = null;
+  private _cachedBlueTeamPicks: any[] | null = null;
+  private _cachedRedTeamPicks: any[] | null = null;
   private _cachedBlueTeamByLane: TeamSlot[] | null = null;
   private _cachedRedTeamByLane: TeamSlot[] | null = null;
   private _lastCacheUpdate: number = 0;
@@ -237,27 +237,27 @@ export class DraftConfirmationModalComponent implements OnChanges {
   }
 
   // MÉTODOS PARA VERIFICAR ESTADO DOS CAMPEÕES
-  getBannedChampions(): Champion[] {
-    if (this.isCacheValid() && this._cachedBannedChampions) {
-      return this._cachedBannedChampions;
+  getBannedChampions(): any[] {
+    if (this.isCacheValid() && this._cachedBannedanys) {
+      return this._cachedBannedanys;
     }
 
     if (!this.session) return [];
 
-    const bannedChampions = this.session.phases
+    const bannedanys = this.session.phases
       .filter(phase => phase.action === 'ban' && phase.champion)
       .map(phase => phase.champion!)
       .filter((champion, index, self) =>
         index === self.findIndex(c => c.id === champion.id)
       );
 
-    this._cachedBannedChampions = bannedChampions;
+    this._cachedBannedanys = bannedanys;
     this._lastCacheUpdate = Date.now();
 
-    return bannedChampions;
+    return bannedanys;
   }
 
-  getTeamPicks(team: 'blue' | 'red'): Champion[] {
+  getTeamPicks(team: 'blue' | 'red'): any[] {
     if (team === 'blue' && this.isCacheValid() && this._cachedBlueTeamPicks) {
       return this._cachedBlueTeamPicks;
     }
@@ -270,7 +270,7 @@ export class DraftConfirmationModalComponent implements OnChanges {
     logConfirmationModal(`🎯 [getTeamPicks] === OBTENDO PICKS DO TIME ${team.toUpperCase()} ===`);
 
     // ✅ CORREÇÃO: Usar actions em vez de phases para obter dados reais
-    let teamPicks: Champion[] = [];
+    let teamPicks: any[] = [];
 
     if (this.session.actions && this.session.actions.length > 0) {
       // Usar dados das actions (fonte de verdade)
@@ -326,11 +326,11 @@ export class DraftConfirmationModalComponent implements OnChanges {
     return teamPicks;
   }
 
-  getTeamBans(team: 'blue' | 'red'): Champion[] {
+  getTeamBans(team: 'blue' | 'red'): any[] {
     if (!this.session) return [];
 
     // ✅ CORREÇÃO: Usar actions em vez de phases para obter dados reais
-    let teamBans: Champion[] = [];
+    let teamBans: any[] = [];
 
     if (this.session.actions && this.session.actions.length > 0) {
       // Usar dados das actions (fonte de verdade)
@@ -507,7 +507,7 @@ export class DraftConfirmationModalComponent implements OnChanges {
       const phaseIndex = this.getPhaseIndexForPlayer(player) || 0;
 
       // ✅ NOVO: Encontrar o pick específico deste jogador usando actions
-      let playerChampion = undefined;
+      let playerany = undefined;
 
       if (this.session?.actions) {
         const playerAction = this.session.actions.find((action: any) => {
@@ -518,7 +518,7 @@ export class DraftConfirmationModalComponent implements OnChanges {
         });
 
         if (playerAction) {
-          playerChampion = playerAction.champion;
+          playerany = playerAction.champion;
           logConfirmationModal('🎯 [organizeTeamByLanes] Pick encontrado via actions para:', {
             playerName: player.summonerName || player.name,
             championName: playerAction.champion.name,
@@ -528,8 +528,8 @@ export class DraftConfirmationModalComponent implements OnChanges {
       }
 
       // ✅ FALLBACK: Se não encontrou via actions, usar índice (comportamento antigo)
-      if (!playerChampion && teamPicks[index]) {
-        playerChampion = teamPicks[index];
+      if (!playerany && teamPicks[index]) {
+        playerany = teamPicks[index];
         logConfirmationModal('🎯 [organizeTeamByLanes] Pick encontrado via índice (fallback) para:', {
           playerName: player.summonerName || player.name,
           championName: teamPicks[index].name,
@@ -543,13 +543,13 @@ export class DraftConfirmationModalComponent implements OnChanges {
         playerTeamIndex: player.teamIndex,
         playerLane: player.assignedLane || player.lane,
         phaseIndex: phaseIndex,
-        hasChampion: !!playerChampion,
-        championName: playerChampion?.name || 'Sem champion'
+        hasany: !!playerany,
+        championName: playerany?.name || 'Sem champion'
       });
 
       return {
         player,
-        champion: playerChampion,
+        champion: playerany,
         phaseIndex: phaseIndex
       };
     });
@@ -962,7 +962,7 @@ export class DraftConfirmationModalComponent implements OnChanges {
 
   // MÉTODOS PARA CACHE
   private invalidateCache(): void {
-    this._cachedBannedChampions = null;
+    this._cachedBannedanys = null;
     this._cachedBlueTeamPicks = null;
     this._cachedRedTeamPicks = null;
     this._cachedBlueTeamByLane = null;
@@ -975,7 +975,7 @@ export class DraftConfirmationModalComponent implements OnChanges {
   }
 
   // MÉTODOS AUXILIARES
-  onImageError(event: any, champion: Champion): void {
+  onImageError(event: any, champion: any): void {
     event.target.src = 'assets/images/champion-placeholder.svg';
   }
 
@@ -991,7 +991,7 @@ export class DraftConfirmationModalComponent implements OnChanges {
     logConfirmationModal('🔄 [forceRefresh] Forçando atualização do modal de confirmação');
     this.invalidateCache();
     // Forçar recálculo de todos os dados
-    this._cachedBannedChampions = null;
+    this._cachedBannedanys = null;
     this._cachedBlueTeamPicks = null;
     this._cachedRedTeamPicks = null;
     this._cachedBlueTeamByLane = null;

@@ -2,9 +2,9 @@ import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, ChangeDetect
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
-import { ChampionService, Champion } from '../../services/champion.service';
+import { ChampionService } from '../../services/champion.service';
 import { BotService } from '../../services/bot.service';
-import { DraftChampionModalComponent } from './draft-champion-modal';
+import { DraftanyModalComponent } from './draft-champion-modal';
 import { DraftConfirmationModalComponent } from './draft-confirmation-modal';
 import { firstValueFrom } from 'rxjs';
 import { ApiService } from '../../services/api';
@@ -52,7 +52,7 @@ function saveLogToRoot(message: string, filename: string = 'draft-debug.log') {
   imports: [
     CommonModule,
     FormsModule,
-    DraftChampionModalComponent,
+    DraftanyModalComponent,
     DraftConfirmationModalComponent
   ],
   templateUrl: './draft-pick-ban.html',
@@ -65,14 +65,14 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   @Output() draftComplete = new EventEmitter<any>();
   @Output() onPickBanComplete = new EventEmitter<any>();
   @Output() onPickBanCancel = new EventEmitter<void>();
-  @Output() onOpenChampionModal = new EventEmitter<void>();
+  @Output() onOpenanyModal = new EventEmitter<void>();
   @Output() onOpenConfirmationModal = new EventEmitter<void>();
 
   // ✅ PROPRIEDADES SIMPLIFICADAS - apenas para exibição
   session: any = null;
   champions: any[] = [];
   championsByRole: any = {};
-  showChampionModal: boolean = false;
+  showanyModal: boolean = false;
   showConfirmationModal: boolean = false;
   confirmationData: any = null; // ✅ NOVO: Dados de confirmação dos jogadores
   isMyTurn: boolean = false;
@@ -486,14 +486,16 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   private async loadChampions() {
     try {
       logDraft('🔄 [loadChampions] Carregando campeões...');
-      this.championService.getAllChampions().subscribe({
-        next: (champions) => {
-          this.champions = champions;
-          this.championsLoaded = true;
-          logDraft(`✅ [loadChampions] ${this.champions.length} campeões carregados`);
-          this.organizeChampionsByRole();
+      this.championService.preloadChampions().subscribe({
+        next: (loaded: boolean) => {
+          if (loaded) {
+            this.champions = []; // TODO: Implementar getAllChampions se necessário
+            this.championsLoaded = true;
+            logDraft(`✅ [loadChampions] Champions data loaded`);
+            this.organizeChampionsByRole();
+          }
         },
-        error: (error) => {
+        error: (error: any) => {
           logDraft('❌ [loadChampions] Erro ao carregar campeões:', error);
         }
       });
@@ -503,6 +505,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   private organizeChampionsByRole() {
+    // TODO: Implementar getChampionsByRole se necessário
+    this.championsByRole = {}; // Temporário
+    /*
     this.championService.getChampionsByRole().subscribe({
       next: (championsByRole) => {
         this.championsByRole = championsByRole;
@@ -511,6 +516,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         logDraft('❌ [organizeChampionsByRole] Erro ao organizar campeões por role:', error);
       }
     });
+    */
   }
 
   // ✅ SINCRONIZAÇÃO OTIMIZADA - Sob demanda via WebSocket
@@ -759,7 +765,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
             currentAction: this.session.currentAction,
             phase: this.session.phase,
             phasesCount: this.session.phases?.length,
-            phasesWithChampions: this.session.phases?.filter((phase: any) => phase.champion)?.length || 0,
+            phasesWithanys: this.session.phases?.filter((phase: any) => phase.champion)?.length || 0,
             blueTeamLength: this.session.blueTeam?.length || 0,
             redTeamLength: this.session.redTeam?.length || 0,
             confirmationData: this.confirmationData
@@ -772,14 +778,14 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
               team: phase.team,
               playerId: phase.playerId,
               playerName: phase.playerName,
-              hasChampion: !!phase.champion,
+              hasany: !!phase.champion,
               championName: phase.champion?.name || 'N/A'
             });
           });
 
           // Atualizar estado da interface para mostrar modal de confirmação
           this.isMyTurn = false;
-          this.showChampionModal = false;
+          this.showanyModal = false;
           this.showConfirmationModal = true;
           this.cdr.detectChanges();
           return;
@@ -849,12 +855,12 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     if (this.isEditingMode) {
       logDraft('🔄 [updateInterfaceState] Modo de edição ativo - mantendo modal de campeão aberto');
       saveLogToRoot(`🎯 [updateInterfaceState] Modo de edição ativo - preservando estado do modal`);
-      saveLogToRoot(`🔍 [updateInterfaceState] Estado preservado: showChampionModal=${this.showChampionModal}, showConfirmationModal=${this.showConfirmationModal}`);
+      saveLogToRoot(`🔍 [updateInterfaceState] Estado preservado: showanyModal=${this.showanyModal}, showConfirmationModal=${this.showConfirmationModal}`);
 
       // ✅ NOVO: Garantir que o modal de campeão está aberto durante edição
-      if (!this.showChampionModal) {
+      if (!this.showanyModal) {
         saveLogToRoot(`⚠️ [updateInterfaceState] CORREÇÃO: Modal de campeão estava fechado durante edição - reabrindo`);
-        this.showChampionModal = true;
+        this.showanyModal = true;
       }
 
       // ✅ NOVO: Garantir que o modal de confirmação está fechado durante edição
@@ -863,7 +869,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         this.showConfirmationModal = false;
       }
 
-      saveLogToRoot(`🎯 [updateInterfaceState] Estado final modo edição: showChampionModal=${this.showChampionModal}, showConfirmationModal=${this.showConfirmationModal}`);
+      saveLogToRoot(`🎯 [updateInterfaceState] Estado final modo edição: showanyModal=${this.showanyModal}, showConfirmationModal=${this.showConfirmationModal}`);
       this.cdr.detectChanges();
       return;
     }
@@ -875,7 +881,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     if (isDraftCompleted) {
       logDraft('🎯 [updateInterfaceState] Draft completado - mostrando modal de confirmação');
       saveLogToRoot(`✅ [updateInterfaceState] Draft completado - mostrando modal de confirmação`);
-      this.showChampionModal = false;
+      this.showanyModal = false;
       this.showConfirmationModal = true;
       this.cdr.detectChanges();
       return;
@@ -890,17 +896,17 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     if (shouldShowModal) {
       logDraft('🔄 [updateInterfaceState] É minha vez de pick ou ban - mostrando modal');
       saveLogToRoot(`✅ [updateInterfaceState] Mostrando modal de campeões para ação: ${this.currentPlayerTurn?.action}`);
-      this.showChampionModal = true;
+      this.showanyModal = true;
       this.showConfirmationModal = false;
     } else {
       logDraft('🔄 [updateInterfaceState] Não é minha vez ou condições não atendidas - ocultando modal');
       saveLogToRoot(`❌ [updateInterfaceState] Ocultando modal. isMyTurn=${this.isMyTurn}, action=${this.currentPlayerTurn?.action}, currentAction=${this.session?.currentAction}, phasesLength=${this.session?.phases?.length || 0}`);
-      this.showChampionModal = false;
+      this.showanyModal = false;
     }
 
     // ✅ NOVO: Log detalhado do estado da interface
     const interfaceState = {
-      showChampionModal: this.showChampionModal,
+      showanyModal: this.showanyModal,
       showConfirmationModal: this.showConfirmationModal,
       isMyTurn: this.isMyTurn,
       currentAction: this.session?.currentAction,
@@ -992,20 +998,20 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   // ✅ MÉTODOS DE EXIBIÇÃO
-  getBannedChampions(): Champion[] {
+  getBannedChampions(): any[] {
     if (!this.session) return [];
 
-    const bannedChampions = this.session.phases
+    const bannedanys = this.session.phases
       .filter((phase: any) => phase.action === 'ban' && phase.champion && phase.locked)
       .map((phase: any) => phase.champion!)
       .filter((champion: any, index: number, self: any[]) =>
         index === self.findIndex((c: any) => c.id === champion.id)
       );
 
-    return bannedChampions;
+    return bannedanys;
   }
 
-  getTeamPicks(team: 'blue' | 'red'): Champion[] {
+  getTeamPicks(team: 'blue' | 'red'): any[] {
     if (!this.session) return [];
 
     // ✅ MELHORADO: Usar dados das ações se disponíveis
@@ -1029,7 +1035,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     return teamPicks;
   }
 
-  getTeamBans(team: 'blue' | 'red'): Champion[] {
+  getTeamBans(team: 'blue' | 'red'): any[] {
     if (!this.session) return [];
 
     // ✅ MELHORADO: Usar dados das ações se disponíveis
@@ -1116,11 +1122,11 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     return player ? this.botService.comparePlayers(this.currentPlayer, player) : false;
   }
 
-  isChampionBanned(champion: Champion): boolean {
+  isChampionBanned(champion: any): boolean {
     return this.getBannedChampions().some(c => c.id === champion.id);
   }
 
-  isChampionPicked(champion: Champion): boolean {
+  isChampionPicked(champion: any): boolean {
     const bluePicks = this.getTeamPicks('blue');
     const redPicks = this.getTeamPicks('red');
 
@@ -1166,7 +1172,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     return teamPlayers.find((p: any) => this.checkPlayerMatch(p, player));
   }
 
-  private findPickInActions(foundPlayer: any, team: 'blue' | 'red'): Champion | null {
+  private findPickInActions(foundPlayer: any, team: 'blue' | 'red'): any | null {
     if (!this.session.actions?.length) return null;
 
     const teamIndex = team === 'blue' ? 1 : 2;
@@ -1220,19 +1226,19 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       }
 
       const isPickAction = action.action === 'pick';
-      const hasChampion = action.champion && action.locked;
+      const hasany = action.champion && action.locked;
 
-      if (isCorrectTeam && isCorrectPlayer && isPickAction && hasChampion) {
+      if (isCorrectTeam && isCorrectPlayer && isPickAction && hasany) {
         saveLogToRoot(`✅ [findPickInActions] Pick encontrado: ${action.playerName} → ${action.champion.name}`);
       }
 
-      return isCorrectTeam && isCorrectPlayer && isPickAction && hasChampion;
+      return isCorrectTeam && isCorrectPlayer && isPickAction && hasany;
     });
 
     return pickAction?.champion || null;
   }
 
-  private findPickInPhases(foundPlayer: any, team: 'blue' | 'red'): Champion | null {
+  private findPickInPhases(foundPlayer: any, team: 'blue' | 'red'): any | null {
     if (!this.session) return null;
 
     const pickPhases = this.session.phases.filter((phase: any) =>
@@ -1260,7 +1266,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       this.botService.comparePlayerWithId(foundPlayer, pickPhase.playerName || '');
   }
 
-  getPlayerPick(team: 'blue' | 'red', player: any): Champion | null {
+  getPlayerPick(team: 'blue' | 'red', player: any): any | null {
     const foundPlayer = this.findPlayerInTeam(team, player);
     if (!foundPlayer) return null;
 
@@ -1272,7 +1278,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     return this.findPickInPhases(foundPlayer, team);
   }
 
-  getPlayerBans(team: 'blue' | 'red', player: any): Champion[] {
+  getPlayerBans(team: 'blue' | 'red', player: any): any[] {
     if (!this.session) return [];
 
     const teamPlayers = team === 'blue' ? this.session.blueTeam : this.session.redTeam;
@@ -1290,9 +1296,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           action.playerName === foundPlayer.name ||
           action.playerName === foundPlayer.displayName;
         const isBanAction = action.action === 'ban';
-        const hasChampion = action.champion && action.locked;
+        const hasany = action.champion && action.locked;
 
-        return isCorrectTeam && isCorrectPlayer && isBanAction && hasChampion;
+        return isCorrectTeam && isCorrectPlayer && isBanAction && hasany;
       });
 
       return banActions.map((action: any) => action.champion);
@@ -1305,7 +1311,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       phase.locked
     );
 
-    const playerBans: Champion[] = [];
+    const playerBans: any[] = [];
 
     for (const banPhase of banPhases) {
       const phasePlayerName = banPhase.playerName || banPhase.playerId || '';
@@ -1502,17 +1508,17 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   // ✅ MÉTODOS DE INTERFACE
-  onImageError(event: any, champion: Champion): void {
+  onImageError(event: any, champion: any): void {
     event.target.src = 'assets/images/champion-placeholder.svg';
   }
 
-  openChampionModal(): void {
-    logDraft('🎯 [openChampionModal] === ABRINDO MODAL DE CAMPEÕES ===');
-    saveLogToRoot(`🎯 [openChampionModal] Tentando abrir modal de campeões`);
+  openanyModal(): void {
+    logDraft('🎯 [openanyModal] === ABRINDO MODAL DE CAMPEÕES ===');
+    saveLogToRoot(`🎯 [openanyModal] Tentando abrir modal de campeões`);
 
     if (!this.session) {
-      logDraft('❌ [openChampionModal] Session não existe - não abrindo modal');
-      saveLogToRoot(`❌ [openChampionModal] Session não existe`);
+      logDraft('❌ [openanyModal] Session não existe - não abrindo modal');
+      saveLogToRoot(`❌ [openanyModal] Session não existe`);
       return;
     }
 
@@ -1520,20 +1526,20 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     this.updateDraftState();
 
     if (!this.isMyTurn) {
-      logDraft('❌ [openChampionModal] Não é a vez do jogador, não abrindo modal');
-      saveLogToRoot(`❌ [openChampionModal] Não é a vez do jogador. isMyTurn=${this.isMyTurn}`);
+      logDraft('❌ [openanyModal] Não é a vez do jogador, não abrindo modal');
+      saveLogToRoot(`❌ [openanyModal] Não é a vez do jogador. isMyTurn=${this.isMyTurn}`);
       return;
     }
     if (this.session.phase === 'completed' || this.session.currentAction >= this.session.phases.length) {
-      logDraft('❌ [openChampionModal] Sessão completada ou inválida - não abrindo modal');
-      saveLogToRoot(`❌ [openChampionModal] Sessão completada ou inválida. phase=${this.session.phase}, currentAction=${this.session.currentAction}, phases.length=${this.session.phases.length}`);
+      logDraft('❌ [openanyModal] Sessão completada ou inválida - não abrindo modal');
+      saveLogToRoot(`❌ [openanyModal] Sessão completada ou inválida. phase=${this.session.phase}, currentAction=${this.session.currentAction}, phases.length=${this.session.phases.length}`);
       return;
     }
 
-    this.showChampionModal = true;
+    this.showanyModal = true;
     this.cdr.markForCheck();
-    logDraft('🎯 [openChampionModal] === FIM DA ABERTURA DO MODAL ===');
-    saveLogToRoot(`✅ [openChampionModal] Modal aberto com sucesso. showChampionModal=${this.showChampionModal}`);
+    logDraft('🎯 [openanyModal] === FIM DA ABERTURA DO MODAL ===');
+    saveLogToRoot(`✅ [openanyModal] Modal aberto com sucesso. showanyModal=${this.showanyModal}`);
   }
 
   openConfirmationModal(): void {
@@ -1566,28 +1572,28 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   // ✅ MÉTODOS DE AÇÃO
-  async onChampionSelected(champion: Champion): Promise<void> {
-    logDraft('🎯 [onChampionSelected] === CAMPEÃO SELECIONADO ===');
-    logDraft('🎯 [onChampionSelected] Campeão selecionado:', champion.name);
-    saveLogToRoot(`🎯 [onChampionSelected] Campeão selecionado: ${champion.name} (ID: ${champion.id})`);
+  async onanySelected(champion: any): Promise<void> {
+    logDraft('🎯 [onanySelected] === CAMPEÃO SELECIONADO ===');
+    logDraft('🎯 [onanySelected] Campeão selecionado:', champion.name);
+    saveLogToRoot(`🎯 [onanySelected] Campeão selecionado: ${champion.name} (ID: ${champion.id})`);
 
     if (!this.session) {
-      logDraft('❌ [onChampionSelected] Session não existe');
-      saveLogToRoot(`❌ [onChampionSelected] Session não existe`);
+      logDraft('❌ [onanySelected] Session não existe');
+      saveLogToRoot(`❌ [onanySelected] Session não existe`);
       return;
     }
 
     // ✅ NOVO: Verificar se estamos em modo de edição
     if (this.isEditingMode && this.currentEditingPlayer) {
-      logDraft('🔄 [onChampionSelected] Modo edição - sobrescrevendo pick anterior');
-      saveLogToRoot(`🔄 [onChampionSelected] Editando pick de ${this.currentEditingPlayer.playerId} para ${champion.name}`);
+      logDraft('🔄 [onanySelected] Modo edição - sobrescrevendo pick anterior');
+      saveLogToRoot(`🔄 [onanySelected] Editando pick de ${this.currentEditingPlayer.playerId} para ${champion.name}`);
 
       await this.updatePlayerPick(this.currentEditingPlayer.playerId, champion);
 
       // Resetar modo de edição
       this.isEditingMode = false;
       this.currentEditingPlayer = null;
-      this.showChampionModal = false;
+      this.showanyModal = false;
       this.showConfirmationModal = true; // Voltar para modal de confirmação
       this.cdr.detectChanges();
       return;
@@ -1598,27 +1604,27 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       this.session.currentAction >= (this.session.phases?.length || 0);
 
     if (isDraftCompleted) {
-      logDraft('🔄 [onChampionSelected] Draft completado - editando pick via botão');
-      saveLogToRoot(`🔄 [onChampionSelected] Draft completado - editando pick para campeão ${champion.name}`);
+      logDraft('🔄 [onanySelected] Draft completado - editando pick via botão');
+      saveLogToRoot(`🔄 [onanySelected] Draft completado - editando pick para campeão ${champion.name}`);
       await this.changePlayerPick(Number(champion.id));
       return;
     }
 
     const currentPhase = this.session.phases[this.session.currentAction];
     if (!currentPhase) {
-      logDraft('❌ [onChampionSelected] Fase atual não existe');
-      saveLogToRoot(`❌ [onChampionSelected] Fase atual não existe para currentAction=${this.session.currentAction}`);
+      logDraft('❌ [onanySelected] Fase atual não existe');
+      saveLogToRoot(`❌ [onanySelected] Fase atual não existe para currentAction=${this.session.currentAction}`);
       return;
     }
 
     // ✅ NOVO: Log detalhado da fase atual
-    saveLogToRoot(`🎯 [onChampionSelected] Fase atual: ${JSON.stringify(currentPhase)}`);
+    saveLogToRoot(`🎯 [onanySelected] Fase atual: ${JSON.stringify(currentPhase)}`);
 
     // ✅ MELHORADO: Atualizar fase local
     currentPhase.champion = champion;
     currentPhase.locked = true;
     currentPhase.timeRemaining = 0;
-    this.showChampionModal = false;
+    this.showanyModal = false;
 
     if (!this.botService.isBot(this.currentPlayer)) {
       this.isWaitingBackend = true;
@@ -1627,7 +1633,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     // ✅ CORREÇÃO: Garantir que matchId seja sempre válido
     const effectiveMatchId = this.matchId || this.matchData?.matchId || this.matchData?.id;
     if (effectiveMatchId) {
-      saveLogToRoot(`🎯 [onChampionSelected] Usando matchId: ${effectiveMatchId}`);
+      saveLogToRoot(`🎯 [onanySelected] Usando matchId: ${effectiveMatchId}`);
       try {
         // ✅ CORREÇÃO: Priorizar summonerName para compatibilidade com backend
         let playerIdentifier = '';
@@ -1635,22 +1641,22 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         // Prioridade 1: summonerName (o que o backend espera principalmente)
         if (this.currentPlayer?.summonerName) {
           playerIdentifier = this.currentPlayer.summonerName;
-          saveLogToRoot(`🎯 [onChampionSelected] Usando summonerName: ${playerIdentifier}`);
+          saveLogToRoot(`🎯 [onanySelected] Usando summonerName: ${playerIdentifier}`);
         } else if (this.currentPlayer?.displayName) {
           playerIdentifier = this.currentPlayer.displayName;
-          saveLogToRoot(`🎯 [onChampionSelected] Usando displayName: ${playerIdentifier}`);
+          saveLogToRoot(`🎯 [onanySelected] Usando displayName: ${playerIdentifier}`);
         } else if (this.currentPlayer?.gameName && this.currentPlayer?.tagLine) {
           playerIdentifier = `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`;
-          saveLogToRoot(`🎯 [onChampionSelected] Usando gameName#tagLine: ${playerIdentifier}`);
+          saveLogToRoot(`🎯 [onanySelected] Usando gameName#tagLine: ${playerIdentifier}`);
         } else if (this.currentPlayer?.puuid) {
           playerIdentifier = this.currentPlayer.puuid;
-          saveLogToRoot(`🎯 [onChampionSelected] Usando PUUID como fallback: ${playerIdentifier}`);
+          saveLogToRoot(`🎯 [onanySelected] Usando PUUID como fallback: ${playerIdentifier}`);
         } else if (currentPhase.playerId) {
           playerIdentifier = currentPhase.playerId;
-          saveLogToRoot(`🎯 [onChampionSelected] Usando playerId da fase: ${playerIdentifier}`);
+          saveLogToRoot(`🎯 [onanySelected] Usando playerId da fase: ${playerIdentifier}`);
         } else if (currentPhase.playerName) {
           playerIdentifier = currentPhase.playerName;
-          saveLogToRoot(`🎯 [onChampionSelected] Usando playerName da fase: ${playerIdentifier}`);
+          saveLogToRoot(`🎯 [onanySelected] Usando playerName da fase: ${playerIdentifier}`);
         }
 
         const url = `${this.baseUrl}/match/draft-action`;
@@ -1662,8 +1668,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           actionIndex: this.session.currentAction
         };
 
-        logDraft('🎯 [onChampionSelected] Enviando ação para backend:', requestData);
-        saveLogToRoot(`🎯 [onChampionSelected] Enviando ação: ${JSON.stringify(requestData)}`);
+        logDraft('🎯 [onanySelected] Enviando ação para backend:', requestData);
+        saveLogToRoot(`🎯 [onanySelected] Enviando ação: ${JSON.stringify(requestData)}`);
 
         const response = await firstValueFrom(this.http.post(url, requestData, {
           headers: {
@@ -1672,8 +1678,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           }
         }));
 
-        logDraft('✅ [onChampionSelected] Ação enviada para backend com sucesso');
-        saveLogToRoot(`✅ [onChampionSelected] Ação enviada para backend com sucesso. Resposta: ${JSON.stringify(response)}`);
+        logDraft('✅ [onanySelected] Ação enviada para backend com sucesso');
+        saveLogToRoot(`✅ [onanySelected] Ação enviada para backend com sucesso. Resposta: ${JSON.stringify(response)}`);
 
         // ✅ OTIMIZAÇÃO: Sincronização imediata após ação + retry automático
         this.syncSessionWithRetry();
@@ -1681,16 +1687,16 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         // ✅ MELHORADO: Aguardar um pouco antes de parar o loading
         setTimeout(() => {
           this.isWaitingBackend = false;
-          logDraft('✅ [onChampionSelected] Loading finalizado');
-          saveLogToRoot(`✅ [onChampionSelected] Loading finalizado`);
+          logDraft('✅ [onanySelected] Loading finalizado');
+          saveLogToRoot(`✅ [onanySelected] Loading finalizado`);
         }, 1000);
       } catch (error: any) {
-        logDraft('❌ [onChampionSelected] Erro ao enviar para backend:', error);
-        saveLogToRoot(`❌ [onChampionSelected] Erro: ${error}`);
+        logDraft('❌ [onanySelected] Erro ao enviar para backend:', error);
+        saveLogToRoot(`❌ [onanySelected] Erro: ${error}`);
 
         // ✅ NOVO: Fallback para erro de autorização
         if (error?.error?.error?.includes('não autorizado')) {
-          saveLogToRoot(`🔄 [onChampionSelected] Erro de autorização detectado - tentando com playerId da fase`);
+          saveLogToRoot(`🔄 [onanySelected] Erro de autorização detectado - tentando com playerId da fase`);
 
           // Reconstruir URL e requestData no escopo correto
           const fallbackUrl = `${this.baseUrl}/match/draft-action`;
@@ -1703,30 +1709,30 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           };
 
           try {
-            saveLogToRoot(`🔄 [onChampionSelected] Tentativa fallback: ${JSON.stringify(fallbackRequestData)}`);
+            saveLogToRoot(`🔄 [onanySelected] Tentativa fallback: ${JSON.stringify(fallbackRequestData)}`);
             const fallbackResponse = await firstValueFrom(this.http.post(fallbackUrl, fallbackRequestData, {
               headers: { 'Content-Type': 'application/json' }
             }));
-            saveLogToRoot(`✅ [onChampionSelected] Fallback bem-sucedido: ${JSON.stringify(fallbackResponse)}`);
+            saveLogToRoot(`✅ [onanySelected] Fallback bem-sucedido: ${JSON.stringify(fallbackResponse)}`);
 
             // Se o fallback funcionar, seguir o fluxo normal
             this.syncSessionWithRetry();
             setTimeout(() => {
               this.isWaitingBackend = false;
-              logDraft('✅ [onChampionSelected] Loading finalizado (fallback)');
-              saveLogToRoot(`✅ [onChampionSelected] Loading finalizado (fallback)`);
+              logDraft('✅ [onanySelected] Loading finalizado (fallback)');
+              saveLogToRoot(`✅ [onanySelected] Loading finalizado (fallback)`);
             }, 1000);
             return;
           } catch (fallbackError) {
-            saveLogToRoot(`❌ [onChampionSelected] Fallback também falhou: ${fallbackError}`);
+            saveLogToRoot(`❌ [onanySelected] Fallback também falhou: ${fallbackError}`);
           }
         }
 
         this.isWaitingBackend = false;
       }
     } else {
-      logDraft('❌ [onChampionSelected] Nenhum matchId disponível');
-      saveLogToRoot(`❌ [onChampionSelected] Nenhum matchId disponível`);
+      logDraft('❌ [onanySelected] Nenhum matchId disponível');
+      saveLogToRoot(`❌ [onanySelected] Nenhum matchId disponível`);
       this.isWaitingBackend = false;
     }
   }
@@ -1808,7 +1814,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     saveLogToRoot(`✏️ [onConfirmationModalEditPick] Editando pick: ${JSON.stringify(data)}`);
 
     // ✅ PRIMEIRO: Log do estado atual ANTES de qualquer alteração
-    saveLogToRoot(`🔍 [onConfirmationModalEditPick] ANTES: showChampionModal=${this.showChampionModal}, showConfirmationModal=${this.showConfirmationModal}, isEditingMode=${this.isEditingMode}`);
+    saveLogToRoot(`🔍 [onConfirmationModalEditPick] ANTES: showanyModal=${this.showanyModal}, showConfirmationModal=${this.showConfirmationModal}, isEditingMode=${this.isEditingMode}`);
 
     // ✅ CRÍTICO: Definir modo de edição PRIMEIRO para bloquear updateInterfaceState
     this.isEditingMode = true;
@@ -1837,8 +1843,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
     // ✅ ALTERAR MODAIS: Fechar confirmação e abrir campeão
     this.showConfirmationModal = false;
-    this.showChampionModal = true;
-    saveLogToRoot(`🔄 [onConfirmationModalEditPick] MODAIS ALTERADOS: showChampionModal=${this.showChampionModal}, showConfirmationModal=${this.showConfirmationModal}`);
+    this.showanyModal = true;
+    saveLogToRoot(`🔄 [onConfirmationModalEditPick] MODAIS ALTERADOS: showanyModal=${this.showanyModal}, showConfirmationModal=${this.showConfirmationModal}`);
 
     logDraft('✅ [onConfirmationModalEditPick] Modal de edição configurado');
     saveLogToRoot(`✅ [onConfirmationModalEditPick] Modo edição ativado para jogador: ${data.playerId}`);
@@ -1847,7 +1853,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     const sessionOk = this.session ? 'true' : 'false';
     const phaseOk = this.session?.phase !== 'completed' ? 'true' : 'false';
     const actionOk = this.session ? this.session.currentAction < this.session.phases.length : 'session_null';
-    saveLogToRoot(`🔍 [onConfirmationModalEditPick] CONDIÇÕES TEMPLATE: isVisible=${this.showChampionModal}, session=${sessionOk}, phase!='completed'=${phaseOk}, currentAction<phases.length=${actionOk}`);
+    saveLogToRoot(`🔍 [onConfirmationModalEditPick] CONDIÇÕES TEMPLATE: isVisible=${this.showanyModal}, session=${sessionOk}, phase!='completed'=${phaseOk}, currentAction<phases.length=${actionOk}`);
 
     // ✅ FORÇAR detecção de mudanças IMEDIATAMENTE
     this.cdr.detectChanges();
@@ -1855,18 +1861,18 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
     // ✅ VERIFICAÇÃO: Timeout para garantir que o estado não foi sobrescrito
     setTimeout(() => {
-      saveLogToRoot(`🕒 [onConfirmationModalEditPick] VERIFICAÇÃO (100ms): showChampionModal=${this.showChampionModal}, showConfirmationModal=${this.showConfirmationModal}, isEditingMode=${this.isEditingMode}`);
+      saveLogToRoot(`🕒 [onConfirmationModalEditPick] VERIFICAÇÃO (100ms): showanyModal=${this.showanyModal}, showConfirmationModal=${this.showConfirmationModal}, isEditingMode=${this.isEditingMode}`);
 
       // ✅ DIAGNÓSTICO: Verificar condições do template APÓS timeout
       const sessionOk2 = this.session ? 'true' : 'false';
       const phaseOk2 = this.session?.phase !== 'completed' ? 'true' : 'false';
       const actionOk2 = this.session ? this.session.currentAction < this.session.phases.length : 'session_null';
-      saveLogToRoot(`🔍 [onConfirmationModalEditPick] CONDIÇÕES TEMPLATE (100ms): isVisible=${this.showChampionModal}, session=${sessionOk2}, phase!='completed'=${phaseOk2}, currentAction<phases.length=${actionOk2}`);
+      saveLogToRoot(`🔍 [onConfirmationModalEditPick] CONDIÇÕES TEMPLATE (100ms): isVisible=${this.showanyModal}, session=${sessionOk2}, phase!='completed'=${phaseOk2}, currentAction<phases.length=${actionOk2}`);
 
-      if (!this.showChampionModal || this.showConfirmationModal || !this.isEditingMode) {
+      if (!this.showanyModal || this.showConfirmationModal || !this.isEditingMode) {
         saveLogToRoot(`🚨 [onConfirmationModalEditPick] ESTADO INCORRETO - CORRIGINDO`);
         this.isEditingMode = true;
-        this.showChampionModal = true;
+        this.showanyModal = true;
         this.showConfirmationModal = false;
         this.cdr.detectChanges();
         saveLogToRoot(`🔧 [onConfirmationModalEditPick] Estado corrigido`);
@@ -1922,7 +1928,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       saveLogToRoot(`✅ [changePlayerPick] Pick alterado com sucesso: ${JSON.stringify(response)}`);
 
       // Fechar modal de campeão e reabrir modal de confirmação
-      this.showChampionModal = false;
+      this.showanyModal = false;
       this.showConfirmationModal = true;
       this.cdr.detectChanges();
 
@@ -1935,7 +1941,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   // ✅ NOVO: Método para atualizar pick específico de um jogador
-  async updatePlayerPick(playerId: string, champion: Champion): Promise<void> {
+  async updatePlayerPick(playerId: string, champion: any): Promise<void> {
     logDraft('🔄 [updatePlayerPick] === ATUALIZANDO PICK ===');
     saveLogToRoot(`🔄 [updatePlayerPick] Atualizando pick de ${playerId} para ${champion.name}`);
 
@@ -1980,7 +1986,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       // ✅ FINALIZAR EDIÇÃO e abrir modal de confirmação
       this.isEditingMode = false;
       this.currentEditingPlayer = null;
-      this.showChampionModal = false;
+      this.showanyModal = false;
       this.showConfirmationModal = true; // ✅ REABRIR modal de confirmação
       this.cdr.detectChanges();
       saveLogToRoot(`✅ [updatePlayerPick] Pick atualizado e modal de confirmação reaberto`);
@@ -2036,7 +2042,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
     if (isTimeoutForCurrentPlayer) {
       logDraft('⏰ [DraftPickBan] Timeout para o jogador atual, fechando modais');
-      this.showChampionModal = false;
+      this.showanyModal = false;
       this.showConfirmationModal = false;
       this.isWaitingBackend = false;
     }
@@ -2072,7 +2078,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     return player.summonerName || player.name || index.toString();
   }
 
-  trackByChampion(index: number, champion: Champion): string {
+  trackByany(index: number, champion: any): string {
     return champion.id.toString() || champion.key || index.toString();
   }
 
