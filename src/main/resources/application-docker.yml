@@ -1,25 +1,23 @@
-server:
-  port: 8080
-  address: 0.0.0.0 # ✅ CORREÇÃO: Aceitar conexões de qualquer interface
+# Configurações para ambiente Docker/Containerizado
+# Gateway RPC deve ser preferido para comunicação com LCU via Electron
 
-# URLs e endpoints para ambiente Docker local
+# Configurações customizadas do LCU (usando @ConfigurationProperties)
+# @spring-boot-ignore-property: app.lcu.*
 app:
-  frontend:
-    url: "http://localhost:${PORT:8080}"
-  backend:
-    url: "http://localhost:${PORT:8080}"
-    base-url: "http://localhost:${PORT:8080}"
-  websocket:
-    endpoint: "ws://localhost:${PORT:8080}/ws"
-  cors:
-    allowed-origins:
-      - "http://localhost:8080"
-      - "http://127.0.0.1:8080"
-      - "http://localhost:4200"
-      - "http://127.0.0.1:4200"
-      - "http://localhost:${PORT:8080}"
+  lcu:
+    prefer-gateway: true # Priorizar gateway RPC sobre HTTP direto
+    host: host.docker.internal # Para acesso ao LCU local via Docker
+    protocol: https
+    port: 0 # Será descoberto automaticamente via lockfile
+    password: "" # Será configurado via lockfile
 
+# Logs controlados para debugging
 logging:
   level:
-    br.com.lolmatchmaking: INFO
     root: INFO
+    "[br.com.lolmatchmaking.backend.service.LCUService]": INFO
+    "[br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService]": INFO
+    "[org.hibernate.SQL]": WARN
+    "[org.hibernate.type.descriptor.sql.BasicBinder]": WARN
+    "[org.springframework.web]": WARN
+    "[org.springframework.security]": WARN

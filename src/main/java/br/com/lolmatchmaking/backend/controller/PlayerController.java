@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import com.fasterxml.jackson.databind.JsonNode;
 
 import java.util.HashMap;
 import java.util.List;
@@ -41,12 +42,12 @@ public class PlayerController {
 
                         if (summonerData != null) {
                             // Extrair dados do LCU
-                            String summonerName = summonerData.has("displayName") ?
-                                    summonerData.get("displayName").asText() : "Unknown";
-                            String gameName = summonerData.has("gameName") ?
-                                    summonerData.get("gameName").asText() : summonerName;
-                            String tagLine = summonerData.has("tagLine") ?
-                                    summonerData.get("tagLine").asText() : "";
+                            String summonerName = summonerData.has("displayName")
+                                    ? summonerData.get("displayName").asText()
+                                    : "Unknown";
+                            String gameName = summonerData.has("gameName") ? summonerData.get("gameName").asText()
+                                    : summonerName;
+                            String tagLine = summonerData.has("tagLine") ? summonerData.get("tagLine").asText() : "";
 
                             Map<String, Object> playerData = new HashMap<>();
                             playerData.put("summonerName", summonerName);
@@ -57,18 +58,173 @@ public class PlayerController {
 
                             // Adicionar dados do LCU se disponíveis
                             if (summonerData.has("summonerId")) {
-                                playerData.put("summonerId", summonerData.get("summonerId").asText());
+                                String sid = summonerData.get("summonerId").asText();
+                                playerData.put("summonerId", sid);
+                                try {
+                                    playerData.put("id", Integer.parseInt(sid));
+                                } catch (Exception ignore) {
+                                    playerData.put("id", 0);
+                                }
+                            } else {
+                                playerData.put("id", 0);
                             }
+
                             if (summonerData.has("puuid")) {
                                 playerData.put("puuid", summonerData.get("puuid").asText());
+                            } else {
+                                playerData.put("puuid", "");
                             }
+
                             if (summonerData.has("summonerLevel")) {
                                 playerData.put("summonerLevel", summonerData.get("summonerLevel").asInt());
+                            } else {
+                                playerData.put("summonerLevel", 1);
                             }
+
+                            // Build displayName and include common player fields expected by the frontend
+                            String constructedDisplayName = (gameName != null && !gameName.isEmpty() && tagLine != null
+                                    && !tagLine.isEmpty())
+                                            ? gameName + "#" + tagLine
+                                            : (summonerData.has("displayName")
+                                                    ? summonerData.get("displayName").asText()
+                                                    : summonerName);
+                            playerData.put("displayName", constructedDisplayName);
+
+                            playerData.put("profileIconId",
+                                    summonerData.has("profileIconId") ? summonerData.get("profileIconId").asInt() : 29);
+
+                            playerData.put("currentMMR",
+                                    summonerData.has("currentMMR") ? summonerData.get("currentMMR").asInt() : 1200);
+                            // Try to get ranked info from the local LCU first (local client often
+                            // has current-ranked-stats). If available, use it. Otherwise fall back
+                            // to Riot API enrichment (if configured).
+                            Map<String, Object> fallbackRank = new HashMap<>();
+                            fallbackRank.put("tier", "UNRANKED");
+                            fallbackRank.put("rank", "");
+                            fallbackRank.put("lp", 0);
+                            fallbackRank.put("wins", 0);
+                            fallbackRank.put("losses", 0);
+
+                            // Default values
+                            playerData.put("rank", fallbackRank);
+                            playerData.put("wins", 0);
+                            playerData.put("losses", 0);
+
+                            try {
+                                // Try LCU local ranked stats
+                                JsonNode rankedNode = lcuService.getCurrentSummonerRanked().get();
+                                log.info("🔍 LCU ranked data received: {}", rankedNode);
+                                if (rankedNode != null) {
+                                    // The LCU /lol-ranked/v1/current-ranked-stats endpoint varies by
+                                    // client. We try to coerce commonly used fields.
+                                    Map<String, Object> rankObj = new HashMap<>();
+
+                                    // Check if it's an array of queues (common format)
+                                    if (rankedNode.isArray()) {
+                                        log.info("🔍 LCU ranked data is array, processing queues...");
+                                        for (JsonNode queue : rankedNode) {
+                                            if (queue.has("queueType")
+                                                    && queue.get("queueType").asText().equals("RANKED_SOLO_5x5")) {
+                                                log.info("🔍 Found solo queue data: {}", queue);
+                                                if (queue.has("tier"))
+                                                    rankObj.put("tier", queue.get("tier").asText(null));
+                                                if (queue.has("rank"))
+                                                    rankObj.put("rank", queue.get("rank").asText(null));
+                                                if (queue.has("leaguePoints"))
+                                                    rankObj.put("lp", queue.get("leaguePoints").asInt(0));
+                                                if (queue.has("wins"))
+                                                    rankObj.put("wins", queue.get("wins").asInt(0));
+                                                if (queue.has("losses"))
+                                                    rankObj.put("losses", queue.get("losses").asInt(0));
+                                                break;
+                                            }
+                                        }
+                                    } else {
+                                        // Single object format
+                                        if (rankedNode.has("tier"))
+                                            rankObj.put("tier", rankedNode.get("tier").asText(null));
+                                        if (rankedNode.has("division"))
+                                            rankObj.put("rank", rankedNode.get("division").asText(null));
+                                        if (rankedNode.has("leaguePoints"))
+                                            rankObj.put("lp", rankedNode.get("leaguePoints").asInt(0));
+                                        if (rankedNode.has("wins"))
+                                            rankObj.put("wins", rankedNode.get("wins").asInt(0));
+                                        if (rankedNode.has("losses"))
+                                            rankObj.put("losses", rankedNode.get("losses").asInt(0));
+                                    }
+
+                                    log.info("🔍 Processed rank object: {}", rankObj);
+
+                                    // If we found any tier info, consider this a valid ranked payload
+                                    if (rankObj.get("tier") != null || rankObj.get("lp") != null) {
+                                        playerData.put("rank", rankObj);
+                                        playerData.put("wins", (Integer) rankObj.getOrDefault("wins", 0));
+                                        playerData.put("losses", (Integer) rankObj.getOrDefault("losses", 0));
+                                    }
+
+                                    // Store raw LCU ranked stats for frontend processing (like old backend)
+                                    playerData.put("lcuRankedStats", rankedNode);
+                                }
+                            } catch (Exception e) {
+                                log.debug("LCU ranked-stats unavailable or failed: {}", e.getMessage());
+                            }
+
+                            // If still not found and Riot API is configured, enrich via Riot API
+                            try {
+                                if ((playerData.get("rank") == null
+                                        || ((Map) playerData.get("rank")).get("tier").equals("UNRANKED"))
+                                        && riotAPIService != null && riotAPIService.isConfigured()
+                                        && playerData.get("summonerId") != null) {
+                                    String sid = String.valueOf(playerData.get("summonerId"));
+                                    List<RiotAPIService.RankedData> ranked = riotAPIService.getRankedData(sid,
+                                            (String) playerData.getOrDefault("region", "br1"));
+                                    if (ranked != null && !ranked.isEmpty()) {
+                                        // Prefer solo queue
+                                        RiotAPIService.RankedData solo = ranked.stream()
+                                                .filter(r -> "RANKED_SOLO_5x5".equals(r.getQueueType()))
+                                                .findFirst()
+                                                .orElse(ranked.get(0));
+
+                                        Map<String, Object> rankObj = new HashMap<>();
+                                        rankObj.put("tier", solo.getTier());
+                                        rankObj.put("rank", solo.getRank());
+                                        rankObj.put("lp", solo.getLeaguePoints());
+                                        rankObj.put("wins", solo.getWins());
+                                        rankObj.put("losses", solo.getLosses());
+
+                                        playerData.put("rank", rankObj);
+                                        // Also set flat wins/losses for backward-compat
+                                        playerData.put("wins", solo.getWins() != null ? solo.getWins() : 0);
+                                        playerData.put("losses", solo.getLosses() != null ? solo.getLosses() : 0);
+                                    }
+                                }
+                            } catch (Exception e) {
+                                log.debug("⚠️ Não foi possível enriquecer com Riot ranked data: {}", e.getMessage());
+                            }
+                            playerData.put("region", playerData.getOrDefault("region", "br1"));
+                            playerData.put("registeredAt", java.time.Instant.now().toString());
+                            playerData.put("updatedAt", java.time.Instant.now().toString());
 
                             response.put("success", true);
                             response.put("player", playerData);
                             response.put("source", "LCU");
+
+                            // Also provide a `data` shape expected by the Electron frontend
+                            // so callers that expect `{ success:true, data: { lcu: ..., riotAccount: ...
+                            // }}`
+                            // can consume it directly.
+                            Map<String, Object> riotAccount = new HashMap<>();
+                            riotAccount.put("gameName", gameName);
+                            riotAccount.put("tagLine", tagLine);
+                            riotAccount.put("puuid",
+                                    summonerData.has("puuid") ? summonerData.get("puuid").asText() : "");
+
+                            Map<String, Object> dataWrapper = new HashMap<>();
+                            dataWrapper.put("lcu", summonerData);
+                            dataWrapper.put("riotAccount", riotAccount);
+                            dataWrapper.put("partialData", true);
+
+                            response.put("data", dataWrapper);
 
                             return ResponseEntity.ok(response);
                         } else {
@@ -98,8 +254,7 @@ public class PlayerController {
             errorResponse.put("lcuConnected", false);
 
             return CompletableFuture.completedFuture(
-                    ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse)
-            );
+                    ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse));
         }
     }
 

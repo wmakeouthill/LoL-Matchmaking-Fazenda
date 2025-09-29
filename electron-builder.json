@@ -1,0 +1,9 @@
+{
+  "appId": "com.lolmatchmaking.app",
+  "productName": "LOL Matchmaking",
+  "directories": { "output": "dist-electron" },
+  "files": [ "**/*" ],
+  "win": { "target": "nsis", "icon": "electron/assets/icon.ico" },
+  "linux": { "target": "AppImage", "icon": "electron/assets/icon.png" },
+  "mac": { "target": "dmg", "icon": "electron/assets/icon.icns" }
+}

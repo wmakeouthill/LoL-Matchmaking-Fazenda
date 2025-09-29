@@ -408,8 +408,27 @@ public class PlayerService {
 
         try {
             // Buscar dados do summoner
-            Optional<RiotAPIService.SummonerData> summonerData = riotAPIService
-                    .getSummonerByName(player.getSummonerName(), player.getRegion());
+            Optional<RiotAPIService.SummonerData> summonerData = Optional.empty();
+
+            String name = player.getSummonerName();
+            if (name != null && name.contains("#")) {
+                // If stored as gameName#tagLine, resolve via account API to obtain PUUID
+                try {
+                    String[] parts = name.split("#", 2);
+                    String gameName = parts[0];
+                    String tagLine = parts[1];
+                    Optional<RiotAPIService.AccountData> acc = riotAPIService.getAccountByRiotId(gameName, tagLine,
+                            player.getRegion());
+                    if (acc.isPresent()) {
+                        summonerData = riotAPIService.getSummonerByPUUID(acc.get().getPuuid(), player.getRegion());
+                    }
+                } catch (Exception e) {
+                    log.debug("Erro resolvendo account by Riot ID: {}", e.getMessage());
+                }
+            } else {
+                // Try by summoner name directly (legacy behaviour)
+                summonerData = riotAPIService.getSummonerByName(name, player.getRegion());
+            }
 
             if (summonerData.isPresent()) {
                 RiotAPIService.SummonerData data = summonerData.get();
@@ -459,16 +478,24 @@ public class PlayerService {
                         });
             }
 
-            // Buscar dados da conta (gameName#tagLine)
-            if (player.getSummonerName() != null) {
-                // Assumindo formato SummonerName = gameName
-                Optional<RiotAPIService.AccountData> accountData = riotAPIService
-                        .getAccountByRiotId(player.getSummonerName(), "BR1", player.getRegion());
+            // Buscar dados da conta (gameName#tagLine) se estivermos armazenando o nome
+            // nesse formato
+            if (player.getSummonerName() != null && player.getSummonerName().contains("#")) {
+                try {
+                    String[] parts = player.getSummonerName().split("#", 2);
+                    String gameName = parts[0];
+                    String tagLine = parts[1];
+                    Optional<RiotAPIService.AccountData> accountData = riotAPIService.getAccountByRiotId(gameName,
+                            tagLine, player.getRegion());
 
-                if (accountData.isPresent()) {
-                    RiotAPIService.AccountData data = accountData.get();
-                    dto.setGameName(data.getGameName());
-                    dto.setTagLine(data.getTagLine());
+                    if (accountData.isPresent()) {
+                        RiotAPIService.AccountData data = accountData.get();
+                        dto.setGameName(data.getGameName());
+                        dto.setTagLine(data.getTagLine());
+                    }
+                } catch (Exception e) {
+                    log.debug("Erro ao buscar account by Riot ID para {}: {}", player.getSummonerName(),
+                            e.getMessage());
                 }
             }
         } catch (Exception e) {

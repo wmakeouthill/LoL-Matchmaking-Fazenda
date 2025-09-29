@@ -7,9 +7,13 @@
     "build": "npx tsc",
     "build:frontend": "cd frontend && npm run build:prod",
     "build:all": "npm run build:frontend && npm run build",
-    "dev:electron": "npm run build && npx electron .",
-    "electron": "npm run build:all && npx electron .",
-    "electron:dev": "cross-env ENABLE_ELECTRON_INTERCEPTORS=1 BACKEND_URL=http://127.0.0.1:8080 npm run build && cross-env ENABLE_ELECTRON_INTERCEPTORS=1 BACKEND_URL=http://127.0.0.1:8080 npx electron . --dev",
+  "dev:electron": "npx electron . --dev",
+  "electron": "node scripts/start-electron.js",
+  "electron:run-wrapper": "npx electron .",
+    "electron:dev": "npx electron . --dev",
+    "electron:build": "npm run build:all && npx electron .",
+    "electron:new": "npx electron ./electron",
+    "electron:new:build": "npm run build:all && npx electron-builder --config electron-builder.json",
     "build:electron": "npm run build:all && npx electron-builder",
     "dist": "npm run build:all && npx electron-builder",
     "watch": "npx tsc --watch",
@@ -33,8 +37,10 @@
     "electron": "^28.0.0",
     "electron-builder": "^24.6.4",
     "typescript": "^5.0.0",
-    "@types/node": "^20.0.0",
-    "cross-env": "^7.0.3"
+    "@types/node": "^20.0.0"
+  },
+  "dependencies": {
+    "ws": "^8.13.0"
   },
   "build": {
     "appId": "com.lolmatchmaking.app",

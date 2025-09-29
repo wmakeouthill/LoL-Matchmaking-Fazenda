@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Console appender com formato limpo -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Appender para arquivo de log -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/application.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>logs/application.%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>7</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{50} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Configurações específicas por ambiente -->
+    <springProfile name="local">
+        <logger name="br.com.lolmatchmaking.backend" level="INFO" />
+        <logger name="br.com.lolmatchmaking.backend.service.LCUService" level="INFO" />
+        <logger name="br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService"
+            level="INFO" />
+        <logger name="org.hibernate.SQL" level="WARN" />
+        <logger name="org.hibernate.type.descriptor.sql.BasicBinder" level="WARN" />
+        <logger name="org.springframework.web" level="WARN" />
+        <logger name="org.springframework.security" level="WARN" />
+        <logger name="org.springframework.boot" level="WARN" />
+        <logger name="org.springframework.context" level="WARN" />
+        <logger name="com.zaxxer.hikari" level="WARN" />
+    </springProfile>
+
+    <springProfile name="docker">
+        <logger name="br.com.lolmatchmaking.backend" level="INFO" />
+        <logger name="br.com.lolmatchmaking.backend.service.LCUService" level="INFO" />
+        <logger name="br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService"
+            level="INFO" />
+        <logger name="org.hibernate.SQL" level="WARN" />
+        <logger name="org.hibernate.type.descriptor.sql.BasicBinder" level="WARN" />
+        <logger name="org.springframework.web" level="WARN" />
+        <logger name="org.springframework.security" level="WARN" />
+        <logger name="org.springframework.boot" level="WARN" />
+        <logger name="org.springframework.context" level="WARN" />
+        <logger name="com.zaxxer.hikari" level="WARN" />
+    </springProfile>
+
+    <!-- Root logger -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE" />
+        <appender-ref ref="FILE" />
+    </root>
+</configuration>

@@ -10,6 +10,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.*;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
+import br.com.lolmatchmaking.backend.service.LCUService;
+import org.springframework.context.ApplicationContext;
 
 import java.time.Instant;
 import java.util.*;
@@ -21,10 +23,12 @@ import java.util.concurrent.*;
 public class MatchmakingWebSocketService extends TextWebSocketHandler {
 
     private final ObjectMapper objectMapper;
+    private final ApplicationContext applicationContext;
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
     private final Map<String, ClientInfo> clientInfo = new ConcurrentHashMap<>();
     private final Map<String, Instant> lastHeartbeat = new ConcurrentHashMap<>();
-    // Track scheduled heartbeat monitor tasks so they can be cancelled when session closes
+    // Track scheduled heartbeat monitor tasks so they can be cancelled when session
+    // closes
     private final Map<String, ScheduledFuture<?>> heartbeatTasks = new ConcurrentHashMap<>();
     private final Map<String, List<String>> pendingEvents = new ConcurrentHashMap<>();
 
@@ -32,6 +36,15 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
 
     // New: pending LCU requests by requestId
     private final Map<String, CompletableFuture<JsonNode>> pendingLcuRequests = new ConcurrentHashMap<>();
+    // Map requestId -> sessionId so we can identify which client answered
+    private final Map<String, String> lcuRequestSession = new ConcurrentHashMap<>();
+
+    /**
+     * Obtém o LCUService quando necessário para evitar dependência circular
+     */
+    private LCUService getLcuService() {
+        return applicationContext.getBean(LCUService.class);
+    }
 
     // Configurações
     private static final long HEARTBEAT_INTERVAL = 30000; // 30 segundos
@@ -68,7 +81,8 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         // Cancel heartbeat monitoring task if present
         try {
             ScheduledFuture<?> f = heartbeatTasks.remove(sessionId);
-            if (f != null) f.cancel(true);
+            if (f != null)
+                f.cancel(true);
         } catch (Exception e) {
             log.warn("⚠️ Falha ao cancelar heartbeat task para {}", sessionId, e);
         }
@@ -96,7 +110,10 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                     break;
                 case "ping":
                     // Respond with pong to keep client alive
-                    try { sendMessage(sessionId, "pong", Map.of("ts", System.currentTimeMillis())); } catch (Exception e) { }
+                    try {
+                        sendMessage(sessionId, "pong", Map.of("ts", System.currentTimeMillis()));
+                    } catch (Exception e) {
+                    }
                     break;
                 case "pong":
                     // Client acknowledges a server ping; treat as heartbeat
@@ -126,6 +143,9 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                 case "lcu_response":
                     handleLcuResponse(jsonMessage);
                     break;
+                case "lcu_status":
+                    handleLcuStatus(sessionId, jsonMessage);
+                    break;
                 default:
                     log.warn("⚠️ Tipo de mensagem desconhecido: {}", messageType);
             }
@@ -135,8 +155,44 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         }
     }
 
+    private void handleLcuStatus(String sessionId, JsonNode jsonMessage) {
+        try {
+            JsonNode data = jsonMessage.has("data") ? jsonMessage.get("data") : null;
+            if (data == null) {
+                sendMessage(sessionId, "lcu_status_ack", Map.of("success", false, "error", "data required"));
+                return;
+            }
+            int status = data.has("status") && data.get("status").isInt() ? data.get("status").asInt() : -1;
+            JsonNode body = data.has("body") ? data.get("body") : null;
+
+            if (status == 200) {
+                ClientInfo info = clientInfo.get(sessionId);
+                if (info != null && info.getLcuHost() != null && info.getLcuPort() > 0) {
+                    String summonerId = null;
+                    try {
+                        summonerId = extractSummonerId(body);
+                    } catch (Exception ignored) {
+                    }
+                    log.info("LCU status from gateway session={} summonerId={}", sessionId, summonerId);
+                    getLcuService().markConnectedFromGateway(info.getLcuHost(), info.getLcuPort(),
+                            info.getLcuProtocol(),
+                            info.getLcuPassword(), summonerId);
+                    sendMessage(sessionId, "lcu_status_ack", Map.of("success", true));
+                    log.info("LCU status accepted from gateway session={}", sessionId);
+                    return;
+                }
+            }
+
+            sendMessage(sessionId, "lcu_status_ack", Map.of("success", false));
+        } catch (Exception e) {
+            log.error("Erro ao processar lcu_status", e);
+            sendMessage(sessionId, "lcu_status_ack", Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
     private void handleLcuResponse(JsonNode jsonMessage) {
-        // Expected shape: { type: 'lcu_response', id: 'uuid', status: 200, body: {...} }
+        // Expected shape: { type: 'lcu_response', id: 'uuid', status: 200, body: {...}
+        // }
         try {
             String id = jsonMessage.has("id") ? jsonMessage.get("id").asText() : null;
             if (id == null) {
@@ -152,18 +208,99 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             JsonNode body = jsonMessage.has("body") ? jsonMessage.get("body") : null;
             // Build a response node combining status and body
             ObjectNode resp = objectMapper.createObjectNode();
-            if (status != null) resp.set("status", status);
-            if (body != null) resp.set("body", body);
+            if (status != null)
+                resp.set("status", status);
+            if (body != null)
+                resp.set("body", body);
             fut.complete(resp);
+
+            // If successful response, mark backend LCU as connected using client-provided
+            // lockfile info
+            try {
+                int code = -1;
+                if (status != null && status.isInt())
+                    code = status.asInt();
+                if (code == 200) {
+                    String sess = lcuRequestSession.remove(id);
+                    if (sess != null) {
+                        ClientInfo info = clientInfo.get(sess);
+                        if (info != null && info.getLcuHost() != null) {
+                            String summonerId = null;
+                            try {
+                                summonerId = extractSummonerId(body);
+                            } catch (Exception ignored) {
+                            }
+                            log.info("LCU response from session={} id={} summonerId={}", sess, id, summonerId);
+                            getLcuService().markConnectedFromGateway(info.getLcuHost(), info.getLcuPort(),
+                                    info.getLcuProtocol(), info.getLcuPassword(), summonerId);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("Erro marcando LCU conectado via gateway: {}", e.getMessage());
+            }
         } catch (Exception e) {
             log.error("Erro ao processar lcu_response", e);
         }
     }
 
     /**
-     * Envia uma request LCU para o cliente especificado e espera pela resposta (RPC)
+     * Tenta extrair um identificador de summoner de diferentes formatos de resposta
      */
-    public JsonNode requestLcu(String sessionId, String method, String path, JsonNode body, long timeoutMs) throws Exception {
+    private String extractSummonerId(JsonNode node) {
+        if (node == null || node.isNull())
+            return null;
+        try {
+            // If it's a text node, return it
+            if (node.isTextual())
+                return node.asText();
+
+            // Common fields used by LCU or other endpoints
+            if (node.has("summonerId") && !node.get("summonerId").isNull())
+                return node.get("summonerId").asText();
+            if (node.has("id") && !node.get("id").isNull())
+                return node.get("id").asText();
+            if (node.has("puuid") && !node.get("puuid").isNull())
+                return node.get("puuid").asText();
+            if (node.has("accountId") && !node.get("accountId").isNull())
+                return node.get("accountId").asText();
+            if (node.has("displayName") && !node.get("displayName").isNull())
+                return node.get("displayName").asText();
+
+            // Some LCU responses may not populate displayName but provide gameName and
+            // tagLine separately. Construct displayName as gameName#tagLine in that
+            // case so other parts of the system can use a consistent identifier.
+            if (node.has("gameName") && !node.get("gameName").isNull() && node.has("tagLine")
+                    && !node.get("tagLine").isNull()) {
+                try {
+                    String gn = node.get("gameName").asText();
+                    String tl = node.get("tagLine").asText();
+                    if (gn != null && !gn.isBlank() && tl != null && !tl.isBlank()) {
+                        return gn + "#" + tl;
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+
+            // Recurse into child objects/arrays to try to find an id
+            for (JsonNode child : node) {
+                String s = extractSummonerId(child);
+                if (s != null)
+                    return s;
+            }
+        } catch (Exception e) {
+            // best-effort only
+            log.debug("Erro extraindo summonerId: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * Envia uma request LCU para o cliente especificado e espera pela resposta
+     * (RPC)
+     */
+    public JsonNode requestLcu(String sessionId, String method, String path, JsonNode body, long timeoutMs)
+            throws Exception {
         WebSocketSession session = sessions.get(sessionId);
         if (session == null || !session.isOpen()) {
             throw new IllegalStateException("Sessão WebSocket não disponível: " + sessionId);
@@ -174,12 +311,21 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         req.put("id", id);
         req.put("method", method == null ? "GET" : method);
         req.put("path", path == null ? "/" : path);
-        if (body != null) req.set("body", body);
+        if (body != null)
+            req.set("body", body);
 
         CompletableFuture<JsonNode> fut = new CompletableFuture<>();
         pendingLcuRequests.put(id, fut);
 
-        session.sendMessage(new TextMessage(objectMapper.writeValueAsString(req)));
+        // Log outgoing RPC to help diagnostics
+        try {
+            log.info("Sending lcu_request id={} method={} path={} -> session={}", id, method, path, sessionId);
+            session.sendMessage(new TextMessage(objectMapper.writeValueAsString(req)));
+        } catch (Exception e) {
+            pendingLcuRequests.remove(id);
+            log.error("Failed to send lcu_request id={} to session={}: {}", id, sessionId, e.getMessage());
+            throw e;
+        }
 
         try {
             JsonNode resp = fut.get(timeoutMs <= 0 ? LCU_RPC_TIMEOUT_MS : timeoutMs, TimeUnit.MILLISECONDS);
@@ -197,16 +343,64 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
      */
     private void handleIdentify(String sessionId, JsonNode data) {
         try {
-            String playerId = data.get("playerId").asText();
-            String summonerName = data.get("summonerName").asText();
+            // Support flexible identify payloads. Some clients send fields at the
+            // root (playerId, summonerName, data:{ lockfile }) while others may
+            // nest them under data (data: { playerId, summonerName, lockfile }).
+            String playerId = null;
+            String summonerName = null;
+
+            if (data.has("playerId") && !data.get("playerId").isNull()) {
+                playerId = data.get("playerId").asText(null);
+            } else if (data.has("data") && data.get("data") != null && data.get("data").has("playerId")) {
+                playerId = data.get("data").get("playerId").asText(null);
+            }
+
+            if (data.has("summonerName") && !data.get("summonerName").isNull()) {
+                summonerName = data.get("summonerName").asText(null);
+            } else if (data.has("data") && data.get("data") != null && data.get("data").has("summonerName")) {
+                summonerName = data.get("data").get("summonerName").asText(null);
+            }
 
             ClientInfo info = clientInfo.get(sessionId);
             if (info != null) {
-                info.setPlayerId(playerId);
-                info.setSummonerName(summonerName);
+                if (playerId != null)
+                    info.setPlayerId(playerId);
+                if (summonerName != null)
+                    info.setSummonerName(summonerName);
                 info.setIdentified(true);
 
-                log.info("🆔 Cliente identificado: {} ({})", summonerName, playerId);
+                // If identify included lockfile data, capture it for later.
+                // Accept multiple shapes: message.data.lockfile, message.data.data.lockfile,
+                // or message.lockfile (less common).
+                try {
+                    JsonNode lf = null;
+                    if (data.has("data") && data.get("data") != null) {
+                        JsonNode d = data.get("data");
+                        if (d.has("lockfile"))
+                            lf = d.get("lockfile");
+                        else if (d.has("data") && d.get("data") != null && d.get("data").has("lockfile"))
+                            lf = d.get("data").get("lockfile");
+                    }
+                    if (lf == null && data.has("lockfile"))
+                        lf = data.get("lockfile");
+
+                    if (lf != null) {
+                        if (lf.has("host"))
+                            info.setLcuHost(lf.get("host").asText(null));
+                        if (lf.has("port"))
+                            info.setLcuPort(lf.get("port").asInt(0));
+                        if (lf.has("protocol"))
+                            info.setLcuProtocol(lf.get("protocol").asText(null));
+                        if (lf.has("password"))
+                            info.setLcuPassword(lf.get("password").asText(null));
+                        // Debug: log parsed lockfile info
+                        log.debug("handleIdentify: parsed lockfile for session={} host={} port={} protocol={}",
+                                sessionId, info.getLcuHost(), info.getLcuPort(), info.getLcuProtocol());
+                    }
+                } catch (Exception ignored) {
+                }
+
+                log.info("🆔 Cliente identificado: {} ({})", info.getSummonerName(), info.getPlayerId());
                 sendMessage(sessionId, "identified", Map.of("success", true));
             }
         } catch (Exception e) {
@@ -298,8 +492,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
 
                     log.warn("💔 Heartbeat timeout para cliente: {}", sessionId);
                     closeSession(sessionId);
-                }
-                else {
+                } else {
                     // Probe client with a ping to elicit a pong/heartbeat response
                     try {
                         sendMessage(sessionId, "ping", Map.of("ts", System.currentTimeMillis()));
@@ -357,7 +550,8 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         // Also cancel heartbeat task if present
         try {
             ScheduledFuture<?> f = heartbeatTasks.remove(sessionId);
-            if (f != null) f.cancel(true);
+            if (f != null)
+                f.cancel(true);
         } catch (Exception e) {
             log.warn("⚠️ Erro ao cancelar heartbeat task no closeSession para {}", sessionId, e);
         }
@@ -504,6 +698,80 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     }
 
     /**
+     * Pick a connected client session that has LCU lockfile info attached.
+     * Returns the sessionId or null if none available.
+     */
+    public String pickGatewaySessionId() {
+        // Debug: list available sessions and their clientInfo so we can diagnose why
+        // no gateway client is selected.
+        try {
+            for (Map.Entry<String, WebSocketSession> e : sessions.entrySet()) {
+                try {
+                    String sid = e.getKey();
+                    WebSocketSession s = e.getValue();
+                    ClientInfo info = clientInfo.get(sid);
+                    if (info == null) {
+                        log.info("pickGatewaySessionId: session={} open={} info=null", sid, s != null && s.isOpen());
+                    } else {
+                        log.info("pickGatewaySessionId: session={} open={} info={}/{}:{} protocol={} identified={}",
+                                sid, s != null && s.isOpen(), info.getPlayerId(), info.getSummonerName(),
+                                info.getLcuPort(), info.getLcuHost(), info.isIdentified());
+                    }
+                } catch (Exception ex) {
+                    log.info("pickGatewaySessionId: failed to inspect session {}: {}", e.getKey(), ex.getMessage());
+                }
+            }
+        } catch (Exception ex) {
+            log.info("pickGatewaySessionId: introspection failed: {}", ex.getMessage());
+        }
+
+        for (Map.Entry<String, WebSocketSession> e : sessions.entrySet()) {
+            try {
+                WebSocketSession s = e.getValue();
+                if (s != null && s.isOpen()) {
+                    ClientInfo info = clientInfo.get(e.getKey());
+                    if (info != null && info.getLcuHost() != null && info.getLcuPort() > 0) {
+                        log.info("pickGatewaySessionId: selecting session {} (host={} port={})", e.getKey(),
+                                info.getLcuHost(), info.getLcuPort());
+                        return e.getKey();
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        // Fallback: if no client advertised lockfile info, pick any identified client
+        for (Map.Entry<String, WebSocketSession> e : sessions.entrySet()) {
+            try {
+                WebSocketSession s = e.getValue();
+                if (s != null && s.isOpen()) {
+                    ClientInfo info = clientInfo.get(e.getKey());
+                    if (info != null && info.isIdentified()) {
+                        log.info("pickGatewaySessionId: no lockfile clients found, selecting identified session {}",
+                                e.getKey());
+                        return e.getKey();
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Convenience: request LCU via any available gateway client. Will throw if no
+     * client
+     * is available or the RPC fails.
+     */
+    public JsonNode requestLcuFromAnyClient(String method, String path, JsonNode body, long timeoutMs)
+            throws Exception {
+        String sessionId = pickGatewaySessionId();
+        if (sessionId == null) {
+            throw new IllegalStateException("No gateway client available");
+        }
+        return requestLcu(sessionId, method, path, body, timeoutMs);
+    }
+
+    /**
      * Broadcast de partida aceita
      */
     public void broadcastMatchAccepted(String matchId) {
@@ -528,6 +796,11 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         private String summonerName;
         private Instant connectedAt;
         private boolean identified;
+        // LCU lockfile info (optional)
+        private String lcuHost;
+        private int lcuPort;
+        private String lcuProtocol;
+        private String lcuPassword;
 
         public ClientInfo(String sessionId, Instant connectedAt) {
             this.sessionId = sessionId;
@@ -575,6 +848,37 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         public void setIdentified(boolean identified) {
             this.identified = identified;
         }
+
+        public String getLcuHost() {
+            return lcuHost;
+        }
+
+        public void setLcuHost(String lcuHost) {
+            this.lcuHost = lcuHost;
+        }
+
+        public int getLcuPort() {
+            return lcuPort;
+        }
+
+        public void setLcuPort(int lcuPort) {
+            this.lcuPort = lcuPort;
+        }
+
+        public String getLcuProtocol() {
+            return lcuProtocol;
+        }
+
+        public void setLcuProtocol(String lcuProtocol) {
+            this.lcuProtocol = lcuProtocol;
+        }
+
+        public String getLcuPassword() {
+            return lcuPassword;
+        }
+
+        public void setLcuPassword(String lcuPassword) {
+            this.lcuPassword = lcuPassword;
+        }
     }
 }
-

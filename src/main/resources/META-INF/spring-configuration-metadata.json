@@ -1,0 +1,41 @@
+{
+  "groups": [
+    {
+      "name": "app.lcu",
+      "type": "br.com.lolmatchmaking.backend.config.AppProperties$Lcu",
+      "sourceType": "br.com.lolmatchmaking.backend.config.AppProperties$Lcu"
+    }
+  ],
+  "properties": [
+    {
+      "name": "app.lcu.prefer-gateway",
+      "type": "java.lang.Boolean",
+      "description": "Priorizar gateway RPC sobre HTTP direto para comunicação com LCU",
+      "defaultValue": true
+    },
+    {
+      "name": "app.lcu.host",
+      "type": "java.lang.String",
+      "description": "Host do LCU (127.0.0.1 para local, host.docker.internal para Docker)",
+      "defaultValue": "127.0.0.1"
+    },
+    {
+      "name": "app.lcu.protocol",
+      "type": "java.lang.String",
+      "description": "Protocolo do LCU (https ou http)",
+      "defaultValue": "https"
+    },
+    {
+      "name": "app.lcu.port",
+      "type": "java.lang.Integer",
+      "description": "Porta do LCU (0 para auto-descoberta via lockfile)",
+      "defaultValue": 0
+    },
+    {
+      "name": "app.lcu.password",
+      "type": "java.lang.String",
+      "description": "Senha do LCU (será configurada via lockfile)",
+      "defaultValue": ""
+    }
+  ]
+}

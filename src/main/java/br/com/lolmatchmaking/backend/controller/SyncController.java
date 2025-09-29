@@ -73,4 +73,21 @@ public class SyncController {
             return ResponseEntity.internalServerError().body(Map.of("status", "none", "error", e.getMessage()));
         }
     }
+
+    /**
+     * Compat endpoint: GET /api/sync/check
+     * Older frontend code calls /api/sync/check?identifier=... or ?summonerName=...
+     * Map it to the same status logic for backwards compatibility.
+     */
+    @GetMapping("/check")
+    public ResponseEntity<Map<String, Object>> checkSync(
+            @RequestParam(required = false, name = "identifier") String identifier,
+            @RequestParam(required = false, name = "summonerName") String summonerName) {
+        // prefer summonerName param, fall back to identifier
+        String name = (summonerName != null && !summonerName.isBlank()) ? summonerName : identifier;
+        if (name == null) {
+            return ResponseEntity.badRequest().body(Map.of("status", "none", "error", "missing summoner identifier"));
+        }
+        return getSyncStatus(name);
+    }
 }

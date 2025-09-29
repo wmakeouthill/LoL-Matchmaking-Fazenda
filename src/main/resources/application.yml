@@ -30,10 +30,6 @@ spring:
     properties:
       hibernate:
         # dialect removido (Hibernate 6 autodetecta). Se desejar fixar, usar org.hibernate.dialect.MySQLDialect
-        format_sql: true
-        use_sql_comments: false
-        generate_statistics: false
-        jdbc.time_zone: UTC
   liquibase:
     enabled: true
     change-log: classpath:db/changelog/db.changelog-master.yaml
@@ -42,9 +38,7 @@ spring:
     console:
       enabled: false
 
-  websocket:
-    servlet:
-      allowed-origins: "*"
+  # WebSocket allowed origins handled in WebSocketConfig (CORS configured in code)
 
   task:
     execution:
@@ -60,30 +54,8 @@ spring:
         size: 20
 
 logging:
-  level:
-    br.com.lolmatchmaking.backend: INFO
-    org.springframework.web: INFO
-    org.hibernate.SQL: WARN
   pattern:
     console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
-
-app:
-  backend:
-    id: spring-backend-1
-    sync:
-      enabled: false
-  lcu:
-    host: ${LCU_HOST:${APP_LCU_HOST:127.0.0.1}}
-  sync:
-    observer-interval: ${SYNC_OBSERVER_INTERVAL:5000}
-  riot:
-    api:
-      key: ${RIOT_API_KEY:}
-      base-url: https://ddragon.leagueoflegends.com/cdn
-  discord:
-    token: ${discord.token:}
-    guild-id: ${DISCORD_GUILD_ID:}
-    channel-id: ${DISCORD_CHANNEL_ID:}
 
 management:
   endpoints:
@@ -93,6 +65,5 @@ management:
   endpoint:
     health:
       show-details: always
-
 # Liquibase baseline: changeSets criam tabelas apenas se não existirem.
 # Rotacionar credenciais expostas anteriormente imediatamente.

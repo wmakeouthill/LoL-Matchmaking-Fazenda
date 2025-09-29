@@ -45,6 +45,20 @@ public class MatchHistoryService {
                 .map(matchMapper::toDTO);
     }
 
+    /**
+     * Fallback method that does the same as getMatchesByPlayer but without cache
+     * annotations.
+     * Used when the cache manager does not have the named cache available (e.g.
+     * minimal
+     * runtime environments or tests). Calling this method avoids cache-related
+     * exceptions.
+     */
+    public Page<MatchDTO> getMatchesByPlayerNoCache(String summonerName, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, CREATED_AT_FIELD));
+        return matchRepository.findByPlayerInvolved(summonerName, pageable)
+                .map(matchMapper::toDTO);
+    }
+
     @Cacheable("match-history-by-status")
     public List<MatchDTO> getMatchesByStatus(String status, int limit) {
         Pageable pageable = PageRequest.of(0, limit, Sort.by(Sort.Direction.DESC, CREATED_AT_FIELD));
