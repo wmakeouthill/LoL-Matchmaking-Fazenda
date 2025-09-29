@@ -579,30 +579,57 @@ export class App implements OnInit, OnDestroy {
 
   // Carrega a lista de special users da tabela settings (key/value)
   private loadSpecialUsersFromSettings(): void {
+    console.log('🔐 [App] Carregando special users do backend...');
+
     this.apiService.getConfigSettings().subscribe({
       next: (resp: any) => {
         try {
-          // resp pode ser { settings: [{key, value}, ...] } ou array direto
-          const entries: any[] = Array.isArray(resp) ? resp : (resp?.settings || resp?.data || []);
-          const special = entries.find((e: any) => (e?.key || e?.name) === 'special_users');
-          if (special && typeof special.value === 'string') {
-            const parsed = JSON.parse(special.value);
-            if (Array.isArray(parsed)) {
-              this.specialUsers = parsed.map((s: any) => String(s).toLowerCase().trim());
+          console.log('🔐 [App] Resposta do backend para settings:', resp);
+
+          // Backend retorna: { settings: { "special_users": "[\"FZD Ratoso#fzd\"]", ... } }
+          if (resp?.settings && typeof resp.settings === 'object') {
+            const specialUsersValue = resp.settings['special_users'];
+            console.log('🔐 [App] Valor de special_users encontrado:', specialUsersValue);
+
+            if (specialUsersValue && typeof specialUsersValue === 'string') {
+              const parsed = JSON.parse(specialUsersValue);
+              console.log('🔐 [App] Special users parseados:', parsed);
+
+              if (Array.isArray(parsed)) {
+                this.specialUsers = parsed.map((s: any) => String(s).toLowerCase().trim());
+                console.log('🔐 [App] Special users normalizados:', this.specialUsers);
+              }
             }
           }
-          // fallback: se backend devolver objeto com special_users direto
-          if (!this.specialUsers.length && resp?.special_users) {
-            const arr = Array.isArray(resp.special_users) ? resp.special_users : [];
-            this.specialUsers = arr.map((s: any) => String(s).toLowerCase().trim());
+          // Fallback: formato antigo com array de objetos
+          else if (Array.isArray(resp) || resp?.settings) {
+            const entries: any[] = Array.isArray(resp) ? resp : (resp?.settings || resp?.data || []);
+            console.log('🔐 [App] Entradas encontradas (formato antigo):', entries);
+
+            const special = entries.find((e: any) => (e?.key || e?.name) === 'special_users');
+            console.log('🔐 [App] Configuração special_users encontrada:', special);
+
+            if (special && typeof special.value === 'string') {
+              const parsed = JSON.parse(special.value);
+              console.log('🔐 [App] Special users parseados (formato antigo):', parsed);
+
+              if (Array.isArray(parsed)) {
+                this.specialUsers = parsed.map((s: any) => String(s).toLowerCase().trim());
+                console.log('🔐 [App] Special users normalizados (formato antigo):', this.specialUsers);
+              }
+            }
           }
+
+          console.log('🔐 [App] Special users final:', this.specialUsers);
           this.cdr.detectChanges();
         } catch (err) {
           console.warn('⚠️ [App] Falha ao parsear special_users:', err);
+          this.specialUsers = [];
         }
       },
       error: (err) => {
         console.warn('⚠️ [App] Falha ao carregar settings:', err);
+        this.specialUsers = [];
       }
     });
   }
@@ -610,7 +637,16 @@ export class App implements OnInit, OnDestroy {
   // Checa se o jogador atual está na lista de special users (gameName#tagLine)
   isSpecialUser(): boolean {
     const id = this.normalizePlayerIdentifier(this.currentPlayer);
-    return !!id && this.specialUsers.includes(id);
+    const isSpecial = !!id && this.specialUsers.includes(id);
+
+    console.log('🔐 [App] Verificando special user:', {
+      currentPlayer: this.currentPlayer,
+      normalizedId: id,
+      specialUsers: this.specialUsers,
+      isSpecial: isSpecial
+    });
+
+    return isSpecial;
   }
 
   private normalizePlayerIdentifier(playerInfo: any): string {
@@ -1635,6 +1671,52 @@ export class App implements OnInit, OnDestroy {
       logApp(`❌ [App] Erro ao extrair time ${teamNumber}:`, error);
       return [];
     }
+  }
+
+  // Métodos para Special User Tools
+  addBotToQueue(): void {
+    console.log('🤖 [App] Adicionando bot à fila');
+
+    this.apiService.addBotToQueue().subscribe({
+      next: (response) => {
+        console.log('✅ [App] Bot adicionado à fila:', response);
+        this.addNotification('success', 'Bot Adicionado', 'Bot foi adicionado à fila com sucesso');
+      },
+      error: (error) => {
+        console.error('❌ [App] Erro ao adicionar bot à fila:', error);
+        this.addNotification('error', 'Erro ao Adicionar Bot', 'Falha ao adicionar bot à fila');
+      }
+    });
+  }
+
+  resetBotCounter(): void {
+    console.log('🔄 [App] Resetando contador de bots');
+
+    this.apiService.resetBotCounter().subscribe({
+      next: (response) => {
+        console.log('✅ [App] Contador de bots resetado:', response);
+        this.addNotification('success', 'Contador Resetado', 'Contador de bots foi resetado com sucesso');
+      },
+      error: (error) => {
+        console.error('❌ [App] Erro ao resetar contador de bots:', error);
+        this.addNotification('error', 'Erro ao Resetar', 'Falha ao resetar contador de bots');
+      }
+    });
+  }
+
+  simulateLastMatch(): void {
+    console.log('🎮 [App] Simulando última partida ranqueada');
+
+    this.apiService.simulateLastMatch().subscribe({
+      next: (response) => {
+        console.log('✅ [App] Última partida simulada:', response);
+        this.addNotification('success', 'Partida Simulada', 'Última partida ranqueada foi simulada com sucesso');
+      },
+      error: (error) => {
+        console.error('❌ [App] Erro ao simular última partida:', error);
+        this.addNotification('error', 'Erro na Simulação', 'Falha ao simular última partida');
+      }
+    });
   }
 
   cleanupTestMatches(): void {
