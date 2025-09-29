@@ -24,7 +24,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <mapstruct.version>1.5.5.Final</mapstruct.version>
         <netty-socketio.version>1.7.19</netty-socketio.version>
-        <jda.version>5.0.0-beta.24</jda.version>
+        <jda.version>5.0.0-beta.15</jda.version>
         <resilience4j.version>2.2.0</resilience4j.version>
         <angular.build.config>production</angular.build.config>
     </properties>
@@ -139,6 +139,19 @@
             <artifactId>spring-boot-devtools</artifactId>
             <scope>runtime</scope>
             <optional>true</optional>
+        </dependency>
+
+        <!-- Discord JDA -->
+        <dependency>
+            <groupId>net.dv8tion</groupId>
+            <artifactId>JDA</artifactId>
+            <version>${jda.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>club.minnced</groupId>
+                    <artifactId>opus-java</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
     </dependencies>

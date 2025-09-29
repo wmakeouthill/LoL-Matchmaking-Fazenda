@@ -8,7 +8,6 @@ import br.com.lolmatchmaking.backend.domain.entity.Player;
 import br.com.lolmatchmaking.backend.domain.repository.PlayerRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PostConstruct;
@@ -22,7 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class DiscordAdvancedService {
 
-    @Value("${app.discord.token:}")
+    // Token será obtido do DiscordService principal
     private String discordToken;
 
     private final DiscordLolLinkRepository discordLolLinkRepository;
@@ -39,8 +38,15 @@ public class DiscordAdvancedService {
 
     @PostConstruct
     public void initialize() {
-        if (discordToken.isEmpty()) {
-            log.warn("⚠️ Token do Discord não configurado");
+        // Obter token do DiscordService principal
+        try {
+            discordToken = discordService.getDiscordToken();
+            if (discordToken == null || discordToken.isEmpty()) {
+                log.warn("⚠️ Token do Discord não configurado no DiscordService");
+                return;
+            }
+        } catch (Exception e) {
+            log.warn("⚠️ Erro ao obter token do Discord: {}", e.getMessage());
             return;
         }
 
@@ -314,18 +320,18 @@ public class DiscordAdvancedService {
             }
 
             String channelName = "Partida-" + matchId;
-            
+
             // Em uma implementação real, aqui seria feita a chamada para a API do Discord
             // Para criar o canal de voz no servidor configurado
             log.info("🎤 Criando canal de voz: {} para partida: {}", channelName, matchId);
-            
+
             // Simular criação do canal (em produção, usar JDA ou API do Discord)
             String channelId = "channel_" + System.currentTimeMillis();
             activeVoiceChannels.put(matchId, channelId);
             channelLastActivity.put(channelId, Instant.now());
-            
+
             log.info("✅ Canal de voz criado com sucesso: {} (ID: {})", channelName, channelId);
-            
+
         } catch (Exception e) {
             log.error("❌ Erro ao criar canal de voz", e);
         }
@@ -346,7 +352,7 @@ public class DiscordAdvancedService {
                 // Em uma implementação real, aqui seria feita a chamada para a API do Discord
                 // Para deletar o canal de voz
                 log.info("🗑️ Removendo canal de voz: {} da partida: {}", channelId, matchId);
-                
+
                 channelLastActivity.remove(channelId);
                 log.info("✅ Canal de voz removido com sucesso: {}", channelId);
             } else {
@@ -374,15 +380,15 @@ public class DiscordAdvancedService {
             }
 
             log.info("👥 Movendo {} jogadores para canal da partida: {}", discordUserIds.size(), matchId);
-            
+
             // Em uma implementação real, aqui seria feita a chamada para a API do Discord
             // Para mover os usuários para o canal de voz
             for (String userId : discordUserIds) {
                 log.debug("🔄 Movendo usuário {} para canal {}", userId, channelId);
             }
-            
+
             log.info("✅ Jogadores movidos com sucesso para canal da partida");
-            
+
         } catch (Exception e) {
             log.error("❌ Erro ao mover jogadores para canal", e);
         }
@@ -398,17 +404,17 @@ public class DiscordAdvancedService {
                 return;
             }
 
-            log.info("👥 Movendo {} jogadores de volta para canal original da partida: {}", 
+            log.info("👥 Movendo {} jogadores de volta para canal original da partida: {}",
                     discordUserIds.size(), matchId);
-            
+
             // Em uma implementação real, aqui seria feita a chamada para a API do Discord
             // Para mover os usuários de volta para o canal de matchmaking
             for (String userId : discordUserIds) {
                 log.debug("🔄 Movendo usuário {} de volta para canal original", userId);
             }
-            
+
             log.info("✅ Jogadores movidos de volta com sucesso");
-            
+
         } catch (Exception e) {
             log.error("❌ Erro ao mover jogadores de volta", e);
         }
@@ -468,8 +474,7 @@ public class DiscordAdvancedService {
         String message = String.format("🎮 **%s** entrou na fila! (Posição: %d/%d)",
                 summonerName, queuePosition, totalInQueue);
 
-        return discordService.sendMessage(channelId, message)
-                .join(); // Aguardar resultado
+        return discordService.sendMessage(channelId, message);
     }
 
     /**
@@ -485,8 +490,7 @@ public class DiscordAdvancedService {
         String message = String.format("👋 **%s** saiu da fila! (Restam: %d)",
                 summonerName, totalInQueue);
 
-        return discordService.sendMessage(channelId, message)
-                .join(); // Aguardar resultado
+        return discordService.sendMessage(channelId, message);
     }
 
     /**
@@ -499,8 +503,7 @@ public class DiscordAdvancedService {
             return false;
         }
 
-        return discordService.notifyMatchFound(channelId, matchId, team1, team2)
-                .join(); // Aguardar resultado
+        return discordService.notifyMatchFound(channelId, matchId, team1, team2);
     }
 
     /**
@@ -513,7 +516,6 @@ public class DiscordAdvancedService {
             return false;
         }
 
-        return discordService.notifyDraftStarted(channelId, matchId, draftUrl)
-                .join(); // Aguardar resultado
+        return discordService.notifyDraftStarted(channelId, matchId, draftUrl);
     }
 }

@@ -355,11 +355,16 @@ function startWebSocketGateway(backendBase) {
       if (lastRendererIdentify) {
         try { wsClient.send(JSON.stringify({ type: 'identify', data: lastRendererIdentify })); } catch (e) { safeLog('ws send renderer identify error', String(e)); }
       }
+      
+      // Initialize Discord bot after WebSocket connection
+      initializeDiscordOnConnect();
     });
 
     wsClient.on('message', async (msg) => {
       try {
         const json = JSON.parse(msg.toString());
+        
+        // Handle LCU requests
         if (json.type === 'lcu_request') {
           safeLog('ws gateway received lcu_request', json.id, json.method, json.path);
           try {
@@ -374,6 +379,50 @@ function startWebSocketGateway(backendBase) {
             const resp = { type: 'lcu_response', id: json.id, status: 500, error: String(err) };
             wsClient.send(JSON.stringify(resp));
             safeLog('ws gateway sent lcu_response error for', json.id);
+          }
+        }
+        // Handle Discord requests
+        else if (json.type === 'discord_request') {
+          safeLog('ws gateway received discord_request', json.id, json.method, json.path);
+          try {
+            const result = await performDiscordRequest(json.method || 'GET', json.path, json.body);
+            safeLog('ws gateway performDiscordRequest success for', json.path, 'result type:', typeof result);
+            const resp = { type: 'discord_response', id: json.id, status: 200, body: result };
+            wsClient.send(JSON.stringify(resp));
+            safeLog('ws gateway sent discord_response for', json.id);
+          } catch (err) {
+            safeLog('discord_request handler error', String(err));
+            const resp = { type: 'discord_response', id: json.id, status: 500, error: String(err) };
+            wsClient.send(JSON.stringify(resp));
+            safeLog('ws gateway sent discord_response error for', json.id);
+          }
+        }
+        // Handle Discord status requests
+        else if (json.type === 'get_discord_status') {
+          safeLog('ws gateway received get_discord_status');
+          try {
+            const status = await getDiscordStatus();
+            const resp = { type: 'discord_status', data: status };
+            wsClient.send(JSON.stringify(resp));
+            safeLog('ws gateway sent discord_status');
+          } catch (err) {
+            safeLog('get_discord_status error', String(err));
+            const resp = { type: 'discord_status', data: { isConnected: false, error: String(err) } };
+            wsClient.send(JSON.stringify(resp));
+          }
+        }
+        // Handle Discord users online requests
+        else if (json.type === 'get_discord_users_online') {
+          safeLog('ws gateway received get_discord_users_online');
+          try {
+            const users = await getDiscordUsersOnline();
+            const resp = { type: 'discord_users_online', users: users };
+            wsClient.send(JSON.stringify(resp));
+            safeLog('ws gateway sent discord_users_online', users.length, 'users');
+          } catch (err) {
+            safeLog('get_discord_users_online error', String(err));
+            const resp = { type: 'discord_users_online', users: [], error: String(err) };
+            wsClient.send(JSON.stringify(resp));
           }
         }
       } catch (e) {
@@ -403,6 +452,12 @@ const WS_MAX_RECONNECT_ATTEMPTS = 10;
 const WS_BASE_BACKOFF_MS = 2000; // 2 segundos
 const WS_MAX_BACKOFF_MS = 60000; // 1 minuto
 const WS_HEARTBEAT_INTERVAL = 60000; // 60 segundos
+
+// Discord integration
+let discordBot = null;
+let discordChannelId = null;
+let discordUsers = [];
+let discordStatus = { isConnected: false, botUsername: null, channelName: null };
 
 // Função de reconexão inteligente com backoff exponencial
 function scheduleWebSocketReconnect(backendBase) {
@@ -546,6 +601,145 @@ function performLcuRequest(method, pathname, body) {
       reject(err);
     }
   });
+}
+
+// =============================================================================
+// Discord Integration Functions
+// =============================================================================
+
+// Perform Discord API request
+function performDiscordRequest(method, pathname, body) {
+  return new Promise((resolve, reject) => {
+    if (!discordBot) {
+      return reject(new Error('Discord bot not initialized'));
+    }
+
+    try {
+      // For now, return mock data - in real implementation, this would call Discord API
+      const mockResponse = {
+        status: 200,
+        data: {
+          message: 'Discord request processed',
+          path: pathname,
+          method: method
+        }
+      };
+      resolve(mockResponse);
+    } catch (err) {
+      safeLog('discord request error', String(err));
+      return reject(err);
+    }
+  });
+}
+
+// Get Discord status
+async function getDiscordStatus() {
+  try {
+    // In real implementation, this would check if Discord bot is connected
+    // For now, return mock status
+    return {
+      isConnected: discordStatus.isConnected,
+      botUsername: discordStatus.botUsername,
+      channelName: discordStatus.channelName,
+      usersCount: discordUsers.length
+    };
+  } catch (err) {
+    safeLog('getDiscordStatus error', String(err));
+    return {
+      isConnected: false,
+      error: String(err)
+    };
+  }
+}
+
+// Get Discord users online
+async function getDiscordUsersOnline() {
+  try {
+    // In real implementation, this would fetch users from Discord channel
+    // For now, return mock users
+    return discordUsers;
+  } catch (err) {
+    safeLog('getDiscordUsersOnline error', String(err));
+    return [];
+  }
+}
+
+// Initialize Discord bot (mock implementation)
+async function initializeDiscordBot() {
+  try {
+    safeLog('initializing Discord bot...');
+    
+    // In real implementation, this would:
+    // 1. Load Discord token from settings
+    // 2. Initialize Discord client
+    // 3. Connect to Discord
+    // 4. Join the configured channel
+    // 5. Start monitoring users
+    
+    // Mock initialization
+    discordStatus.isConnected = true;
+    discordStatus.botUsername = 'LoL Matchmaking Bot';
+    discordStatus.channelName = 'lol-matchmaking';
+    
+    // Mock users
+    discordUsers = [
+      {
+        id: 'user1',
+        username: 'FZD Ratoso',
+        displayName: 'FZD Ratoso',
+        linkedNickname: {
+          gameName: 'FZD Ratoso',
+          tagLine: 'fzd'
+        },
+        inChannel: true,
+        joinedAt: new Date().toISOString()
+      }
+    ];
+    
+    safeLog('Discord bot initialized successfully');
+    return true;
+  } catch (err) {
+    safeLog('Discord bot initialization error', String(err));
+    discordStatus.isConnected = false;
+    return false;
+  }
+}
+
+// Start Discord monitoring
+function startDiscordMonitoring() {
+  if (!discordStatus.isConnected) {
+    safeLog('Discord bot not connected, cannot start monitoring');
+    return;
+  }
+
+  // In real implementation, this would:
+  // 1. Monitor voice channel for user joins/leaves
+  // 2. Update discordUsers array
+  // 3. Send updates to backend via WebSocket
+  
+  safeLog('Discord monitoring started');
+  
+  // Mock periodic updates
+  setInterval(() => {
+    if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+      const update = {
+        type: 'discord_users_online',
+        users: discordUsers,
+        timestamp: new Date().toISOString()
+      };
+      wsClient.send(JSON.stringify(update));
+    }
+  }, 30000); // Update every 30 seconds
+}
+
+// Initialize Discord when WebSocket connects
+function initializeDiscordOnConnect() {
+  setTimeout(async () => {
+    await initializeDiscordBot();
+    if (discordStatus.isConnected) {
+      startDiscordMonitoring();
+    }
+  }, 2000); // Wait 2 seconds after WebSocket connection
 }
 
 // -------------------------------------------------------------------------------

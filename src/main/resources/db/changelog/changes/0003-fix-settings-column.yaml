@@ -1,0 +1,15 @@
+databaseChangeLog:
+  - changeSet:
+      id: fix-settings-column-name
+      author: migration
+      preConditions:
+        onFail: MARK_RAN
+        columnExists:
+          tableName: settings
+          columnName: key
+      changes:
+        - renameColumn:
+            tableName: settings
+            oldColumnName: key
+            newColumnName: settings_key
+            columnDataType: VARCHAR(191)
