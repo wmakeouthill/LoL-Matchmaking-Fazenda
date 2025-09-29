@@ -148,10 +148,22 @@ electronAPI.lcu.getCurrentSummoner = async () => electronAPI.lcu.request('/lol-s
 electronAPI.lcu.getGameflowPhase = async () => electronAPI.lcu.request('/lol-gameflow/v1/gameflow-phase', 'GET');
 electronAPI.lcu.getSession = async () => electronAPI.lcu.request('/lol-gameflow/v1/session', 'GET');
 electronAPI.lcu.getMatchHistory = async () => {
-  const summoner = await electronAPI.lcu.request('/lol-summoner/v1/current-summoner', 'GET');
-  const summonerId = summoner?.summonerId;
-  if (!summonerId) throw new Error('summonerId unavailable');
-  return electronAPI.lcu.request(`/lol-match-history/v1/matches/${summonerId}`, 'GET');
+  try {
+    console.log('[preload] getMatchHistory: fetching summoner...');
+    const summoner = await electronAPI.lcu.request('/lol-summoner/v1/current-summoner', 'GET');
+    const summonerId = summoner?.summonerId;
+    console.log('[preload] getMatchHistory: summonerId =', summonerId);
+    if (!summonerId) throw new Error('summonerId unavailable');
+    console.log('[preload] getMatchHistory: fetching matches for summonerId', summonerId);
+    
+    // Try the correct LCU endpoint for match history
+    const result = await electronAPI.lcu.request('/lol-match-history/v1/products/lol/current-summoner/matches', 'GET');
+    console.log('[preload] getMatchHistory: result type =', typeof result, 'length =', result?.length);
+    return result;
+  } catch (error) {
+    console.error('[preload] getMatchHistory error:', error);
+    throw error;
+  }
 };
 
 try {

@@ -7,9 +7,12 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import com.fasterxml.jackson.databind.JsonNode;
 
 @Slf4j
 @RestController
@@ -140,10 +143,20 @@ public class LCUController {
                     Map<String, Object> response = new HashMap<>();
                     if (matchHistory != null) {
                         response.put(SUCCESS, true);
+
+                        // Extract games array from matchHistory.games.games structure
+                        List<Object> games = new ArrayList<>();
+                        if (matchHistory.has("games") && matchHistory.get("games").has("games")) {
+                            JsonNode gamesNode = matchHistory.get("games").get("games");
+                            if (gamesNode.isArray()) {
+                                gamesNode.forEach(game -> games.add(game));
+                            }
+                        }
+
                         // Ensure frontend finds 'matches' array (legacy name) and nested shape
-                        response.put("matches", matchHistory);
+                        response.put("matches", games);
                         response.put("matchHistory", matchHistory);
-                        response.put("data", Map.of("matches", matchHistory, "matchHistory", matchHistory));
+                        response.put("data", Map.of("matches", games, "matchHistory", matchHistory));
                         response.put(TIMESTAMP, System.currentTimeMillis());
                         return ResponseEntity.ok(response);
                     } else {
