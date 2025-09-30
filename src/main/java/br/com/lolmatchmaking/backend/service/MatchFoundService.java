@@ -333,11 +333,26 @@ public class MatchFoundService {
 
     private void notifyMatchFound(CustomMatch match, List<QueuePlayer> team1, List<QueuePlayer> team2) {
         try {
+            // ✅ Mapeamento de lanes por posição
+            String[] lanes = { "top", "jungle", "mid", "bot", "support" };
+
             Map<String, Object> data = new HashMap<>();
             data.put("type", "match_found");
             data.put("matchId", match.getId());
-            data.put("team1", team1.stream().map(this::convertToDTO).collect(Collectors.toList()));
-            data.put("team2", team2.stream().map(this::convertToDTO).collect(Collectors.toList()));
+
+            // ✅ Enriquecer jogadores com metadados de posição
+            List<QueuePlayerInfoDTO> team1DTOs = new ArrayList<>();
+            for (int i = 0; i < team1.size(); i++) {
+                team1DTOs.add(convertToDTO(team1.get(i), lanes[i], i, false));
+            }
+
+            List<QueuePlayerInfoDTO> team2DTOs = new ArrayList<>();
+            for (int i = 0; i < team2.size(); i++) {
+                team2DTOs.add(convertToDTO(team2.get(i), lanes[i], i + 5, false));
+            }
+
+            data.put("team1", team1DTOs);
+            data.put("team2", team2DTOs);
             data.put("averageMmrTeam1", match.getAverageMmrTeam1());
             data.put("averageMmrTeam2", match.getAverageMmrTeam2());
             data.put("timeoutSeconds", ACCEPTANCE_TIMEOUT_SECONDS);
@@ -409,17 +424,25 @@ public class MatchFoundService {
         }
     }
 
-    private QueuePlayerInfoDTO convertToDTO(QueuePlayer player) {
+    private QueuePlayerInfoDTO convertToDTO(QueuePlayer player, String assignedLane, int teamIndex,
+            boolean isAutofill) {
         return QueuePlayerInfoDTO.builder()
                 .id(player.getId())
+                .playerId(player.getPlayerId())
                 .summonerName(player.getSummonerName())
                 .region(player.getRegion())
+                .customLp(player.getCustomLp() != null ? player.getCustomLp() : 0)
                 .mmr(player.getCustomLp() != null ? player.getCustomLp() : 0)
                 .primaryLane(player.getPrimaryLane())
                 .secondaryLane(player.getSecondaryLane())
+                .assignedLane(assignedLane)
+                .isAutofill(isAutofill)
+                .teamIndex(teamIndex)
                 .queuePosition(player.getQueuePosition())
                 .joinTime(player.getJoinTime())
+                .acceptanceStatus(player.getAcceptanceStatus())
                 .isCurrentPlayer(false)
+                .profileIconId(29) // Default icon
                 .build();
     }
 
