@@ -198,6 +198,22 @@ public class QueueController {
         }
     }
 
+    /**
+     * POST /api/queue/refresh
+     * Recarrega a fila do banco (sincroniza cache)
+     */
+    @PostMapping("/refresh")
+    public ResponseEntity<Map<String, Object>> refreshQueue() {
+        try {
+            log.info("🔄 Sincronizando fila com banco de dados");
+            queueManagementService.loadQueueFromDatabase();
+            return ResponseEntity.ok(Map.of("success", true, "message", "Fila sincronizada com sucesso"));
+        } catch (Exception e) {
+            log.error("❌ Erro ao sincronizar fila", e);
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
     // DTOs
     @Data
     public static class JoinQueueRequest {
