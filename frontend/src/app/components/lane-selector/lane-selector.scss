@@ -5,11 +5,12 @@
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.8);
-  display: flex;
+  display: flex !important;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 9999 !important; /* Aumentado z-index */
   backdrop-filter: blur(5px);
+  pointer-events: auto !important; /* Garantir que eventos sejam capturados */
 }
 
 .lane-selector-modal {
@@ -22,6 +23,9 @@
   max-height: 90vh;
   overflow-y: auto;
   color: #f0e6d2;
+  display: block !important; /* Garantir que seja exibido */
+  visibility: visible !important; /* Garantir visibilidade */
+  opacity: 1 !important; /* Garantir opacidade */
 }
 
 .modal-header {

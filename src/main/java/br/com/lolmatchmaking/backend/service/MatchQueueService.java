@@ -193,8 +193,7 @@ public class MatchQueueService {
         dto.setCustomLp(queuePlayer.getCustomLp());
         dto.setPrimaryLane(queuePlayer.getPrimaryLane());
         dto.setSecondaryLane(queuePlayer.getSecondaryLane());
-        dto.setJoinTime(queuePlayer.getJoinTime() != null ? 
-            queuePlayer.getJoinTime().atZone(java.time.ZoneId.systemDefault()).toLocalDateTime() : null);
+        dto.setJoinTime(queuePlayer.getJoinTime());
         dto.setQueuePosition(queuePlayer.getQueuePosition());
         dto.setIsActive(queuePlayer.getActive());
         dto.setAcceptanceStatus(queuePlayer.getAcceptanceStatus());

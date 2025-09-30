@@ -47,8 +47,7 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
   showLaneSelector = false;
   queuePreferences: QueuePreferences = {
     primaryLane: '',
-    secondaryLane: '',
-    autoAccept: false
+    secondaryLane: ''
   };
 
   // Discord Integration (dados vindos do backend)
@@ -65,7 +64,7 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
 
   // Auto-refresh (controlado pelo QueueStateService)
   private autoRefreshInterval?: number;
-  private readonly AUTO_REFRESH_INTERVAL_MS = 10000; // ✅ CORREÇÃO: 10 segundos em vez de 2
+  private readonly AUTO_REFRESH_INTERVAL_MS = 5000; // ✅ CORREÇÃO: 5 segundos
 
   // Cleanup
   private readonly destroy$ = new Subject<void>();
@@ -265,6 +264,7 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
   // AUTO-REFRESH METHODS (simplificados - backend gerencia a sincronização)
   // =============================================================================
   onAutoRefreshChange(): void {
+    this.autoRefreshEnabled = !this.autoRefreshEnabled;
     console.log(`🔄 [Queue] Auto-refresh ${this.autoRefreshEnabled ? 'habilitado' : 'desabilitado'}`);
 
     this.autoRefreshToggle.emit(this.autoRefreshEnabled);
@@ -326,11 +326,20 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
       playersInQueue: this.queueStatus?.playersInQueue
     });
 
-    this.isRefreshing = true;
+    if (this.isRefreshing) {
+      console.log('⚠️ [Queue] Refresh já em andamento, ignorando...');
+      return;
+    }
 
-    // ✅ NOVO: Emitir evento para o componente pai atualizar o estado da fila
-    console.log('🔄 [Queue] Solicitando atualização completa do estado da fila ao componente pai...');
+    this.isRefreshing = true;
+    console.log('🔄 [Queue] Iniciando refresh completo...');
+
+    // ✅ NOVO: Feedback visual imediato
+    console.log('🔄 [Queue] Solicitando atualização completa do estado da fila e Discord ao componente pai...');
     this.refreshData.emit();
+
+    // ✅ NOVO: Notificação visual para o usuário
+    console.log('🔄 [Queue] Atualizando dados da fila e Discord...');
 
     // ✅ NOVO: Forçar atualização do QueueStateService
     if (this.currentPlayer?.displayName) {
@@ -342,12 +351,12 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
     // ✅ NOVO: Forçar detecção de mudanças imediatamente
     this.cdr.detectChanges();
 
-    // Parar refresh após 2 segundos
+    // Parar o indicador de loading após 3 segundos (tempo suficiente para backend responder)
     setTimeout(() => {
       this.isRefreshing = false;
       this.cdr.detectChanges();
-      console.log('✅ [Queue] Refresh completo');
-    }, 2000);
+      console.log('✅ [Queue] Refresh completo finalizado');
+    }, 3000);
   }
 
   // =============================================================================
@@ -390,9 +399,13 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
     );
 
     if (currentPlayerInQueue?.joinTime) {
-      // ✅ CORRIGIDO: Usar método auxiliar para garantir consistência
+      // ✅ CORRIGIDO: Calcular tempo baseado no joinTime do servidor
       const timeData = this.calculateTimeInQueue(currentPlayerInQueue.joinTime);
       this.queueTimer = timeData.seconds;
+      console.log(`⏱️ [Queue] Timer atualizado: ${this.getTimerDisplay()} (${timeData.seconds}s)`);
+    } else {
+      // Se não encontrou o jogador na fila, incrementar timer local
+      this.queueTimer++;
     }
   }
 
@@ -408,7 +421,13 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
   onJoinQueue(): void {
     if (!this.queueStatus.isActive) return;
     console.log('🎮 [Queue] Abrindo seletor de lanes...');
+    console.log('🎮 [Queue] Estado antes de abrir modal:', {
+      showLaneSelector: this.showLaneSelector,
+      isVisible: this.showLaneSelector
+    });
     this.showLaneSelector = true;
+    console.log('🎮 [Queue] Modal definido como visível:', this.showLaneSelector);
+    this.cdr.detectChanges(); // ✅ Forçar detecção de mudanças
   }
 
   // Métodos Discord chamados pelo template
@@ -417,9 +436,48 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
     console.log('🔍 [Queue] Estado atual antes da entrada:', {
       isInQueue: this.isInQueue,
       currentPlayer: this.currentPlayer?.displayName,
-      isDiscordConnected: this.isDiscordConnected
+      isDiscordConnected: this.isDiscordConnected,
+      canJoinQueue: this.canJoinDiscordQueue()
     });
-    this.showLaneSelector = true;
+
+    if (!this.canJoinDiscordQueue()) {
+      console.warn('⚠️ [Queue] Não é possível entrar na fila - condições não atendidas');
+      return;
+    }
+
+    console.log('🎮 [Queue] Todas as condições atendidas - abrindo seletor de lanes...');
+    this.onJoinQueue();
+  }
+
+  /**
+   * Verifica se o jogador pode entrar na fila Discord
+   * Condições: LCU conectado + Discord bot ativo + Jogador no canal monitorado
+   * ✅ CORRIGIDO: Método agora apenas verifica condições, não executa ações
+   */
+  canJoinDiscordQueue(): boolean {
+    // Verificar se não está já na fila
+    if (this.isInQueue) {
+      return false;
+    }
+
+    // Verificar se tem jogador atual
+    if (!this.currentPlayer || !this.currentPlayer.displayName) {
+      return false;
+    }
+
+    // Verificar se Discord está conectado
+    if (!this.isDiscordConnected) {
+      return false;
+    }
+
+    // Verificar se sistema está ativo
+    if (!this.queueStatus.isActive) {
+      return false;
+    }
+
+    // TODO: Adicionar verificação de canal monitorado quando implementado
+    // Por enquanto, retorna true se todas as outras condições forem atendidas
+    return true;
   }
 
   onLeaveDiscordQueue(): void {
@@ -466,14 +524,9 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
       return;
     }
 
-    // Backend gerenciará todas as validações de vinculação e fila
-    console.log('✅ [Queue] Delegando entrada na fila para o backend');
-    this.joinDiscordQueueWithFullData.emit({
-      player: this.currentPlayer,
-      preferences: preferences
-    });
-
-    // ✅ REMOVIDO: Timer será sincronizado automaticamente quando o backend atualizar a fila
+    // Usar o novo sistema de fila centralizado
+    console.log('✅ [Queue] Entrando na fila via novo sistema centralizado');
+    this.joinQueue.emit(preferences);
     // this.queueTimer = 0;
     // this.startQueueTimer();
 
@@ -482,6 +535,7 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
 
   onCloseLaneSelector(): void {
     this.showLaneSelector = false;
+    this.cdr.detectChanges(); // ✅ Forçar detecção de mudanças
   }
 
   onLeaveQueue(): void {

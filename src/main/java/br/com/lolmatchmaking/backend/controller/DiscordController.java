@@ -15,68 +15,99 @@ import java.util.Map;
 @RequestMapping("/api/discord")
 @RequiredArgsConstructor
 public class DiscordController {
-    
+
     private final DiscordService discordService;
-    
+
     private static final String IS_CONNECTED = "isConnected";
     private static final String TIMESTAMP = "timestamp";
     private static final String SUCCESS = "success";
     private static final String MESSAGE = "message";
     private static final String ERROR = "error";
-    
+
+    // Cache para reduzir chamadas desnecessárias
+    private Map<String, Object> cachedStatus = null;
+    private long lastStatusUpdate = 0;
+    private Map<String, Object> cachedUsers = null;
+    private long lastUsersUpdate = 0;
+    private static final long CACHE_DURATION_MS = 2000; // 2 segundos de cache
+
     /**
      * Obtém o status atual do Discord Bot
      */
     @GetMapping("/status")
     public ResponseEntity<Map<String, Object>> getDiscordStatus() {
         try {
+            long currentTime = System.currentTimeMillis();
+
+            // Verificar se o cache ainda é válido
+            if (cachedStatus != null && (currentTime - lastStatusUpdate) < CACHE_DURATION_MS) {
+                log.debug("📊 [DiscordController] Retornando status do cache");
+                return ResponseEntity.ok(cachedStatus);
+            }
+
+            // Atualizar cache
             Map<String, Object> status = new HashMap<>();
             status.put(IS_CONNECTED, discordService.isConnected());
             status.put("botUsername", discordService.getBotUsername());
             status.put("channelName", discordService.getChannelName());
             status.put("usersCount", discordService.getUsersCount());
-            status.put(TIMESTAMP, System.currentTimeMillis());
-            
+            status.put(TIMESTAMP, currentTime);
+
+            // Armazenar no cache
+            cachedStatus = status;
+            lastStatusUpdate = currentTime;
+
             log.info("📊 [DiscordController] Status solicitado: {}", status);
             return ResponseEntity.ok(status);
-            
+
         } catch (Exception e) {
             log.error("❌ [DiscordController] Erro ao obter status do Discord", e);
             return ResponseEntity.internalServerError().body(Map.of(
                     SUCCESS, false,
                     MESSAGE, "Erro interno do servidor",
-                    ERROR, e.getMessage()
-            ));
+                    ERROR, e.getMessage()));
         }
     }
-    
+
     /**
      * Obtém a lista de usuários no canal do Discord
      */
     @GetMapping("/users")
     public ResponseEntity<Map<String, Object>> getDiscordUsers() {
         try {
+            long currentTime = System.currentTimeMillis();
+
+            // Verificar se o cache ainda é válido
+            if (cachedUsers != null && (currentTime - lastUsersUpdate) < CACHE_DURATION_MS) {
+                log.debug("👥 [DiscordController] Retornando usuários do cache");
+                return ResponseEntity.ok(cachedUsers);
+            }
+
+            // Atualizar cache
             List<DiscordService.DiscordUser> users = discordService.getUsersInChannel();
-            
+
             Map<String, Object> response = new HashMap<>();
             response.put(SUCCESS, true);
             response.put("users", users);
             response.put("count", users.size());
-            response.put(TIMESTAMP, System.currentTimeMillis());
-            
+            response.put(TIMESTAMP, currentTime);
+
+            // Armazenar no cache
+            cachedUsers = response;
+            lastUsersUpdate = currentTime;
+
             log.info("👥 [DiscordController] {} usuários solicitados", users.size());
             return ResponseEntity.ok(response);
-            
+
         } catch (Exception e) {
             log.error("❌ [DiscordController] Erro ao obter usuários do Discord", e);
             return ResponseEntity.internalServerError().body(Map.of(
                     SUCCESS, false,
                     MESSAGE, "Erro interno do servidor",
-                    ERROR, e.getMessage()
-            ));
+                    ERROR, e.getMessage()));
         }
     }
-    
+
     /**
      * Força a atualização das configurações do Discord
      */
@@ -85,25 +116,24 @@ public class DiscordController {
         try {
             log.info("🔄 [DiscordController] Atualizando configurações do Discord...");
             discordService.refreshSettings();
-            
+
             Map<String, Object> response = new HashMap<>();
             response.put(SUCCESS, true);
             response.put(MESSAGE, "Configurações do Discord atualizadas com sucesso");
             response.put(IS_CONNECTED, discordService.isConnected());
             response.put(TIMESTAMP, System.currentTimeMillis());
-            
+
             return ResponseEntity.ok(response);
-            
+
         } catch (Exception e) {
             log.error("❌ [DiscordController] Erro ao atualizar configurações do Discord", e);
             return ResponseEntity.internalServerError().body(Map.of(
                     SUCCESS, false,
                     MESSAGE, "Erro ao atualizar configurações",
-                    ERROR, e.getMessage()
-            ));
+                    ERROR, e.getMessage()));
         }
     }
-    
+
     /**
      * Testa a conexão com o Discord
      */
@@ -112,7 +142,7 @@ public class DiscordController {
         try {
             boolean connected = discordService.isConnected();
             String message = connected ? "Discord Bot conectado com sucesso" : "Discord Bot não está conectado";
-            
+
             Map<String, Object> response = new HashMap<>();
             response.put(SUCCESS, connected);
             response.put(MESSAGE, message);
@@ -121,44 +151,42 @@ public class DiscordController {
             response.put("channelName", discordService.getChannelName());
             response.put("usersCount", discordService.getUsersCount());
             response.put(TIMESTAMP, System.currentTimeMillis());
-            
+
             log.info("🧪 [DiscordController] Teste de conexão: {}", message);
             return ResponseEntity.ok(response);
-            
+
         } catch (Exception e) {
             log.error("❌ [DiscordController] Erro no teste de conexão", e);
             return ResponseEntity.internalServerError().body(Map.of(
                     SUCCESS, false,
                     MESSAGE, "Erro no teste de conexão",
-                    ERROR, e.getMessage()
-            ));
+                    ERROR, e.getMessage()));
         }
     }
-    
+
     /**
      * Força o registro de comandos slash no Discord
      */
     @PostMapping("/register-commands")
     public ResponseEntity<Map<String, Object>> registerSlashCommands() {
         log.info("🔧 [DiscordController] Forçando registro de comandos slash");
-        
+
         try {
             boolean success = discordService.registerSlashCommandsNow();
-            
+
             Map<String, Object> response = new HashMap<>();
             response.put(SUCCESS, success);
             response.put(MESSAGE, success ? "Comandos slash registrados com sucesso" : "Erro ao registrar comandos");
             response.put(TIMESTAMP, System.currentTimeMillis());
-            
+
             return ResponseEntity.ok(response);
-            
+
         } catch (Exception e) {
             log.error("❌ [DiscordController] Erro ao registrar comandos", e);
             return ResponseEntity.internalServerError().body(Map.of(
                     SUCCESS, false,
                     MESSAGE, "Erro ao registrar comandos slash",
-                    ERROR, e.getMessage()
-            ));
+                    ERROR, e.getMessage()));
         }
     }
 }

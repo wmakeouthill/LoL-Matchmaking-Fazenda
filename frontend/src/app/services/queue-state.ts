@@ -111,21 +111,8 @@ export class QueueStateService {
   forceSync(): void {
     console.log('🔄 [QueueState] Forçando sincronização imediata com tabela queue_players...');
 
-    // Chamar sincronização MySQL no backend (read-only)
-    this.apiService.forceMySQLSync().subscribe({
-      next: (response) => {
-        console.log('✅ [QueueState] Sincronização MySQL backend concluída:', response);
-
-        // Sincronizar dados do frontend com o backend atualizado
-        this.syncQueueFromDatabase();
-      },
-      error: (error) => {
-        console.error('❌ [QueueState] Erro na sincronização MySQL backend:', error);
-
-        // FALLBACK: Mesmo com erro no backend, tentar sincronizar frontend
-        this.syncQueueFromDatabase();
-      }
-    });
+    // Apenas sincronizar dados do frontend (sem chamar force-sync que limpa a fila)
+    this.syncQueueFromDatabase();
   }
 
   /**

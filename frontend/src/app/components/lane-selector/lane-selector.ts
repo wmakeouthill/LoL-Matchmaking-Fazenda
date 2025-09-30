@@ -1,21 +1,19 @@
-import { Component, Input, Output, EventEmitter, OnInit } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnInit, OnChanges, SimpleChanges, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormsModule } from '@angular/forms';
 import { Lane, QueuePreferences } from '../../interfaces';
 
 @Component({
   selector: 'app-lane-selector',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule],
   templateUrl: './lane-selector.html',
   styleUrl: './lane-selector.scss'
 })
-export class LaneSelectorComponent implements OnInit {
+export class LaneSelectorComponent implements OnInit, OnChanges, OnDestroy {
   @Input() isVisible = false;
   @Input() currentPreferences: QueuePreferences = {
     primaryLane: '',
-    secondaryLane: '',
-    autoAccept: false
+    secondaryLane: ''
   };
 
   @Output() close = new EventEmitter<void>();
@@ -56,12 +54,33 @@ export class LaneSelectorComponent implements OnInit {
 
   selectedPrimary = '';
   selectedSecondary = '';
-  autoAccept = false;
 
   ngOnInit() {
+    console.log('🎯 [LaneSelector] Componente inicializado');
+    console.log('🎯 [LaneSelector] Estado inicial:', {
+      isVisible: this.isVisible,
+      currentPreferences: this.currentPreferences
+    });
     this.selectedPrimary = this.currentPreferences.primaryLane;
     this.selectedSecondary = this.currentPreferences.secondaryLane;
-    this.autoAccept = this.currentPreferences.autoAccept || false;
+  }
+
+  ngOnChanges(changes: SimpleChanges) {
+    if (changes['isVisible']) {
+      console.log('🎯 [LaneSelector] isVisible mudou:', {
+        previousValue: changes['isVisible'].previousValue,
+        currentValue: changes['isVisible'].currentValue,
+        modalAberto: changes['isVisible'].currentValue
+      });
+
+      if (changes['isVisible'].currentValue === true) {
+        console.log('🎯 [LaneSelector] MODAL DEVE ESTAR VISÍVEL AGORA!');
+        // Forçar detecção de mudanças após um pequeno delay
+        setTimeout(() => {
+          console.log('🎯 [LaneSelector] Verificando se modal está realmente visível no DOM...');
+        }, 100);
+      }
+    }
   }
 
   selectPrimaryLane(laneId: string) {
@@ -87,14 +106,18 @@ export class LaneSelectorComponent implements OnInit {
     if (this.isValidSelection()) {
       this.confirm.emit({
         primaryLane: this.selectedPrimary,
-        secondaryLane: this.selectedSecondary,
-        autoAccept: this.autoAccept
+        secondaryLane: this.selectedSecondary
       });
     }
   }
 
   onClose() {
+    console.log('🎯 [LaneSelector] Fechando modal...');
     this.close.emit();
+  }
+
+  ngOnDestroy() {
+    console.log('🎯 [LaneSelector] Componente destruído');
   }
 
   getLaneName(laneId: string): string {
