@@ -403,6 +403,7 @@ export class App implements OnInit, OnDestroy {
         break;
       case 'match_found':
         console.log('🎮 [App] Match found recebido:', message);
+        console.log('🎮 [App] Match found JSON:', JSON.stringify(message, null, 2));
         this.handleMatchFound(message);
         break;
       case 'acceptance_progress':
@@ -430,6 +431,25 @@ export class App implements OnInit, OnDestroy {
           this.draftData = message;
           this.cdr.detectChanges();
         }, 3000);
+        break;
+      case 'acceptance_timer':
+        // Atualizar timer do MatchFoundComponent
+        if (this.showMatchFound && this.matchFoundData) {
+          this.matchFoundData.acceptanceTimer = message.secondsRemaining || message.timeLeft || message.secondsLeft || 30;
+          console.log('⏰ [App] Timer atualizado:', this.matchFoundData.acceptanceTimer, 's');
+          this.cdr.detectChanges();
+
+          // Disparar evento para o MatchFoundComponent
+          const timeLeft = this.matchFoundData.acceptanceTimer || 30;
+          const event = new CustomEvent('matchTimerUpdate', {
+            detail: {
+              matchId: message.matchId,
+              timeLeft: timeLeft,
+              isUrgent: timeLeft <= 10
+            }
+          });
+          document.dispatchEvent(event);
+        }
         break;
       default:
         // outras mensagens tratadas por componentes específicos
