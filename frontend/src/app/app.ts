@@ -410,8 +410,9 @@ export class App implements OnInit, OnDestroy {
         console.log('📊 [App] Progresso de aceitação:', message);
         // Atualizar dados do MatchFoundComponent se estiver visível
         if (this.showMatchFound && this.matchFoundData) {
-          this.matchFoundData.acceptedCount = message.acceptedCount || 0;
-          this.matchFoundData.totalPlayers = message.totalPlayers || 10;
+          const progressData = message.data || message;
+          this.matchFoundData.acceptedCount = progressData.acceptedCount || 0;
+          this.matchFoundData.totalPlayers = progressData.totalPlayers || 10;
           this.cdr.detectChanges();
         }
         break;
@@ -435,7 +436,8 @@ export class App implements OnInit, OnDestroy {
       case 'acceptance_timer':
         // Atualizar timer do MatchFoundComponent
         if (this.showMatchFound && this.matchFoundData) {
-          this.matchFoundData.acceptanceTimer = message.secondsRemaining || message.timeLeft || message.secondsLeft || 30;
+          const timerData = message.data || message;
+          this.matchFoundData.acceptanceTimer = timerData.secondsRemaining || timerData.timeLeft || timerData.secondsLeft || 30;
           console.log('⏰ [App] Timer atualizado:', this.matchFoundData.acceptanceTimer, 's');
           this.cdr.detectChanges();
 
@@ -443,7 +445,7 @@ export class App implements OnInit, OnDestroy {
           const timeLeft = this.matchFoundData.acceptanceTimer || 30;
           const event = new CustomEvent('matchTimerUpdate', {
             detail: {
-              matchId: message.matchId,
+              matchId: timerData.matchId || this.matchFoundData.matchId,
               timeLeft: timeLeft,
               isUrgent: timeLeft <= 10
             }
@@ -459,13 +461,17 @@ export class App implements OnInit, OnDestroy {
 
   private handleMatchFound(message: any): void {
     console.log('🎯 [App] Processando match found:', message);
-    console.log('🎯 [App] matchId recebido:', message.matchId);
-    console.log('🎯 [App] team1:', message.team1?.length, 'jogadores');
-    console.log('🎯 [App] team2:', message.team2?.length, 'jogadores');
+
+    // ✅ CORREÇÃO: Dados vêm em message.data
+    const data = message.data || message;
+
+    console.log('🎯 [App] matchId recebido:', data.matchId);
+    console.log('🎯 [App] team1:', data.team1?.length, 'jogadores');
+    console.log('🎯 [App] team2:', data.team2?.length, 'jogadores');
 
     // ✅ Converter formato do backend para formato do componente
-    const team1 = message.team1 || [];
-    const team2 = message.team2 || [];
+    const team1 = data.team1 || [];
+    const team2 = data.team2 || [];
 
     // Determinar qual time o jogador está
     const currentPlayerName = this.currentPlayer?.displayName || this.currentPlayer?.summonerName || '';
@@ -476,7 +482,7 @@ export class App implements OnInit, OnDestroy {
     const playerSide: 'blue' | 'red' = isInTeam1 ? 'blue' : 'red';
 
     this.matchFoundData = {
-      matchId: message.matchId,
+      matchId: data.matchId,
       playerSide,
       teammates: teammates.map((p: any, index: number) => ({
         id: p.playerId || p.id || index,
@@ -485,7 +491,7 @@ export class App implements OnInit, OnDestroy {
         primaryLane: p.primaryLane || 'fill',
         secondaryLane: p.secondaryLane || 'fill',
         assignedLane: p.assignedLane || p.primaryLane || 'fill',
-        teamIndex: isInTeam1 ? index : (index + 5),
+        teamIndex: p.teamIndex !== undefined ? p.teamIndex : (isInTeam1 ? index : (index + 5)),
         isAutofill: p.isAutofill || false,
         profileIconId: p.profileIconId || 29
       })),
@@ -496,17 +502,17 @@ export class App implements OnInit, OnDestroy {
         primaryLane: p.primaryLane || 'fill',
         secondaryLane: p.secondaryLane || 'fill',
         assignedLane: p.assignedLane || p.primaryLane || 'fill',
-        teamIndex: isInTeam1 ? (index + 5) : index,
+        teamIndex: p.teamIndex !== undefined ? p.teamIndex : (isInTeam1 ? (index + 5) : index),
         isAutofill: p.isAutofill || false,
         profileIconId: p.profileIconId || 29
       })),
       averageMMR: {
-        yourTeam: isInTeam1 ? (message.averageMmrTeam1 || 0) : (message.averageMmrTeam2 || 0),
-        enemyTeam: isInTeam1 ? (message.averageMmrTeam2 || 0) : (message.averageMmrTeam1 || 0)
+        yourTeam: isInTeam1 ? (data.averageMmrTeam1 || 0) : (data.averageMmrTeam2 || 0),
+        enemyTeam: isInTeam1 ? (data.averageMmrTeam2 || 0) : (data.averageMmrTeam1 || 0)
       },
       estimatedGameDuration: 30,
       phase: 'accept',
-      acceptanceTimer: message.timeoutSeconds || 30,
+      acceptanceTimer: data.timeoutSeconds || 30,
       acceptedCount: 0,
       totalPlayers: 10
     } as any;
