@@ -42,6 +42,9 @@ public class QueueManagementService {
     private static final long QUEUE_SYNC_INTERVAL = 10000; // 10 segundos
     private static final long MATCH_FOUND_TIMEOUT = 30000; // 30 segundos
 
+    // Contador de bots
+    private int botCounter = 0;
+
     /**
      * Inicializa o serviço de fila
      */
@@ -62,11 +65,11 @@ public class QueueManagementService {
 
             log.info("📥 [QueueManagementService] Carregando fila do banco...");
             log.info("📥 [QueueManagementService] Jogadores ativos encontrados: {}", activePlayers.size());
-            
+
             queueCache.clear();
             for (QueuePlayer player : activePlayers) {
                 queueCache.put(player.getSummonerName(), player);
-                log.info("📥 [QueueManagementService] Jogador carregado: {} (ID: {})", 
+                log.info("📥 [QueueManagementService] Jogador carregado: {} (ID: {})",
                         player.getSummonerName(), player.getId());
             }
 
@@ -179,7 +182,7 @@ public class QueueManagementService {
         activePlayers.sort(Comparator.comparing(QueuePlayer::getJoinTime));
 
         log.info("📊 [QueueManagementService] getQueueStatus - {} jogadores no cache", activePlayers.size());
-        log.info("📊 [QueueManagementService] Jogadores: {}", 
+        log.info("📊 [QueueManagementService] Jogadores: {}",
                 activePlayers.stream().map(p -> p.getSummonerName()).collect(Collectors.toList()));
 
         List<QueuePlayerInfoDTO> playersInQueueList = activePlayers.stream()
@@ -521,6 +524,80 @@ public class QueueManagementService {
             webSocketService.broadcastQueueUpdate(status.getPlayersInQueueList());
         } catch (Exception e) {
             log.error("❌ Erro ao fazer broadcast da atualização da fila", e);
+        }
+    }
+
+    /**
+     * Adiciona um bot à fila para testes
+     */
+    @Transactional
+    public void addBotToQueue() {
+        try {
+            botCounter++;
+            String botName = "Bot" + botCounter;
+
+            // MMR aleatório entre 800 e 2000
+            int randomMMR = 800 + (int) (Math.random() * 1200);
+
+            // Lanes aleatórias
+            String[] lanes = { "top", "jungle", "mid", "bot", "support" };
+            String primaryLane = lanes[(int) (Math.random() * lanes.length)];
+            String secondaryLane = lanes[(int) (Math.random() * lanes.length)];
+
+            log.info("🤖 Criando bot: {} (MMR: {}, Lane: {})", botName, randomMMR, primaryLane);
+
+            // Remover bot anterior se existir
+            queuePlayerRepository.findBySummonerName(botName).ifPresent(qp -> {
+                queuePlayerRepository.delete(qp);
+                queueCache.remove(botName);
+            });
+
+            // Criar bot na fila
+            QueuePlayer botPlayer = QueuePlayer.builder()
+                    .playerId(-1L * botCounter) // ID negativo para bots
+                    .summonerName(botName)
+                    .region("br1")
+                    .customLp(randomMMR)
+                    .primaryLane(primaryLane)
+                    .secondaryLane(secondaryLane)
+                    .joinTime(Instant.now())
+                    .queuePosition(calculateNextPosition())
+                    .active(true)
+                    .acceptanceStatus(1) // ✅ Bot sempre aceita
+                    .build();
+
+            // Salvar no banco
+            botPlayer = queuePlayerRepository.save(botPlayer);
+
+            // Adicionar ao cache
+            queueCache.put(botName, botPlayer);
+
+            // Atualizar posições
+            updateQueuePositions();
+
+            // Broadcast atualização
+            broadcastQueueUpdate();
+
+            log.info("✅ Bot {} adicionado à fila (posição: {}, MMR: {}, Lane: {})",
+                    botName, botPlayer.getQueuePosition(), randomMMR, primaryLane);
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao adicionar bot à fila", e);
+            throw new RuntimeException("Erro ao adicionar bot à fila", e);
+        }
+    }
+
+    /**
+     * Reseta o contador de bots
+     */
+    public void resetBotCounter() {
+        try {
+            log.info("🔄 Resetando contador de bots (anterior: {})", botCounter);
+            botCounter = 0;
+            log.info("✅ Contador de bots resetado para 0");
+        } catch (Exception e) {
+            log.error("❌ Erro ao resetar contador de bots", e);
+            throw new RuntimeException("Erro ao resetar contador de bots", e);
         }
     }
 }
