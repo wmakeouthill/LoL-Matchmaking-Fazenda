@@ -1,8 +1,7 @@
 import { Component, OnInit, OnDestroy, ChangeDetectorRef, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Subject, takeUntil, filter, take, firstValueFrom } from 'rxjs';
-import { Router } from '@angular/router';
+import { Subject, takeUntil, take, firstValueFrom } from 'rxjs';
 
 import { DashboardComponent } from './components/dashboard/dashboard';
 import { QueueComponent } from './components/queue/queue';
@@ -17,37 +16,7 @@ import { DiscordIntegrationService } from './services/discord-integration.servic
 import { BotService } from './services/bot.service';
 import { Player, QueueStatus, LCUStatus, QueuePreferences } from './interfaces';
 import type { Notification } from './interfaces';
-
-// ✅ Função de log para gravar no app.log separado do draft
-function logApp(...args: any[]) {
-  const fs = (window as any).electronAPI?.fs;
-  const path = (window as any).electronAPI?.path;
-  const process = (window as any).electronAPI?.process;
-
-  // ✅ CORREÇÃO: Usar caminho relativo se electronAPI não estiver disponível
-  let logPath = '';
-  if (path && process) {
-    logPath = path.join(process.cwd(), 'app.log');
-  } else {
-    // Fallback para ambiente web
-    logPath = 'app.log';
-  }
-
-  const logLine = `[${new Date().toISOString()}] [App] ` + args.map(a => (typeof a === 'object' ? JSON.stringify(a) : a)).join(' ') + '\n';
-
-  if (fs && logPath) {
-    fs.appendFile(logPath, logLine, (err: any) => {
-      if (err) {
-        console.error('[App] Erro ao escrever log:', err);
-      }
-    });
-  } else {
-    // ✅ FALLBACK: Se não conseguir escrever no arquivo, pelo menos log no console
-    console.log('[App] ElectronAPI não disponível, log apenas no console');
-  }
-
-  console.log('[App]', ...args);
-}
+import { logApp } from './utils/app-logger';
 
 @Component({
   selector: 'app-root',
@@ -153,7 +122,6 @@ export class App implements OnInit, OnDestroy {
     private readonly queueStateService: QueueStateService,
     private readonly discordService: DiscordIntegrationService,
     private readonly botService: BotService,
-    private readonly router: Router,
     private readonly cdr: ChangeDetectorRef
   ) {
     console.log(`[App] Constructor`);
@@ -415,9 +383,6 @@ export class App implements OnInit, OnDestroy {
     this.apiService.sendWebSocketMessage(data);
   }
 
-  private startPeriodicUpdates(): void {
-    // Placeholder: atualizações periódicas podem ser adicionadas aqui
-  }
 
   private handleInitializationError(error: any): void {
     console.error('❌ [App] Erro na inicialização:', error);
@@ -681,6 +646,22 @@ export class App implements OnInit, OnDestroy {
     try {
       await firstValueFrom(this.apiService.joinQueue(this.currentPlayer, preferences));
       console.log('✅ [App] Solicitação de entrada na fila enviada');
+
+      // ✅ NOVO: Atualizar imediatamente o estado local para mostrar entrada na fila
+      this.isInQueue = true;
+      this.markBackendAction(); // Marcar que acabamos de fazer uma ação no backend
+
+      // ✅ NOVO: Adicionar jogador à tabela local imediatamente (otimista)
+      if (preferences) {
+        this.updateQueueTableOptimistically(this.currentPlayer, preferences);
+      }
+
+      this.addNotification('success', 'Fila Ingressada!', 'Você entrou na fila com sucesso');
+
+      // ✅ NOVO: Atualizar status real após 2 segundos para confirmar
+      setTimeout(() => {
+        this.refreshQueueStatus();
+      }, 2000);
     } catch (error) {
       console.error('❌ [App] Erro ao entrar na fila:', error);
       this.addNotification('error', 'Erro', 'Falha ao entrar na fila');
@@ -696,43 +677,27 @@ export class App implements OnInit, OnDestroy {
       return;
     }
 
-    if (!data.player.gameName || !data.player.tagLine) {
-      console.error('❌ [App] gameName ou tagLine não disponíveis');
-      this.addNotification('error', 'Erro', 'Dados do jogador incompletos (gameName/tagLine)');
-      return;
-    }
-
+    // Usar o novo sistema de fila centralizado
     try {
-      // ✅ CORRIGIDO: Usar discordService.joinDiscordQueue para entrada via Discord
-      const success = this.discordService.joinDiscordQueue(
-        data.preferences.primaryLane,
-        data.preferences.secondaryLane,
-        data.player.summonerName,
-        {
-          gameName: data.player.gameName,
-          tagLine: data.player.tagLine
-        }
-      );
+      await firstValueFrom(this.apiService.joinQueue(data.player, data.preferences));
+      console.log('✅ [App] Solicitação de entrada na fila enviada via novo sistema');
 
-      if (success) {
-        console.log('✅ [App] Solicitação de entrada na fila Discord enviada via WebSocket');
-        this.addNotification('success', 'Fila Discord', 'Entrando na fila via Discord...');
+      // ✅ NOVO: Atualizar imediatamente o estado local para mostrar entrada na fila
+      this.isInQueue = true;
+      this.markBackendAction(); // Marcar que acabamos de fazer uma ação no backend
 
-        // ✅ CORRIGIDO: Marcar estado como na fila imediatamente
-        this.isInQueue = true;
-        this.hasRecentBackendQueueStatus = true;
+      // ✅ NOVO: Adicionar jogador à tabela local imediatamente (otimista)
+      this.updateQueueTableOptimistically(data.player, data.preferences);
 
-        // Atualizar status após 3 segundos para confirmar
-        setTimeout(() => {
-          this.refreshQueueStatus();
-        }, 3000);
-      } else {
-        console.error('❌ [App] Falha ao enviar solicitação via Discord WebSocket');
-        this.addNotification('error', 'Erro', 'Falha ao conectar com Discord');
-      }
+      this.addNotification('success', 'Fila Discord', 'Você entrou na fila com sucesso');
+
+      // Atualizar status após 3 segundos para confirmar
+      setTimeout(() => {
+        this.refreshQueueStatus();
+      }, 3000);
     } catch (error) {
-      console.error('❌ [App] Erro ao entrar na fila Discord:', error);
-      this.addNotification('error', 'Erro', 'Falha ao entrar na fila Discord');
+      console.error('❌ [App] Erro ao entrar na fila:', error);
+      this.addNotification('error', 'Erro', 'Falha ao entrar na fila');
     }
   }
 
@@ -1262,8 +1227,12 @@ export class App implements OnInit, OnDestroy {
     console.log('📊 [App] refreshQueueStatus chamado:', {
       currentPlayerDisplayName: currentPlayerDisplayName,
       currentIsInQueue: this.isInQueue,
-      hasRecentBackendQueueStatus: this.hasRecentBackendQueueStatus
+      hasRecentBackendQueueStatus: this.hasRecentBackendQueueStatus,
+      refreshInProgress: this.refreshInProgress
     });
+
+    // Marcar como em progresso
+    this.refreshInProgress = true;
 
     this.apiService.getQueueStatus(currentPlayerDisplayName).subscribe({
       next: (status) => {
@@ -1310,10 +1279,16 @@ export class App implements OnInit, OnDestroy {
         }, 5000);
 
         console.log('📊 [App] === FIM DO REFRESH QUEUE STATUS ===');
+
+        // Marcar como finalizado
+        this.refreshInProgress = false;
       },
       error: (error) => {
         console.warn('⚠️ [App] Erro ao atualizar status da fila:', error);
         this.hasRecentBackendQueueStatus = false;
+
+        // Marcar como finalizado mesmo em caso de erro
+        this.refreshInProgress = false;
       }
     });
   }
@@ -1335,12 +1310,12 @@ export class App implements OnInit, OnDestroy {
 
     // Solicitar status inicial UMA VEZ apenas
     this.discordService.checkConnection();
-    
+
     // ✅ NOVO: Forçar verificação inicial do status do Discord
     setTimeout(() => {
       this.discordService.requestDiscordStatus();
     }, 2000);
-    
+
     // ✅ NOVO: Verificação periódica do status do Discord
     setInterval(() => {
       this.discordService.requestDiscordStatus();
@@ -1957,6 +1932,66 @@ export class App implements OnInit, OnDestroy {
     console.log('🔄 [App] Ação do backend marcada - aguardando processamento');
   }
 
+  // ✅ NOVO: Método auxiliar para obter nome de exibição da lane
+  private getLaneDisplayName(laneId: string): string {
+    const laneNames: { [key: string]: string } = {
+      'top': 'Topo',
+      'jungle': 'Selva',
+      'mid': 'Meio',
+      'bot': 'Atirador',
+      'adc': 'Atirador',
+      'support': 'Suporte',
+      'fill': 'Qualquer'
+    };
+    return laneNames[laneId] || 'Qualquer';
+  }
+
+  // ✅ NOVO: Atualizar tabela de jogadores otimisticamente quando alguém entra na fila
+  private updateQueueTableOptimistically(player: Player, preferences: QueuePreferences): void {
+    console.log('📊 [App] Atualizando tabela de jogadores otimisticamente...', {
+      playerName: player.displayName || player.summonerName,
+      preferences: preferences
+    });
+
+    // Criar entrada do jogador na fila
+    const queuePlayer = {
+      summonerName: player.displayName || player.summonerName || '',
+      tagLine: player.tagLine || '',
+      primaryLane: preferences.primaryLane || '',
+      secondaryLane: preferences.secondaryLane || '',
+      primaryLaneDisplay: this.getLaneDisplayName(preferences.primaryLane || ''),
+      secondaryLaneDisplay: this.getLaneDisplayName(preferences.secondaryLane || ''),
+      mmr: player.currentMMR || 1200,
+      queuePosition: (this.queueStatus.playersInQueue || 0) + 1,
+      joinTime: new Date().toISOString(),
+      isCurrentPlayer: true // Marcar como jogador atual
+    };
+
+    // Adicionar à lista existente ou criar nova
+    if (!this.queueStatus.playersInQueueList) {
+      this.queueStatus.playersInQueueList = [];
+    }
+
+    // Remover jogador da lista se já estiver lá (atualização)
+    this.queueStatus.playersInQueueList = this.queueStatus.playersInQueueList.filter(
+      p => !p.isCurrentPlayer && p.summonerName !== queuePlayer.summonerName
+    );
+
+    // Adicionar no início da lista
+    this.queueStatus.playersInQueueList.unshift(queuePlayer);
+
+    // Atualizar contador
+    this.queueStatus.playersInQueue = this.queueStatus.playersInQueueList.length;
+
+    console.log('✅ [App] Tabela atualizada otimisticamente:', {
+      playersCount: this.queueStatus.playersInQueue,
+      playersListLength: this.queueStatus.playersInQueueList?.length
+    });
+
+    // Forçar detecção de mudanças
+    this.cdr.detectChanges();
+  }
+
   // ✅ NOVO: Lidar com mudança de status detectada via polling
   private async handleStatusChange(newStatus: string, response: any): Promise<void> {
     console.log(`🔄 [App] === PROCESSANDO MUDANÇA DE STATUS ===`);
@@ -2351,6 +2386,89 @@ export class App implements OnInit, OnDestroy {
     } catch {
       // ignore
     }
+  }
+
+  // =============================================================================
+  // QUEUE REFRESH METHODS
+  // =============================================================================
+
+  // Controle de chamadas para evitar spam
+  private refreshInProgress = false;
+  private lastRefreshTime = 0;
+  private readonly MIN_REFRESH_INTERVAL = 3000; // 3 segundos mínimo entre refreshes
+  private periodicUpdateInterval?: number;
+
+  onRefreshData(): void {
+    console.log('🔄 [App] onRefreshData chamado - atualizando dados da fila e Discord');
+
+    // ✅ NOVO: Atualizar status da fila (MySQL)
+    this.refreshQueueStatus();
+
+    // ✅ NOVO: Atualizar status do Discord (canal e usuários)
+    this.refreshDiscordStatus();
+  }
+
+  // ✅ NOVO: Método específico para atualizar status do Discord
+  private refreshDiscordStatus(): void {
+    console.log('🤖 [App] Atualizando status do Discord...');
+
+    // Solicitar status do Discord bot
+    this.discordService.requestDiscordStatus();
+
+    // Verificar conexão do Discord
+    this.discordService.checkConnection();
+
+    console.log('✅ [App] Atualização do Discord solicitada');
+  }
+
+  onAutoRefreshToggle(enabled: boolean): void {
+    console.log(`🔄 [App] Auto-refresh ${enabled ? 'habilitado' : 'desabilitado'}`);
+
+    if (enabled) {
+      // Iniciar atualização automática a cada 5 segundos
+      this.startPeriodicUpdates();
+    } else {
+      // Parar atualizações automáticas
+      this.stopPeriodicUpdates();
+    }
+  }
+
+  private startPeriodicUpdates(): void {
+    console.log('🔄 [App] Iniciando atualizações periódicas...');
+
+    // Limpar intervalo anterior se existir
+    this.stopPeriodicUpdates();
+
+    // Atualizar a cada 5 segundos com controle de spam
+    this.periodicUpdateInterval = setInterval(() => {
+      this.refreshQueueStatusWithDebounce();
+    }, 5000);
+  }
+
+  private stopPeriodicUpdates(): void {
+    console.log('🔄 [App] Parando atualizações periódicas...');
+    if (this.periodicUpdateInterval) {
+      clearInterval(this.periodicUpdateInterval);
+      this.periodicUpdateInterval = undefined;
+    }
+  }
+
+  private refreshQueueStatusWithDebounce(): void {
+    const now = Date.now();
+
+    // Verificar se já está em progresso ou se passou tempo suficiente
+    if (this.refreshInProgress) {
+      console.log('🔄 [App] Refresh já em progresso, ignorando...');
+      return;
+    }
+
+    if (now - this.lastRefreshTime < this.MIN_REFRESH_INTERVAL) {
+      console.log('🔄 [App] Refresh muito recente, ignorando...');
+      return;
+    }
+
+    this.lastRefreshTime = now;
+    this.refreshQueueStatus();
   }
 }
 

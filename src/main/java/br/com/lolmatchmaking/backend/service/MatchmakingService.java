@@ -619,21 +619,21 @@ public class MatchmakingService {
         String summonerName = nameParts[0];
         String tagLine = nameParts.length > 1 ? nameParts[1] : null;
 
-        return new QueuePlayerInfoDTO(
-                player.getId(),
-                summonerName,
-                tagLine,
-                player.getRegion(),
-                player.getCustomLp(),
-                player.getPrimaryLane(),
-                player.getSecondaryLane(),
-                player.getJoinTime() != null
-                        ? LocalDateTime.ofInstant(player.getJoinTime(), java.time.ZoneId.systemDefault())
-                        : null,
-                player.getQueuePosition(),
-                player.getActive(),
-                player.getAcceptanceStatus(),
-                false);
+        return QueuePlayerInfoDTO.builder()
+                .id(player.getId())
+                .summonerName(summonerName)
+                .tagLine(tagLine)
+                .region(player.getRegion())
+                .customLp(player.getCustomLp())
+                .mmr(player.getCustomLp() != null ? player.getCustomLp() : 0)
+                .primaryLane(player.getPrimaryLane())
+                .secondaryLane(player.getSecondaryLane())
+                .joinTime(player.getJoinTime())
+                .queuePosition(player.getQueuePosition())
+                .isActive(player.getActive())
+                .acceptanceStatus(player.getAcceptanceStatus())
+                .isCurrentPlayer(false)
+                .build();
     }
 
     /**

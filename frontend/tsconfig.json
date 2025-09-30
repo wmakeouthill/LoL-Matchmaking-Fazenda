@@ -27,10 +27,13 @@
   },
   "angularCompilerOptions": {
     "enableI18nLegacyMessageIdFormat": false,
-    "strictInjectionParameters": true,
+    "strictInjectionParameters": false,
     "strictInputAccessModifiers": false,
     "typeCheckHostBindings": false,
-    "strictTemplates": false
+    "strictTemplates": false,
+    "disableTypeScriptVersionCheck": true,
+    "enableIvy": true,
+    "fullTemplateTypeCheck": false
   },
   "files": [],
   "references": [

@@ -1,7 +1,7 @@
 package br.com.lolmatchmaking.backend.controller;
 
-import br.com.lolmatchmaking.backend.service.MatchmakingService;
-import br.com.lolmatchmaking.backend.service.QueueService;
+import br.com.lolmatchmaking.backend.dto.QueueStatusDTO;
+import br.com.lolmatchmaking.backend.service.QueueManagementService;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,8 +16,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class QueueController {
 
-    private final QueueService queueService;
-    private final MatchmakingService matchmakingService;
+    private final QueueManagementService queueManagementService;
 
     /**
      * GET /api/queue/status
@@ -25,15 +24,19 @@ public class QueueController {
      */
     @GetMapping("/status")
     public ResponseEntity<Map<String, Object>> getQueueStatus(
-            @RequestParam(required = false) String currentPlayer) {
+            @RequestParam(required = false) String currentPlayerDisplayName) {
         try {
-            log.info("📊 Obtendo status da fila (currentPlayer: {})", currentPlayer);
+            log.info("📊 Obtendo status da fila (currentPlayer: {})", currentPlayerDisplayName);
 
-            MatchmakingService.QueueStatus status = matchmakingService.getQueueStatus(currentPlayer);
+            QueueStatusDTO status = queueManagementService.getQueueStatus(currentPlayerDisplayName);
 
             return ResponseEntity.ok(Map.of(
                     "success", true,
-                    "status", status));
+                    "playersInQueue", status.getPlayersInQueue(),
+                    "playersInQueueList", status.getPlayersInQueueList(),
+                    "averageWaitTime", status.getAverageWaitTime(),
+                    "estimatedMatchTime", status.getEstimatedMatchTime(),
+                    "isActive", status.isActive()));
 
         } catch (Exception e) {
             log.error("❌ Erro ao obter status da fila", e);
@@ -62,11 +65,18 @@ public class QueueController {
                         .body(Map.of("success", false, "error", "Região é obrigatória"));
             }
 
+            // Verificar se pode entrar na fila (LCU + Discord + Canal)
+            if (!queueManagementService.canPlayerJoinQueue(request.getSummonerName())) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("success", false, "error",
+                                "Não é possível entrar na fila. Verifique se o LCU está conectado, o Discord bot está ativo e você está no canal monitorado"));
+            }
+
             // Entrar na fila
-            boolean success = matchmakingService.addPlayerToQueue(
-                    request.getPlayerId(),
+            boolean success = queueManagementService.addToQueue(
                     request.getSummonerName(),
                     request.getRegion(),
+                    request.getPlayerId(),
                     request.getCustomLp(),
                     request.getPrimaryLane(),
                     request.getSecondaryLane());
@@ -103,9 +113,7 @@ public class QueueController {
             }
 
             // Sair da fila
-            boolean success = matchmakingService.removePlayerFromQueue(
-                    request.getPlayerId(),
-                    request.getSummonerName());
+            boolean success = queueManagementService.removeFromQueue(request.getSummonerName());
 
             if (success) {
                 return ResponseEntity.ok(Map.of(
@@ -133,7 +141,7 @@ public class QueueController {
             log.info("🔄 Forçando sincronização da fila");
 
             // Forçar sincronização
-            matchmakingService.syncCacheWithDatabase();
+            queueManagementService.loadQueueFromDatabase();
 
             return ResponseEntity.ok(Map.of(
                     "success", true,
@@ -141,105 +149,6 @@ public class QueueController {
 
         } catch (Exception e) {
             log.error("❌ Erro ao sincronizar fila", e);
-            return ResponseEntity.internalServerError()
-                    .body(Map.of("success", false, "error", e.getMessage()));
-        }
-    }
-
-    /**
-     * POST /api/queue/add-bot
-     * Adiciona bot à fila (para debug/teste)
-     */
-    @PostMapping("/add-bot")
-    public ResponseEntity<Map<String, Object>> addBotToQueue(@RequestBody AddBotRequest request) {
-        try {
-            log.info("🤖 Adicionando bot à fila: {}", request.getBotName());
-
-            // Adicionar bot
-            boolean success = matchmakingService.addPlayerToQueue(
-                    request.getBotId(),
-                    request.getBotName(),
-                    request.getRegion(),
-                    request.getCustomLp(),
-                    request.getPrimaryLane(),
-                    request.getSecondaryLane());
-
-            if (success) {
-                return ResponseEntity.ok(Map.of(
-                        "success", true,
-                        "message", "Bot adicionado à fila com sucesso"));
-            } else {
-                return ResponseEntity.badRequest()
-                        .body(Map.of("success", false, "error", "Erro ao adicionar bot à fila"));
-            }
-
-        } catch (Exception e) {
-            log.error("❌ Erro ao adicionar bot à fila", e);
-            return ResponseEntity.internalServerError()
-                    .body(Map.of("success", false, "error", e.getMessage()));
-        }
-    }
-
-    /**
-     * POST /api/queue/reset-bot-counter
-     * Reseta contador de bots (para debug/teste)
-     */
-    @PostMapping("/reset-bot-counter")
-    public ResponseEntity<Map<String, Object>> resetBotCounter() {
-        try {
-            log.info("🔄 Resetando contador de bots");
-
-            // TODO: Implementar reset do contador de bots
-            // matchmakingService.resetBotCounter();
-
-            return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "message", "Contador de bots resetado"));
-
-        } catch (Exception e) {
-            log.error("❌ Erro ao resetar contador de bots", e);
-            return ResponseEntity.internalServerError()
-                    .body(Map.of("success", false, "error", e.getMessage()));
-        }
-    }
-
-    /**
-     * GET /api/queue/size
-     * Obtém tamanho da fila
-     */
-    @GetMapping("/size")
-    public ResponseEntity<Map<String, Object>> getQueueSize() {
-        try {
-            int size = matchmakingService.getQueueSize();
-
-            return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "size", size));
-
-        } catch (Exception e) {
-            log.error("❌ Erro ao obter tamanho da fila", e);
-            return ResponseEntity.internalServerError()
-                    .body(Map.of("success", false, "error", e.getMessage()));
-        }
-    }
-
-    /**
-     * DELETE /api/queue/clear
-     * Limpa a fila (para debug/admin)
-     */
-    @DeleteMapping("/clear")
-    public ResponseEntity<Map<String, Object>> clearQueue() {
-        try {
-            log.info("🧹 Limpando fila");
-
-            matchmakingService.clearQueue();
-
-            return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "message", "Fila limpa com sucesso"));
-
-        } catch (Exception e) {
-            log.error("❌ Erro ao limpar fila", e);
             return ResponseEntity.internalServerError()
                     .body(Map.of("success", false, "error", e.getMessage()));
         }
@@ -260,15 +169,5 @@ public class QueueController {
     public static class LeaveQueueRequest {
         private Long playerId;
         private String summonerName;
-    }
-
-    @Data
-    public static class AddBotRequest {
-        private Long botId;
-        private String botName;
-        private String region;
-        private Integer customLp;
-        private String primaryLane;
-        private String secondaryLane;
     }
 }

@@ -75,7 +75,6 @@ export interface Lane {
 export interface QueuePreferences {
   primaryLane: string;
   secondaryLane: string;
-  autoAccept?: boolean;
 }
 
 export interface LCUStatus {

@@ -1,5 +1,6 @@
 package br.com.lolmatchmaking.backend.config;
 
+import br.com.lolmatchmaking.backend.service.QueueManagementService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationRunner;
@@ -15,6 +16,7 @@ import org.springframework.core.env.Environment;
 public class ApplicationStartupConfig implements ApplicationListener<ApplicationReadyEvent> {
 
     private final Environment environment;
+    private final QueueManagementService queueManagementService;
 
     @Bean
     public ApplicationRunner applicationRunner() {
@@ -30,6 +32,11 @@ public class ApplicationStartupConfig implements ApplicationListener<Application
 
                 log.info("🌐 Porta do servidor: {}", port);
                 log.info("🔧 Profile ativo: {}", profile);
+
+                // Inicializar QueueManagementService
+                log.info("🔄 Inicializando QueueManagementService...");
+                queueManagementService.initialize();
+                log.info("✅ QueueManagementService inicializado");
 
                 log.info("✅ ApplicationRunner concluído com sucesso!");
 

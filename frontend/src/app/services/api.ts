@@ -584,8 +584,20 @@ export class ApiService {
       url += `?${params.toString()}`;
     }
 
-    return this.http.get<QueueStatus>(url)
-      .pipe(catchError(this.handleError));
+    return this.http.get<any>(url)
+      .pipe(
+        map(response => {
+          // Converter resposta do novo backend para formato esperado
+          return {
+            playersInQueue: response.playersInQueue || 0,
+            playersInQueueList: response.playersInQueueList || [],
+            averageWaitTime: response.averageWaitTime || 0,
+            estimatedMatchTime: response.estimatedMatchTime || 0,
+            isActive: response.isActive || false
+          } as QueueStatus;
+        }),
+        catchError(this.handleError)
+      );
   }
 
   // New: join queue (used by app.ts)
@@ -1226,10 +1238,10 @@ export class ApiService {
       console.log('✅ [WebSocket] Já conectado, ignorando nova tentativa');
       return;
     }
-    
+
     const wsUrl = this.getWebSocketUrl();
     console.log('🔄 [WebSocket] Tentando conectar em:', wsUrl);
-    
+
     try {
       // Clear any pending reconnect timer
       if (this.wsReconnectTimer) { clearTimeout(this.wsReconnectTimer); this.wsReconnectTimer = null; }
@@ -1306,11 +1318,11 @@ export class ApiService {
         const baseBackoff = Math.min(this.wsBaseBackoffMs * Math.pow(1.5, this.wsReconnectAttempts), this.wsMaxBackoffMs);
         const jitter = Math.random() * 1000; // Adicionar até 1s de jitter
         const backoff = baseBackoff + jitter;
-        
+
         console.log(`🔄 [WebSocket] Tentativa ${this.wsReconnectAttempts}/${this.wsMaxReconnectAttempts} de reconexão em ${Math.round(backoff)}ms`);
-        this.wsReconnectTimer = setTimeout(() => { 
-          try { 
-            this.connectWebSocket(); 
+        this.wsReconnectTimer = setTimeout(() => {
+          try {
+            this.connectWebSocket();
           } catch (e) {
             console.warn('⚠️ [WebSocket] Erro na tentativa de reconexão:', e);
           }
