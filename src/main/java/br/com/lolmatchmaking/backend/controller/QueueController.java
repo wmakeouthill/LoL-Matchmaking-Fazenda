@@ -154,6 +154,50 @@ public class QueueController {
         }
     }
 
+    /**
+     * POST /api/queue/add-bot
+     * Adiciona um bot à fila para testes
+     */
+    @PostMapping("/add-bot")
+    public ResponseEntity<Map<String, Object>> addBotToQueue() {
+        try {
+            log.info("🤖 Adicionando bot à fila");
+
+            queueManagementService.addBotToQueue();
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Bot adicionado à fila com sucesso"));
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao adicionar bot à fila", e);
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    /**
+     * POST /api/queue/reset-bot-counter
+     * Reseta o contador de bots
+     */
+    @PostMapping("/reset-bot-counter")
+    public ResponseEntity<Map<String, Object>> resetBotCounter() {
+        try {
+            log.info("🔄 Resetando contador de bots");
+
+            queueManagementService.resetBotCounter();
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Contador de bots resetado com sucesso"));
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao resetar contador de bots", e);
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
     // DTOs
     @Data
     public static class JoinQueueRequest {
