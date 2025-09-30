@@ -4,541 +4,490 @@ import br.com.lolmatchmaking.backend.domain.entity.CustomMatch;
 import br.com.lolmatchmaking.backend.domain.entity.QueuePlayer;
 import br.com.lolmatchmaking.backend.domain.repository.CustomMatchRepository;
 import br.com.lolmatchmaking.backend.domain.repository.QueuePlayerRepository;
-import br.com.lolmatchmaking.backend.dto.MatchDTO;
-import br.com.lolmatchmaking.backend.dto.MatchInfoDTO;
-import br.com.lolmatchmaking.backend.dto.PlayerDTO;
-import br.com.lolmatchmaking.backend.service.DraftService.DraftPlayer;
+import br.com.lolmatchmaking.backend.dto.QueuePlayerInfoDTO;
 import br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService;
-import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.context.ApplicationContext;
 
 import java.time.Instant;
-import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class MatchFoundService {
 
-    private final CustomMatchRepository customMatchRepository;
     private final QueuePlayerRepository queuePlayerRepository;
+    private final CustomMatchRepository customMatchRepository;
     private final MatchmakingWebSocketService webSocketService;
-    private final DraftService draftService;
-    private final DiscordService discordService;
-    private final ApplicationContext applicationContext;
+    private final QueueManagementService queueManagementService;
+
+    // Constructor manual para @Lazy
+    public MatchFoundService(
+            QueuePlayerRepository queuePlayerRepository,
+            CustomMatchRepository customMatchRepository,
+            MatchmakingWebSocketService webSocketService,
+            @Lazy QueueManagementService queueManagementService) {
+        this.queuePlayerRepository = queuePlayerRepository;
+        this.customMatchRepository = customMatchRepository;
+        this.webSocketService = webSocketService;
+        this.queueManagementService = queueManagementService;
+    }
+
+    // Tracking de partidas pendentes de aceitação
+    private final Map<Long, MatchAcceptanceStatus> pendingMatches = new ConcurrentHashMap<>();
 
     // Configurações
-    private static final long ACCEPTANCE_TIMEOUT_MS = 30000; // 30 segundos
-    private static final long MONITORING_INTERVAL_MS = 1000; // 1 segundo
-
-    // Cache de partidas pendentes de aceitação
-    private final Map<Long, AcceptanceStatus> pendingMatches = new ConcurrentHashMap<>();
-    private final Map<Long, Boolean> matchCreationLocks = new ConcurrentHashMap<>();
-
-    @Data
-    @RequiredArgsConstructor
-    public static class AcceptanceStatus {
-        private final Long matchId;
-        private final List<String> players;
-        private final Set<String> acceptedPlayers = new HashSet<>();
-        private final Set<String> declinedPlayers = new HashSet<>();
-        private final LocalDateTime createdAt = LocalDateTime.now();
-        private CompletableFuture<Void> timeoutFuture;
-    }
+    private static final int ACCEPTANCE_TIMEOUT_SECONDS = 30;
+    private static final int BOT_AUTO_ACCEPT_DELAY_MS = 2000; // Bots aceitam após 2 segundos
 
     /**
-     * Inicializa o serviço
-     */
-    public void initialize() {
-        log.info("🎯 Inicializando MatchFoundService...");
-        log.info("✅ MatchFoundService inicializado com sucesso");
-    }
-
-    /**
-     * Cria uma partida para processo de aceitação
+     * Cria uma partida para aceitação
      */
     @Transactional
-    public Long createMatchForAcceptance(List<QueuePlayer> team1, List<QueuePlayer> team2,
-            int averageMmrTeam1, int averageMmrTeam2) {
+    public void createMatchForAcceptance(CustomMatch match, List<QueuePlayer> team1, List<QueuePlayer> team2) {
         try {
-            log.info("🎮 Criando partida para processo de aceitação...");
+            log.info("🎯 [MatchFound] Criando partida para aceitação: ID {}", match.getId());
 
-            // Criar partida no banco
-            CustomMatch match = new CustomMatch();
-            match.setTitle("Partida Customizada");
-            match.setDescription("Partida criada pelo sistema de matchmaking");
-            match.setTeam1PlayersJson(team1.stream()
-                    .map(QueuePlayer::getSummonerName)
-                    .collect(Collectors.joining(",")));
-            match.setTeam2PlayersJson(team2.stream()
-                    .map(QueuePlayer::getSummonerName)
-                    .collect(Collectors.joining(",")));
-            match.setStatus("pending_acceptance");
-            match.setCreatedBy("system");
-            match.setCreatedAt(Instant.now());
-            match.setGameMode("5v5");
-            match.setAverageMmrTeam1(averageMmrTeam1);
-            match.setAverageMmrTeam2(averageMmrTeam2);
-            match.setOwnerBackendId("spring-backend");
-            match.setOwnerHeartbeat(System.currentTimeMillis());
+            // Zerar status de aceitação de todos os jogadores
+            List<QueuePlayer> allPlayers = new ArrayList<>();
+            allPlayers.addAll(team1);
+            allPlayers.addAll(team2);
 
-            match = customMatchRepository.save(match);
+            for (QueuePlayer player : allPlayers) {
+                player.setAcceptanceStatus(-1); // -1 = aguardando aceitação (para não ser selecionado novamente)
+                queuePlayerRepository.save(player);
+            }
 
-            // Criar status de aceitação
-            List<String> allPlayers = new ArrayList<>();
-            allPlayers.addAll(team1.stream().map(QueuePlayer::getSummonerName).toList());
-            allPlayers.addAll(team2.stream().map(QueuePlayer::getSummonerName).toList());
+            // Criar tracking local
+            MatchAcceptanceStatus status = new MatchAcceptanceStatus();
+            status.setMatchId(match.getId());
+            status.setPlayers(allPlayers.stream().map(QueuePlayer::getSummonerName).collect(Collectors.toList()));
+            status.setAcceptedPlayers(new HashSet<>());
+            status.setDeclinedPlayers(new HashSet<>());
+            status.setCreatedAt(Instant.now());
+            status.setTeam1(team1.stream().map(QueuePlayer::getSummonerName).collect(Collectors.toList()));
+            status.setTeam2(team2.stream().map(QueuePlayer::getSummonerName).collect(Collectors.toList()));
 
-            AcceptanceStatus status = new AcceptanceStatus(match.getId(), allPlayers);
             pendingMatches.put(match.getId(), status);
 
-            // Configurar timeout
-            setupAcceptanceTimeout(match.getId());
-
-            // Notificar jogadores via WebSocket
+            // Notificar match found
             notifyMatchFound(match, team1, team2);
 
-            // Notificar Discord se disponível
-            notifyDiscordMatchFound(match, team1, team2);
+            // Auto-aceitar bots após delay
+            autoAcceptBots(match.getId(), allPlayers);
 
-            log.info("✅ Partida criada para aceitação: ID {}", match.getId());
-            return match.getId();
-
-        } catch (Exception e) {
-            log.error("❌ Erro ao criar partida para aceitação", e);
-            return null;
-        }
-    }
-
-    /**
-     * Processa aceitação de partida
-     */
-    @Transactional
-    public boolean acceptMatch(Long matchId, String playerName) {
-        try {
-            AcceptanceStatus status = pendingMatches.get(matchId);
-            if (status == null) {
-                log.warn("⚠️ Status de aceitação não encontrado para partida: {}", matchId);
-                return false;
-            }
-
-            if (status.getDeclinedPlayers().contains(playerName)) {
-                log.warn("⚠️ Jogador {} já recusou a partida {}", playerName, matchId);
-                return false;
-            }
-
-            status.getAcceptedPlayers().add(playerName);
-            log.info("✅ Jogador {} aceitou a partida {}", playerName, matchId);
-
-            // Verificar se todos aceitaram
-            if (status.getAcceptedPlayers().size() == status.getPlayers().size()) {
-                // Use proxy bean to ensure transactional proxy is applied
-                getSelf().completeMatchAcceptance(matchId);
-            }
-
-            // Notificar atualização
-            broadcastAcceptanceUpdate(matchId);
-
-            return true;
+            log.info("✅ [MatchFound] Partida {} criada para aceitação (timeout: {}s)",
+                    match.getId(), ACCEPTANCE_TIMEOUT_SECONDS);
 
         } catch (Exception e) {
-            log.error("❌ Erro ao processar aceitação", e);
-            return false;
+            log.error("❌ [MatchFound] Erro ao criar partida para aceitação", e);
         }
     }
 
     /**
-     * Processa recusa de partida
+     * Jogador aceita a partida
      */
     @Transactional
-    public boolean declineMatch(Long matchId, String playerName) {
+    public void acceptMatch(Long matchId, String summonerName) {
         try {
-            AcceptanceStatus status = pendingMatches.get(matchId);
-            if (status == null) {
-                log.warn("⚠️ Status de aceitação não encontrado para partida: {}", matchId);
-                return false;
+            log.info("✅ [MatchFound] Jogador {} aceitou partida {}", summonerName, matchId);
+
+            // Atualizar no banco
+            queuePlayerRepository.findBySummonerName(summonerName).ifPresent(player -> {
+                player.setAcceptanceStatus(1); // 1 = accepted
+                queuePlayerRepository.save(player);
+            });
+
+            // Atualizar tracking local
+            MatchAcceptanceStatus status = pendingMatches.get(matchId);
+            if (status != null) {
+                status.getAcceptedPlayers().add(summonerName);
+
+                log.info("✅ [MatchFound] Match {} - {}/{} jogadores aceitaram",
+                        matchId, status.getAcceptedPlayers().size(), status.getPlayers().size());
+
+                // Notificar progresso
+                notifyAcceptanceProgress(matchId, status);
+
+                // Verificar se todos aceitaram
+                if (status.getAcceptedPlayers().size() == status.getPlayers().size()) {
+                    log.info("🎉 [MatchFound] TODOS OS JOGADORES ACEITARAM! Match {}", matchId);
+                    handleAllPlayersAccepted(matchId);
+                }
+            } else {
+                log.warn("⚠️ [MatchFound] Match {} não encontrado no tracking", matchId);
             }
 
-            status.getDeclinedPlayers().add(playerName);
-            log.info("❌ Jogador {} recusou a partida {}", playerName, matchId);
-
-            // Cancelar partida se alguém recusou (usar proxy para transação)
-            getSelf().cancelMatch(matchId, "Jogador recusou a partida");
-
-            return true;
-
         } catch (Exception e) {
-            log.error("❌ Erro ao processar recusa", e);
-            return false;
+            log.error("❌ [MatchFound] Erro ao aceitar partida", e);
         }
     }
 
     /**
-     * Obtém status de aceitação
-     */
-    public Map<String, Object> getAcceptanceStatus(Long matchId) {
-        AcceptanceStatus status = pendingMatches.get(matchId);
-        if (status == null) {
-            return Map.of("error", "Partida não encontrada");
-        }
-
-        return Map.of(
-                "matchId", matchId,
-                "players", status.getPlayers(),
-                "acceptedPlayers", new ArrayList<>(status.getAcceptedPlayers()),
-                "declinedPlayers", new ArrayList<>(status.getDeclinedPlayers()),
-                "allAccepted", status.getAcceptedPlayers().size() == status.getPlayers().size(),
-                "createdAt", status.getCreatedAt());
-    }
-
-    /**
-     * Completa o processo de aceitação
+     * Jogador recusa a partida
      */
     @Transactional
-    public void completeMatchAcceptance(Long matchId) {
+    public void declineMatch(Long matchId, String summonerName) {
         try {
-            AcceptanceStatus status = pendingMatches.get(matchId);
-            if (status == null) {
+            log.warn("❌ [MatchFound] Jogador {} recusou partida {}", summonerName, matchId);
+
+            // Atualizar no banco
+            queuePlayerRepository.findBySummonerName(summonerName).ifPresent(player -> {
+                player.setAcceptanceStatus(2); // 2 = declined
+                queuePlayerRepository.save(player);
+            });
+
+            // Cancelar partida
+            handleMatchDeclined(matchId, summonerName);
+
+        } catch (Exception e) {
+            log.error("❌ [MatchFound] Erro ao recusar partida", e);
+        }
+    }
+
+    /**
+     * Todos os jogadores aceitaram
+     */
+    @Transactional
+    private void handleAllPlayersAccepted(Long matchId) {
+        try {
+            MatchAcceptanceStatus status = pendingMatches.get(matchId);
+            if (status == null)
                 return;
-            }
 
             // Atualizar status da partida
-            CustomMatch match = customMatchRepository.findById(matchId).orElse(null);
-            if (match != null) {
+            customMatchRepository.findById(matchId).ifPresent(match -> {
                 match.setStatus("accepted");
-                match.setUpdatedAt(Instant.now());
                 customMatchRepository.save(match);
+            });
 
-                // Iniciar draft
-                startDraftProcess(match);
+            // ✅ Remover todos os jogadores da fila (agora vão para o draft)
+            for (String playerName : status.getPlayers()) {
+                queueManagementService.removeFromQueue(playerName);
+                log.info("🗑️ [MatchFound] Jogador {} removido da fila - indo para draft", playerName);
             }
 
-            // Remover do cache de pendentes
+            // Notificar todos os jogadores
+            notifyAllPlayersAccepted(matchId);
+
+            // Iniciar draft após 3 segundos
+            Timer timer = new Timer();
+            timer.schedule(new TimerTask() {
+                @Override
+                public void run() {
+                    startDraft(matchId);
+                }
+            }, 3000);
+
+            // Remover do tracking
             pendingMatches.remove(matchId);
 
-            // Notificar via WebSocket
-            webSocketService.broadcastMatchAccepted(matchId.toString());
-
-            log.info("✅ Partida {} aceita por todos os jogadores", matchId);
+            log.info("✅ [MatchFound] Partida {} aceita por todos - iniciando draft em 3s", matchId);
 
         } catch (Exception e) {
-            log.error("❌ Erro ao completar aceitação", e);
+            log.error("❌ [MatchFound] Erro ao processar aceitação completa", e);
         }
     }
 
     /**
-     * Cancela uma partida
+     * Partida recusada
      */
     @Transactional
-    public void cancelMatch(Long matchId, String reason) {
+    private void handleMatchDeclined(Long matchId, String declinedPlayer) {
         try {
-            AcceptanceStatus status = pendingMatches.get(matchId);
-            if (status != null) {
-                // Cancelar timeout se existir
-                if (status.getTimeoutFuture() != null) {
-                    status.getTimeoutFuture().cancel(true);
-                }
-                pendingMatches.remove(matchId);
-            }
+            MatchAcceptanceStatus status = pendingMatches.get(matchId);
+            if (status == null)
+                return;
 
             // Atualizar status da partida
-            CustomMatch match = customMatchRepository.findById(matchId).orElse(null);
-            if (match != null) {
-                match.setStatus("cancelled");
-                match.setUpdatedAt(Instant.now());
+            customMatchRepository.findById(matchId).ifPresent(match -> {
+                match.setStatus("declined");
                 customMatchRepository.save(match);
+            });
+
+            // ✅ Remover apenas jogador que recusou da fila
+            queueManagementService.removeFromQueue(declinedPlayer);
+            log.info("🗑️ [MatchFound] Jogador {} removido da fila por recusar", declinedPlayer);
+
+            // ✅ Resetar status de aceitação dos outros jogadores (voltam ao normal na fila)
+            for (String playerName : status.getPlayers()) {
+                if (!playerName.equals(declinedPlayer)) {
+                    queuePlayerRepository.findBySummonerName(playerName).ifPresent(player -> {
+                        player.setAcceptanceStatus(0); // Resetar status
+                        queuePlayerRepository.save(player);
+                        log.info("🔄 [MatchFound] Jogador {} voltou ao estado normal na fila", playerName);
+                    });
+                }
             }
 
-            // Notificar via WebSocket
-            webSocketService.broadcastMatchCancelled(matchId.toString(), reason);
+            // Notificar cancelamento
+            notifyMatchCancelled(matchId, declinedPlayer);
 
-            log.info("❌ Partida {} cancelada: {}", matchId, reason);
+            // Remover do tracking
+            pendingMatches.remove(matchId);
+
+            log.info("❌ [MatchFound] Partida {} cancelada - {} recusou", matchId, declinedPlayer);
 
         } catch (Exception e) {
-            log.error("❌ Erro ao cancelar partida", e);
+            log.error("❌ [MatchFound] Erro ao processar recusa", e);
         }
     }
 
     /**
-     * Configura timeout para aceitação
+     * Timeout de aceitação
      */
-    private void setupAcceptanceTimeout(Long matchId) {
-        AcceptanceStatus status = pendingMatches.get(matchId);
-        if (status != null) {
-            status.setTimeoutFuture(CompletableFuture.runAsync(() -> {
-                try {
-                    Thread.sleep(ACCEPTANCE_TIMEOUT_MS);
-
-                    // Verificar se ainda está pendente
-                    if (pendingMatches.containsKey(matchId)) {
-                        log.warn("⏰ Timeout de aceitação para partida {}", matchId);
-                        getSelf().cancelMatch(matchId, "Timeout de aceitação");
-                    }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }));
-        }
-    }
-
-    /**
-     * Inicia processo de draft
-     */
-    private void startDraftProcess(CustomMatch match) {
+    @Scheduled(fixedRate = 1000) // Verifica a cada 1 segundo
+    public void checkAcceptanceTimeouts() {
         try {
-            log.info("🏆 Iniciando processo de draft para partida {}", match.getId());
+            Instant now = Instant.now();
 
-            // Atualizar status para draft
-            match.setStatus("draft");
-            match.setUpdatedAt(Instant.now());
-            customMatchRepository.save(match);
+            for (Map.Entry<Long, MatchAcceptanceStatus> entry : pendingMatches.entrySet()) {
+                MatchAcceptanceStatus status = entry.getValue();
+                long secondsElapsed = ChronoUnit.SECONDS.between(status.getCreatedAt(), now);
 
-            // Notificar Discord
-            notifyDiscordDraftStarted(match);
-
-            // Criar listas de jogadores para o draft
-            List<DraftPlayer> team1 = Arrays.stream(match.getTeam1PlayersJson().split(","))
-                    .map(name -> new DraftPlayer(name.trim(), "team1", 1, 0, "mid", "top", false, ""))
-                    .toList();
-            List<DraftPlayer> team2 = Arrays.stream(match.getTeam2PlayersJson().split(","))
-                    .map(name -> new DraftPlayer(name.trim(), "team2", 2, 0, "mid", "top", false, ""))
-                    .toList();
-
-            // Iniciar draft
-            draftService.startDraft(match.getId(), team1, team2, match.getAverageMmrTeam1(),
-                    match.getAverageMmrTeam2());
+                if (secondsElapsed >= ACCEPTANCE_TIMEOUT_SECONDS) {
+                    log.warn("⏰ [MatchFound] Timeout na partida {}", entry.getKey());
+                    handleAcceptanceTimeout(entry.getKey());
+                } else {
+                    // Atualizar timer
+                    int secondsRemaining = ACCEPTANCE_TIMEOUT_SECONDS - (int) secondsElapsed;
+                    notifyTimerUpdate(entry.getKey(), secondsRemaining);
+                }
+            }
 
         } catch (Exception e) {
-            log.error("❌ Erro ao iniciar draft", e);
+            log.error("❌ [MatchFound] Erro ao verificar timeouts", e);
         }
     }
 
     /**
-     * Notifica jogadores sobre partida encontrada
+     * Timeout de aceitação
      */
+    @Transactional
+    private void handleAcceptanceTimeout(Long matchId) {
+        try {
+            MatchAcceptanceStatus status = pendingMatches.get(matchId);
+            if (status == null)
+                return;
+
+            // Encontrar jogadores que não aceitaram
+            List<String> notAcceptedPlayers = status.getPlayers().stream()
+                    .filter(p -> !status.getAcceptedPlayers().contains(p))
+                    .collect(Collectors.toList());
+
+            if (!notAcceptedPlayers.isEmpty()) {
+                log.warn("⏰ [MatchFound] Timeout - jogadores que não aceitaram: {}", notAcceptedPlayers);
+                handleMatchDeclined(matchId, notAcceptedPlayers.get(0));
+            }
+
+        } catch (Exception e) {
+            log.error("❌ [MatchFound] Erro ao processar timeout", e);
+        }
+    }
+
+    /**
+     * Auto-aceitar bots
+     */
+    private void autoAcceptBots(Long matchId, List<QueuePlayer> players) {
+        Timer timer = new Timer();
+        timer.schedule(new TimerTask() {
+            @Override
+            public void run() {
+                for (QueuePlayer player : players) {
+                    if (player.getSummonerName().startsWith("Bot")) {
+                        log.info("🤖 [MatchFound] Auto-aceitando bot: {}", player.getSummonerName());
+                        acceptMatch(matchId, player.getSummonerName());
+                    }
+                }
+            }
+        }, BOT_AUTO_ACCEPT_DELAY_MS);
+    }
+
+    /**
+     * Inicia o draft
+     */
+    private void startDraft(Long matchId) {
+        try {
+            log.info("🎯 [MatchFound] Iniciando draft para partida {}", matchId);
+
+            // Notificar início do draft
+            Map<String, Object> draftData = new HashMap<>();
+            draftData.put("type", "draft_starting");
+            draftData.put("matchId", matchId);
+
+            webSocketService.broadcastToAll("draft_starting", draftData);
+
+        } catch (Exception e) {
+            log.error("❌ [MatchFound] Erro ao iniciar draft", e);
+        }
+    }
+
+    // Métodos de notificação
+
     private void notifyMatchFound(CustomMatch match, List<QueuePlayer> team1, List<QueuePlayer> team2) {
         try {
-            MatchInfoDTO matchInfo = new MatchInfoDTO(
-                    match.getId(),
-                    match.getTitle(),
-                    match.getDescription(),
-                    Arrays.asList(match.getTeam1PlayersJson().split(",")),
-                    Arrays.asList(match.getTeam2PlayersJson().split(",")),
-                    match.getWinnerTeam(),
-                    match.getStatus(),
-                    match.getCreatedBy(),
-                    match.getCreatedAt(),
-                    match.getCompletedAt(),
-                    match.getGameMode(),
-                    match.getDuration(),
-                    match.getLpChangesJson(),
-                    match.getAverageMmrTeam1(),
-                    match.getAverageMmrTeam2(),
-                    match.getParticipantsDataJson(),
-                    match.getRiotGameId(),
-                    match.getDetectedByLcu(),
-                    match.getNotes(),
-                    match.getCustomLp(),
-                    match.getUpdatedAt(),
-                    match.getPickBanDataJson(),
-                    match.getLinkedResultsJson(),
-                    match.getActualWinner(),
-                    match.getActualDuration(),
-                    match.getRiotId(),
-                    match.getMmrChangesJson(),
-                    match.getMatchLeader(),
-                    match.getOwnerBackendId(),
-                    match.getOwnerHeartbeat());
-            webSocketService.broadcastMatchFound(matchInfo);
+            Map<String, Object> data = new HashMap<>();
+            data.put("type", "match_found");
+            data.put("matchId", match.getId());
+            data.put("team1", team1.stream().map(this::convertToDTO).collect(Collectors.toList()));
+            data.put("team2", team2.stream().map(this::convertToDTO).collect(Collectors.toList()));
+            data.put("averageMmrTeam1", match.getAverageMmrTeam1());
+            data.put("averageMmrTeam2", match.getAverageMmrTeam2());
+            data.put("timeoutSeconds", ACCEPTANCE_TIMEOUT_SECONDS);
+
+            webSocketService.broadcastToAll("match_found", data);
+
+            log.info("📢 [MatchFound] Match found notificado para {} jogadores", team1.size() + team2.size());
+
         } catch (Exception e) {
-            log.error("❌ Erro ao notificar partida encontrada", e);
+            log.error("❌ [MatchFound] Erro ao notificar match found", e);
         }
     }
 
-    /**
-     * Notifica Discord sobre partida encontrada
-     */
-    private void notifyDiscordMatchFound(CustomMatch match, List<QueuePlayer> team1, List<QueuePlayer> team2) {
+    private void notifyAcceptanceProgress(Long matchId, MatchAcceptanceStatus status) {
         try {
-            if (discordService != null && discordService.isConnected()) {
-                String[] team1Names = team1.stream()
-                        .map(QueuePlayer::getSummonerName)
-                        .toArray(String[]::new);
-                String[] team2Names = team2.stream()
-                        .map(QueuePlayer::getSummonerName)
-                        .toArray(String[]::new);
+            Map<String, Object> data = new HashMap<>();
+            data.put("type", "acceptance_progress");
+            data.put("matchId", matchId);
+            data.put("acceptedCount", status.getAcceptedPlayers().size());
+            data.put("totalPlayers", status.getPlayers().size());
+            data.put("acceptedPlayers", new ArrayList<>(status.getAcceptedPlayers()));
 
-                discordService.notifyMatchFound("matchmaking", match.getId().toString(), team1Names, team2Names);
-            }
+            webSocketService.broadcastToAll("acceptance_progress", data);
+
         } catch (Exception e) {
-            log.error("❌ Erro ao notificar Discord sobre partida", e);
+            log.error("❌ [MatchFound] Erro ao notificar progresso", e);
         }
     }
 
-    /**
-     * Notifica Discord sobre início do draft
-     */
-    private void notifyDiscordDraftStarted(CustomMatch match) {
+    private void notifyAllPlayersAccepted(Long matchId) {
         try {
-            if (discordService != null && discordService.isConnected()) {
-                // Atualizado para apontar para a porta 8080 (novo backend/frontend)
-                String draftUrl = String.format("http://localhost:8080/draft/%d", match.getId());
-                discordService.notifyDraftStarted("matchmaking", match.getId().toString(), draftUrl);
-            }
+            Map<String, Object> data = new HashMap<>();
+            data.put("type", "all_players_accepted");
+            data.put("matchId", matchId);
+
+            webSocketService.broadcastToAll("all_players_accepted", data);
+
         } catch (Exception e) {
-            log.error("❌ Erro ao notificar Discord sobre draft", e);
+            log.error("❌ [MatchFound] Erro ao notificar aceitação completa", e);
         }
     }
 
-    /**
-     * Faz broadcast da atualização de aceitação
-     */
-    private void broadcastAcceptanceUpdate(Long matchId) {
+    private void notifyMatchCancelled(Long matchId, String declinedPlayer) {
         try {
-            Map<String, Object> status = getAcceptanceStatus(matchId);
-            webSocketService.broadcastToAll("acceptance_update", status);
+            Map<String, Object> data = new HashMap<>();
+            data.put("type", "match_cancelled");
+            data.put("matchId", matchId);
+            data.put("reason", "declined");
+            data.put("declinedPlayer", declinedPlayer);
+
+            webSocketService.broadcastToAll("match_cancelled", data);
+
         } catch (Exception e) {
-            log.error("❌ Erro ao fazer broadcast de aceitação", e);
+            log.error("❌ [MatchFound] Erro ao notificar cancelamento", e);
         }
     }
 
-    /**
-     * Cria uma partida encontrada
-     */
-    public CustomMatch createFoundMatch(List<PlayerDTO> team1, List<PlayerDTO> team2) {
+    private void notifyTimerUpdate(Long matchId, int secondsRemaining) {
         try {
-            log.info("🎮 Criando partida encontrada com {} vs {} jogadores", team1.size(), team2.size());
+            Map<String, Object> data = new HashMap<>();
+            data.put("type", "acceptance_timer");
+            data.put("matchId", matchId);
+            data.put("secondsRemaining", secondsRemaining);
 
-            CustomMatch match = new CustomMatch();
-            match.setTitle("Partida Encontrada");
-            match.setDescription("Partida criada automaticamente pelo sistema de matchmaking");
-            match.setStatus("found");
-            match.setGameMode("ranked");
-            match.setCreatedAt(Instant.now());
-            match.setUpdatedAt(Instant.now());
+            webSocketService.broadcastToAll("acceptance_timer", data);
 
-            // Converter listas de jogadores para JSON
-            String team1Json = team1.stream()
-                    .map(PlayerDTO::getSummonerName)
-                    .collect(Collectors.joining(","));
-            String team2Json = team2.stream()
-                    .map(PlayerDTO::getSummonerName)
-                    .collect(Collectors.joining(","));
-
-            match.setTeam1PlayersJson(team1Json);
-            match.setTeam2PlayersJson(team2Json);
-
-            // Calcular MMR médio
-            double avgMmr1 = team1.stream().mapToInt(p -> p.getLeaguePoints() != null ? p.getLeaguePoints() : 0)
-                    .average().orElse(0);
-            double avgMmr2 = team2.stream().mapToInt(p -> p.getLeaguePoints() != null ? p.getLeaguePoints() : 0)
-                    .average().orElse(0);
-
-            match.setAverageMmrTeam1((int) avgMmr1);
-            match.setAverageMmrTeam2((int) avgMmr2);
-
-            CustomMatch savedMatch = customMatchRepository.save(match);
-
-            return savedMatch;
         } catch (Exception e) {
-            log.error("❌ Erro ao criar partida encontrada", e);
-            return null;
+            // Log silencioso para não poluir
         }
     }
 
-    /**
-     * Converte CustomMatch para MatchDTO
-     */
-    private MatchDTO convertToMatchDTO(CustomMatch match) {
-        return MatchDTO.builder()
-                .matchId(match.getId().toString())
-                .status(match.getStatus())
-                .createdAt(match.getCreatedAt() != null
-                        ? match.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()
-                        : null)
-                .updatedAt(match.getUpdatedAt() != null
-                        ? match.getUpdatedAt().atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()
-                        : null)
-                .matchStartedAt(match.getCreatedAt() != null
-                        ? match.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()
-                        : null)
-                .matchEndedAt(match.getCompletedAt() != null
-                        ? match.getCompletedAt().atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()
-                        : null)
-                .gameMode(match.getGameMode())
-                .duration(match.getDuration() != null ? match.getDuration().longValue() : null)
-                .winnerTeam(match.getWinnerTeam() != null ? match.getWinnerTeam().toString() : null)
-                .isCustomGame(true)
-                .riotMatchId(match.getRiotGameId())
+    private QueuePlayerInfoDTO convertToDTO(QueuePlayer player) {
+        return QueuePlayerInfoDTO.builder()
+                .id(player.getId())
+                .summonerName(player.getSummonerName())
+                .region(player.getRegion())
+                .mmr(player.getCustomLp() != null ? player.getCustomLp() : 0)
+                .primaryLane(player.getPrimaryLane())
+                .secondaryLane(player.getSecondaryLane())
+                .queuePosition(player.getQueuePosition())
+                .joinTime(player.getJoinTime())
+                .isCurrentPlayer(false)
                 .build();
     }
 
-    /**
-     * Monitoramento de aceitação executado periodicamente via @Scheduled
-     */
-    @Scheduled(fixedDelay = MONITORING_INTERVAL_MS)
-    public void monitorAcceptance() {
-        try {
-            // Limpar partidas expiradas
-            cleanupExpiredMatches();
-        } catch (Exception e) {
-            log.error("❌ Erro no monitoramento de aceitação", e);
+    // Classe interna para tracking
+    private static class MatchAcceptanceStatus {
+        private Long matchId;
+        private List<String> players;
+        private Set<String> acceptedPlayers;
+        private Set<String> declinedPlayers;
+        private Instant createdAt;
+        private List<String> team1;
+        private List<String> team2;
+
+        // Getters e Setters
+        public Long getMatchId() {
+            return matchId;
         }
-    }
 
-    /**
-     * Limpa partidas expiradas
-     */
-    private void cleanupExpiredMatches() {
-        try {
-            LocalDateTime cutoff = LocalDateTime.now().minusSeconds(ACCEPTANCE_TIMEOUT_MS / 1000);
-
-            pendingMatches.entrySet().removeIf(entry -> {
-                AcceptanceStatus status = entry.getValue();
-                if (status.getCreatedAt().isBefore(cutoff)) {
-                    log.warn("🧹 Removendo partida expirada: {}", entry.getKey());
-                    getSelf().cancelMatch(entry.getKey(), "Partida expirada");
-                    return true;
-                }
-                return false;
-            });
-        } catch (Exception e) {
-            log.error("❌ Erro ao limpar partidas expiradas", e);
+        public void setMatchId(Long matchId) {
+            this.matchId = matchId;
         }
-    }
 
-    /**
-     * Obtém número de partidas pendentes
-     */
-    public int getPendingMatchesCount() {
-        return pendingMatches.size();
-    }
-
-    /**
-     * Limpa todas as partidas pendentes (para debug/admin)
-     */
-    public void clearPendingMatches() {
-        try {
-            for (Long matchId : new ArrayList<>(pendingMatches.keySet())) {
-                getSelf().cancelMatch(matchId, "Sistema limpo");
-            }
-            log.info("🧹 Partidas pendentes limpas");
-        } catch (Exception e) {
-            log.error("❌ Erro ao limpar partidas pendentes", e);
+        public List<String> getPlayers() {
+            return players;
         }
-    }
 
-    // Retorna o bean proxy desta classe para chamadas que precisam acionar proxy de transação
-    private MatchFoundService getSelf() {
-        return applicationContext.getBean(MatchFoundService.class);
+        public void setPlayers(List<String> players) {
+            this.players = players;
+        }
+
+        public Set<String> getAcceptedPlayers() {
+            return acceptedPlayers;
+        }
+
+        public void setAcceptedPlayers(Set<String> acceptedPlayers) {
+            this.acceptedPlayers = acceptedPlayers;
+        }
+
+        public Set<String> getDeclinedPlayers() {
+            return declinedPlayers;
+        }
+
+        public void setDeclinedPlayers(Set<String> declinedPlayers) {
+            this.declinedPlayers = declinedPlayers;
+        }
+
+        public Instant getCreatedAt() {
+            return createdAt;
+        }
+
+        public void setCreatedAt(Instant createdAt) {
+            this.createdAt = createdAt;
+        }
+
+        public List<String> getTeam1() {
+            return team1;
+        }
+
+        public void setTeam1(List<String> team1) {
+            this.team1 = team1;
+        }
+
+        public List<String> getTeam2() {
+            return team2;
+        }
+
+        public void setTeam2(List<String> team2) {
+            this.team2 = team2;
+        }
     }
 }

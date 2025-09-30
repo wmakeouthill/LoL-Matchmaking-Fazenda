@@ -626,6 +626,11 @@ export class ApiService {
       .pipe(catchError(this.handleError));
   }
 
+  refreshQueueCache(): Observable<any> {
+    return this.http.post(`${this.baseUrl}/queue/refresh`, {})
+      .pipe(catchError(this.handleError));
+  }
+
   forceMySQLSync(): Observable<any> {
     return this.http.post(`${this.baseUrl}/queue/force-sync`, {})
       .pipe(catchError(this.handleError));

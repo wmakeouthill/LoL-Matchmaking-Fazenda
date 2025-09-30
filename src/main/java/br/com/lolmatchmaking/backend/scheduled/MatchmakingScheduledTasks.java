@@ -8,7 +8,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 @Slf4j
-@Component
+// @Component // ✅ DESATIVADO: QueueManagementService.processQueue() já tem
+// @Scheduled
 @RequiredArgsConstructor
 public class MatchmakingScheduledTasks {
 

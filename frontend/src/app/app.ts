@@ -401,10 +401,110 @@ export class App implements OnInit, OnDestroy {
       case 'backend_connection_success':
         console.log('🔌 [App] Backend conectado');
         break;
+      case 'match_found':
+        console.log('🎮 [App] Match found recebido:', message);
+        this.handleMatchFound(message);
+        break;
+      case 'acceptance_progress':
+        console.log('📊 [App] Progresso de aceitação:', message);
+        // Atualizar dados do MatchFoundComponent se estiver visível
+        if (this.showMatchFound && this.matchFoundData) {
+          this.matchFoundData.acceptedCount = message.acceptedCount || 0;
+          this.matchFoundData.totalPlayers = message.totalPlayers || 10;
+          this.cdr.detectChanges();
+        }
+        break;
+      case 'match_cancelled':
+        console.log('❌ [App] Match cancelado:', message);
+        this.showMatchFound = false;
+        this.matchFoundData = null;
+        this.cdr.detectChanges();
+        break;
+      case 'all_players_accepted':
+        console.log('✅ [App] Todos jogadores aceitaram:', message);
+        this.showMatchFound = false;
+        this.matchFoundData = null;
+        // Aguardar 3s para entrar no draft
+        setTimeout(() => {
+          this.inDraftPhase = true;
+          this.draftData = message;
+          this.cdr.detectChanges();
+        }, 3000);
+        break;
       default:
         // outras mensagens tratadas por componentes específicos
         break;
     }
+  }
+
+  private handleMatchFound(message: any): void {
+    console.log('🎯 [App] Processando match found:', message);
+    console.log('🎯 [App] matchId recebido:', message.matchId);
+    console.log('🎯 [App] team1:', message.team1?.length, 'jogadores');
+    console.log('🎯 [App] team2:', message.team2?.length, 'jogadores');
+
+    // ✅ Converter formato do backend para formato do componente
+    const team1 = message.team1 || [];
+    const team2 = message.team2 || [];
+
+    // Determinar qual time o jogador está
+    const currentPlayerName = this.currentPlayer?.displayName || this.currentPlayer?.summonerName || '';
+    const isInTeam1 = team1.some((p: any) => p.summonerName === currentPlayerName);
+
+    const teammates = isInTeam1 ? team1 : team2;
+    const enemies = isInTeam1 ? team2 : team1;
+    const playerSide: 'blue' | 'red' = isInTeam1 ? 'blue' : 'red';
+
+    this.matchFoundData = {
+      matchId: message.matchId,
+      playerSide,
+      teammates: teammates.map((p: any, index: number) => ({
+        id: p.playerId || p.id || index,
+        summonerName: p.summonerName || p.name || 'Desconhecido',
+        mmr: p.customLp || p.mmr || 1200,
+        primaryLane: p.primaryLane || 'fill',
+        secondaryLane: p.secondaryLane || 'fill',
+        assignedLane: p.assignedLane || p.primaryLane || 'fill',
+        teamIndex: isInTeam1 ? index : (index + 5),
+        isAutofill: p.isAutofill || false,
+        profileIconId: p.profileIconId || 29
+      })),
+      enemies: enemies.map((p: any, index: number) => ({
+        id: p.playerId || p.id || (index + 100),
+        summonerName: p.summonerName || p.name || 'Desconhecido',
+        mmr: p.customLp || p.mmr || 1200,
+        primaryLane: p.primaryLane || 'fill',
+        secondaryLane: p.secondaryLane || 'fill',
+        assignedLane: p.assignedLane || p.primaryLane || 'fill',
+        teamIndex: isInTeam1 ? (index + 5) : index,
+        isAutofill: p.isAutofill || false,
+        profileIconId: p.profileIconId || 29
+      })),
+      averageMMR: {
+        yourTeam: isInTeam1 ? (message.averageMmrTeam1 || 0) : (message.averageMmrTeam2 || 0),
+        enemyTeam: isInTeam1 ? (message.averageMmrTeam2 || 0) : (message.averageMmrTeam1 || 0)
+      },
+      estimatedGameDuration: 30,
+      phase: 'accept',
+      acceptanceTimer: message.timeoutSeconds || 30,
+      acceptedCount: 0,
+      totalPlayers: 10
+    } as any;
+
+    this.showMatchFound = true;
+
+    if (this.matchFoundData) {
+      console.log('✅ [App] matchFoundData criado:', {
+        matchId: this.matchFoundData.matchId,
+        phase: this.matchFoundData.phase,
+        teammatesCount: this.matchFoundData.teammates?.length || 0,
+        enemiesCount: this.matchFoundData.enemies?.length || 0
+      });
+    }
+
+    this.cdr.detectChanges();
+
+    console.log('✅ [App] Modal Match Found exibido (showMatchFound =', this.showMatchFound, ')');
   }
 
   private stopDraftPolling(): void {

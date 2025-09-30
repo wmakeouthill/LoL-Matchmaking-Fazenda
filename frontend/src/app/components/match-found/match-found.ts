@@ -20,6 +20,8 @@ export interface MatchFoundData {
   acceptanceDeadline?: string; // ✅ NOVO: Deadline ISO string
   teamStats?: any; // ✅ NOVO: Estatísticas dos times
   balancingInfo?: any; // ✅ NOVO: Informações de balanceamento
+  acceptedCount?: number; // ✅ NOVO: Contador de jogadores que aceitaram
+  totalPlayers?: number; // ✅ NOVO: Total de jogadores na partida
 }
 
 export interface PlayerInfo {

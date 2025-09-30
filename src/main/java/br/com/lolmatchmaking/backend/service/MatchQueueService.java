@@ -19,7 +19,7 @@ import java.util.List;
 import java.util.Optional;
 
 @Slf4j
-@Service
+// @Service // ✅ DESATIVADO: Substituído por QueueManagementService
 @RequiredArgsConstructor
 public class MatchQueueService {
 
@@ -108,8 +108,8 @@ public class MatchQueueService {
                 List<PlayerDTO> team1 = convertToPlayerDTOs(teams.team1());
                 List<PlayerDTO> team2 = convertToPlayerDTOs(teams.team2());
 
-                // Criar partida
-                matchFoundService.createFoundMatch(team1, team2);
+                // ✅ DESATIVADO: QueueManagementService agora gerencia isso
+                // matchFoundService.createFoundMatch(team1, team2);
 
                 log.info("Partida criada com sucesso - Team1: {} jogadores, Team2: {} jogadores",
                         team1.size(), team2.size());

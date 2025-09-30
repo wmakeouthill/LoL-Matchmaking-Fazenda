@@ -334,6 +334,16 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
     this.isRefreshing = true;
     console.log('🔄 [Queue] Iniciando refresh completo...');
 
+    // ✅ NOVO: Sincronizar cache do backend com o banco
+    this.apiService.refreshQueueCache().subscribe({
+      next: (response: any) => {
+        console.log('✅ [Queue] Cache do backend sincronizado:', response);
+      },
+      error: (err: any) => {
+        console.error('❌ [Queue] Erro ao sincronizar cache:', err);
+      }
+    });
+
     // ✅ NOVO: Feedback visual imediato
     console.log('🔄 [Queue] Solicitando atualização completa do estado da fila e Discord ao componente pai...');
     this.refreshData.emit();

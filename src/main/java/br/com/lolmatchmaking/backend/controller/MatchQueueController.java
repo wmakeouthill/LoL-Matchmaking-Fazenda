@@ -13,7 +13,7 @@ import jakarta.validation.constraints.NotBlank;
 import java.util.List;
 
 @Slf4j
-@RestController
+// @RestController // ✅ DESATIVADO: Substituído por QueueController
 @RequestMapping("/api/match-queue")
 @RequiredArgsConstructor
 @Validated
