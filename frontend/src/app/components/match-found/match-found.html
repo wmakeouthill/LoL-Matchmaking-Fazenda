@@ -13,29 +13,57 @@
           <h3 [style.color]="getTeamColor('blue')">
             {{ getTeamSideName('blue') }}
           </h3>
-          <span class="team-mmr">{{ getRoundedMMR(getBlueTeamMMR()) }} MMR médio</span>
+          <span class="team-mmr"
+            >{{ getRoundedMMR(getBlueTeamMMR()) }} MMR médio</span
+          >
         </div>
 
         <div class="players-list">
-          <div class="player-card" *ngFor="let player of sortedBlueTeam"
-            [class.current-player]="isCurrentPlayer(player)">
+          <div
+            class="player-card"
+            *ngFor="let player of sortedBlueTeam"
+            [class.current-player]="isCurrentPlayer(player)"
+          >
             <div class="player-avatar">
               <ng-container *ngIf="!(botService.isBot(player)); else botIcon">
-                <img *ngIf="getPlayerProfileIconUrlIfHuman(player) | async as iconUrl" [src]="iconUrl" alt="Avatar"
-                  class="avatar-image" (error)="onProfileIconError($event, player)">
+                <img
+                  *ngIf="getPlayerProfileIconUrlIfHuman(player) | async as iconUrl"
+                  [src]="iconUrl"
+                  alt="Avatar"
+                  class="avatar-image"
+                  (error)="onProfileIconError($event, player)"
+                />
               </ng-container>
               <ng-template #botIcon>
-                <img src="/assets/images/champion-placeholder.svg" alt="Bot" class="avatar-image"
-                  style="opacity:0.5;" />
+                <img
+                  src="/assets/images/champion-placeholder.svg"
+                  alt="Bot"
+                  class="avatar-image"
+                  style="opacity: 0.5"
+                />
               </ng-template>
             </div>
             <div class="player-info">
               <div class="player-main-info">
                 <span class="player-name">{{ player.summonerName }}</span>
+                <span
+                  class="lane-badge"
+                  [ngClass]="{
+                    'badge-primary': getLaneBadgeType(player) === 'primary',
+                    'badge-secondary': getLaneBadgeType(player) === 'secondary',
+                    'badge-autofill': getLaneBadgeType(player) === 'autofill'
+                  }"
+                  *ngIf="getLaneBadgeType(player)"
+                >
+                  {{ getLaneBadgeText(getLaneBadgeType(player)) }}
+                </span>
                 <span class="player-mmr">{{ player.mmr }} MMR</span>
               </div>
               <div class="player-lanes">
-                <span class="lane assigned-lane" [class.autofill]="player.isAutofill">
+                <span
+                  class="lane assigned-lane"
+                  [class.autofill]="player.isAutofill"
+                >
                   {{ getAssignedLaneDisplay(player) }}
                 </span>
                 <span class="lane-separator">•</span>
@@ -59,29 +87,57 @@
           <h3 [style.color]="getTeamColor('red')">
             {{ getTeamSideName('red') }}
           </h3>
-          <span class="team-mmr">{{ getRoundedMMR(getRedTeamMMR()) }} MMR médio</span>
+          <span class="team-mmr"
+            >{{ getRoundedMMR(getRedTeamMMR()) }} MMR médio</span
+          >
         </div>
 
         <div class="players-list">
-          <div class="player-card" *ngFor="let player of sortedRedTeam"
-            [class.current-player]="isCurrentPlayer(player)">
+          <div
+            class="player-card"
+            *ngFor="let player of sortedRedTeam"
+            [class.current-player]="isCurrentPlayer(player)"
+          >
             <div class="player-avatar">
               <ng-container *ngIf="!(botService.isBot(player)); else botIcon">
-                <img *ngIf="getPlayerProfileIconUrlIfHuman(player) | async as iconUrl" [src]="iconUrl" alt="Avatar"
-                  class="avatar-image" (error)="onProfileIconError($event, player)">
+                <img
+                  *ngIf="getPlayerProfileIconUrlIfHuman(player) | async as iconUrl"
+                  [src]="iconUrl"
+                  alt="Avatar"
+                  class="avatar-image"
+                  (error)="onProfileIconError($event, player)"
+                />
               </ng-container>
               <ng-template #botIcon>
-                <img src="/assets/images/champion-placeholder.svg" alt="Bot" class="avatar-image"
-                  style="opacity:0.5;" />
+                <img
+                  src="/assets/images/champion-placeholder.svg"
+                  alt="Bot"
+                  class="avatar-image"
+                  style="opacity: 0.5"
+                />
               </ng-template>
             </div>
             <div class="player-info">
               <div class="player-main-info">
                 <span class="player-name">{{ player.summonerName }}</span>
+                <span
+                  class="lane-badge"
+                  [ngClass]="{
+                    'badge-primary': getLaneBadgeType(player) === 'primary',
+                    'badge-secondary': getLaneBadgeType(player) === 'secondary',
+                    'badge-autofill': getLaneBadgeType(player) === 'autofill'
+                  }"
+                  *ngIf="getLaneBadgeType(player)"
+                >
+                  {{ getLaneBadgeText(getLaneBadgeType(player)) }}
+                </span>
                 <span class="player-mmr">{{ player.mmr }} MMR</span>
               </div>
               <div class="player-lanes">
-                <span class="lane assigned-lane" [class.autofill]="player.isAutofill">
+                <span
+                  class="lane assigned-lane"
+                  [class.autofill]="player.isAutofill"
+                >
                   {{ getAssignedLaneDisplay(player) }}
                 </span>
                 <span class="lane-separator">•</span>
@@ -126,8 +182,12 @@
           <span class="mmr-diff">
             Diferença de MMR: {{ getMMRDifference() }}
           </span>
-          <span class="balance-rating" [class.excellent]="isExcellentBalance()" [class.good]="isGoodBalance()"
-            [class.fair]="isFairBalance()">
+          <span
+            class="balance-rating"
+            [class.excellent]="isExcellentBalance()"
+            [class.good]="isGoodBalance()"
+            [class.fair]="isFairBalance()"
+          >
             {{ getBalanceRating(getMMRDifference()) }}
           </span>
         </div>

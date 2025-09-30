@@ -395,6 +395,42 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   /**
+   * Retorna o tipo de badge de lane (primary, secondary, autofill)
+   */
+  getLaneBadgeType(player: PlayerInfo): 'primary' | 'secondary' | 'autofill' | null {
+    if (!player.assignedLane) return null;
+
+    const assignedLane = player.assignedLane.toLowerCase().trim();
+    const primaryLane = (player.primaryLane || '').toLowerCase().trim();
+    const secondaryLane = (player.secondaryLane || '').toLowerCase().trim();
+
+    // Normalizar lanes (adc -> bot)
+    const normalizedAssigned = assignedLane === 'adc' ? 'bot' : assignedLane;
+    const normalizedPrimary = primaryLane === 'adc' ? 'bot' : primaryLane;
+    const normalizedSecondary = secondaryLane === 'adc' ? 'bot' : secondaryLane;
+
+    if (normalizedAssigned === normalizedPrimary) {
+      return 'primary';
+    } else if (normalizedAssigned === normalizedSecondary) {
+      return 'secondary';
+    } else {
+      return 'autofill';
+    }
+  }
+
+  /**
+   * Retorna o texto do badge
+   */
+  getLaneBadgeText(type: 'primary' | 'secondary' | 'autofill' | null): string {
+    switch (type) {
+      case 'primary': return '1ª Lane';
+      case 'secondary': return '2ª Lane';
+      case 'autofill': return 'Auto-fill';
+      default: return '';
+    }
+  }
+
+  /**
    * Ordena jogadores por teamIndex (0-4) conforme o draft espera
    */
   getSortedPlayersByLane(players: PlayerInfo[]): PlayerInfo[] {
