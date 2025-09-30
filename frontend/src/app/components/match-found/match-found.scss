@@ -215,6 +215,7 @@
       align-items: center;
       justify-content: space-between;
       margin-bottom: 0.2rem;
+      gap: 0.4rem;
 
       .player-name {
         color: #fff;
@@ -224,7 +225,38 @@
         overflow: hidden;
         text-overflow: ellipsis;
         flex: 1;
-        margin-right: 0.5rem;
+        margin-right: 0;
+      }
+
+      .lane-badge {
+        padding: 0.15rem 0.4rem;
+        border-radius: 4px;
+        font-size: 0.65rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        white-space: nowrap;
+        flex-shrink: 0;
+        transition: all 0.2s ease;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+
+        &.badge-primary {
+          background: linear-gradient(135deg, #00b894, #00cec9);
+          color: #fff;
+          border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        &.badge-secondary {
+          background: linear-gradient(135deg, #0984e3, #74b9ff);
+          color: #fff;
+          border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        &.badge-autofill {
+          background: linear-gradient(135deg, #fdcb6e, #e17055);
+          color: #2d3436;
+          border: 1px solid rgba(255, 255, 255, 0.3);
+        }
       }
 
       .player-mmr {
@@ -612,12 +644,26 @@
   .player-card {
     .player-info {
       .player-main-info {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 0.1rem;
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.3rem;
 
         .player-name {
           margin-right: 0;
+          flex: 1 1 auto;
+          min-width: 80px;
+        }
+
+        .lane-badge {
+          font-size: 0.6rem;
+          padding: 0.12rem 0.35rem;
+          order: 2;
+        }
+
+        .player-mmr {
+          order: 3;
+          margin-left: auto;
         }
       }
 
@@ -663,8 +709,15 @@
       height: 32px;
     }
 
-    .player-info .player-main-info .player-name {
-      font-size: 0.75rem;
+    .player-info .player-main-info {
+      .player-name {
+        font-size: 0.75rem;
+      }
+
+      .lane-badge {
+        font-size: 0.55rem;
+        padding: 0.1rem 0.3rem;
+      }
     }
   }
 }
