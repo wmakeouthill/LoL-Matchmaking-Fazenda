@@ -632,9 +632,24 @@ public class DraftFlowService {
         states.values().forEach(st -> {
             if (st.getCurrentIndex() >= st.getActions().size())
                 return; // completo
-            if (now - st.getLastActionStartMs() >= getActionTimeoutMs()) {
+            
+            long elapsed = now - st.getLastActionStartMs();
+            
+            // ✅ NOVO: Para bots, fazer ação automática após 2 segundos ao invés de esperar timeout completo
+            DraftAction currentAction = st.getActions().get(st.getCurrentIndex());
+            String currentPlayer = getPlayerForTeamAndIndex(st, currentAction.team(), st.getCurrentIndex());
+            
+            if (isBot(currentPlayer) && elapsed >= 2000) {  // 2 segundos para bots
+                log.info("🤖 [DraftFlow] Bot {} fazendo ação automática", currentPlayer);
+                handleBotAutoAction(st, currentPlayer);
+                return;
+            }
+            
+            // ✅ Para jogadores reais, usar timeout configurado
+            if (elapsed >= getActionTimeoutMs()) {
                 int idx = st.getCurrentIndex();
                 DraftAction prev = st.getActions().get(idx);
+                log.warn("⏰ [DraftFlow] Timeout na ação {} - marcando como SKIPPED", idx);
                 DraftAction skipped = new DraftAction(prev.index(), prev.type(), prev.team(), SKIPPED, TIMEOUT_PLAYER);
                 st.getActions().set(idx, skipped);
                 st.advance();
@@ -646,6 +661,115 @@ public class DraftFlowService {
                 }
             }
         });
+    }
+    
+    /**
+     * Verifica se um jogador é um bot
+     */
+    private boolean isBot(String playerName) {
+        return playerName != null && playerName.startsWith("Bot");
+    }
+    
+    /**
+     * Retorna o nome do jogador para uma ação específica
+     */
+    private String getPlayerForTeamAndIndex(DraftState st, int team, int actionIndex) {
+        // Mapear índice de ação para jogador
+        // Sequência: team1[0], team2[0], team1[1], team2[1], team1[2], team2[2], team2[3], team1[3], team2[4], team1[4], etc
+        Set<String> teamPlayers = team == 1 ? st.getTeam1Players() : st.getTeam2Players();
+        
+        if (teamPlayers.isEmpty()) {
+            log.warn("⚠️ [DraftFlow] Time {} está vazio", team);
+            return null;
+        }
+        
+        // Para picks/bans, usa um índice simplificado baseado na posição no time
+        // As ações são distribuídas entre os jogadores do time
+        int playerIndex = (actionIndex / 2) % 5;  // 0-4 para cada jogador do time
+        
+        // Converter Set para List para acessar por índice
+        String[] players = teamPlayers.toArray(new String[0]);
+        if (playerIndex < players.length) {
+            return players[playerIndex];
+        }
+        
+        return players[0];  // Fallback para primeiro jogador
+    }
+    
+    /**
+     * Executa ação automática para bot
+     */
+    private void handleBotAutoAction(DraftState st, String botName) {
+        try {
+            int actionIndex = st.getCurrentIndex();
+            DraftAction currentAction = st.getActions().get(actionIndex);
+            
+            // Selecionar campeão aleatório que não foi banido ou escolhido
+            String championId = selectRandomAvailableChampion(st);
+            
+            if (championId == null) {
+                log.warn("⚠️ [DraftFlow] Nenhum campeão disponível para bot {}, pulando", botName);
+                // Marcar como SKIPPED se não houver campeões disponíveis
+                DraftAction skipped = new DraftAction(currentAction.index(), currentAction.type(), currentAction.team(), SKIPPED, botName);
+                st.getActions().set(actionIndex, skipped);
+                st.advance();
+                st.markActionStart();
+                persist(st.getMatchId(), st);
+                broadcastUpdate(st, false);
+                return;
+            }
+            
+            log.info("🤖 [DraftFlow] Bot {} fazendo {} do campeão {}", botName, currentAction.type(), championId);
+            
+            // Processar ação do bot
+            boolean success = processAction(st.getMatchId(), actionIndex, championId, botName);
+            
+            if (!success) {
+                log.error("❌ [DraftFlow] Falha ao processar ação do bot {}", botName);
+            }
+            
+        } catch (Exception e) {
+            log.error("❌ [DraftFlow] Erro ao executar ação automática do bot", e);
+        }
+    }
+    
+    /**
+     * Seleciona um campeão aleatório disponível (não banido, não escolhido)
+     */
+    private String selectRandomAvailableChampion(DraftState st) {
+        // Lista de IDs de campeões (simplificada - em produção, buscar de Data Dragon)
+        List<String> allChampions = generateChampionIds();
+        
+        // Filtrar campeões já usados (banidos ou escolhidos)
+        Set<String> usedChampions = st.getActions().stream()
+                .filter(a -> a.championId() != null && !SKIPPED.equals(a.championId()))
+                .map(DraftAction::championId)
+                .collect(java.util.stream.Collectors.toSet());
+        
+        List<String> availableChampions = allChampions.stream()
+                .filter(id -> !usedChampions.contains(id))
+                .collect(java.util.stream.Collectors.toList());
+        
+        if (availableChampions.isEmpty()) {
+            return null;
+        }
+        
+        // Selecionar aleatório
+        int randomIndex = new java.util.Random().nextInt(availableChampions.size());
+        return availableChampions.get(randomIndex);
+    }
+    
+    /**
+     * Gera lista de IDs de campeões (simplificada)
+     */
+    private List<String> generateChampionIds() {
+        // IDs de campeões do LoL (168 campeões até 2024)
+        // Em produção, isso deveria vir do Data Dragon ou banco de dados
+        List<String> champions = new java.util.ArrayList<>();
+        for (int i = 1; i <= 200; i++) {
+            champions.add(String.valueOf(i));
+        }
+        return champions;
     }
 
     private long getActionTimeoutMs() {
