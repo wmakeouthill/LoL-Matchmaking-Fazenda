@@ -403,30 +403,48 @@ public class MatchFoundService {
                         .map(p -> (String) p.get("summonerName"))
                         .collect(Collectors.toList());
 
-                // Notificar início do draft com dados completos dos times (já do pick_ban_data)
-                // ✅ CORREÇÃO: NÃO incluir "type" aqui, o broadcastToAll já adiciona
+                // ✅ CORREÇÃO CRÍTICA: Iniciar DraftFlowService PRIMEIRO para criar as 20 ações
+                log.info("🎬 [MatchFound] Iniciando DraftFlowService para criar ações...");
+                var draftState = draftFlowService.startDraft(matchId, team1Names, team2Names);
+                log.info("✅ [MatchFound] DraftFlowService iniciado - {} ações criadas", draftState.getActions().size());
+
+                // ✅ Agora buscar as ações do DraftState recém-criado
+                List<Map<String, Object>> actions = draftState.getActions().stream()
+                        .map(action -> {
+                            Map<String, Object> actionMap = new HashMap<>();
+                            actionMap.put("index", action.index());
+                            actionMap.put("type", action.type());
+                            actionMap.put("team", action.team());
+                            actionMap.put("championId", action.championId());
+                            actionMap.put("byPlayer", action.byPlayer());
+                            return actionMap;
+                        })
+                        .collect(Collectors.toList());
+
+                Integer currentIndex = draftState.getCurrentIndex();
+
+                // Notificar início do draft com dados completos dos times + ações
                 Map<String, Object> draftData = new HashMap<>();
                 draftData.put("matchId", matchId);
                 draftData.put("team1", team1Data);
                 draftData.put("team2", team2Data);
                 draftData.put("averageMmrTeam1", match.getAverageMmrTeam1());
                 draftData.put("averageMmrTeam2", match.getAverageMmrTeam2());
+                draftData.put("actions", actions); // ✅ CRÍTICO: 20 ações do DraftState
+                draftData.put("currentIndex", currentIndex); // ✅ CRÍTICO: Índice atual (0)
 
                 // ✅ Log detalhado do que será enviado
                 log.info("📢 [MatchFound] Enviando draft_starting via WebSocket:");
                 log.info("  - matchId: {}", matchId);
                 log.info("  - team1: {} jogadores", team1Data.size());
                 log.info("  - team2: {} jogadores", team2Data.size());
-                log.info("  - Estrutura data: {}", new ObjectMapper().writeValueAsString(draftData));
+                log.info("  - actions: {} fases", actions.size());
+                log.info("  - currentIndex: {}", currentIndex);
 
                 webSocketService.broadcastToAll("draft_starting", draftData);
 
-                log.info("✅ [MatchFound] Draft starting enviado com {} jogadores no time 1 e {} no time 2",
-                        team1Data.size(), team2Data.size());
-
-                // Iniciar o DraftFlowService para gerenciar picks/bans
-                draftFlowService.startDraft(matchId, team1Names, team2Names);
-                log.info("✅ [MatchFound] DraftFlowService iniciado para partida {}", matchId);
+                log.info("✅ [MatchFound] Draft starting enviado com {} ações, {} jogadores no time 1 e {} no time 2",
+                        actions.size(), team1Data.size(), team2Data.size());
 
             } catch (Exception e) {
                 log.error("❌ [MatchFound] Erro ao parsear pick_ban_data", e);

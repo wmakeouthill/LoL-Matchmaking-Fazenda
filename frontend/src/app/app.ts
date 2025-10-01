@@ -422,6 +422,38 @@ export class App implements OnInit, OnDestroy {
         this.matchFoundData = null;
         this.cdr.detectChanges();
         break;
+      case 'draft_updated':
+        console.log('📋 [App] Draft updated recebido:', message);
+        // ✅ Atualizar draftData com as informações recebidas
+        if (this.inDraftPhase && this.draftData) {
+          const updateData = message.data || message;
+
+          // ✅ CORREÇÃO: Aceitar tanto "phases" quanto "actions" e verificar se tem elementos
+          if ((updateData.phases && updateData.phases.length > 0) || (updateData.actions && updateData.actions.length > 0)) {
+            const newPhases = (updateData.phases && updateData.phases.length > 0) ? updateData.phases : updateData.actions;
+            this.draftData.phases = newPhases;
+            this.draftData.actions = newPhases;  // ✅ Manter ambos sincronizados
+            console.log(`✅ [App] phases/actions atualizado: ${this.draftData.phases.length} ações`);
+          }
+
+          // ✅ CORREÇÃO: Aceitar tanto "currentAction" quanto "currentIndex"
+          if (updateData.currentAction !== undefined || updateData.currentIndex !== undefined) {
+            const newCurrentAction = updateData.currentAction !== undefined ? updateData.currentAction : updateData.currentIndex;
+            this.draftData.currentAction = newCurrentAction;
+            this.draftData.currentIndex = newCurrentAction;  // ✅ Manter ambos sincronizados
+            console.log(`✅ [App] currentAction/currentIndex atualizado: ${this.draftData.currentAction}`);
+          }
+
+          // ✅ Despachar evento customizado para o DraftPickBanComponent
+          document.dispatchEvent(new CustomEvent('draftUpdate', {
+            detail: {
+              matchId: this.draftData.matchId,
+              ...updateData
+            }
+          }));
+          this.cdr.detectChanges();
+        }
+        break;
       case 'all_players_accepted':
         console.log('✅ [App] Todos jogadores aceitaram:', message);
         // ✅ Esconder modal de match found mas MANTER os dados para o draft
@@ -434,25 +466,46 @@ export class App implements OnInit, OnDestroy {
       case 'draft_starting':
         console.log('🎯 [App] Draft iniciando:', message);
         const draftData = message.data || message;
-        
+
+        // ✅ CORREÇÃO CRÍTICA: Backend envia "actions", não "phases"!
+        const phases = (draftData.phases && draftData.phases.length > 0) ? draftData.phases :
+          (draftData.actions && draftData.actions.length > 0) ? draftData.actions : [];
+
+        const currentAction = draftData.currentAction !== undefined ? draftData.currentAction :
+          draftData.currentIndex !== undefined ? draftData.currentIndex : 0;
+
+        console.log('🎯 [App] Extraindo dados do draft:', {
+          hasPhasesInMessage: !!draftData.phases,
+          phasesLength: draftData.phases?.length,
+          hasActionsInMessage: !!draftData.actions,
+          actionsLength: draftData.actions?.length,
+          extractedPhasesLength: phases.length,
+          currentAction: currentAction
+        });
+
         // ✅ Preparar dados do draft com informações completas dos times
         this.draftData = {
           matchId: draftData.matchId || this.matchFoundData?.matchId,
           team1: draftData.team1 || this.matchFoundData?.teammates || [],
           team2: draftData.team2 || this.matchFoundData?.enemies || [],
-          phases: draftData.phases || [],
+          phases: phases,  // ✅ Usar o array extraído corretamente
+          actions: phases,  // ✅ Adicionar também como "actions" para compatibilidade
+          currentAction: currentAction,  // ✅ Passar currentAction explicitamente
+          currentIndex: currentAction,  // ✅ Adicionar também como "currentIndex" para compatibilidade
           averageMMR: draftData.averageMMR || this.matchFoundData?.averageMMR,
           balanceQuality: draftData.balanceQuality,
           autofillCount: draftData.autofillCount,
           currentPlayer: this.currentPlayer
         };
-        
+
         console.log('🎯 [App] Dados do draft preparados:', {
           matchId: this.draftData.matchId,
           team1Length: this.draftData.team1?.length || 0,
-          team2Length: this.draftData.team2?.length || 0
+          team2Length: this.draftData.team2?.length || 0,
+          phasesLength: this.draftData.phases?.length || 0,
+          currentAction: this.draftData.currentAction
         });
-        
+
         // Entrar no draft
         this.inDraftPhase = true;
         this.matchFoundData = null; // Agora sim limpar

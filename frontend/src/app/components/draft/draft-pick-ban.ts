@@ -262,17 +262,30 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
           this.updateDraftState();
         } else {
-          // ✅ CORREÇÃO: Preservar dados importantes e apenas mesclar novos dados
-          const oldCurrentAction = this.session.currentAction;
-          const oldActions = this.session.actions || [];
+          // ✅ CORREÇÃO: Mesclar novos dados com os existentes, mas PERMITIR atualização de currentAction e phases
+          const oldBlueTeam = this.session.blueTeam || [];
+          const oldRedTeam = this.session.redTeam || [];
 
           this.session = {
             ...this.session,
             ...currentValue,
-            currentAction: oldCurrentAction, // ✅ PRESERVAR currentAction
-            actions: currentValue.actions?.length >= oldActions.length ? currentValue.actions : oldActions // ✅ PRESERVAR ações
+            // ✅ ATUALIZAR phases/actions se vierem novos valores com elementos
+            phases: (currentValue.phases && currentValue.phases.length > 0) ? currentValue.phases :
+              (currentValue.actions && currentValue.actions.length > 0) ? currentValue.actions :
+                (this.session.phases && this.session.phases.length > 0) ? this.session.phases : [],
+            // ✅ ATUALIZAR currentAction se vier novo valor
+            currentAction: currentValue.currentAction !== undefined ? currentValue.currentAction :
+              currentValue.currentIndex !== undefined ? currentValue.currentIndex :
+                this.session.currentAction,
+            // ✅ PRESERVAR times se não vierem novos
+            blueTeam: (currentValue.blueTeam && currentValue.blueTeam.length > 0) ? currentValue.blueTeam :
+              (currentValue.team1 && currentValue.team1.length > 0) ? currentValue.team1 :
+                oldBlueTeam,
+            redTeam: (currentValue.redTeam && currentValue.redTeam.length > 0) ? currentValue.redTeam :
+              (currentValue.team2 && currentValue.team2.length > 0) ? currentValue.team2 :
+                oldRedTeam
           };
-          saveLogToRoot(`⏭️ [processNgOnChanges] Preservando currentAction=${oldCurrentAction}, actions=${this.session.actions?.length || 0}`);
+          saveLogToRoot(`⏭️ [processNgOnChanges] Session atualizada: currentAction=${this.session.currentAction}, phases=${this.session.phases?.length || 0}`);
         }
       } finally {
         this.updateInProgress = false;
@@ -307,9 +320,10 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     document.addEventListener('draftUpdate', (event: any) => {
       if (event.detail?.matchId === this.matchId) {
         logDraft('🔄 [DraftPickBan] draftUpdate recebido via WebSocket:', event.detail);
-        saveLogToRoot(`🚀 [WebSocket] draftUpdate recebido - sincronizando IMEDIATAMENTE`);
-        // ✅ CORREÇÃO: Sincronização imediata quando receber WebSocket
-        this.syncSessionWithBackend();
+        saveLogToRoot(`🚀 [WebSocket] draftUpdate recebido - dados já atualizados pelo app.ts via ngOnChanges`);
+        // ✅ CORREÇÃO: NÃO sincronizar aqui pois app.ts já atualiza draftData e dispara ngOnChanges
+        // O ngOnChanges do componente já processa as mudanças automaticamente
+        this.cdr.detectChanges();
       }
     });
 
@@ -317,9 +331,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     document.addEventListener('draft_action', (event: any) => {
       if (event.detail?.matchId === this.matchId) {
         logDraft('🎯 [DraftPickBan] draft_action recebido via WebSocket:', event.detail);
-        saveLogToRoot(`🚀 [WebSocket] draft_action recebido - sincronizando IMEDIATAMENTE`);
-        // Sincronização imediata após ação de draft
-        this.syncSessionWithBackend();
+        saveLogToRoot(`🚀 [WebSocket] draft_action recebido - dados atualizados via ngOnChanges`);
+        // ✅ CORREÇÃO: NÃO sincronizar - dados chegam via draft_updated
+        this.cdr.detectChanges();
       }
     });
 
@@ -327,9 +341,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     document.addEventListener('draftActionCompleted', (event: any) => {
       if (event.detail?.matchId === this.matchId) {
         logDraft('🎯 [DraftPickBan] draftActionCompleted recebido via WebSocket:', event.detail);
-        saveLogToRoot(`🚀 [WebSocket] draftActionCompleted recebido - sincronizando IMEDIATAMENTE`);
-        // Sincronização imediata após ação completada
-        this.syncSessionWithBackend();
+        saveLogToRoot(`🚀 [WebSocket] draftActionCompleted recebido - dados atualizados via ngOnChanges`);
+        // ✅ CORREÇÃO: NÃO sincronizar - dados chegam via draft_updated
+        this.cdr.detectChanges();
       }
     });
 
@@ -337,9 +351,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     document.addEventListener('draftPhaseChanged', (event: any) => {
       if (event.detail?.matchId === this.matchId) {
         logDraft('🔄 [DraftPickBan] draftPhaseChanged recebido via WebSocket:', event.detail);
-        saveLogToRoot(`🚀 [WebSocket] draftPhaseChanged recebido - sincronizando IMEDIATAMENTE`);
-        // Sincronização imediata quando fase mudar
-        this.syncSessionWithBackend();
+        saveLogToRoot(`🚀 [WebSocket] draftPhaseChanged recebido - dados atualizados via ngOnChanges`);
+        // ✅ CORREÇÃO: NÃO sincronizar - dados chegam via draft_updated
+        this.cdr.detectChanges();
       }
     });
 
@@ -452,12 +466,30 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     logDraft('🚀 [DraftPickBan] Inicializando sessão com dados do matchData');
     saveLogToRoot(`🚀 [initializeSessionFromMatchData] Inicializando sessão`);
 
+    // ✅ Extrair phases/actions com verificação
+    const phases = (this.matchData.phases && this.matchData.phases.length > 0) ? this.matchData.phases :
+      (this.matchData.actions && this.matchData.actions.length > 0) ? this.matchData.actions : [];
+
+    const currentAction = this.matchData.currentAction !== undefined ? this.matchData.currentAction :
+      this.matchData.currentIndex !== undefined ? this.matchData.currentIndex : 0;
+
+    console.log('🎯 [initializeSessionFromMatchData] Dados recebidos:', {
+      hasPhases: !!this.matchData.phases,
+      phasesLength: this.matchData.phases?.length,
+      hasActions: !!this.matchData.actions,
+      actionsLength: this.matchData.actions?.length,
+      extractedPhasesLength: phases.length,
+      currentAction: currentAction
+    });
+
+    saveLogToRoot(`🎯 [initializeSessionFromMatchData] phases=${phases.length}, currentAction=${currentAction}, matchData.phases=${this.matchData.phases?.length}, matchData.actions=${this.matchData.actions?.length}`);
+
     this.session = {
       id: this.matchData.matchId || 0,
       blueTeam: this.matchData.blueTeam || this.matchData.team1 || [],
       redTeam: this.matchData.redTeam || this.matchData.team2 || [],
-      phases: this.matchData.phases || [],
-      currentAction: this.matchData.currentAction || 0,
+      phases: phases,
+      currentAction: currentAction,
       currentPlayerIndex: 0,
       extendedTime: 0,
       phase: this.matchData.phase || 'bans'
@@ -644,21 +676,25 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
       const response: any = await firstValueFrom(this.http.get(url));
 
-      if (!response?.success || !response?.session) {
-        logDraft('[syncSessionWithBackend] ❌ Resposta inválida do backend');
+      // ✅ CORREÇÃO: Backend retorna dados diretamente (sem wrapper "session")
+      if (!response || response.exists === false) {
+        logDraft('[syncSessionWithBackend] ❌ Resposta inválida do backend ou draft não existe');
         return;
       }
 
       const oldCurrentAction = this.session?.currentAction || 0;
-      const newCurrentAction = response.session.currentAction || 0;
+      // ✅ Aceitar currentAction OU currentIndex (backend envia currentIndex)
+      const newCurrentAction = response.currentAction !== undefined ? response.currentAction : response.currentIndex || 0;
       const oldPhasesCount = this.session?.phases?.length || 0;
-      const newPhasesCount = response.session.phases?.length || 0;
+      // ✅ Aceitar phases OU actions (backend envia actions)
+      const newPhasesCount = (response.phases || response.actions)?.length || 0;
 
       logDraft(`🔄 [syncSessionWithBackend] Comparando: old=${oldCurrentAction}, new=${newCurrentAction}`);
       saveLogToRoot(`🔄 [syncSessionWithBackend] Resposta recebida: oldCurrentAction=${oldCurrentAction}, newCurrentAction=${newCurrentAction}, oldPhases=${oldPhasesCount}, newPhases=${newPhasesCount}`);
-      saveLogToRoot(`🔄 [syncSessionWithBackend] Resposta completa: ${JSON.stringify(response.session)}`);
+      saveLogToRoot(`🔄 [syncSessionWithBackend] Resposta completa: ${JSON.stringify(response)}`);
 
-      this.mergeSessionData(response);
+      // ✅ Passar resposta direta (não response.session)
+      this.mergeSessionData({ session: response });
 
       // ✅ CORREÇÃO: SEMPRE atualizar na primeira sincronização ou quando há mudanças
       const isFirstSync = !this.session || this.session.currentAction === undefined;
@@ -700,11 +736,13 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         const url = `${this.baseUrl}/match/${validation.effectiveMatchId}/draft-session`;
         const response: any = await firstValueFrom(this.http.get(url));
 
-        if (response?.success && response?.session) {
+        // ✅ CORREÇÃO: Backend retorna dados diretamente (sem wrapper)
+        if (response && response.exists !== false) {
           logDraft(`✅ [syncSessionWithRetry] Tentativa ${attempt}: Sucesso`);
           saveLogToRoot(`✅ [syncSessionWithRetry] Sincronização imediata bem-sucedida na tentativa ${attempt}`);
 
-          this.mergeSessionData(response);
+          // ✅ Passar resposta direta (não response.session)
+          this.mergeSessionData({ session: response });
           this.updateDraftState();
           return; // Sucesso, sair do loop
         } else {
@@ -1415,10 +1453,16 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
     // ✅ NOVO: Se o draft está completo (currentAction >= phases.length), não há fase atual
     if (this.session.currentAction >= this.session.phases.length) {
-      logDraft('🏁 [getCurrentPlayerName] Draft completado - sem fase atual:', {
+      const debugInfo = {
         currentAction: this.session.currentAction,
-        phasesLength: this.session.phases.length
-      });
+        phasesLength: this.session.phases.length,
+        phases: this.session.phases,
+        hasPhases: !!this.session.phases,
+        phasesIsArray: Array.isArray(this.session.phases)
+      };
+      logDraft('🏁 [getCurrentPlayerName] Draft completado - sem fase atual:', debugInfo);
+      console.error('❌ [DraftPickBan] PHASES VAZIO OU INCORRETO:', debugInfo);
+      saveLogToRoot(`❌ [getCurrentPlayerName] PROBLEMA: currentAction=${this.session.currentAction}, phasesLength=${this.session.phases.length}, phases=${JSON.stringify(this.session.phases?.slice(0, 3))}`);
       return 'Draft Completo';
     }
 
