@@ -32,6 +32,7 @@ public class QueueManagementService {
     private final LCUService lcuService;
     private final ObjectMapper objectMapper;
     private final MatchFoundService matchFoundService;
+    private final PlayerService playerService;
 
     public QueueManagementService(
             QueuePlayerRepository queuePlayerRepository,
@@ -41,7 +42,8 @@ public class QueueManagementService {
             DiscordService discordService,
             LCUService lcuService,
             ObjectMapper objectMapper,
-            @Lazy MatchFoundService matchFoundService) {
+            @Lazy MatchFoundService matchFoundService,
+            PlayerService playerService) {
         this.queuePlayerRepository = queuePlayerRepository;
         this.playerRepository = playerRepository;
         this.customMatchRepository = customMatchRepository;
@@ -50,6 +52,7 @@ public class QueueManagementService {
         this.lcuService = lcuService;
         this.objectMapper = objectMapper;
         this.matchFoundService = matchFoundService;
+        this.playerService = playerService;
     }
 
     // Cache local da fila para performance
@@ -130,12 +133,28 @@ public class QueueManagementService {
                 queueCache.remove(summonerName);
             });
 
+            // ✅ NOVO: Buscar Player da tabela para pegar custom_mmr (current_mmr + custom_lp)
+            int finalMmr = 0;
+            Optional<Player> playerOpt = playerRepository.findBySummonerNameIgnoreCase(summonerName);
+            if (playerOpt.isPresent()) {
+                Player player = playerOpt.get();
+                // ✅ Usar custom_mmr que já é calculado (current_mmr + custom_lp)
+                finalMmr = player.getCustomMmr() != null ? player.getCustomMmr() : 0;
+                log.info("📊 Player encontrado: {} (current_mmr: {}, custom_lp: {}, custom_mmr: {})",
+                        summonerName, player.getCurrentMmr(), player.getCustomLp(), finalMmr);
+            } else {
+                // Player não encontrado na tabela (pode ser bot ou jogador não logado ainda)
+                // Usar apenas o customLp fornecido
+                finalMmr = customLp != null ? customLp : 0;
+                log.info("📊 Player não encontrado na tabela, usando MMR fornecido: {} ({})", summonerName, finalMmr);
+            }
+
             // Criar nova entrada na fila
             QueuePlayer queuePlayer = QueuePlayer.builder()
                     .playerId(playerId != null ? playerId : 0L)
                     .summonerName(summonerName)
                     .region(region)
-                    .customLp(customLp != null ? customLp : 0)
+                    .customLp(finalMmr) // ✅ Usar MMR total calculado
                     .primaryLane(primaryLane)
                     .secondaryLane(secondaryLane)
                     .joinTime(Instant.now())
