@@ -162,8 +162,18 @@ public class DraftFlowService {
         List<DraftAction> actions = buildDefaultActionSequence();
         DraftState st = new DraftState(matchId, actions, team1Players, team2Players);
         states.put(matchId, st);
+
+        log.info("🎬 [DraftFlow] startDraft - matchId={}, actions={}, currentIndex={}, team1={}, team2={}",
+                matchId, actions.size(), st.getCurrentIndex(), team1Players, team2Players);
+
+        // ✅ Persistir o estado inicial no banco
         persist(matchId, st);
-        broadcastUpdate(st, false);
+        
+        // ✅ CORREÇÃO: NÃO fazer broadcast aqui, o MatchFoundService já envia draft_starting
+        // broadcastUpdate(st, false);
+
+        log.info("📡 [DraftFlow] startDraft - Estado criado e persistido para matchId={}", matchId);
+
         return st;
     }
 
@@ -263,7 +273,8 @@ public class DraftFlowService {
                                 (team2Data instanceof java.util.List && ((java.util.List<?>) team2Data).isEmpty());
 
                         if (team1Empty) {
-                            log.warn("⚠️ [DraftFlow] team1 vazio, adicionando nomes (fallback): {}", st.getTeam1Players());
+                            log.warn("⚠️ [DraftFlow] team1 vazio, adicionando nomes (fallback): {}",
+                                    st.getTeam1Players());
                             // ✅ Criar objetos básicos com apenas nomes como fallback
                             List<Map<String, Object>> team1Fallback = new ArrayList<>();
                             int idx = 0;
@@ -281,7 +292,8 @@ public class DraftFlowService {
                         }
 
                         if (team2Empty) {
-                            log.warn("⚠️ [DraftFlow] team2 vazio, adicionando nomes (fallback): {}", st.getTeam2Players());
+                            log.warn("⚠️ [DraftFlow] team2 vazio, adicionando nomes (fallback): {}",
+                                    st.getTeam2Players());
                             // ✅ Criar objetos básicos com apenas nomes como fallback
                             List<Map<String, Object>> team2Fallback = new ArrayList<>();
                             int idx = 5; // Team 2 começa no índice 5
@@ -315,7 +327,7 @@ public class DraftFlowService {
                             playerObj.put("teamIndex", idx++);
                             team1Fallback.add(playerObj);
                         }
-                        
+
                         List<Map<String, Object>> team2Fallback = new ArrayList<>();
                         idx = 5;
                         for (String playerName : st.getTeam2Players()) {
@@ -324,7 +336,7 @@ public class DraftFlowService {
                             playerObj.put("teamIndex", idx++);
                             team2Fallback.add(playerObj);
                         }
-                        
+
                         snapshot.put(KEY_TEAM1, team1Fallback);
                         snapshot.put(KEY_TEAM2, team2Fallback);
                     }
@@ -347,7 +359,8 @@ public class DraftFlowService {
     private static final String KEY_CURRENT_INDEX = "currentIndex";
     private static final String KEY_ACTIONS = "actions";
     private static final String KEY_CONFIRMATIONS = "confirmations";
-    // ✅ Usar "team1" e "team2" (como no backend antigo), não "team1Players"/"team2Players"
+    // ✅ Usar "team1" e "team2" (como no backend antigo), não
+    // "team1Players"/"team2Players"
     private static final String KEY_TEAM1 = "team1";
     private static final String KEY_TEAM2 = "team2";
     // configurable via property above
@@ -360,6 +373,14 @@ public class DraftFlowService {
         try {
             long remainingMs = calcRemainingMs(st);
 
+            // ✅ Calcular jogador atual
+            String currentPlayer = null;
+            int currentIdx = st.getCurrentIndex();
+            if (currentIdx < st.getActions().size()) {
+                DraftAction currentAction = st.getActions().get(currentIdx);
+                currentPlayer = getPlayerForTeamAndIndex(st, currentAction.team(), currentIdx);
+            }
+
             // ✅ CRÍTICO: Carregar dados completos dos times do banco, não apenas nomes
             Map<String, Object> updateData = new HashMap<>();
             updateData.put(KEY_TYPE, "draft_updated");
@@ -367,6 +388,11 @@ public class DraftFlowService {
             updateData.put(KEY_CURRENT_INDEX, st.getCurrentIndex());
             updateData.put(KEY_ACTIONS, st.getActions());
             updateData.put(KEY_CONFIRMATIONS, st.getConfirmations());
+            updateData.put("currentPlayer", currentPlayer); // ✅ Nome do jogador da vez
+
+            log.debug(
+                    "📡 [DraftFlow] Broadcasting update - matchId={}, currentIndex={}, currentPlayer={}, remainingMs={}",
+                    st.getMatchId(), currentIdx, currentPlayer, remainingMs);
 
             // ✅ Buscar dados completos dos times do banco
             customMatchRepository.findById(st.getMatchId()).ifPresent(cm -> {
@@ -428,7 +454,7 @@ public class DraftFlowService {
                             team1Fallback.add(playerObj);
                         }
                         updateData.put(KEY_TEAM1, team1Fallback);
-                        
+
                         List<Map<String, Object>> team2Fallback = new ArrayList<>();
                         idx = 5;
                         for (String playerName : st.getTeam2Players()) {
@@ -451,7 +477,7 @@ public class DraftFlowService {
                         team1Fallback.add(playerObj);
                     }
                     updateData.put(KEY_TEAM1, team1Fallback);
-                    
+
                     List<Map<String, Object>> team2Fallback = new ArrayList<>();
                     idx = 5;
                     for (String playerName : st.getTeam2Players()) {
@@ -529,15 +555,46 @@ public class DraftFlowService {
         if (st == null)
             return Map.of("exists", false);
         long remainingMs = calcRemainingMs(st);
-        return Map.of(
-                "exists", true,
-                KEY_ACTIONS, st.getActions(),
-                KEY_CURRENT_INDEX, st.getCurrentIndex(),
-                KEY_CONFIRMATIONS, st.getConfirmations(),
-                KEY_TEAM1, st.getTeam1Players(),
-                KEY_TEAM2, st.getTeam2Players(),
-                KEY_REMAINING_MS, remainingMs,
-                KEY_ACTION_TIMEOUT_MS, getActionTimeoutMs());
+
+        // ✅ Usar HashMap mutável para adicionar dados completos dos times
+        Map<String, Object> result = new HashMap<>();
+        result.put("exists", true);
+        result.put(KEY_ACTIONS, st.getActions());
+        result.put(KEY_CURRENT_INDEX, st.getCurrentIndex());
+        result.put(KEY_CONFIRMATIONS, st.getConfirmations());
+        result.put(KEY_REMAINING_MS, remainingMs);
+        result.put(KEY_ACTION_TIMEOUT_MS, getActionTimeoutMs());
+
+        // ✅ Buscar dados completos dos times do banco (igual ao broadcastUpdate)
+        customMatchRepository.findById(matchId).ifPresent(cm -> {
+            if (cm.getPickBanDataJson() != null && !cm.getPickBanDataJson().isEmpty()) {
+                try {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> pickBanData = mapper.readValue(cm.getPickBanDataJson(), Map.class);
+                    Object team1Data = pickBanData.get(KEY_TEAM1);
+                    Object team2Data = pickBanData.get(KEY_TEAM2);
+
+                    if (team1Data != null) {
+                        result.put(KEY_TEAM1, team1Data);
+                    }
+                    if (team2Data != null) {
+                        result.put(KEY_TEAM2, team2Data);
+                    }
+                } catch (Exception e) {
+                    log.warn("Erro ao carregar pick_ban_data no snapshot", e);
+                }
+            }
+        });
+
+        // ✅ Fallback se não houver dados completos
+        if (!result.containsKey(KEY_TEAM1)) {
+            result.put(KEY_TEAM1, st.getTeam1Players());
+        }
+        if (!result.containsKey(KEY_TEAM2)) {
+            result.put(KEY_TEAM2, st.getTeam2Players());
+        }
+
+        return result;
     }
 
     public void reemitIfPlayerInDraft(String playerName, org.springframework.web.socket.WebSocketSession session) {
@@ -632,19 +689,40 @@ public class DraftFlowService {
         states.values().forEach(st -> {
             if (st.getCurrentIndex() >= st.getActions().size())
                 return; // completo
-            
+
             long elapsed = now - st.getLastActionStartMs();
-            
-            // ✅ NOVO: Para bots, fazer ação automática após 2 segundos ao invés de esperar timeout completo
-            DraftAction currentAction = st.getActions().get(st.getCurrentIndex());
-            String currentPlayer = getPlayerForTeamAndIndex(st, currentAction.team(), st.getCurrentIndex());
-            
-            if (isBot(currentPlayer) && elapsed >= 2000) {  // 2 segundos para bots
-                log.info("🤖 [DraftFlow] Bot {} fazendo ação automática", currentPlayer);
+
+            // ✅ NOVO: Para bots, fazer ação automática após 2 segundos ao invés de esperar
+            // timeout completo
+            int currentIdx = st.getCurrentIndex();
+            DraftAction currentAction = st.getActions().get(currentIdx);
+            String currentPlayer = getPlayerForTeamAndIndex(st, currentAction.team(), currentIdx);
+
+            log.info("🔍 [DraftFlow] Match {} - Ação {}/{}: team={}, type={}, player={}, elapsed={}ms",
+                    st.getMatchId(), currentIdx, st.getActions().size(),
+                    currentAction.team(), currentAction.type(), currentPlayer, elapsed);
+
+            if (currentPlayer == null) {
+                log.error("❌ [DraftFlow] Match {} - Jogador NULL para ação {} (team {})",
+                        st.getMatchId(), currentIdx, currentAction.team());
+                // Pular esta ação
+                DraftAction skipped = new DraftAction(currentAction.index(), currentAction.type(), currentAction.team(),
+                        SKIPPED, "NO_PLAYER");
+                st.getActions().set(currentIdx, skipped);
+                st.advance();
+                st.markActionStart();
+                persist(st.getMatchId(), st);
+                broadcastUpdate(st, false);
+                return;
+            }
+
+            if (isBot(currentPlayer) && elapsed >= 2000) { // 2 segundos para bots
+                log.info("🤖 [DraftFlow] Match {} - Bot {} fazendo ação automática (ação {}, {})",
+                        st.getMatchId(), currentPlayer, currentIdx, currentAction.type());
                 handleBotAutoAction(st, currentPlayer);
                 return;
             }
-            
+
             // ✅ Para jogadores reais, usar timeout configurado
             if (elapsed >= getActionTimeoutMs()) {
                 int idx = st.getCurrentIndex();
@@ -662,40 +740,124 @@ public class DraftFlowService {
             }
         });
     }
-    
+
     /**
      * Verifica se um jogador é um bot
      */
     private boolean isBot(String playerName) {
         return playerName != null && playerName.startsWith("Bot");
     }
-    
+
     /**
      * Retorna o nome do jogador para uma ação específica
+     * Segue a sequência EXATA do draft ranqueado do LoL:
+     * 
+     * Ações 0-5: Bans fase 1 → team1[0], team2[0], team1[1], team2[1], team1[2],
+     * team2[2]
+     * Ações 6-11: Picks fase 1 → team1[0], team2[0], team2[1], team1[1], team1[2],
+     * team2[2]
+     * Ações 12-15: Bans fase 2 → team2[3], team1[3], team2[4], team1[4]
+     * Ações 16-19: Picks fase 2 → team2[3], team1[3], team1[4], team2[4]
      */
     private String getPlayerForTeamAndIndex(DraftState st, int team, int actionIndex) {
-        // Mapear índice de ação para jogador
-        // Sequência: team1[0], team2[0], team1[1], team2[1], team1[2], team2[2], team2[3], team1[3], team2[4], team1[4], etc
         Set<String> teamPlayers = team == 1 ? st.getTeam1Players() : st.getTeam2Players();
-        
+
         if (teamPlayers.isEmpty()) {
             log.warn("⚠️ [DraftFlow] Time {} está vazio", team);
             return null;
         }
-        
-        // Para picks/bans, usa um índice simplificado baseado na posição no time
-        // As ações são distribuídas entre os jogadores do time
-        int playerIndex = (actionIndex / 2) % 5;  // 0-4 para cada jogador do time
-        
-        // Converter Set para List para acessar por índice
-        String[] players = teamPlayers.toArray(new String[0]);
-        if (playerIndex < players.length) {
-            return players[playerIndex];
+
+        // Converter Set para List para acessar por índice (mantém ordem de inserção)
+        List<String> team1List = new ArrayList<>(st.getTeam1Players());
+        List<String> team2List = new ArrayList<>(st.getTeam2Players());
+
+        // Mapear ação para jogador específico seguindo a sequência do draft ranqueado
+        int playerIndex;
+        switch (actionIndex) {
+            // Primeira fase de bans (ações 0-5)
+            case 0:
+                playerIndex = 0;
+                break; // team1[0] - Top
+            case 1:
+                playerIndex = 0;
+                break; // team2[0] - Top
+            case 2:
+                playerIndex = 1;
+                break; // team1[1] - Jungle
+            case 3:
+                playerIndex = 1;
+                break; // team2[1] - Jungle
+            case 4:
+                playerIndex = 2;
+                break; // team1[2] - Mid
+            case 5:
+                playerIndex = 2;
+                break; // team2[2] - Mid
+
+            // Primeira fase de picks (ações 6-11)
+            case 6:
+                playerIndex = 0;
+                break; // team1[0] - Top (First Pick)
+            case 7:
+                playerIndex = 0;
+                break; // team2[0] - Top
+            case 8:
+                playerIndex = 1;
+                break; // team2[1] - Jungle
+            case 9:
+                playerIndex = 1;
+                break; // team1[1] - Jungle
+            case 10:
+                playerIndex = 2;
+                break; // team1[2] - Mid
+            case 11:
+                playerIndex = 2;
+                break; // team2[2] - Mid
+
+            // Segunda fase de bans (ações 12-15)
+            case 12:
+                playerIndex = 3;
+                break; // team2[3] - ADC
+            case 13:
+                playerIndex = 3;
+                break; // team1[3] - ADC
+            case 14:
+                playerIndex = 4;
+                break; // team2[4] - Support
+            case 15:
+                playerIndex = 4;
+                break; // team1[4] - Support
+
+            // Segunda fase de picks (ações 16-19)
+            case 16:
+                playerIndex = 3;
+                break; // team2[3] - ADC
+            case 17:
+                playerIndex = 3;
+                break; // team1[3] - ADC
+            case 18:
+                playerIndex = 4;
+                break; // team1[4] - Support
+            case 19:
+                playerIndex = 4;
+                break; // team2[4] - Support (Last Pick)
+
+            default:
+                log.warn("⚠️ [DraftFlow] Ação {} fora do range esperado (0-19)", actionIndex);
+                return null;
         }
-        
-        return players[0];  // Fallback para primeiro jogador
+
+        // Retornar jogador do time correto
+        List<String> currentTeamPlayers = team == 1 ? team1List : team2List;
+        if (playerIndex < currentTeamPlayers.size()) {
+            return currentTeamPlayers.get(playerIndex);
+        }
+
+        log.warn("⚠️ [DraftFlow] PlayerIndex {} fora do range para time {} (size: {})",
+                playerIndex, team, currentTeamPlayers.size());
+        return null;
     }
-    
+
     /**
      * Executa ação automática para bot
      */
@@ -703,14 +865,15 @@ public class DraftFlowService {
         try {
             int actionIndex = st.getCurrentIndex();
             DraftAction currentAction = st.getActions().get(actionIndex);
-            
+
             // Selecionar campeão aleatório que não foi banido ou escolhido
             String championId = selectRandomAvailableChampion(st);
-            
+
             if (championId == null) {
                 log.warn("⚠️ [DraftFlow] Nenhum campeão disponível para bot {}, pulando", botName);
                 // Marcar como SKIPPED se não houver campeões disponíveis
-                DraftAction skipped = new DraftAction(currentAction.index(), currentAction.type(), currentAction.team(), SKIPPED, botName);
+                DraftAction skipped = new DraftAction(currentAction.index(), currentAction.type(), currentAction.team(),
+                        SKIPPED, botName);
                 st.getActions().set(actionIndex, skipped);
                 st.advance();
                 st.markActionStart();
@@ -718,47 +881,47 @@ public class DraftFlowService {
                 broadcastUpdate(st, false);
                 return;
             }
-            
+
             log.info("🤖 [DraftFlow] Bot {} fazendo {} do campeão {}", botName, currentAction.type(), championId);
-            
+
             // Processar ação do bot
             boolean success = processAction(st.getMatchId(), actionIndex, championId, botName);
-            
+
             if (!success) {
                 log.error("❌ [DraftFlow] Falha ao processar ação do bot {}", botName);
             }
-            
+
         } catch (Exception e) {
             log.error("❌ [DraftFlow] Erro ao executar ação automática do bot", e);
         }
     }
-    
+
     /**
      * Seleciona um campeão aleatório disponível (não banido, não escolhido)
      */
     private String selectRandomAvailableChampion(DraftState st) {
         // Lista de IDs de campeões (simplificada - em produção, buscar de Data Dragon)
         List<String> allChampions = generateChampionIds();
-        
+
         // Filtrar campeões já usados (banidos ou escolhidos)
         Set<String> usedChampions = st.getActions().stream()
                 .filter(a -> a.championId() != null && !SKIPPED.equals(a.championId()))
                 .map(DraftAction::championId)
                 .collect(java.util.stream.Collectors.toSet());
-        
+
         List<String> availableChampions = allChampions.stream()
                 .filter(id -> !usedChampions.contains(id))
                 .collect(java.util.stream.Collectors.toList());
-        
+
         if (availableChampions.isEmpty()) {
             return null;
         }
-        
+
         // Selecionar aleatório
         int randomIndex = new java.util.Random().nextInt(availableChampions.size());
         return availableChampions.get(randomIndex);
     }
-    
+
     /**
      * Gera lista de IDs de campeões (simplificada)
      */
