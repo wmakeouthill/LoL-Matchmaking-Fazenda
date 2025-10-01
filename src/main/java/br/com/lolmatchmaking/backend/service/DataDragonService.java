@@ -5,9 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import jakarta.annotation.PostConstruct;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -21,7 +21,7 @@ public class DataDragonService {
     private final ObjectMapper objectMapper;
 
     private static final String BASE_URL = "https://ddragon.leagueoflegends.com/cdn";
-    private static final String VERSION = "15.14.1";
+    private static final String VERSION = "15.19.1";
     private static final String LANGUAGE = "pt_BR";
 
     private final Map<String, ChampionData> championsCache = new ConcurrentHashMap<>();
@@ -86,10 +86,20 @@ public class DataDragonService {
     }
 
     /**
+     * ✅ Carregar campeões na inicialização do Spring
+     */
+    @PostConstruct
+    public void init() {
+        log.info("🎯 Inicializando DataDragonService...");
+        loadChampions();
+    }
+
+    /**
      * Carrega todos os campeões da Data Dragon API
      */
     public void loadChampions() {
         if (championsLoaded) {
+            log.debug("✅ Campeões já carregados, pulando...");
             return;
         }
 
@@ -130,7 +140,7 @@ public class DataDragonService {
         }
     }
 
-    @Cacheable("champion-name-by-id")
+    // ✅ CORREÇÃO: Removido @Cacheable (serviço já tem cache interno)
     public String getChampionNameById(Integer championId) {
         if (!championsLoaded) {
             loadChampions();
@@ -138,7 +148,7 @@ public class DataDragonService {
         return championIdToNameMap.get(championId);
     }
 
-    @Cacheable("champion-data-by-id")
+    // ✅ CORREÇÃO: Removido @Cacheable (serviço já tem cache interno)
     public ChampionData getChampionById(Integer championId) {
         if (!championsLoaded) {
             loadChampions();
@@ -152,7 +162,7 @@ public class DataDragonService {
         return championsCache.get(championName);
     }
 
-    @Cacheable("champion-data-by-name")
+    // ✅ CORREÇÃO: Removido @Cacheable (serviço já tem cache interno)
     public ChampionData getChampionByName(String championName) {
         if (!championsLoaded) {
             loadChampions();
@@ -160,7 +170,7 @@ public class DataDragonService {
         return championsCache.get(championName);
     }
 
-    @Cacheable("all-champions")
+    // ✅ CORREÇÃO: Removido @Cacheable (serviço já tem cache interno)
     public List<ChampionData> getAllChampions() {
         if (!championsLoaded) {
             loadChampions();
@@ -198,7 +208,7 @@ public class DataDragonService {
         return LANGUAGE;
     }
 
-    @Cacheable("champions-by-role")
+    // ✅ CORREÇÃO: Removido @Cacheable (serviço já tem cache interno)
     public List<ChampionData> getChampionsByRole(String role) {
         if (!championsLoaded) {
             loadChampions();

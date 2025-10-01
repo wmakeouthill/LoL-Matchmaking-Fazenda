@@ -17,13 +17,19 @@ class DraftFlowServiceTest {
 
     private CustomMatchRepository customMatchRepository;
     private SessionRegistry sessionRegistry;
+    private DataDragonService dataDragonService;
     private DraftFlowService draftFlowService;
 
     @BeforeEach
     void setup() {
         customMatchRepository = mock(CustomMatchRepository.class);
         sessionRegistry = mock(SessionRegistry.class);
-        draftFlowService = new DraftFlowService(customMatchRepository, sessionRegistry);
+        dataDragonService = mock(DataDragonService.class);
+
+        // Mock para retornar lista vazia de campeões (evita NPE nos testes)
+        when(dataDragonService.getAllChampions()).thenReturn(List.of());
+
+        draftFlowService = new DraftFlowService(customMatchRepository, sessionRegistry, dataDragonService);
     }
 
     @Test

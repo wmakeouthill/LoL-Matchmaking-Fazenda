@@ -422,6 +422,18 @@ public class MatchFoundService {
                         .collect(Collectors.toList());
 
                 Integer currentIndex = draftState.getCurrentIndex();
+                
+                // ✅ CRÍTICO: Calcular o jogador da vez inicial (ação 0)
+                String currentPlayer = null;
+                if (currentIndex < draftState.getActions().size()) {
+                    var currentAction = draftState.getActions().get(currentIndex);
+                    // O jogador da ação 0 é sempre do time 1, índice 0
+                    if (currentAction.team() == 1 && !team1Names.isEmpty()) {
+                        currentPlayer = team1Names.get(0);
+                    } else if (currentAction.team() == 2 && !team2Names.isEmpty()) {
+                        currentPlayer = team2Names.get(0);
+                    }
+                }
 
                 // Notificar início do draft com dados completos dos times + ações
                 Map<String, Object> draftData = new HashMap<>();
@@ -432,6 +444,7 @@ public class MatchFoundService {
                 draftData.put("averageMmrTeam2", match.getAverageMmrTeam2());
                 draftData.put("actions", actions); // ✅ CRÍTICO: 20 ações do DraftState
                 draftData.put("currentIndex", currentIndex); // ✅ CRÍTICO: Índice atual (0)
+                draftData.put("currentPlayer", currentPlayer); // ✅ CRÍTICO: Jogador da vez inicial
 
                 // ✅ Log detalhado do que será enviado
                 log.info("📢 [MatchFound] Enviando draft_starting via WebSocket:");
@@ -440,6 +453,7 @@ public class MatchFoundService {
                 log.info("  - team2: {} jogadores", team2Data.size());
                 log.info("  - actions: {} fases", actions.size());
                 log.info("  - currentIndex: {}", currentIndex);
+                log.info("  - currentPlayer: {}", currentPlayer);
 
                 webSocketService.broadcastToAll("draft_starting", draftData);
 

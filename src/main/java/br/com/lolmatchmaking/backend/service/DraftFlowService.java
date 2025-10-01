@@ -22,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class DraftFlowService {
     private final CustomMatchRepository customMatchRepository;
     private final SessionRegistry sessionRegistry;
+    private final DataDragonService dataDragonService;
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Value("${app.draft.action-timeout-ms:30000}")
@@ -926,13 +927,12 @@ public class DraftFlowService {
      * Gera lista de IDs de campeões (simplificada)
      */
     private List<String> generateChampionIds() {
-        // IDs de campeões do LoL (168 campeões até 2024)
-        // Em produção, isso deveria vir do Data Dragon ou banco de dados
-        List<String> champions = new java.util.ArrayList<>();
-        for (int i = 1; i <= 200; i++) {
-            champions.add(String.valueOf(i));
-        }
-        return champions;
+        // ✅ Buscar IDs reais do Data Dragon dinamicamente
+        List<DataDragonService.ChampionData> allChampions = dataDragonService.getAllChampions();
+        return allChampions.stream()
+                .map(DataDragonService.ChampionData::getKey)
+                .filter(Objects::nonNull)
+                .toList();
     }
 
     private long getActionTimeoutMs() {
