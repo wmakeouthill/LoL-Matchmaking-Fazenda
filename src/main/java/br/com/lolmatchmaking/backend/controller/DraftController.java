@@ -12,6 +12,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class DraftController {
     private final DraftService draftService;
+    private final br.com.lolmatchmaking.backend.service.DraftFlowService draftFlowService;
     private static final String KEY_ERROR = "error";
 
     record ConfirmSyncRequest(Long matchId, String playerId, Integer actionIndex) {
@@ -36,6 +37,15 @@ public class DraftController {
         }
         draftService.confirmDraft(req.matchId(), req.playerId());
         return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    @GetMapping("/match/{matchId}/draft-session")
+    public ResponseEntity<Map<String, Object>> getDraftSession(@PathVariable Long matchId) {
+        Map<String, Object> snapshot = draftFlowService.snapshot(matchId);
+        if (snapshot.containsKey("exists") && !Boolean.TRUE.equals(snapshot.get("exists"))) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(snapshot);
     }
 
     @GetMapping("/match/{matchId}/confirmation-status")

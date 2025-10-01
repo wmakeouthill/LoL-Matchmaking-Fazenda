@@ -1,5 +1,6 @@
 package br.com.lolmatchmaking.backend.controller;
 
+import br.com.lolmatchmaking.backend.domain.entity.Player;
 import br.com.lolmatchmaking.backend.dto.PlayerDTO;
 import br.com.lolmatchmaking.backend.service.PlayerService;
 import br.com.lolmatchmaking.backend.service.RiotAPIService;
@@ -119,8 +120,29 @@ public class PlayerController {
                                     // client. We try to coerce commonly used fields.
                                     Map<String, Object> rankObj = new HashMap<>();
 
+                                    // ✅ NOVO: Checar se tem campo "queues" (formato novo do LCU)
+                                    if (rankedNode.has("queues") && rankedNode.get("queues").isArray()) {
+                                        log.info("🔍 LCU ranked data has 'queues' array, processing...");
+                                        for (JsonNode queue : rankedNode.get("queues")) {
+                                            if (queue.has("queueType")
+                                                    && queue.get("queueType").asText().equals("RANKED_SOLO_5x5")) {
+                                                log.info("🔍 Found solo queue data in queues: {}", queue);
+                                                if (queue.has("tier"))
+                                                    rankObj.put("tier", queue.get("tier").asText(null));
+                                                if (queue.has("division"))
+                                                    rankObj.put("rank", queue.get("division").asText(null));
+                                                if (queue.has("leaguePoints"))
+                                                    rankObj.put("lp", queue.get("leaguePoints").asInt(0));
+                                                if (queue.has("wins"))
+                                                    rankObj.put("wins", queue.get("wins").asInt(0));
+                                                if (queue.has("losses"))
+                                                    rankObj.put("losses", queue.get("losses").asInt(0));
+                                                break;
+                                            }
+                                        }
+                                    }
                                     // Check if it's an array of queues (common format)
-                                    if (rankedNode.isArray()) {
+                                    else if (rankedNode.isArray()) {
                                         log.info("🔍 LCU ranked data is array, processing queues...");
                                         for (JsonNode queue : rankedNode) {
                                             if (queue.has("queueType")
@@ -128,8 +150,8 @@ public class PlayerController {
                                                 log.info("🔍 Found solo queue data: {}", queue);
                                                 if (queue.has("tier"))
                                                     rankObj.put("tier", queue.get("tier").asText(null));
-                                                if (queue.has("rank"))
-                                                    rankObj.put("rank", queue.get("rank").asText(null));
+                                                if (queue.has("division")) // ✅ CORREÇÃO: Campo correto é "division"
+                                                    rankObj.put("rank", queue.get("division").asText(null));
                                                 if (queue.has("leaguePoints"))
                                                     rankObj.put("lp", queue.get("leaguePoints").asInt(0));
                                                 if (queue.has("wins"))
@@ -225,6 +247,55 @@ public class PlayerController {
                             dataWrapper.put("partialData", true);
 
                             response.put("data", dataWrapper);
+
+                            // ✅ NOVO: Criar/atualizar player na tabela players com dados completos
+                            try {
+                                Map<String, Object> rankData = (Map<String, Object>) playerData.get("rank");
+
+                                // ✅ LOG DETALHADO: Ver rankData recebido
+                                log.info("🔍 [PlayerController] rankData recebido: {}", rankData);
+
+                                int currentMmrFromLoL = calculateMMRFromRank(rankData);
+                                String fullSummonerName = constructedDisplayName != null ? constructedDisplayName
+                                        : summonerName;
+                                String region = (String) playerData.getOrDefault("region", "br1");
+
+                                // ✅ Extrair summonerId e puuid
+                                String summonerId = summonerData.has("summonerId")
+                                        ? summonerData.get("summonerId").asText()
+                                        : null;
+                                String puuid = summonerData.has("puuid")
+                                        ? summonerData.get("puuid").asText()
+                                        : null;
+
+                                // ✅ LOG DETALHADO: Ver valores calculados
+                                log.info("🔍 [PlayerController] Valores calculados:");
+                                log.info("  - summonerName: {}", fullSummonerName);
+                                log.info("  - region: {}", region);
+                                log.info("  - currentMmrFromLoL: {}", currentMmrFromLoL);
+                                log.info("  - summonerId: {}", summonerId);
+                                log.info("  - puuid: {}", puuid);
+
+                                Player savedPlayer = playerService.createOrUpdatePlayerOnLogin(
+                                        fullSummonerName,
+                                        region,
+                                        currentMmrFromLoL,
+                                        summonerId,
+                                        puuid);
+
+                                // ✅ LOG DETALHADO: Ver player salvo
+                                log.info("✅ [PlayerController] Player salvo no banco:");
+                                log.info("  - ID: {}", savedPlayer.getId());
+                                log.info("  - summonerName: {}", savedPlayer.getSummonerName());
+                                log.info("  - current_mmr: {}", savedPlayer.getCurrentMmr());
+                                log.info("  - custom_lp: {}", savedPlayer.getCustomLp());
+                                log.info("  - custom_mmr: {}", savedPlayer.getCustomMmr());
+                                log.info("  - summonerId: {}", savedPlayer.getSummonerId());
+                                log.info("  - puuid: {}", savedPlayer.getPuuid());
+                            } catch (Exception e) {
+                                log.error("❌ [PlayerController] Erro ao criar/atualizar player: {}", e.getMessage(), e);
+                                log.error("❌ [PlayerController] Stack trace:", e);
+                            }
 
                             return ResponseEntity.ok(response);
                         } else {
@@ -467,6 +538,71 @@ public class PlayerController {
             return ResponseEntity.internalServerError()
                     .body(Map.of("success", false, "error", e.getMessage()));
         }
+    }
+
+    /**
+     * Calcula o MMR usando a MESMA fórmula do frontend
+     * Baseado em: tier base + rank bonus + (LP * 0.8)
+     */
+    private int calculateMMRFromRank(Map<String, Object> rankData) {
+        if (rankData == null) {
+            log.warn("⚠️ [calculateMMRFromRank] rankData é null, retornando MMR padrão 1200");
+            return 1200; // MMR padrão para unranked
+        }
+
+        String tier = (String) rankData.getOrDefault("tier", "UNRANKED");
+        String rank = (String) rankData.getOrDefault("rank", "");
+
+        // ✅ Tentar converter LP de diferentes tipos
+        int lp = 0;
+        Object lpObj = rankData.get("lp");
+        if (lpObj instanceof Integer) {
+            lp = (Integer) lpObj;
+        } else if (lpObj instanceof String) {
+            try {
+                lp = Integer.parseInt((String) lpObj);
+            } catch (NumberFormatException e) {
+                log.warn("⚠️ [calculateMMRFromRank] LP não é um número válido: {}", lpObj);
+            }
+        }
+
+        // ✅ MMR base por tier (MESMA tabela do frontend)
+        int baseMmr = switch (tier.toUpperCase()) {
+            case "IRON" -> 800;
+            case "BRONZE" -> 1000;
+            case "SILVER" -> 1200;
+            case "GOLD" -> 1400;
+            case "PLATINUM" -> 1700;
+            case "EMERALD" -> 2000;
+            case "DIAMOND" -> 2300;
+            case "MASTER" -> 2600;
+            case "GRANDMASTER" -> 2800;
+            case "CHALLENGER" -> 3000;
+            default -> 1200; // UNRANKED
+        };
+
+        // ✅ Ajuste por divisão (MESMA tabela do frontend)
+        int rankBonus = switch (rank.toUpperCase()) {
+            case "IV" -> 0;
+            case "III" -> 50;
+            case "II" -> 100;
+            case "I" -> 150;
+            default -> 0;
+        };
+
+        // ✅ LP contribui com multiplicador 0.8 (MESMA fórmula do frontend)
+        int lpBonus = (int) Math.round(lp * 0.8);
+
+        int finalMmr = baseMmr + rankBonus + lpBonus;
+
+        // ✅ LOG DETALHADO: Ver cálculo passo a passo
+        log.info("🔢 [calculateMMRFromRank] Cálculo detalhado:");
+        log.info("  - Tier: {} → Base MMR: {}", tier, baseMmr);
+        log.info("  - Rank: {} → Rank Bonus: {}", rank, rankBonus);
+        log.info("  - LP: {} → LP Bonus (LP * 0.8): {}", lp, lpBonus);
+        log.info("  - Final MMR: {} + {} + {} = {}", baseMmr, rankBonus, lpBonus, finalMmr);
+
+        return finalMmr;
     }
 
     // DTOs

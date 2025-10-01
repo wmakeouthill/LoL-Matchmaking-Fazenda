@@ -9,7 +9,8 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 @Slf4j
-@Component
+// @Component // ✅ DESABILITADO: Players só devem ser criados quando jogadores
+// reais logam
 @Profile({ "development", "test" })
 @RequiredArgsConstructor
 public class DataSeeder implements CommandLineRunner {

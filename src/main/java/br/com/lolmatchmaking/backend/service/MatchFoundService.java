@@ -6,6 +6,7 @@ import br.com.lolmatchmaking.backend.domain.repository.CustomMatchRepository;
 import br.com.lolmatchmaking.backend.domain.repository.QueuePlayerRepository;
 import br.com.lolmatchmaking.backend.dto.QueuePlayerInfoDTO;
 import br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
@@ -27,17 +28,20 @@ public class MatchFoundService {
     private final CustomMatchRepository customMatchRepository;
     private final MatchmakingWebSocketService webSocketService;
     private final QueueManagementService queueManagementService;
+    private final DraftFlowService draftFlowService;
 
     // Constructor manual para @Lazy
     public MatchFoundService(
             QueuePlayerRepository queuePlayerRepository,
             CustomMatchRepository customMatchRepository,
             MatchmakingWebSocketService webSocketService,
-            @Lazy QueueManagementService queueManagementService) {
+            @Lazy QueueManagementService queueManagementService,
+            DraftFlowService draftFlowService) {
         this.queuePlayerRepository = queuePlayerRepository;
         this.customMatchRepository = customMatchRepository;
         this.webSocketService = webSocketService;
         this.queueManagementService = queueManagementService;
+        this.draftFlowService = draftFlowService;
     }
 
     // Tracking de partidas pendentes de aceitação
@@ -116,8 +120,8 @@ public class MatchFoundService {
                 // Notificar progresso
                 notifyAcceptanceProgress(matchId, status);
 
-                // Verificar se todos aceitaram
-                if (status.getAcceptedPlayers().size() == status.getPlayers().size()) {
+            // Verificar se todos aceitaram
+            if (status.getAcceptedPlayers().size() == status.getPlayers().size()) {
                     log.info("🎉 [MatchFound] TODOS OS JOGADORES ACEITARAM! Match {}", matchId);
                     handleAllPlayersAccepted(matchId);
                 }
@@ -317,16 +321,135 @@ public class MatchFoundService {
         try {
             log.info("🎯 [MatchFound] Iniciando draft para partida {}", matchId);
 
-            // Notificar início do draft
+            // Buscar dados completos da partida
+            CustomMatch match = customMatchRepository.findById(matchId).orElse(null);
+            if (match == null) {
+                log.error("❌ [MatchFound] Partida {} não encontrada", matchId);
+                return;
+            }
+
+            // Atualizar status para 'draft'
+            match.setStatus("draft");
+            customMatchRepository.save(match);
+            log.info("✅ [MatchFound] Status da partida atualizado para 'draft'");
+
+            // Buscar nomes dos jogadores
+            List<String> team1Names = parsePlayerNames(match.getTeam1PlayersJson());
+            List<String> team2Names = parsePlayerNames(match.getTeam2PlayersJson());
+
+            log.info("🎯 [MatchFound] Iniciando draft com {} jogadores no time 1 e {} no time 2",
+                    team1Names.size(), team2Names.size());
+
+            // Buscar jogadores completos para enviar no draft_starting
+            List<QueuePlayer> team1Players = team1Names.stream()
+                    .map(name -> queuePlayerRepository.findBySummonerName(name).orElse(null))
+                    .filter(p -> p != null)
+                    .collect(Collectors.toList());
+
+            List<QueuePlayer> team2Players = team2Names.stream()
+                    .map(name -> queuePlayerRepository.findBySummonerName(name).orElse(null))
+                    .filter(p -> p != null)
+                    .collect(Collectors.toList());
+
+            // Mapeamento de lanes por posição
+            String[] lanes = { "top", "jungle", "mid", "bot", "support" };
+
+            // Converter para DTOs com lanes e posições
+            List<QueuePlayerInfoDTO> team1DTOs = new ArrayList<>();
+            for (int i = 0; i < team1Players.size(); i++) {
+                team1DTOs.add(convertToDTO(team1Players.get(i), lanes[i], i, false));
+            }
+
+            List<QueuePlayerInfoDTO> team2DTOs = new ArrayList<>();
+            for (int i = 0; i < team2Players.size(); i++) {
+                team2DTOs.add(convertToDTO(team2Players.get(i), lanes[i], i + 5, false));
+            }
+
+            // Notificar início do draft com dados completos dos times
             Map<String, Object> draftData = new HashMap<>();
             draftData.put("type", "draft_starting");
             draftData.put("matchId", matchId);
+            draftData.put("team1", team1DTOs);
+            draftData.put("team2", team2DTOs);
+            draftData.put("averageMmrTeam1", match.getAverageMmrTeam1());
+            draftData.put("averageMmrTeam2", match.getAverageMmrTeam2());
 
             webSocketService.broadcastToAll("draft_starting", draftData);
+
+            log.info("📢 [MatchFound] Draft starting enviado com {} jogadores no time 1 e {} no time 2",
+                    team1DTOs.size(), team2DTOs.size());
+
+            // ✅ Salvar dados completos dos times no pick_ban_data
+            saveTeamsDataToPickBan(matchId, team1DTOs, team2DTOs);
+
+            // Iniciar o DraftFlowService para gerenciar picks/bans
+            draftFlowService.startDraft(matchId, team1Names, team2Names);
+            log.info("✅ [MatchFound] DraftFlowService iniciado para partida {}", matchId);
 
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao iniciar draft", e);
         }
+    }
+
+    /**
+     * Salva dados completos dos times no pick_ban_data para uso no draft
+     */
+    private void saveTeamsDataToPickBan(Long matchId, List<QueuePlayerInfoDTO> team1, List<QueuePlayerInfoDTO> team2) {
+        try {
+            CustomMatch match = customMatchRepository.findById(matchId).orElse(null);
+            if (match == null) {
+                log.error("❌ [MatchFound] Partida {} não encontrada para salvar pick_ban_data", matchId);
+                return;
+            }
+
+            // Criar estrutura com dados completos dos times
+            Map<String, Object> pickBanData = new HashMap<>();
+            pickBanData.put("team1Players", team1.stream()
+                    .map(p -> Map.of(
+                            "summonerName", p.getSummonerName(),
+                            "playerId", p.getPlayerId(),
+                            "mmr", p.getCustomLp() != null ? p.getCustomLp() : 0,
+                            "primaryLane", p.getPrimaryLane() != null ? p.getPrimaryLane() : "fill",
+                            "secondaryLane", p.getSecondaryLane() != null ? p.getSecondaryLane() : "fill",
+                            "assignedLane", p.getAssignedLane() != null ? p.getAssignedLane() : "fill",
+                            "teamIndex", p.getTeamIndex() != null ? p.getTeamIndex() : 0,
+                            "isAutofill", p.getIsAutofill() != null ? p.getIsAutofill() : false))
+                    .collect(Collectors.toList()));
+
+            pickBanData.put("team2Players", team2.stream()
+                    .map(p -> Map.of(
+                            "summonerName", p.getSummonerName(),
+                            "playerId", p.getPlayerId(),
+                            "mmr", p.getCustomLp() != null ? p.getCustomLp() : 0,
+                            "primaryLane", p.getPrimaryLane() != null ? p.getPrimaryLane() : "fill",
+                            "secondaryLane", p.getSecondaryLane() != null ? p.getSecondaryLane() : "fill",
+                            "assignedLane", p.getAssignedLane() != null ? p.getAssignedLane() : "fill",
+                            "teamIndex", p.getTeamIndex() != null ? p.getTeamIndex() : 0,
+                            "isAutofill", p.getIsAutofill() != null ? p.getIsAutofill() : false))
+                    .collect(Collectors.toList()));
+
+            // Salvar no banco
+            match.setPickBanDataJson(new ObjectMapper().writeValueAsString(pickBanData));
+            customMatchRepository.save(match);
+
+            log.info("✅ [MatchFound] Dados dos times salvos em pick_ban_data para partida {}", matchId);
+
+        } catch (Exception e) {
+            log.error("❌ [MatchFound] Erro ao salvar pick_ban_data", e);
+        }
+    }
+
+    /**
+     * Helper para parsear nomes de jogadores do campo CSV
+     */
+    private List<String> parsePlayerNames(String playersCsv) {
+        if (playersCsv == null || playersCsv.trim().isEmpty()) {
+            return new ArrayList<>();
+        }
+        return Arrays.stream(playersCsv.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
     }
 
     // Métodos de notificação

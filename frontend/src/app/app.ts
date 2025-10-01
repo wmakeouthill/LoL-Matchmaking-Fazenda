@@ -424,14 +424,39 @@ export class App implements OnInit, OnDestroy {
         break;
       case 'all_players_accepted':
         console.log('✅ [App] Todos jogadores aceitaram:', message);
+        // ✅ Esconder modal de match found mas MANTER os dados para o draft
         this.showMatchFound = false;
-        this.matchFoundData = null;
-        // Aguardar 3s para entrar no draft
-        setTimeout(() => {
-          this.inDraftPhase = true;
-          this.draftData = message;
-          this.cdr.detectChanges();
-        }, 3000);
+        this.cdr.detectChanges();
+        // Nota: matchFoundData será usado quando draft_started chegar
+        console.log('⏳ [App] Aguardando mensagem draft_started do backend...');
+        break;
+      case 'draft_started':
+      case 'draft_starting':
+        console.log('🎯 [App] Draft iniciando:', message);
+        const draftData = message.data || message;
+        
+        // ✅ Preparar dados do draft com informações completas dos times
+        this.draftData = {
+          matchId: draftData.matchId || this.matchFoundData?.matchId,
+          team1: draftData.team1 || this.matchFoundData?.teammates || [],
+          team2: draftData.team2 || this.matchFoundData?.enemies || [],
+          phases: draftData.phases || [],
+          averageMMR: draftData.averageMMR || this.matchFoundData?.averageMMR,
+          balanceQuality: draftData.balanceQuality,
+          autofillCount: draftData.autofillCount,
+          currentPlayer: this.currentPlayer
+        };
+        
+        console.log('🎯 [App] Dados do draft preparados:', {
+          matchId: this.draftData.matchId,
+          team1Length: this.draftData.team1?.length || 0,
+          team2Length: this.draftData.team2?.length || 0
+        });
+        
+        // Entrar no draft
+        this.inDraftPhase = true;
+        this.matchFoundData = null; // Agora sim limpar
+        this.cdr.detectChanges();
         break;
       case 'acceptance_timer':
         // Atualizar timer do MatchFoundComponent

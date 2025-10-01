@@ -8,7 +8,8 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
 @Slf4j
-@Component
+// @Component // ✅ DESABILITADO: Players só devem ser criados quando jogadores
+// reais logam
 @RequiredArgsConstructor
 public class DatabaseSeederService implements CommandLineRunner {
 

@@ -111,6 +111,73 @@ public class PlayerService {
         return enrichPlayerData(savedPlayer);
     }
 
+    /**
+     * Cria ou atualiza um player quando ele loga, atualizando com dados completos do LoL
+     */
+    @Transactional
+    public Player createOrUpdatePlayerOnLogin(String summonerName, String region, Integer currentMmrFromLoL, 
+                                              String summonerId, String puuid) {
+        log.info("🎯🎯🎯 [PlayerService.createOrUpdatePlayerOnLogin] MÉTODO CHAMADO!");
+        log.info("🔄 Criando/atualizando player no login: {} (MMR: {}, ID: {}, PUUID: {})", 
+            summonerName, currentMmrFromLoL, summonerId, puuid);
+        
+        Optional<Player> existingPlayer = playerRepository.findBySummonerNameIgnoreCase(summonerName);
+        
+        Player player;
+        if (existingPlayer.isPresent()) {
+            player = existingPlayer.get();
+            player.setCurrentMmr(currentMmrFromLoL);
+            player.setRegion(region);
+            
+            // ✅ Atualizar summonerId e puuid se fornecidos
+            if (summonerId != null && !summonerId.isEmpty()) {
+                player.setSummonerId(summonerId);
+            }
+            if (puuid != null && !puuid.isEmpty()) {
+                player.setPuuid(puuid);
+            }
+            
+            // ✅ Atualizar custom_mmr (current_mmr + custom_lp)
+            int customLp = player.getCustomLp() != null ? player.getCustomLp() : 0;
+            player.setCustomMmr(currentMmrFromLoL + customLp);
+            
+            log.info("✅ Player existente atualizado: {} (current_mmr: {}, custom_lp: {}, custom_mmr: {})", 
+                summonerName, 
+                player.getCurrentMmr(), 
+                customLp,
+                player.getCustomMmr());
+        } else {
+            player = Player.builder()
+                    .summonerName(summonerName)
+                    .region(region)
+                    .currentMmr(currentMmrFromLoL)
+                    .summonerId(summonerId)
+                    .puuid(puuid)
+                    .customLp(0) // Inicia com 0 LP customizado
+                    .customMmr(currentMmrFromLoL) // custom_mmr = current_mmr + 0
+                    .customWins(0)
+                    .customLosses(0)
+                    .customGamesPlayed(0)
+                    .gamesPlayed(0)
+                    .wins(0)
+                    .losses(0)
+                    .build();
+            log.info("✅ Novo player criado: {} (current_mmr: {}, custom_mmr: {})", 
+                summonerName, currentMmrFromLoL, currentMmrFromLoL);
+        }
+        
+        return playerRepository.save(player);
+    }
+
+    /**
+     * Calcula o MMR total do jogador (current_mmr + custom_lp)
+     */
+    public int calculateTotalMMR(Player player) {
+        int currentMmr = player.getCurrentMmr() != null ? player.getCurrentMmr() : 0;
+        int customLp = player.getCustomLp() != null ? player.getCustomLp() : 0;
+        return currentMmr + customLp;
+    }
+
     public List<PlayerDTO> getTopPlayersByCustomMmr(int limit) {
         return playerRepository.findTopByCustomMmr(limit)
                 .stream()
