@@ -249,8 +249,17 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
         // ✅ MELHORADO: Só inicializar se não estivermos no meio de uma inicialização
         if (!this.session || (this.session.currentAction === undefined && !this.isInitializing)) {
-          this.session = currentValue;
-          saveLogToRoot(`🔄 [processNgOnChanges] Session inicializada: matchId=${this.matchId}`);
+          // ✅ CORREÇÃO CRÍTICA: Atualizar matchData ANTES de inicializar
+          this.matchData = currentValue;
+          saveLogToRoot(`🔄 [processNgOnChanges] matchData atualizado, chamando initializeSessionFromMatchData()`);
+
+          // ✅ Chamar método que faz mapeamento correto de team1/team2 → blueTeam/redTeam
+          this.initializeSessionFromMatchData();
+
+          saveLogToRoot(`✅ [processNgOnChanges] Session inicializada via initializeSessionFromMatchData: matchId=${this.matchId}`);
+          saveLogToRoot(`  - blueTeam: ${this.session?.blueTeam?.length || 0} jogadores`);
+          saveLogToRoot(`  - redTeam: ${this.session?.redTeam?.length || 0} jogadores`);
+
           this.updateDraftState();
         } else {
           // ✅ CORREÇÃO: Preservar dados importantes e apenas mesclar novos dados
@@ -1069,12 +1078,17 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   private sortPlayersByLane(players: any[]): any[] {
-    const laneOrder = ['top', 'jungle', 'mid', 'adc', 'support'];
+    const laneOrder = ['top', 'jungle', 'mid', 'bot', 'support'];  // ✅ Incluir 'bot' também
     const playersCopy = [...players];
 
     playersCopy.sort((a, b) => {
-      const laneA = a.lane || 'unknown';
-      const laneB = b.lane || 'unknown';
+      // ✅ CORREÇÃO: Usar assignedLane primeiro (vem do backend), depois lane como fallback
+      let laneA = a.assignedLane || a.lane || 'unknown';
+      let laneB = b.assignedLane || b.lane || 'unknown';
+
+      // ✅ Normalizar "adc" para "bot"
+      if (laneA === 'adc') laneA = 'bot';
+      if (laneB === 'adc') laneB = 'bot';
 
       const indexA = laneOrder.indexOf(laneA);
       const indexB = laneOrder.indexOf(laneB);
@@ -1102,6 +1116,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       'jungle': '🌲 Jungle',
       'mid': '⚡ Mid',
       'adc': '🏹 ADC',
+      'bot': '🏹 ADC',  // ✅ CORREÇÃO: Backend envia 'bot', mapear para ADC
       'support': '💎 Support',
       'unknown': '❓ Unknown'
     };
