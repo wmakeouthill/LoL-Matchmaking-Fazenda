@@ -114,6 +114,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     // ✅ NOVO: Marcar que estamos inicializando para evitar conflitos
     this.isInitializing = true;
 
+    // ✅ CRÍTICO: Carregar campeões do Data Dragon imediatamente
+    this.loadChampionsForDraft();
+
     // ✅ Configurar listener para mensagens do backend
     this.setupBackendListeners();
 
@@ -207,14 +210,19 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   ngOnChanges(changes: SimpleChanges) {
-    // ✅ NOVO: Prevenir concorrência com debouncing
+    // ✅ CRÍTICO: Processar imediatamente (sem debounce) para OnPush funcionar
+    console.log('🔥 [ngOnChanges] CHAMADO!', changes);
+    this.processNgOnChanges(changes);
+
+    // ✅ DESABILITADO: Debouncing estava atrasando a atualização
+    /*
     if (this.ngOnChangesDebounceTimer) {
       clearTimeout(this.ngOnChangesDebounceTimer);
     }
-
     this.ngOnChangesDebounceTimer = window.setTimeout(() => {
       this.processNgOnChanges(changes);
-    }, 50); // 50ms de debounce
+    }, 50);
+    */
   }
 
   private processNgOnChanges(changes: SimpleChanges) {
@@ -266,6 +274,18 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           const oldBlueTeam = this.session.blueTeam || [];
           const oldRedTeam = this.session.redTeam || [];
 
+          // ✅ LOGS DETALHADOS para debug
+          console.log('🔍 [processNgOnChanges] currentValue recebido:', {
+            hasPhases: !!currentValue.phases,
+            phasesLength: currentValue.phases?.length || 0,
+            hasActions: !!currentValue.actions,
+            actionsLength: currentValue.actions?.length || 0,
+            currentAction: currentValue.currentAction,
+            currentIndex: currentValue.currentIndex,
+            currentPlayer: currentValue.currentPlayer,
+            phasesFirst3: currentValue.phases?.slice(0, 3) || []
+          });
+
           this.session = {
             ...this.session,
             ...currentValue,
@@ -277,6 +297,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
             currentAction: currentValue.currentAction !== undefined ? currentValue.currentAction :
               currentValue.currentIndex !== undefined ? currentValue.currentIndex :
                 this.session.currentAction,
+            // ✅ ATUALIZAR currentPlayer se vier novo valor
+            currentPlayer: currentValue.currentPlayer !== undefined ? currentValue.currentPlayer : this.session.currentPlayer,
             // ✅ PRESERVAR times se não vierem novos
             blueTeam: (currentValue.blueTeam && currentValue.blueTeam.length > 0) ? currentValue.blueTeam :
               (currentValue.team1 && currentValue.team1.length > 0) ? currentValue.team1 :
@@ -285,7 +307,21 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
               (currentValue.team2 && currentValue.team2.length > 0) ? currentValue.team2 :
                 oldRedTeam
           };
-          saveLogToRoot(`⏭️ [processNgOnChanges] Session atualizada: currentAction=${this.session.currentAction}, phases=${this.session.phases?.length || 0}`);
+
+          // ✅ NOVO: Atualizar timer se vier no currentValue
+          if (currentValue.timeRemaining !== undefined) {
+            this.timeRemaining = currentValue.timeRemaining;
+            console.log(`⏰ [processNgOnChanges] Timer atualizado: ${this.timeRemaining}s`);
+          }
+
+          console.log('✅ [processNgOnChanges] Session após atualização:', {
+            phasesLength: this.session.phases?.length || 0,
+            currentAction: this.session.currentAction,
+            currentPlayer: this.session.currentPlayer,
+            phasesFirst3: this.session.phases?.slice(0, 3) || []
+          });
+
+          saveLogToRoot(`⏭️ [processNgOnChanges] Session atualizada: currentAction=${this.session.currentAction}, currentPlayer=${this.session.currentPlayer}, phases=${this.session.phases?.length || 0}`);
         }
       } finally {
         this.updateInProgress = false;
@@ -302,9 +338,21 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   private setupBackendListeners(): void {
     // Listener para mensagens de timer via WebSocket
     document.addEventListener('draftTimerUpdate', (event: any) => {
+      console.log('⏰ [draftTimerUpdate] Evento recebido:', {
+        eventMatchId: event.detail?.matchId,
+        componentMatchId: this.matchId,
+        timeRemaining: event.detail?.timeRemaining,
+        matches: event.detail?.matchId === this.matchId
+      });
+      
       if (event.detail?.matchId === this.matchId) {
         logDraft('⏰ [DraftPickBan] Timer atualizado via WebSocket:', event.detail);
         this.updateTimerFromBackend(event.detail);
+      } else {
+        console.warn('⚠️ [draftTimerUpdate] MatchId não bate!', {
+          eventMatchId: event.detail?.matchId,
+          componentMatchId: this.matchId
+        });
       }
     });
 
@@ -318,12 +366,79 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
     // Listener para draftUpdate via WebSocket
     document.addEventListener('draftUpdate', (event: any) => {
+      console.log('🔄 [draftUpdate] Evento recebido:', {
+        eventMatchId: event.detail?.matchId,
+        componentMatchId: this.matchId,
+        hasPhases: !!(event.detail?.phases || event.detail?.actions),
+        currentAction: event.detail?.currentAction,
+        currentIndex: event.detail?.currentIndex,
+        timeRemaining: event.detail?.timeRemaining,
+        matches: event.detail?.matchId === this.matchId
+      });
+      
       if (event.detail?.matchId === this.matchId) {
         logDraft('🔄 [DraftPickBan] draftUpdate recebido via WebSocket:', event.detail);
-        saveLogToRoot(`🚀 [WebSocket] draftUpdate recebido - dados já atualizados pelo app.ts via ngOnChanges`);
-        // ✅ CORREÇÃO: NÃO sincronizar aqui pois app.ts já atualiza draftData e dispara ngOnChanges
-        // O ngOnChanges do componente já processa as mudanças automaticamente
-        this.cdr.detectChanges();
+        saveLogToRoot(`🚀 [WebSocket] draftUpdate recebido - atualizando session diretamente`);
+
+        // ✅ CRÍTICO: Atualizar session diretamente como fallback (caso ngOnChanges não dispare)
+        const updateData = event.detail;
+        if (this.session) {
+          const newPhases = (updateData.phases && updateData.phases.length > 0) ? updateData.phases :
+            (updateData.actions && updateData.actions.length > 0) ? updateData.actions :
+              this.session.phases;
+
+          const newCurrentAction = updateData.currentAction !== undefined ? updateData.currentAction :
+            updateData.currentIndex !== undefined ? updateData.currentIndex :
+              this.session.currentAction;
+
+          const newCurrentPlayer = updateData.currentPlayer !== undefined ? updateData.currentPlayer : this.session.currentPlayer;
+          const newTimeRemaining = updateData.timeRemaining !== undefined ? updateData.timeRemaining : this.timeRemaining;
+          
+          console.log('🔄 [draftUpdate] Valores extraídos:', {
+            newPhases: newPhases?.length || 0,
+            newCurrentAction,
+            newCurrentPlayer,
+            newTimeRemaining
+          });
+
+          console.log('🔄 [draftUpdate] Atualizando session:', {
+            oldPhases: this.session.phases?.length || 0,
+            newPhases: newPhases?.length || 0,
+            oldCurrentAction: this.session.currentAction,
+            newCurrentAction: newCurrentAction,
+            oldCurrentPlayer: this.session.currentPlayer,
+            newCurrentPlayer: newCurrentPlayer,
+            newTimeRemaining: newTimeRemaining
+          });
+
+          // ✅ Criar novo objeto session para garantir detecção de mudança
+          this.session = {
+            ...this.session,
+            phases: newPhases,
+            actions: newPhases,
+            currentAction: newCurrentAction,
+            currentIndex: newCurrentAction,
+            currentPlayer: newCurrentPlayer
+          };
+
+          this.timeRemaining = newTimeRemaining;
+          
+          console.log(`⏰ [draftUpdate] Timer atualizado para ${this.timeRemaining}s`);
+
+          // ✅ Atualizar estado do draft
+          this.updateDraftState();
+          
+          // ✅ CRÍTICO: Forçar detecção de mudanças SEMPRE
+          this.cdr.markForCheck();
+          this.cdr.detectChanges();
+        } else {
+          console.warn('⚠️ [draftUpdate] session é null!');
+        }
+      } else {
+        console.warn('⚠️ [draftUpdate] MatchId não bate!', {
+          eventMatchId: event.detail?.matchId,
+          componentMatchId: this.matchId
+        });
       }
     });
 
@@ -372,7 +487,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         logDraft('🔄 [DraftPickBan] Dados de confirmação atualizados:', this.confirmationData);
         this.cdr.detectChanges();
 
-        this.syncSessionWithBackend();
+        // ✅ CRÍTICO: NÃO sincronizar - dados já estão atualizados via WebSocket
+        // this.syncSessionWithBackend();
       }
     });
 
@@ -401,8 +517,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     document.addEventListener('draft_pick_changed', (event: any) => {
       if (event.detail?.matchId === this.matchId) {
         logDraft('🔄 [DraftPickBan] draft_pick_changed recebido via WebSocket:', event.detail);
-        saveLogToRoot(`🔄 [WebSocket] Pick alterado - sincronizando`);
-        this.syncSessionWithBackend();
+        saveLogToRoot(`🔄 [WebSocket] Pick alterado - aguardando ngOnChanges`);
+        // ✅ CRÍTICO: NÃO sincronizar - dados já estão atualizados via WebSocket
+        // this.syncSessionWithBackend();
       }
     });
   }
@@ -479,10 +596,11 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       hasActions: !!this.matchData.actions,
       actionsLength: this.matchData.actions?.length,
       extractedPhasesLength: phases.length,
-      currentAction: currentAction
+      currentAction: currentAction,
+      currentPlayer: this.matchData.currentPlayer  // ✅ Log do currentPlayer
     });
 
-    saveLogToRoot(`🎯 [initializeSessionFromMatchData] phases=${phases.length}, currentAction=${currentAction}, matchData.phases=${this.matchData.phases?.length}, matchData.actions=${this.matchData.actions?.length}`);
+    saveLogToRoot(`🎯 [initializeSessionFromMatchData] phases=${phases.length}, currentAction=${currentAction}, currentPlayer=${this.matchData.currentPlayer}, matchData.phases=${this.matchData.phases?.length}, matchData.actions=${this.matchData.actions?.length}`);
 
     this.session = {
       id: this.matchData.matchId || 0,
@@ -490,6 +608,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       redTeam: this.matchData.redTeam || this.matchData.team2 || [],
       phases: phases,
       currentAction: currentAction,
+      currentPlayer: this.matchData.currentPlayer,  // ✅ CRÍTICO: Incluir jogador da vez
       currentPlayerIndex: 0,
       extendedTime: 0,
       phase: this.matchData.phase || 'bans'
@@ -560,22 +679,18 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     */
   }
 
-  // ✅ SINCRONIZAÇÃO OTIMIZADA - Sob demanda via WebSocket
+  // ✅ SINCRONIZAÇÃO OTIMIZADA - 100% via WebSocket + ngOnChanges
   private startSessionSync(): void {
-    logDraft('[startSessionSync] 🔄 Iniciando sincronização otimizada...');
-    saveLogToRoot('[startSessionSync] ✅ Sincronização otimizada iniciada - usando WebSockets para atualizações em tempo real');
+    logDraft('[startSessionSync] 🔄 Modo 100% reativo ativado');
+    saveLogToRoot('[startSessionSync] ✅ Confiando 100% em WebSocket + ngOnChanges (sem polling HTTP)');
 
-    // ✅ CORREÇÃO: Fazer apenas uma sincronização inicial, depois confiar nos WebSockets
-    this.syncSessionWithBackend();
+    // ✅ CRÍTICO: DESABILITADO - ngOnChanges já recebe os dados quando draftData muda
+    // this.syncSessionWithBackend();
 
-    // ✅ OPCIONAL: Fallback timer muito menos frequente (apenas para emergências)
-    this.realTimeSyncTimer = window.setInterval(async () => {
-      // Só sincronizar se não recebemos updates via WebSocket por muito tempo
-      await this.syncSessionWithBackend();
-      saveLogToRoot('[startSessionSync] ⚠️ Sincronização de emergência executada (fallback)');
-    }, 30000); // 30 segundos como fallback de emergência
+    // ✅ CRÍTICO: DESABILITADO - Polling HTTP estava causando conflitos com WebSocket
+    // this.realTimeSyncTimer = window.setInterval(...);
 
-    logDraft('[startSessionSync] ✅ Sincronização otimizada configurada - sync inicial + WebSockets + fallback 30s');
+    logDraft('[startSessionSync] ✅ Modo reativo configurado - aguardando ngOnChanges');
   }
 
   private stopSessionSync(): void {
@@ -792,9 +907,10 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
       // ✅ CORREÇÃO: Verificar se currentAction é válido
       if (this.session.currentAction === undefined || this.session.currentAction === null) {
-        saveLogToRoot(`⚠️ [updateDraftState] currentAction undefined/null (${this.session.currentAction}), sincronizando com backend`);
-        logDraft('⚠️ [updateDraftState] currentAction undefined/null, sincronizando com backend');
-        this.syncSessionWithBackend();
+        saveLogToRoot(`⚠️ [updateDraftState] currentAction undefined/null (${this.session.currentAction}), aguardando ngOnChanges...`);
+        logDraft('⚠️ [updateDraftState] currentAction undefined/null, aguardando ngOnChanges...');
+        // ✅ CRÍTICO: NÃO forçar sync HTTP - aguardar WebSocket + ngOnChanges
+        // this.syncSessionWithBackend();
         return;
       }
 
@@ -838,9 +954,10 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           return;
         }
 
-        saveLogToRoot(`⚠️ [updateDraftState] currentAction inválido (${this.session.currentAction}), sincronizando com backend`);
-        logDraft('⚠️ [updateDraftState] currentAction inválido, sincronizando com backend');
-        this.syncSessionWithBackend();
+        saveLogToRoot(`⚠️ [updateDraftState] currentAction inválido (${this.session.currentAction}), aguardando ngOnChanges...`);
+        logDraft('⚠️ [updateDraftState] currentAction inválido, aguardando ngOnChanges...');
+        // ✅ CRÍTICO: NÃO forçar sync HTTP - aguardar WebSocket + ngOnChanges
+        // this.syncSessionWithBackend();
         return;
       }
 
@@ -866,12 +983,12 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
       // ✅ MELHORADO: Atualizar jogador da vez com mais informações
       this.currentPlayerTurn = {
-        playerId: currentPhase.playerId,
-        playerName: currentPhase.playerName,
+        playerId: currentPhase.byPlayer, // ✅ CORREÇÃO: byPlayer ao invés de playerId
+        playerName: currentPhase.byPlayer, // ✅ CORREÇÃO: byPlayer contém o nome
         team: currentPhase.team,
-        action: currentPhase.action,
-        actionIndex: currentPhase.actionIndex,
-        playerIndex: currentPhase.playerIndex
+        action: currentPhase.type, // ✅ CRÍTICO: type ao invés de action (estrutura do backend)
+        actionIndex: currentPhase.index, // ✅ CORREÇÃO: index ao invés de actionIndex
+        playerIndex: currentPhase.index // ✅ CORREÇÃO: index serve como playerIndex também
       };
 
       saveLogToRoot(`🔄 [updateDraftState] CurrentPlayerTurn definido: ${JSON.stringify(this.currentPlayerTurn)}`);
@@ -940,12 +1057,24 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       this.session &&
       this.session.currentAction < (this.session.phases?.length || 0);
 
+    // ✅ DEBUG CRÍTICO: Logs detalhados
+    console.log('🔍 [updateInterfaceState] DEBUG Modal:', {
+      isMyTurn: this.isMyTurn,
+      currentPlayerTurnAction: this.currentPlayerTurn?.action,
+      hasSession: !!this.session,
+      currentAction: this.session?.currentAction,
+      phasesLength: this.session?.phases?.length || 0,
+      shouldShowModal: shouldShowModal
+    });
+
     if (shouldShowModal) {
+      console.log('✅ [updateInterfaceState] ABRINDO MODAL DE CAMPEÕES!');
       logDraft('🔄 [updateInterfaceState] É minha vez de pick ou ban - mostrando modal');
       saveLogToRoot(`✅ [updateInterfaceState] Mostrando modal de campeões para ação: ${this.currentPlayerTurn?.action}`);
       this.showanyModal = true;
       this.showConfirmationModal = false;
     } else {
+      console.log('❌ [updateInterfaceState] NÃO ABRIR MODAL');
       logDraft('🔄 [updateInterfaceState] Não é minha vez ou condições não atendidas - ocultando modal');
       saveLogToRoot(`❌ [updateInterfaceState] Ocultando modal. isMyTurn=${this.isMyTurn}, action=${this.currentPlayerTurn?.action}, currentAction=${this.session?.currentAction}, phasesLength=${this.session?.phases?.length || 0}`);
       this.showanyModal = false;
@@ -993,16 +1122,17 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       this.currentPlayer.gameName ? `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}` : null
     ].filter(Boolean);
 
-    // ✅ MELHORADO: Múltiplas formas de identificar o jogador da vez
+    // ✅ PRIORIDADE MÁXIMA: Usar currentPlayer do backend (enviado pelo DraftFlowService)
     const turnPlayerIdentifiers = [
-      currentPhase.playerId,
-      currentPhase.playerName
+      this.session.currentPlayer,  // ✅ CRÍTICO: Backend calcula corretamente quem é o jogador da vez
+      currentPhase.byPlayer, // ✅ CORREÇÃO: byPlayer ao invés de playerId/playerName
+      currentPhase.byPlayer // ✅ Garantir que está no array
     ].filter(Boolean);
 
     // ✅ NOVO: Log detalhado para debug
     const debugInfo = {
       currentAction: this.session.currentAction,
-      currentPhaseAction: currentPhase.action,
+      currentPhaseAction: currentPhase.type, // ✅ CORREÇÃO: type ao invés de action
       currentPhaseTeam: currentPhase.team,
       currentPlayerIdentifiers,
       turnPlayerIdentifiers,
@@ -1015,15 +1145,20 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         tagLine: this.currentPlayer.tagLine
       },
       currentPhase: {
-        playerId: currentPhase.playerId,
-        playerName: currentPhase.playerName,
-        action: currentPhase.action,
+        byPlayer: currentPhase.byPlayer, // ✅ CORREÇÃO: byPlayer ao invés de playerId
+        championId: currentPhase.championId,
+        type: currentPhase.type, // ✅ CORREÇÃO: type ao invés de action
         team: currentPhase.team,
-        playerIndex: currentPhase.playerIndex,
-        actionIndex: currentPhase.actionIndex
+        index: currentPhase.index
       }
     };
 
+    console.log('🔍 [checkIfMyTurn] DEBUG COMPLETO:', debugInfo);
+    console.log('🔍 [checkIfMyTurn] Comparando:', {
+      currentPlayerIdentifiers,
+      turnPlayerIdentifiers,
+      sessionCurrentPlayer: this.session.currentPlayer
+    });
     logDraft('🔄 [checkIfMyTurn] Verificando turno:', debugInfo);
     saveLogToRoot(`🔍 [checkIfMyTurn] Debug: ${JSON.stringify(debugInfo)}`);
 
@@ -1061,47 +1196,142 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   getTeamPicks(team: 'blue' | 'red'): any[] {
     if (!this.session) return [];
 
-    // ✅ MELHORADO: Usar dados das ações se disponíveis
-    if (this.session.actions?.length > 0) {
-      const teamPicks = this.session.actions
-        .filter((action: any) => {
-          const isCorrectTeam = (team === 'blue' && action.teamIndex === 1) ||
-            (team === 'red' && action.teamIndex === 2);
-          return isCorrectTeam && action.action === 'pick' && action.champion && action.locked;
-        })
-        .map((action: any) => action.champion);
+    // ✅ CORREÇÃO: Buscar picks das phases (que vêm do backend como actions)
+    if (this.session.phases?.length > 0) {
+      const teamNumber = team === 'blue' ? 1 : 2;
 
+      const teamPicks = this.session.phases
+        .filter((action: any) => {
+          // ✅ CRÍTICO: Backend envia "type" e "team", não "action" e "teamIndex"
+          const isCorrectTeam = action.team === teamNumber;
+          const isPick = action.type === 'pick';
+          const hasChampion = action.championId && action.byPlayer;
+
+          return isCorrectTeam && isPick && hasChampion;
+        })
+        .map((action: any) => {
+          // ✅ CRÍTICO: Buscar campeão do ChampionService
+          const championId = parseInt(action.championId, 10);
+          const champion = this.getChampionFromCache(championId);
+
+          if (champion) {
+            return {
+              id: champion.key,
+              name: champion.name,
+              image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/${champion.id}.png`
+            };
+          }
+
+          // Fallback se campeão não estiver no cache
+          return {
+            id: action.championId,
+            name: `Champion ${action.championId}`,
+            image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/Unknown.png`
+          };
+        });
+
+      console.log(`🔍 [getTeamPicks] Time ${team}: ${teamPicks.length} picks`, teamPicks);
       return teamPicks;
     }
 
-    // Fallback para o método antigo
-    const teamPicks = this.session.phases
-      .filter((phase: any) => phase.team === team && phase.action === 'pick' && phase.champion && phase.locked)
-      .map((phase: any) => phase.champion!);
-
-    return teamPicks;
+    return [];
   }
 
   getTeamBans(team: 'blue' | 'red'): any[] {
     if (!this.session) return [];
 
-    // ✅ MELHORADO: Usar dados das ações se disponíveis
-    if (this.session.actions?.length > 0) {
-      const teamBans = this.session.actions
-        .filter((action: any) => {
-          const isCorrectTeam = (team === 'blue' && action.teamIndex === 1) ||
-            (team === 'red' && action.teamIndex === 2);
-          return isCorrectTeam && action.action === 'ban' && action.champion && action.locked;
-        })
-        .map((action: any) => action.champion);
+    // ✅ CORREÇÃO: Buscar bans das phases (que vêm do backend como actions)
+    if (this.session.phases?.length > 0) {
+      const teamNumber = team === 'blue' ? 1 : 2;
 
+      const teamBans = this.session.phases
+        .filter((action: any) => {
+          // ✅ CRÍTICO: Backend envia "type" e "team", não "action" e "teamIndex"
+          const isCorrectTeam = action.team === teamNumber;
+          const isBan = action.type === 'ban';
+          const hasChampion = action.championId && action.byPlayer;
+
+          return isCorrectTeam && isBan && hasChampion;
+        })
+        .map((action: any) => {
+          // ✅ CRÍTICO: Buscar campeão do ChampionService
+          const championId = parseInt(action.championId, 10);
+          const champion = this.getChampionFromCache(championId);
+
+          if (champion) {
+            return {
+              id: champion.key,
+              name: champion.name,
+              image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/${champion.id}.png`
+            };
+          }
+
+          // Fallback se campeão não estiver no cache
+          return {
+            id: action.championId,
+            name: `Champion ${action.championId}`,
+            image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/Unknown.png`
+          };
+        });
+
+      console.log(`🔍 [getTeamBans] Time ${team}: ${teamBans.length} bans`, teamBans);
       return teamBans;
     }
 
-    // Fallback para o método antigo
-    return this.session.phases
-      .filter((phase: any) => phase.team === team && phase.action === 'ban' && phase.champion && phase.locked)
-      .map((phase: any) => phase.champion!);
+    return [];
+  }
+
+  // ✅ NOVO: Buscar campeão do cache do ChampionService (síncrono)
+  private getChampionFromCache(championId: number): any {
+    const cache = (this.championService as any).championsCache as Map<string, any>;
+    if (!cache) return null;
+
+    // ✅ Tentar buscar diretamente pelo key
+    let champion = cache.get(championId.toString());
+
+    if (!champion) {
+      // ✅ FALLBACK: Buscar em todos os campeões pelo ID alternativo
+      // O Data Dragon tem tanto "key" quanto "id" para cada campeão
+      for (const [key, champ] of cache.entries()) {
+        // championId do backend pode corresponder ao "key" (número) ou precisar conversão
+        if (champ.key === championId.toString() ||
+          parseInt(champ.key, 10) === championId) {
+          champion = champ;
+          console.log(`✅ [getChampionFromCache] Campeão ${championId} encontrado via fallback: ${champ.name} (key: ${champ.key})`);
+          break;
+        }
+      }
+    } else {
+      console.log(`✅ [getChampionFromCache] Campeão ${championId} encontrado: ${champion.name}`);
+    }
+
+    if (!champion) {
+      console.warn(`⚠️ [getChampionFromCache] Campeão ${championId} NÃO encontrado em ${cache.size} campeões`);
+      // Apenas logar as primeiras 5 entradas para debug
+      let count = 0;
+      for (const [key, champ] of cache.entries()) {
+        if (count++ < 5) {
+          console.log(`  - key: ${key}, name: ${champ.name}, championKey: ${champ.key}`);
+        }
+      }
+    }
+
+    return champion || null;
+  }
+
+  // ✅ NOVO: Carregar campeões no início do draft
+  private loadChampionsForDraft(): void {
+    // ✅ Usar getChampionById para forçar carregamento do cache
+    this.championService.getChampionById(1).subscribe({
+      next: () => {
+        this.championsLoaded = true;
+        const cacheSize = (this.championService as any).championsCache?.size || 0;
+        console.log('✅ [loadChampionsForDraft] Campeões carregados:', cacheSize);
+      },
+      error: (err: any) => {
+        console.error('❌ [loadChampionsForDraft] Erro ao carregar campeões:', err);
+      }
+    });
   }
 
   getSortedTeamByLane(team: 'blue' | 'red'): any[] {
@@ -1226,86 +1456,51 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   private findPickInActions(foundPlayer: any, team: 'blue' | 'red'): any | null {
-    if (!this.session.actions?.length) return null;
+    if (!this.session.phases?.length) return null; // ✅ CORREÇÃO: usar phases (que contém actions)
 
-    const teamIndex = team === 'blue' ? 1 : 2;
+    const teamNumber = team === 'blue' ? 1 : 2;
 
-    // ✅ DEBUG: Log detalhado do jogador procurado
-    saveLogToRoot(`🔍 [findPickInActions] === PROCURANDO PICK ===`);
-    saveLogToRoot(`🔍 [findPickInActions] Jogador procurado: ${JSON.stringify({
-      name: foundPlayer.name || foundPlayer.summonerName,
-      puuid: foundPlayer.puuid,
-      summonerName: foundPlayer.summonerName,
-      gameName: foundPlayer.gameName,
-      tagLine: foundPlayer.tagLine,
-      teamIndex: foundPlayer.teamIndex
-    })}`);
-    saveLogToRoot(`🔍 [findPickInActions] Time: ${team} (teamIndex=${teamIndex})`);
+    // ✅ CRÍTICO: Buscar na estrutura nova do backend
+    const pickAction = this.session.phases.find((action: any) => {
+      const isCorrectTeam = action.team === teamNumber; // ✅ NOVO: team ao invés de teamIndex
+      const isPickAction = action.type === 'pick'; // ✅ NOVO: type ao invés de action
+      const hasChampion = action.championId && action.byPlayer; // ✅ NOVO: championId/byPlayer ao invés de champion/locked
 
-    // ✅ CORREÇÃO: Melhorar identificação de jogador com prioridade correta
-    const pickAction = this.session.actions.find((action: any) => {
-      const isCorrectTeam = action.teamIndex === teamIndex;
+      // ✅ CORREÇÃO: Comparar jogador pelo byPlayer (nome do jogador)
+      const isCorrectPlayer =
+        action.byPlayer === foundPlayer.summonerName ||
+        action.byPlayer === foundPlayer.name ||
+        action.byPlayer === `${foundPlayer.gameName}#${foundPlayer.tagLine}`;
 
-      // ✅ DEBUG: Log da ação sendo analisada
-      if (action.action === 'pick') {
-        saveLogToRoot(`🔍 [findPickInActions] Analisando ação: ${JSON.stringify({
-          teamIndex: action.teamIndex,
-          playerId: action.playerId,
-          playerName: action.playerName,
-          champion: action.champion?.name,
-          action: action.action
-        })}`);
-      }
-
-      // ✅ CORREÇÃO: Para bots, comparar apenas pelo nome
-      // Para jogadores humanos, priorizar gameName#tagLine ou PUUID
-      let isCorrectPlayer = false;
-
-      if (foundPlayer.puuid && action.playerId === foundPlayer.puuid) {
-        // Jogador humano com PUUID
-        isCorrectPlayer = true;
-        saveLogToRoot(`🎯 [findPickInActions] Match por PUUID: ${foundPlayer.puuid} = ${action.playerId}`);
-      } else if (foundPlayer.summonerName && action.playerName === foundPlayer.summonerName) {
-        // Match por summonerName (bots ou jogadores)
-        isCorrectPlayer = true;
-        saveLogToRoot(`🎯 [findPickInActions] Match por summonerName: ${foundPlayer.summonerName} = ${action.playerName}`);
-      } else if (foundPlayer.gameName && foundPlayer.tagLine) {
-        // Jogador humano com gameName#tagLine
-        const fullName = `${foundPlayer.gameName}#${foundPlayer.tagLine}`;
-        if (action.playerName === fullName || action.playerId === fullName) {
-          isCorrectPlayer = true;
-          saveLogToRoot(`🎯 [findPickInActions] Match por gameName#tagLine: ${fullName}`);
-        }
-      }
-
-      const isPickAction = action.action === 'pick';
-      const hasany = action.champion && action.locked;
-
-      if (isCorrectTeam && isCorrectPlayer && isPickAction && hasany) {
-        saveLogToRoot(`✅ [findPickInActions] Pick encontrado: ${action.playerName} → ${action.champion.name}`);
-      }
-
-      return isCorrectTeam && isCorrectPlayer && isPickAction && hasany;
+      return isCorrectTeam && isCorrectPlayer && isPickAction && hasChampion;
     });
 
-    return pickAction?.champion || null;
+    if (pickAction) {
+      // ✅ CRÍTICO: Buscar campeão do ChampionService
+      const championId = parseInt(pickAction.championId, 10);
+      const champion = this.getChampionFromCache(championId);
+
+      if (champion) {
+        return {
+          id: champion.key,
+          name: champion.name,
+          image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/${champion.id}.png`
+        };
+      }
+
+      // Fallback
+      return {
+        id: pickAction.championId,
+        name: `Champion ${pickAction.championId}`,
+        image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/Unknown.png`
+      };
+    }
+
+    return null;
   }
 
   private findPickInPhases(foundPlayer: any, team: 'blue' | 'red'): any | null {
-    if (!this.session) return null;
-
-    const pickPhases = this.session.phases.filter((phase: any) =>
-      phase.action === 'pick' &&
-      phase.champion &&
-      phase.locked
-    );
-
-    for (const pickPhase of pickPhases) {
-      if (this.isPlayerPhase(foundPlayer, pickPhase, team)) {
-        return pickPhase.champion || null;
-      }
-    }
-
+    // ✅ DESABILITADO: findPickInActions já busca corretamente na nova estrutura
     return null;
   }
 
@@ -1404,7 +1599,23 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       return 'Jogador Desconhecido';
     }
 
-    // ✅ PRIORIDADE MÁXIMA: Se estamos em modo de edição, SEMPRE usar os dados do jogador sendo editado
+    // ✅ PRIORIDADE MÁXIMA: Usar currentPlayer do backend se disponível (exceto em modo de edição)
+    if (!this.isEditingMode && this.session.currentPlayer && typeof this.session.currentPlayer === 'string') {
+      logDraft('✅ [getCurrentPlayerName] Usando currentPlayer do backend:', this.session.currentPlayer);
+      console.log('✅ [getCurrentPlayerName] Usando currentPlayer do backend:', this.session.currentPlayer);
+      saveLogToRoot(`✅ [getCurrentPlayerName] Usando currentPlayer do backend: ${this.session.currentPlayer}`);
+      return this.session.currentPlayer;
+    } else {
+      console.log('⚠️ [getCurrentPlayerName] currentPlayer NÃO disponível:', {
+        isEditingMode: this.isEditingMode,
+        hasCurrentPlayer: !!this.session.currentPlayer,
+        currentPlayerValue: this.session.currentPlayer,
+        currentPlayerType: typeof this.session.currentPlayer
+      });
+      saveLogToRoot(`⚠️ [getCurrentPlayerName] currentPlayer NÃO disponível: isEditingMode=${this.isEditingMode}, currentPlayer=${this.session.currentPlayer}`);
+    }
+
+    // ✅ PRIORIDADE ALTA: Se estamos em modo de edição, SEMPRE usar os dados do jogador sendo editado
     if (this.isEditingMode && this.currentEditingPlayer) {
       console.log('🚨 [getCurrentPlayerName] MODO EDIÇÃO DETECTADO!', this.currentEditingPlayer);
       saveLogToRoot(`🚨 [getCurrentPlayerName] MODO EDIÇÃO DETECTADO: ${JSON.stringify(this.currentEditingPlayer)}`);
@@ -1946,8 +2157,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     saveLogToRoot(`🔄 [onConfirmationModalRefresh] Solicitando atualização do estado do draft`);
 
     try {
-      // Forçar sincronização com o backend
-      await this.syncSessionWithBackend();
+      // ✅ CRÍTICO: NÃO forçar sync HTTP - aguardar WebSocket + ngOnChanges
+      // await this.syncSessionWithBackend();
 
       // Invalidar caches do modal de confirmação
       this.cdr.detectChanges();
@@ -1991,8 +2202,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       this.showConfirmationModal = true;
       this.cdr.detectChanges();
 
-      // Sincronizar com backend para obter dados atualizados
-      await this.syncSessionWithBackend();
+      // ✅ CRÍTICO: NÃO forçar sync HTTP - aguardar WebSocket + ngOnChanges
+      // await this.syncSessionWithBackend();
     } catch (error) {
       logDraft('❌ [changePlayerPick] Erro ao alterar pick:', error);
       saveLogToRoot(`❌ [changePlayerPick] Erro: ${JSON.stringify(error)}`);
@@ -2039,8 +2250,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       logDraft('✅ [updatePlayerPick] Pick atualizado com sucesso:', response);
       saveLogToRoot(`✅ [updatePlayerPick] Pick atualizado: ${JSON.stringify(response)}`);
 
-      // Sincronizar com backend para obter dados atualizados
-      await this.syncSessionWithBackend();
+      // ✅ CRÍTICO: NÃO forçar sync HTTP - aguardar WebSocket + ngOnChanges
+      // await this.syncSessionWithBackend();
 
       // ✅ FINALIZAR EDIÇÃO e abrir modal de confirmação
       this.isEditingMode = false;
@@ -2063,8 +2274,11 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
   // ✅ MÉTODOS DE TIMER E TIMEOUT
   updateTimerFromBackend(data: any): void {
+    console.log('⏰ [updateTimerFromBackend] Chamado com:', data);
+    
     // ✅ CORREÇÃO: Backend é a ÚNICA fonte de verdade para o timer
     if (!data || typeof data.timeRemaining !== 'number') {
+      console.warn('⚠️ [updateTimerFromBackend] Dados inválidos:', data);
       saveLogToRoot(`⚠️ [updateTimerFromBackend] Dados inválidos: ${JSON.stringify(data)}`);
       return;
     }
@@ -2073,14 +2287,17 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     const oldTimeRemaining = this.timeRemaining;
     this.timeRemaining = data.timeRemaining;
 
+    console.log(`⏰ [updateTimerFromBackend] Timer: ${oldTimeRemaining}s → ${data.timeRemaining}s`);
     saveLogToRoot(`⏰ [updateTimerFromBackend] Timer atualizado: ${oldTimeRemaining}s → ${data.timeRemaining}s`);
     logDraft(`⏰ [updateTimerFromBackend] Timer do backend: ${data.timeRemaining}s`);
 
-    // ✅ CORREÇÃO: Forçar atualização da interface
+    // ✅ CRÍTICO: Forçar atualização da interface
+    this.cdr.markForCheck();
     this.cdr.detectChanges();
 
     // ✅ CORREÇÃO: Verificar se timer expirou
     if (data.timeRemaining <= 0) {
+      console.warn(`⏰ [updateTimerFromBackend] Timer expirou!`);
       saveLogToRoot(`⏰ [updateTimerFromBackend] Timer expirou (${data.timeRemaining}s)`);
       logDraft(`⏰ [updateTimerFromBackend] Timer expirou - aguardando backend`);
     }

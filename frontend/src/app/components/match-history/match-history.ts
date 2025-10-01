@@ -1177,7 +1177,7 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
   getItemImageUrl(itemId: number): string {
     if (!itemId || itemId === 0) return '';
     // Data Dragon item image URL
-    return `https://ddragon.leagueoflegends.com/cdn/15.14.1/img/item/${itemId}.png`;
+    return `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/item/${itemId}.png`;
   }
 
   getPlayerItems(match: Match): number[] {

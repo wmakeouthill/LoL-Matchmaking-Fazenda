@@ -427,30 +427,76 @@ export class App implements OnInit, OnDestroy {
         // ✅ Atualizar draftData com as informações recebidas
         if (this.inDraftPhase && this.draftData) {
           const updateData = message.data || message;
+          
+          console.log('📋 [App] updateData extraído:', {
+            hasPhases: !!updateData.phases,
+            phasesLength: updateData.phases?.length || 0,
+            hasActions: !!updateData.actions,
+            actionsLength: updateData.actions?.length || 0,
+            currentAction: updateData.currentAction,
+            currentIndex: updateData.currentIndex,
+            currentPlayer: updateData.currentPlayer,
+            remainingMs: updateData.remainingMs,
+            timeRemainingMs: updateData.timeRemainingMs
+          });
 
-          // ✅ CORREÇÃO: Aceitar tanto "phases" quanto "actions" e verificar se tem elementos
-          if ((updateData.phases && updateData.phases.length > 0) || (updateData.actions && updateData.actions.length > 0)) {
-            const newPhases = (updateData.phases && updateData.phases.length > 0) ? updateData.phases : updateData.actions;
-            this.draftData.phases = newPhases;
-            this.draftData.actions = newPhases;  // ✅ Manter ambos sincronizados
-            console.log(`✅ [App] phases/actions atualizado: ${this.draftData.phases.length} ações`);
-          }
+          // ✅ CRÍTICO: Criar NOVO objeto para disparar ngOnChanges (OnPush detection)
+          const newPhases = (updateData.phases && updateData.phases.length > 0) ? updateData.phases :
+            (updateData.actions && updateData.actions.length > 0) ? updateData.actions :
+              this.draftData.phases;
 
-          // ✅ CORREÇÃO: Aceitar tanto "currentAction" quanto "currentIndex"
-          if (updateData.currentAction !== undefined || updateData.currentIndex !== undefined) {
-            const newCurrentAction = updateData.currentAction !== undefined ? updateData.currentAction : updateData.currentIndex;
-            this.draftData.currentAction = newCurrentAction;
-            this.draftData.currentIndex = newCurrentAction;  // ✅ Manter ambos sincronizados
-            console.log(`✅ [App] currentAction/currentIndex atualizado: ${this.draftData.currentAction}`);
-          }
+          const newCurrentAction = updateData.currentAction !== undefined ? updateData.currentAction :
+            updateData.currentIndex !== undefined ? updateData.currentIndex :
+              this.draftData.currentAction;
+
+          const newCurrentPlayer = updateData.currentPlayer !== undefined ? updateData.currentPlayer : this.draftData.currentPlayer;
+
+          // ✅ NOVO: Processar timer (backend envia em millisegundos)
+          const newTimeRemaining = updateData.remainingMs !== undefined
+            ? Math.ceil(updateData.remainingMs / 1000) // ✅ Converter ms para segundos
+            : (updateData.timeRemainingMs !== undefined
+              ? Math.ceil(updateData.timeRemainingMs / 1000)
+              : 30);
+          
+          console.log('📋 [App] Timer calculado:', {
+            remainingMs: updateData.remainingMs,
+            timeRemainingMs: updateData.timeRemainingMs,
+            calculatedSeconds: newTimeRemaining
+          });
+
+          // ✅ CRÍTICO: Criar novo objeto ao invés de mutar (para OnPush)
+          this.draftData = {
+            ...this.draftData,
+            phases: newPhases,
+            actions: newPhases,
+            currentAction: newCurrentAction,
+            currentIndex: newCurrentAction,
+            currentPlayer: newCurrentPlayer,
+            timeRemaining: newTimeRemaining // ✅ NOVO: Incluir timer
+          };
+
+          console.log(`✅ [App] Draft atualizado: currentAction=${this.draftData.currentAction}, currentPlayer=${this.draftData.currentPlayer}, phases=${this.draftData.phases?.length}, timer=${newTimeRemaining}s`);
+          console.log(`🔍 [App] Novo draftData criado - referência mudou:`, this.draftData);
+
+          // ✅ NOVO: Despachar evento de timer para o componente
+          document.dispatchEvent(new CustomEvent('draftTimerUpdate', {
+            detail: {
+              matchId: this.draftData.matchId,
+              timeRemaining: newTimeRemaining
+            }
+          }));
 
           // ✅ Despachar evento customizado para o DraftPickBanComponent
           document.dispatchEvent(new CustomEvent('draftUpdate', {
             detail: {
               matchId: this.draftData.matchId,
-              ...updateData
+              ...updateData,
+              timeRemaining: newTimeRemaining // ✅ Incluir no detail também
             }
           }));
+
+          // ✅ CRÍTICO: Marcar para verificação E forçar detecção de mudanças
+          this.cdr.markForCheck();
           this.cdr.detectChanges();
         }
         break;
@@ -492,10 +538,10 @@ export class App implements OnInit, OnDestroy {
           actions: phases,  // ✅ Adicionar também como "actions" para compatibilidade
           currentAction: currentAction,  // ✅ Passar currentAction explicitamente
           currentIndex: currentAction,  // ✅ Adicionar também como "currentIndex" para compatibilidade
+          currentPlayer: draftData.currentPlayer,  // ✅ CRÍTICO: Jogador da VEZ (do backend), não jogador logado
           averageMMR: draftData.averageMMR || this.matchFoundData?.averageMMR,
           balanceQuality: draftData.balanceQuality,
-          autofillCount: draftData.autofillCount,
-          currentPlayer: this.currentPlayer
+          autofillCount: draftData.autofillCount
         };
 
         console.log('🎯 [App] Dados do draft preparados:', {
@@ -503,7 +549,8 @@ export class App implements OnInit, OnDestroy {
           team1Length: this.draftData.team1?.length || 0,
           team2Length: this.draftData.team2?.length || 0,
           phasesLength: this.draftData.phases?.length || 0,
-          currentAction: this.draftData.currentAction
+          currentAction: this.draftData.currentAction,
+          currentPlayer: this.draftData.currentPlayer
         });
 
         // Entrar no draft

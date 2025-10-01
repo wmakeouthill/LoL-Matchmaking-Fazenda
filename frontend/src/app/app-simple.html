@@ -65,7 +65,7 @@
     <div class="view-container draft-view">
       <!-- Use the new modular Draft Components -->
       <app-draft-pick-ban
-        [matchData]="currentMatchData"
+        [matchData]="draftData"
         [currentPlayer]="currentPlayer"
         (onPickBanComplete)="onPickBanComplete($event)"
         (onPickBanCancel)="exitDraft()"
@@ -429,7 +429,7 @@
                   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
                 "
                 loading="lazy"
-                (error)="$any($event.target).src = 'https://ddragon.leagueoflegends.com/cdn/15.14.1/img/profileicon/' + (currentPlayer?.profileIconId || 29) + '.png'"
+                (error)="$any($event.target).src = 'https://ddragon.leagueoflegends.com/cdn/15.19.1/img/profileicon/' + (currentPlayer?.profileIconId || 29) + '.png'"
               />
               <div style="flex: 1">
                 <h4

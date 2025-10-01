@@ -103,12 +103,12 @@ export class LcuMatchConfirmationModalComponent implements OnInit {
 
   // Helper methods
   getChampionImageUrl(championId: string): string {
-    return `https://ddragon.leagueoflegends.com/cdn/15.14.1/img/champion/${championId}.png`;
+    return `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/${championId}.png`;
   }
 
   getChampionImageById(championId: number): string {
     // Você pode implementar um mapeamento ID -> nome do campeão aqui
-    return `https://ddragon.leagueoflegends.com/cdn/15.14.1/img/champion/champion_${championId}.png`;
+    return `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/champion_${championId}.png`;
   }
 
   getChampionNameById(championId: number): string {

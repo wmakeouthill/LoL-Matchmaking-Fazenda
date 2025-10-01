@@ -109,9 +109,7 @@ export class ProfileIconService {
 
         const iconId = profileIconId || 29;
         const fallbackUrls = [
-            `https://ddragon.leagueoflegends.com/cdn/15.14.1/img/profileicon/${iconId}.png`,
-            `https://ddragon.leagueoflegends.com/cdn/14.24.1/img/profileicon/${iconId}.png`,
-            `https://ddragon.leagueoflegends.com/cdn/14.23.1/img/profileicon/${iconId}.png`,
+            `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/profileicon/${iconId}.png`,
             `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/profile-icons/29.jpg`,
             '/assets/images/champion-placeholder.svg' // Fallback final para minion
         ];

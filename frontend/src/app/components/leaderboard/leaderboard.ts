@@ -311,7 +311,7 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
     if (!championName) return 'assets/images/champion-placeholder.svg';
 
     // O nome do campeão já vem no formato correto do Data Dragon
-    return `https://ddragon.leagueoflegends.com/cdn/15.14.1/img/champion/${championName}.png`;
+    return `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/${championName}.png`;
   }
 
   getChampionDisplayName(championName: string): string {
