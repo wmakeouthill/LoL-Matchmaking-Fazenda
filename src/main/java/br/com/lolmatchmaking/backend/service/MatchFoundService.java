@@ -120,8 +120,8 @@ public class MatchFoundService {
                 // Notificar progresso
                 notifyAcceptanceProgress(matchId, status);
 
-            // Verificar se todos aceitaram
-            if (status.getAcceptedPlayers().size() == status.getPlayers().size()) {
+                // Verificar se todos aceitaram
+                if (status.getAcceptedPlayers().size() == status.getPlayers().size()) {
                     log.info("🎉 [MatchFound] TODOS OS JOGADORES ACEITARAM! Match {}", matchId);
                     handleAllPlayersAccepted(matchId);
                 }
@@ -172,7 +172,42 @@ public class MatchFoundService {
                 customMatchRepository.save(match);
             });
 
-            // ✅ Remover todos os jogadores da fila (agora vão para o draft)
+            // ✅ CRÍTICO: Salvar dados completos no pick_ban_data ANTES de remover da fila!
+            log.info("🎯 [MatchFound] Salvando dados completos no pick_ban_data antes de remover da fila...");
+
+            // Buscar jogadores completos da fila
+            List<QueuePlayer> team1Players = new ArrayList<>();
+            List<QueuePlayer> team2Players = new ArrayList<>();
+
+            for (String playerName : status.getTeam1()) {
+                queuePlayerRepository.findBySummonerName(playerName).ifPresent(team1Players::add);
+            }
+
+            for (String playerName : status.getTeam2()) {
+                queuePlayerRepository.findBySummonerName(playerName).ifPresent(team2Players::add);
+            }
+
+            log.info("✅ [MatchFound] Jogadores recuperados: team1={}, team2={}",
+                    team1Players.size(), team2Players.size());
+
+            // Mapeamento de lanes por posição
+            String[] lanes = { "top", "jungle", "mid", "bot", "support" };
+
+            // Converter para DTOs com lanes e posições
+            List<QueuePlayerInfoDTO> team1DTOs = new ArrayList<>();
+            for (int i = 0; i < team1Players.size(); i++) {
+                team1DTOs.add(convertToDTO(team1Players.get(i), lanes[i], i, false));
+            }
+
+            List<QueuePlayerInfoDTO> team2DTOs = new ArrayList<>();
+            for (int i = 0; i < team2Players.size(); i++) {
+                team2DTOs.add(convertToDTO(team2Players.get(i), lanes[i], i + 5, false));
+            }
+
+            // ✅ Salvar dados completos dos times no pick_ban_data AGORA
+            saveTeamsDataToPickBan(matchId, team1DTOs, team2DTOs);
+
+            // ✅ AGORA remover todos os jogadores da fila (agora vão para o draft)
             for (String playerName : status.getPlayers()) {
                 queueManagementService.removeFromQueue(playerName);
                 log.info("🗑️ [MatchFound] Jogador {} removido da fila - indo para draft", playerName);
@@ -316,6 +351,8 @@ public class MatchFoundService {
 
     /**
      * Inicia o draft
+     * ✅ O pick_ban_data já está completo, apenas precisamos notificar e iniciar o
+     * DraftFlowService
      */
     private void startDraft(Long matchId) {
         try {
@@ -333,58 +370,67 @@ public class MatchFoundService {
             customMatchRepository.save(match);
             log.info("✅ [MatchFound] Status da partida atualizado para 'draft'");
 
-            // Buscar nomes dos jogadores
-            List<String> team1Names = parsePlayerNames(match.getTeam1PlayersJson());
-            List<String> team2Names = parsePlayerNames(match.getTeam2PlayersJson());
-
-            log.info("🎯 [MatchFound] Iniciando draft com {} jogadores no time 1 e {} no time 2",
-                    team1Names.size(), team2Names.size());
-
-            // Buscar jogadores completos para enviar no draft_starting
-            List<QueuePlayer> team1Players = team1Names.stream()
-                    .map(name -> queuePlayerRepository.findBySummonerName(name).orElse(null))
-                    .filter(p -> p != null)
-                    .collect(Collectors.toList());
-
-            List<QueuePlayer> team2Players = team2Names.stream()
-                    .map(name -> queuePlayerRepository.findBySummonerName(name).orElse(null))
-                    .filter(p -> p != null)
-                    .collect(Collectors.toList());
-
-            // Mapeamento de lanes por posição
-            String[] lanes = { "top", "jungle", "mid", "bot", "support" };
-
-            // Converter para DTOs com lanes e posições
-            List<QueuePlayerInfoDTO> team1DTOs = new ArrayList<>();
-            for (int i = 0; i < team1Players.size(); i++) {
-                team1DTOs.add(convertToDTO(team1Players.get(i), lanes[i], i, false));
+            // ✅ Ler dados completos do pick_ban_data que já foi salvo
+            if (match.getPickBanDataJson() == null || match.getPickBanDataJson().isEmpty()) {
+                log.error("❌ [MatchFound] pick_ban_data está vazio para partida {}", matchId);
+                return;
             }
 
-            List<QueuePlayerInfoDTO> team2DTOs = new ArrayList<>();
-            for (int i = 0; i < team2Players.size(); i++) {
-                team2DTOs.add(convertToDTO(team2Players.get(i), lanes[i], i + 5, false));
+            try {
+                ObjectMapper mapper = new ObjectMapper();
+                @SuppressWarnings("unchecked")
+                Map<String, Object> pickBanData = mapper.readValue(match.getPickBanDataJson(), Map.class);
+
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> team1Data = (List<Map<String, Object>>) pickBanData.get("team1");
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> team2Data = (List<Map<String, Object>>) pickBanData.get("team2");
+
+                if (team1Data == null || team2Data == null || team1Data.isEmpty() || team2Data.isEmpty()) {
+                    log.error("❌ [MatchFound] Dados de times vazios no pick_ban_data para partida {}", matchId);
+                    return;
+                }
+
+                log.info("✅ [MatchFound] Dados dos times carregados do pick_ban_data: team1={}, team2={}",
+                        team1Data.size(), team2Data.size());
+
+                // Extrair nomes dos jogadores para o DraftFlowService
+                List<String> team1Names = team1Data.stream()
+                        .map(p -> (String) p.get("summonerName"))
+                        .collect(Collectors.toList());
+
+                List<String> team2Names = team2Data.stream()
+                        .map(p -> (String) p.get("summonerName"))
+                        .collect(Collectors.toList());
+
+                // Notificar início do draft com dados completos dos times (já do pick_ban_data)
+                // ✅ CORREÇÃO: NÃO incluir "type" aqui, o broadcastToAll já adiciona
+                Map<String, Object> draftData = new HashMap<>();
+                draftData.put("matchId", matchId);
+                draftData.put("team1", team1Data);
+                draftData.put("team2", team2Data);
+                draftData.put("averageMmrTeam1", match.getAverageMmrTeam1());
+                draftData.put("averageMmrTeam2", match.getAverageMmrTeam2());
+
+                // ✅ Log detalhado do que será enviado
+                log.info("📢 [MatchFound] Enviando draft_starting via WebSocket:");
+                log.info("  - matchId: {}", matchId);
+                log.info("  - team1: {} jogadores", team1Data.size());
+                log.info("  - team2: {} jogadores", team2Data.size());
+                log.info("  - Estrutura data: {}", new ObjectMapper().writeValueAsString(draftData));
+
+                webSocketService.broadcastToAll("draft_starting", draftData);
+
+                log.info("✅ [MatchFound] Draft starting enviado com {} jogadores no time 1 e {} no time 2",
+                        team1Data.size(), team2Data.size());
+
+                // Iniciar o DraftFlowService para gerenciar picks/bans
+                draftFlowService.startDraft(matchId, team1Names, team2Names);
+                log.info("✅ [MatchFound] DraftFlowService iniciado para partida {}", matchId);
+
+            } catch (Exception e) {
+                log.error("❌ [MatchFound] Erro ao parsear pick_ban_data", e);
             }
-
-            // Notificar início do draft com dados completos dos times
-            Map<String, Object> draftData = new HashMap<>();
-            draftData.put("type", "draft_starting");
-            draftData.put("matchId", matchId);
-            draftData.put("team1", team1DTOs);
-            draftData.put("team2", team2DTOs);
-            draftData.put("averageMmrTeam1", match.getAverageMmrTeam1());
-            draftData.put("averageMmrTeam2", match.getAverageMmrTeam2());
-
-            webSocketService.broadcastToAll("draft_starting", draftData);
-
-            log.info("📢 [MatchFound] Draft starting enviado com {} jogadores no time 1 e {} no time 2",
-                    team1DTOs.size(), team2DTOs.size());
-
-            // ✅ Salvar dados completos dos times no pick_ban_data
-            saveTeamsDataToPickBan(matchId, team1DTOs, team2DTOs);
-
-            // Iniciar o DraftFlowService para gerenciar picks/bans
-            draftFlowService.startDraft(matchId, team1Names, team2Names);
-            log.info("✅ [MatchFound] DraftFlowService iniciado para partida {}", matchId);
 
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao iniciar draft", e);
@@ -393,6 +439,7 @@ public class MatchFoundService {
 
     /**
      * Salva dados completos dos times no pick_ban_data para uso no draft
+     * ✅ Formato idêntico ao backend antigo
      */
     private void saveTeamsDataToPickBan(Long matchId, List<QueuePlayerInfoDTO> team1, List<QueuePlayerInfoDTO> team2) {
         try {
@@ -402,37 +449,61 @@ public class MatchFoundService {
                 return;
             }
 
-            // Criar estrutura com dados completos dos times
+            // ✅ Criar estrutura EXATAMENTE como no backend antigo (team1/team2, não
+            // team1Players/team2Players)
             Map<String, Object> pickBanData = new HashMap<>();
-            pickBanData.put("team1Players", team1.stream()
-                    .map(p -> Map.of(
-                            "summonerName", p.getSummonerName(),
-                            "playerId", p.getPlayerId(),
-                            "mmr", p.getCustomLp() != null ? p.getCustomLp() : 0,
-                            "primaryLane", p.getPrimaryLane() != null ? p.getPrimaryLane() : "fill",
-                            "secondaryLane", p.getSecondaryLane() != null ? p.getSecondaryLane() : "fill",
-                            "assignedLane", p.getAssignedLane() != null ? p.getAssignedLane() : "fill",
-                            "teamIndex", p.getTeamIndex() != null ? p.getTeamIndex() : 0,
-                            "isAutofill", p.getIsAutofill() != null ? p.getIsAutofill() : false))
-                    .collect(Collectors.toList()));
 
-            pickBanData.put("team2Players", team2.stream()
-                    .map(p -> Map.of(
-                            "summonerName", p.getSummonerName(),
-                            "playerId", p.getPlayerId(),
-                            "mmr", p.getCustomLp() != null ? p.getCustomLp() : 0,
-                            "primaryLane", p.getPrimaryLane() != null ? p.getPrimaryLane() : "fill",
-                            "secondaryLane", p.getSecondaryLane() != null ? p.getSecondaryLane() : "fill",
-                            "assignedLane", p.getAssignedLane() != null ? p.getAssignedLane() : "fill",
-                            "teamIndex", p.getTeamIndex() != null ? p.getTeamIndex() : 0,
-                            "isAutofill", p.getIsAutofill() != null ? p.getIsAutofill() : false))
-                    .collect(Collectors.toList()));
+            // ✅ Construir objetos completos para team1
+            List<Map<String, Object>> team1Objects = new ArrayList<>();
+            for (QueuePlayerInfoDTO p : team1) {
+                Map<String, Object> playerObj = new HashMap<>();
+                playerObj.put("summonerName", p.getSummonerName());
+                playerObj.put("assignedLane", p.getAssignedLane() != null ? p.getAssignedLane() : "fill");
+                playerObj.put("teamIndex", p.getTeamIndex() != null ? p.getTeamIndex() : 0);
+                playerObj.put("mmr", p.getCustomLp() != null ? p.getCustomLp() : 0);
+                playerObj.put("primaryLane", p.getPrimaryLane() != null ? p.getPrimaryLane() : "fill");
+                playerObj.put("secondaryLane", p.getSecondaryLane() != null ? p.getSecondaryLane() : "fill");
+                playerObj.put("isAutofill", p.getIsAutofill() != null ? p.getIsAutofill() : false);
+
+                // ✅ Adicionar playerId se disponível (para jogadores reais, não bots)
+                if (p.getPlayerId() != null) {
+                    playerObj.put("playerId", p.getPlayerId());
+                }
+
+                team1Objects.add(playerObj);
+            }
+
+            // ✅ Construir objetos completos para team2
+            List<Map<String, Object>> team2Objects = new ArrayList<>();
+            for (QueuePlayerInfoDTO p : team2) {
+                Map<String, Object> playerObj = new HashMap<>();
+                playerObj.put("summonerName", p.getSummonerName());
+                playerObj.put("assignedLane", p.getAssignedLane() != null ? p.getAssignedLane() : "fill");
+                playerObj.put("teamIndex", p.getTeamIndex() != null ? p.getTeamIndex() : 0);
+                playerObj.put("mmr", p.getCustomLp() != null ? p.getCustomLp() : 0);
+                playerObj.put("primaryLane", p.getPrimaryLane() != null ? p.getPrimaryLane() : "fill");
+                playerObj.put("secondaryLane", p.getSecondaryLane() != null ? p.getSecondaryLane() : "fill");
+                playerObj.put("isAutofill", p.getIsAutofill() != null ? p.getIsAutofill() : false);
+
+                // ✅ Adicionar playerId se disponível (para jogadores reais, não bots)
+                if (p.getPlayerId() != null) {
+                    playerObj.put("playerId", p.getPlayerId());
+                }
+
+                team2Objects.add(playerObj);
+            }
+
+            // ✅ Salvar com nomes "team1" e "team2" (como no backend antigo)
+            pickBanData.put("team1", team1Objects);
+            pickBanData.put("team2", team2Objects);
 
             // Salvar no banco
-            match.setPickBanDataJson(new ObjectMapper().writeValueAsString(pickBanData));
+            ObjectMapper mapper = new ObjectMapper();
+            match.setPickBanDataJson(mapper.writeValueAsString(pickBanData));
             customMatchRepository.save(match);
 
-            log.info("✅ [MatchFound] Dados dos times salvos em pick_ban_data para partida {}", matchId);
+            log.info("✅ [MatchFound] Dados dos times salvos em pick_ban_data para partida {} (team1: {}, team2: {})",
+                    matchId, team1Objects.size(), team2Objects.size());
 
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao salvar pick_ban_data", e);
@@ -456,22 +527,29 @@ public class MatchFoundService {
 
     private void notifyMatchFound(CustomMatch match, List<QueuePlayer> team1, List<QueuePlayer> team2) {
         try {
-            // ✅ Mapeamento de lanes por posição
+            // ✅ Mapeamento de lanes por posição (os jogadores já vêm ordenados por posição
+            // do balanceamento)
             String[] lanes = { "top", "jungle", "mid", "bot", "support" };
 
+            // ✅ CORREÇÃO: NÃO incluir "type", o broadcastToAll já adiciona
             Map<String, Object> data = new HashMap<>();
-            data.put("type", "match_found");
             data.put("matchId", match.getId());
 
-            // ✅ Enriquecer jogadores com metadados de posição
+            // ✅ Enriquecer jogadores com metadados de posição E determinar se é autofill
             List<QueuePlayerInfoDTO> team1DTOs = new ArrayList<>();
             for (int i = 0; i < team1.size(); i++) {
-                team1DTOs.add(convertToDTO(team1.get(i), lanes[i], i, false));
+                QueuePlayer player = team1.get(i);
+                String assignedLane = lanes[i];
+                boolean isAutofill = determineIfAutofill(player, assignedLane);
+                team1DTOs.add(convertToDTO(player, assignedLane, i, isAutofill));
             }
 
             List<QueuePlayerInfoDTO> team2DTOs = new ArrayList<>();
             for (int i = 0; i < team2.size(); i++) {
-                team2DTOs.add(convertToDTO(team2.get(i), lanes[i], i + 5, false));
+                QueuePlayer player = team2.get(i);
+                String assignedLane = lanes[i];
+                boolean isAutofill = determineIfAutofill(player, assignedLane);
+                team2DTOs.add(convertToDTO(player, assignedLane, i + 5, isAutofill));
             }
 
             data.put("team1", team1DTOs);
@@ -489,10 +567,51 @@ public class MatchFoundService {
         }
     }
 
+    /**
+     * Determina se um jogador está em autofill ou pegou sua lane preferida
+     */
+    private boolean determineIfAutofill(QueuePlayer player, String assignedLane) {
+        String primary = normalizeLane(player.getPrimaryLane());
+        String secondary = normalizeLane(player.getSecondaryLane());
+        String assigned = normalizeLane(assignedLane);
+
+        // Se pegou lane primária ou secundária, não é autofill
+        return !assigned.equals(primary) && !assigned.equals(secondary);
+    }
+
+    /**
+     * Normaliza nomes de lanes para comparação
+     */
+    private String normalizeLane(String lane) {
+        if (lane == null)
+            return "fill";
+
+        String normalized = lane.toLowerCase().trim();
+
+        // Normalizar variações
+        if (normalized.equals("adc") || normalized.equals("bot") || normalized.equals("bottom")) {
+            return "bot";
+        }
+        if (normalized.equals("middle") || normalized.equals("mid")) {
+            return "mid";
+        }
+        if (normalized.equals("top")) {
+            return "top";
+        }
+        if (normalized.equals("jungle") || normalized.equals("jg")) {
+            return "jungle";
+        }
+        if (normalized.equals("support") || normalized.equals("sup") || normalized.equals("supp")) {
+            return "support";
+        }
+
+        return "fill";
+    }
+
     private void notifyAcceptanceProgress(Long matchId, MatchAcceptanceStatus status) {
         try {
+            // ✅ CORREÇÃO: NÃO incluir "type", o broadcastToAll já adiciona
             Map<String, Object> data = new HashMap<>();
-            data.put("type", "acceptance_progress");
             data.put("matchId", matchId);
             data.put("acceptedCount", status.getAcceptedPlayers().size());
             data.put("totalPlayers", status.getPlayers().size());
@@ -507,8 +626,8 @@ public class MatchFoundService {
 
     private void notifyAllPlayersAccepted(Long matchId) {
         try {
+            // ✅ CORREÇÃO: NÃO incluir "type", o broadcastToAll já adiciona
             Map<String, Object> data = new HashMap<>();
-            data.put("type", "all_players_accepted");
             data.put("matchId", matchId);
 
             webSocketService.broadcastToAll("all_players_accepted", data);
@@ -520,8 +639,8 @@ public class MatchFoundService {
 
     private void notifyMatchCancelled(Long matchId, String declinedPlayer) {
         try {
+            // ✅ CORREÇÃO: NÃO incluir "type", o broadcastToAll já adiciona
             Map<String, Object> data = new HashMap<>();
-            data.put("type", "match_cancelled");
             data.put("matchId", matchId);
             data.put("reason", "declined");
             data.put("declinedPlayer", declinedPlayer);
@@ -535,8 +654,8 @@ public class MatchFoundService {
 
     private void notifyTimerUpdate(Long matchId, int secondsRemaining) {
         try {
+            // ✅ CORREÇÃO: NÃO incluir "type", o broadcastToAll já adiciona
             Map<String, Object> data = new HashMap<>();
-            data.put("type", "acceptance_timer");
             data.put("matchId", matchId);
             data.put("secondsRemaining", secondsRemaining);
 

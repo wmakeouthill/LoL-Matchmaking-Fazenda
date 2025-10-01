@@ -236,22 +236,109 @@ public class DraftFlowService {
 
     private void persist(long matchId, DraftState st) {
         try {
-            Map<String, Object> snapshot = Map.of(
-                    KEY_ACTIONS, st.getActions(),
-                    KEY_CURRENT_INDEX, st.getCurrentIndex(),
-                    KEY_CONFIRMATIONS, st.getConfirmations(),
-                    KEY_TEAM1, st.getTeam1Players(),
-                    KEY_TEAM2, st.getTeam2Players());
             customMatchRepository.findById(matchId).ifPresent(cm -> {
                 try {
-                    cm.setPickBanDataJson(mapper.writeValueAsString(snapshot)); // persist snapshot JSON
+                    Map<String, Object> snapshot;
+
+                    if (cm.getPickBanDataJson() != null && !cm.getPickBanDataJson().isEmpty()) {
+                        // ✅ Carregar dados existentes
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> existing = mapper.readValue(cm.getPickBanDataJson(), Map.class);
+                        snapshot = new HashMap<>(existing);
+
+                        // ✅ CRÍTICO: Atualizar apenas campos de estado do draft
+                        // NUNCA sobrescrever team1/team2 - eles já vêm completos do MatchFoundService
+                        snapshot.put(KEY_ACTIONS, st.getActions());
+                        snapshot.put(KEY_CURRENT_INDEX, st.getCurrentIndex());
+                        snapshot.put(KEY_CONFIRMATIONS, st.getConfirmations());
+
+                        // ✅ Verificar se team1/team2 existem (com dados completos do MatchFoundService)
+                        Object team1Data = snapshot.get(KEY_TEAM1);
+                        Object team2Data = snapshot.get(KEY_TEAM2);
+
+                        // ✅ Se não existem OU são arrays vazios, adicionar apenas nomes (fallback)
+                        boolean team1Empty = team1Data == null ||
+                                (team1Data instanceof java.util.List && ((java.util.List<?>) team1Data).isEmpty());
+                        boolean team2Empty = team2Data == null ||
+                                (team2Data instanceof java.util.List && ((java.util.List<?>) team2Data).isEmpty());
+
+                        if (team1Empty) {
+                            log.warn("⚠️ [DraftFlow] team1 vazio, adicionando nomes (fallback): {}", st.getTeam1Players());
+                            // ✅ Criar objetos básicos com apenas nomes como fallback
+                            List<Map<String, Object>> team1Fallback = new ArrayList<>();
+                            int idx = 0;
+                            for (String playerName : st.getTeam1Players()) {
+                                Map<String, Object> playerObj = new HashMap<>();
+                                playerObj.put("summonerName", playerName);
+                                playerObj.put("teamIndex", idx++);
+                                team1Fallback.add(playerObj);
+                            }
+                            snapshot.put(KEY_TEAM1, team1Fallback);
+                        } else {
+                            log.debug("✅ [DraftFlow] team1 já existe com {} jogadores, PRESERVANDO",
+                                    ((java.util.List<?>) team1Data).size());
+                            // ✅ NÃO SOBRESCREVER - manter dados completos existentes
+                        }
+
+                        if (team2Empty) {
+                            log.warn("⚠️ [DraftFlow] team2 vazio, adicionando nomes (fallback): {}", st.getTeam2Players());
+                            // ✅ Criar objetos básicos com apenas nomes como fallback
+                            List<Map<String, Object>> team2Fallback = new ArrayList<>();
+                            int idx = 5; // Team 2 começa no índice 5
+                            for (String playerName : st.getTeam2Players()) {
+                                Map<String, Object> playerObj = new HashMap<>();
+                                playerObj.put("summonerName", playerName);
+                                playerObj.put("teamIndex", idx++);
+                                team2Fallback.add(playerObj);
+                            }
+                            snapshot.put(KEY_TEAM2, team2Fallback);
+                        } else {
+                            log.debug("✅ [DraftFlow] team2 já existe com {} jogadores, PRESERVANDO",
+                                    ((java.util.List<?>) team2Data).size());
+                            // ✅ NÃO SOBRESCREVER - manter dados completos existentes
+                        }
+                    } else {
+                        // ✅ Primeira persistência - criar estrutura básica
+                        // (Normalmente não deveria acontecer pois MatchFoundService salva primeiro)
+                        snapshot = new HashMap<>();
+                        snapshot.put(KEY_ACTIONS, st.getActions());
+                        snapshot.put(KEY_CURRENT_INDEX, st.getCurrentIndex());
+                        snapshot.put(KEY_CONFIRMATIONS, st.getConfirmations());
+
+                        log.warn("⚠️ [DraftFlow] Criando pick_ban_data pela primeira vez (SEM dados de times!)");
+                        // ✅ Criar estrutura mínima
+                        List<Map<String, Object>> team1Fallback = new ArrayList<>();
+                        int idx = 0;
+                        for (String playerName : st.getTeam1Players()) {
+                            Map<String, Object> playerObj = new HashMap<>();
+                            playerObj.put("summonerName", playerName);
+                            playerObj.put("teamIndex", idx++);
+                            team1Fallback.add(playerObj);
+                        }
+                        
+                        List<Map<String, Object>> team2Fallback = new ArrayList<>();
+                        idx = 5;
+                        for (String playerName : st.getTeam2Players()) {
+                            Map<String, Object> playerObj = new HashMap<>();
+                            playerObj.put("summonerName", playerName);
+                            playerObj.put("teamIndex", idx++);
+                            team2Fallback.add(playerObj);
+                        }
+                        
+                        snapshot.put(KEY_TEAM1, team1Fallback);
+                        snapshot.put(KEY_TEAM2, team2Fallback);
+                    }
+
+                    cm.setPickBanDataJson(mapper.writeValueAsString(snapshot));
                     customMatchRepository.save(cm);
+
+                    log.debug("✅ [DraftFlow] Draft state persistido para match {}", matchId);
                 } catch (Exception e) {
-                    log.warn("Falha serializando pickBanData", e);
+                    log.error("❌ [DraftFlow] Falha ao serializar pickBanData", e);
                 }
             });
         } catch (Exception e) {
-            log.error("Erro persist snapshot draft", e);
+            log.error("❌ [DraftFlow] Erro ao persistir snapshot draft", e);
         }
     }
 
@@ -260,8 +347,9 @@ public class DraftFlowService {
     private static final String KEY_CURRENT_INDEX = "currentIndex";
     private static final String KEY_ACTIONS = "actions";
     private static final String KEY_CONFIRMATIONS = "confirmations";
-    private static final String KEY_TEAM1 = "team1Players";
-    private static final String KEY_TEAM2 = "team2Players";
+    // ✅ Usar "team1" e "team2" (como no backend antigo), não "team1Players"/"team2Players"
+    private static final String KEY_TEAM1 = "team1";
+    private static final String KEY_TEAM2 = "team2";
     // configurable via property above
     private static final String SKIPPED = "SKIPPED";
     private static final String TIMEOUT_PLAYER = "system_timeout";
@@ -271,17 +359,118 @@ public class DraftFlowService {
     private void broadcastUpdate(DraftState st, boolean confirmationOnly) {
         try {
             long remainingMs = calcRemainingMs(st);
-            String payload = mapper.writeValueAsString(Map.of(
-                    KEY_TYPE, "draft_updated",
-                    KEY_MATCH_ID, st.getMatchId(),
-                    KEY_CURRENT_INDEX, st.getCurrentIndex(),
-                    KEY_ACTIONS, st.getActions(),
-                    KEY_CONFIRMATIONS, st.getConfirmations(),
-                    KEY_TEAM1, st.getTeam1Players(),
-                    KEY_TEAM2, st.getTeam2Players(),
-                    KEY_REMAINING_MS, remainingMs,
-                    KEY_ACTION_TIMEOUT_MS, getActionTimeoutMs(),
-                    "confirmationOnly", confirmationOnly));
+
+            // ✅ CRÍTICO: Carregar dados completos dos times do banco, não apenas nomes
+            Map<String, Object> updateData = new HashMap<>();
+            updateData.put(KEY_TYPE, "draft_updated");
+            updateData.put(KEY_MATCH_ID, st.getMatchId());
+            updateData.put(KEY_CURRENT_INDEX, st.getCurrentIndex());
+            updateData.put(KEY_ACTIONS, st.getActions());
+            updateData.put(KEY_CONFIRMATIONS, st.getConfirmations());
+
+            // ✅ Buscar dados completos dos times do banco
+            customMatchRepository.findById(st.getMatchId()).ifPresent(cm -> {
+                if (cm.getPickBanDataJson() != null && !cm.getPickBanDataJson().isEmpty()) {
+                    try {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> pickBanData = mapper.readValue(cm.getPickBanDataJson(), Map.class);
+
+                        // ✅ Buscar dados completos usando KEY_TEAM1 e KEY_TEAM2 ("team1" e "team2")
+                        Object team1Data = pickBanData.get(KEY_TEAM1);
+                        Object team2Data = pickBanData.get(KEY_TEAM2);
+
+                        if (team1Data != null && team1Data instanceof java.util.List
+                                && !((java.util.List<?>) team1Data).isEmpty()) {
+                            updateData.put(KEY_TEAM1, team1Data);
+                            log.debug("✅ [DraftFlow] Broadcast com team1 completo ({} jogadores)",
+                                    ((java.util.List<?>) team1Data).size());
+                        } else {
+                            log.warn("⚠️ [DraftFlow] Broadcast com team1 apenas nomes (fallback)");
+                            // Fallback: criar objetos básicos
+                            List<Map<String, Object>> team1Fallback = new ArrayList<>();
+                            int idx = 0;
+                            for (String playerName : st.getTeam1Players()) {
+                                Map<String, Object> playerObj = new HashMap<>();
+                                playerObj.put("summonerName", playerName);
+                                playerObj.put("teamIndex", idx++);
+                                team1Fallback.add(playerObj);
+                            }
+                            updateData.put(KEY_TEAM1, team1Fallback);
+                        }
+
+                        if (team2Data != null && team2Data instanceof java.util.List
+                                && !((java.util.List<?>) team2Data).isEmpty()) {
+                            updateData.put(KEY_TEAM2, team2Data);
+                            log.debug("✅ [DraftFlow] Broadcast com team2 completo ({} jogadores)",
+                                    ((java.util.List<?>) team2Data).size());
+                        } else {
+                            log.warn("⚠️ [DraftFlow] Broadcast com team2 apenas nomes (fallback)");
+                            // Fallback: criar objetos básicos
+                            List<Map<String, Object>> team2Fallback = new ArrayList<>();
+                            int idx = 5;
+                            for (String playerName : st.getTeam2Players()) {
+                                Map<String, Object> playerObj = new HashMap<>();
+                                playerObj.put("summonerName", playerName);
+                                playerObj.put("teamIndex", idx++);
+                                team2Fallback.add(playerObj);
+                            }
+                            updateData.put(KEY_TEAM2, team2Fallback);
+                        }
+                    } catch (Exception e) {
+                        log.error("❌ [DraftFlow] Erro ao ler pick_ban_data para broadcast", e);
+                        // Fallback: criar objetos básicos
+                        List<Map<String, Object>> team1Fallback = new ArrayList<>();
+                        int idx = 0;
+                        for (String playerName : st.getTeam1Players()) {
+                            Map<String, Object> playerObj = new HashMap<>();
+                            playerObj.put("summonerName", playerName);
+                            playerObj.put("teamIndex", idx++);
+                            team1Fallback.add(playerObj);
+                        }
+                        updateData.put(KEY_TEAM1, team1Fallback);
+                        
+                        List<Map<String, Object>> team2Fallback = new ArrayList<>();
+                        idx = 5;
+                        for (String playerName : st.getTeam2Players()) {
+                            Map<String, Object> playerObj = new HashMap<>();
+                            playerObj.put("summonerName", playerName);
+                            playerObj.put("teamIndex", idx++);
+                            team2Fallback.add(playerObj);
+                        }
+                        updateData.put(KEY_TEAM2, team2Fallback);
+                    }
+                } else {
+                    log.warn("⚠️ [DraftFlow] Sem pick_ban_data no banco, usando fallback");
+                    // Sem dados no banco, criar objetos básicos
+                    List<Map<String, Object>> team1Fallback = new ArrayList<>();
+                    int idx = 0;
+                    for (String playerName : st.getTeam1Players()) {
+                        Map<String, Object> playerObj = new HashMap<>();
+                        playerObj.put("summonerName", playerName);
+                        playerObj.put("teamIndex", idx++);
+                        team1Fallback.add(playerObj);
+                    }
+                    updateData.put(KEY_TEAM1, team1Fallback);
+                    
+                    List<Map<String, Object>> team2Fallback = new ArrayList<>();
+                    idx = 5;
+                    for (String playerName : st.getTeam2Players()) {
+                        Map<String, Object> playerObj = new HashMap<>();
+                        playerObj.put("summonerName", playerName);
+                        playerObj.put("teamIndex", idx++);
+                        team2Fallback.add(playerObj);
+                    }
+                    updateData.put(KEY_TEAM2, team2Fallback);
+                }
+            });
+
+            updateData.put("timeRemainingMs", remainingMs);
+            updateData.put(KEY_REMAINING_MS, remainingMs);
+            updateData.put(KEY_ACTION_TIMEOUT_MS, getActionTimeoutMs());
+            updateData.put("confirmationOnly", confirmationOnly);
+
+            String payload = mapper.writeValueAsString(updateData);
+
             sessionRegistry.all().forEach(ws -> {
                 try {
                     ws.sendMessage(new TextMessage(payload));
