@@ -530,7 +530,7 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   // MÉTODOS PARA FILTRAGEM
-  getModalFilteredanys(): any[] {
+  getModalFilteredChampions(): any[] {
     if (this.session?.currentAction !== undefined) {
       const sessionHash = JSON.stringify({
         currentAction: this.session.currentAction,
