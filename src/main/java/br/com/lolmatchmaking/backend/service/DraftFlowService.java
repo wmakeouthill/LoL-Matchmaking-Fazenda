@@ -213,12 +213,52 @@ public class DraftFlowService {
         return list;
     }
 
+    /**
+     * ✅ CORREÇÃO #6: Normaliza championId para formato numérico (key)
+     * Aceita tanto o nome do campeão (ex: "Ahri") quanto o ID numérico (ex: "103")
+     * Retorna sempre o ID numérico (key) ou null se inválido
+     */
+    private String normalizeChampionId(String championId) {
+        if (championId == null || championId.isBlank() || SKIPPED.equalsIgnoreCase(championId)) {
+            return championId;
+        }
+
+        // Se já é numérico, validar se existe
+        if (championId.matches("\\d+")) {
+            String championName = dataDragonService.getChampionName(championId);
+            if (championName != null) {
+                log.debug("✅ [normalizeChampionId] championId numérico válido: {} -> {}", championId, championName);
+                return championId;
+            }
+            log.warn("⚠️ [normalizeChampionId] championId numérico inválido: {}", championId);
+            return null;
+        }
+
+        // Se é string (nome), converter para key
+        String championKey = dataDragonService.getChampionKeyByName(championId);
+        if (championKey != null) {
+            log.debug("✅ [normalizeChampionId] Convertido nome '{}' para key '{}'", championId, championKey);
+            return championKey;
+        }
+
+        log.warn("⚠️ [normalizeChampionId] Campeão não encontrado: {}", championId);
+        return null;
+    }
+
     @Transactional
     public synchronized boolean processAction(long matchId, int actionIndex, String championId, String byPlayer) {
         DraftState st = states.get(matchId);
         if (st == null) {
             return false;
         }
+
+        // ✅ CORREÇÃO #6: Normalizar championId antes de processar
+        final String normalizedChampionId = normalizeChampionId(championId);
+        if (normalizedChampionId == null) {
+            log.warn("⚠️ [processAction] championId inválido após normalização: {}", championId);
+            return false;
+        }
+
         if (st.getCurrentIndex() >= st.getActions().size()) { // draft já completo
             return false;
         }
@@ -232,11 +272,11 @@ public class DraftFlowService {
         }
         boolean alreadyUsed = st.actions.stream()
                 .filter(a -> a.championId() != null && !SKIPPED.equalsIgnoreCase(a.championId()))
-                .anyMatch(a -> championId.equalsIgnoreCase(a.championId()));
+                .anyMatch(a -> normalizedChampionId.equalsIgnoreCase(a.championId()));
         if (alreadyUsed) {
             return false;
         }
-        DraftAction updated = new DraftAction(prev.index(), prev.type(), prev.team(), championId, byPlayer);
+        DraftAction updated = new DraftAction(prev.index(), prev.type(), prev.team(), normalizedChampionId, byPlayer);
         st.getActions().set(actionIndex, updated);
         st.advance();
         st.markActionStart();

@@ -148,6 +148,52 @@ public class DataDragonService {
         return championIdToNameMap.get(championId);
     }
 
+    /**
+     * ✅ CORREÇÃO #6: Obter nome do campeão pelo key (aceita String)
+     */
+    public String getChampionName(String championKey) {
+        if (championKey == null || championKey.isBlank()) {
+            return null;
+        }
+        try {
+            Integer championId = Integer.parseInt(championKey);
+            return getChampionNameById(championId);
+        } catch (NumberFormatException e) {
+            log.warn("⚠️ [getChampionName] championKey inválido: {}", championKey);
+            return null;
+        }
+    }
+
+    /**
+     * ✅ CORREÇÃO #6: Obter key numérico pelo nome do campeão
+     * Exemplo: "Ahri" -> "103"
+     */
+    public String getChampionKeyByName(String championName) {
+        if (!championsLoaded) {
+            loadChampions();
+        }
+
+        if (championName == null || championName.isBlank()) {
+            return null;
+        }
+
+        // Buscar no cache de campeões
+        ChampionData champion = championsCache.get(championName);
+        if (champion != null) {
+            return champion.getKey();
+        }
+
+        // Tentar busca case-insensitive
+        for (ChampionData champ : championsCache.values()) {
+            if (champ.getName().equalsIgnoreCase(championName)) {
+                return champ.getKey();
+            }
+        }
+
+        log.warn("⚠️ [getChampionKeyByName] Campeão não encontrado: {}", championName);
+        return null;
+    }
+
     // ✅ CORREÇÃO: Removido @Cacheable (serviço já tem cache interno)
     public ChampionData getChampionById(Integer championId) {
         if (!championsLoaded) {

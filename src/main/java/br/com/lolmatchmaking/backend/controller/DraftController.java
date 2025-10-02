@@ -14,6 +14,7 @@ public class DraftController {
     private final DraftService draftService;
     private final br.com.lolmatchmaking.backend.service.DraftFlowService draftFlowService;
     private static final String KEY_ERROR = "error";
+    private static final String KEY_SUCCESS = "success";
 
     record ConfirmSyncRequest(Long matchId, String playerId, Integer actionIndex) {
     }
@@ -36,7 +37,7 @@ public class DraftController {
             return ResponseEntity.badRequest().body(Map.of(KEY_ERROR, "matchId e playerId são obrigatórios"));
         }
         draftService.confirmDraft(req.matchId(), req.playerId());
-        return ResponseEntity.ok(Map.of("success", true));
+        return ResponseEntity.ok(Map.of(KEY_SUCCESS, true));
     }
 
     @GetMapping("/match/{matchId}/draft-session")
@@ -63,6 +64,41 @@ public class DraftController {
                     .body(Map.of(KEY_ERROR, "matchId, playerId e championId são obrigatórios"));
         }
         draftService.changePick(req.matchId(), req.playerId(), req.championId());
-        return ResponseEntity.ok(Map.of("success", true));
+        return ResponseEntity.ok(Map.of(KEY_SUCCESS, true));
+    }
+
+    // ✅ CORREÇÃO #1: Endpoint para processar ações de draft (pick/ban)
+    record DraftActionRequest(Long matchId, Integer actionIndex, String championId, String playerId, String action) {
+    }
+
+    @PostMapping("/match/draft-action")
+    public ResponseEntity<Map<String, Object>> processDraftAction(@RequestBody DraftActionRequest req) {
+        if (req.matchId() == null || req.actionIndex() == null || req.championId() == null
+                || req.playerId() == null) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    KEY_SUCCESS, false,
+                    KEY_ERROR, "matchId, actionIndex, championId e playerId são obrigatórios"));
+        }
+
+        try {
+            // ✅ Chamar DraftFlowService.processAction()
+            boolean success = draftFlowService.processAction(
+                    req.matchId(),
+                    req.actionIndex(),
+                    req.championId(),
+                    req.playerId());
+
+            if (success) {
+                return ResponseEntity.ok(Map.of(KEY_SUCCESS, true));
+            } else {
+                return ResponseEntity.badRequest().body(Map.of(
+                        KEY_SUCCESS, false,
+                        KEY_ERROR, "Ação inválida: campeão já utilizado, jogador errado ou fora de ordem"));
+            }
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of(
+                    KEY_SUCCESS, false,
+                    KEY_ERROR, "Erro ao processar ação: " + e.getMessage()));
+        }
     }
 }
