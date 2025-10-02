@@ -464,7 +464,8 @@ export class App implements OnInit, OnDestroy {
             calculatedSeconds: newTimeRemaining
           });
 
-          // ✅ CRÍTICO: Criar novo objeto ao invés de mutar (para OnPush)
+          // ✅ CRÍTICO: Criar NOVO objeto SEMPRE (para OnPush detectar)
+          const oldDraftData = this.draftData;
           this.draftData = {
             ...this.draftData,
             phases: newPhases,
@@ -472,13 +473,22 @@ export class App implements OnInit, OnDestroy {
             currentAction: newCurrentAction,
             currentIndex: newCurrentAction,
             currentPlayer: newCurrentPlayer,
-            timeRemaining: newTimeRemaining // ✅ NOVO: Incluir timer
+            timeRemaining: newTimeRemaining, // ✅ NOVO: Incluir timer
+            _updateTimestamp: Date.now() // ✅ FORÇA mudança de referência
           };
 
           console.log(`✅ [App] Draft atualizado: currentAction=${this.draftData.currentAction}, currentPlayer=${this.draftData.currentPlayer}, phases=${this.draftData.phases?.length}, timer=${newTimeRemaining}s`);
-          console.log(`🔍 [App] Novo draftData criado - referência mudou:`, this.draftData);
+          console.log(`🔍 [App] Referência mudou:`, {
+            old: oldDraftData,
+            new: this.draftData,
+            referenceChanged: oldDraftData !== this.draftData
+          });
 
           // ✅ NOVO: Despachar evento de timer para o componente
+          console.log('📤 [App] Disparando draftTimerUpdate:', {
+            matchId: this.draftData.matchId,
+            timeRemaining: newTimeRemaining
+          });
           document.dispatchEvent(new CustomEvent('draftTimerUpdate', {
             detail: {
               matchId: this.draftData.matchId,
@@ -487,6 +497,12 @@ export class App implements OnInit, OnDestroy {
           }));
 
           // ✅ Despachar evento customizado para o DraftPickBanComponent
+          console.log('📤 [App] Disparando draftUpdate:', {
+            matchId: this.draftData.matchId,
+            currentPlayer: updateData.currentPlayer,
+            currentAction: newCurrentAction,
+            timeRemaining: newTimeRemaining
+          });
           document.dispatchEvent(new CustomEvent('draftUpdate', {
             detail: {
               matchId: this.draftData.matchId,

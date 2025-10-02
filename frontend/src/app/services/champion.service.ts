@@ -77,6 +77,13 @@ export class ChampionService {
   }
 
   /**
+   * ✅ NOVO: Obter todos os campeões do cache
+   */
+  getAllChampions(): ChampionData[] {
+    return Array.from(this.championsCache.values());
+  }
+
+  /**
    * Load all champions from Data Dragon
    */
   private loadChampions(): Observable<ChampionResponse> {

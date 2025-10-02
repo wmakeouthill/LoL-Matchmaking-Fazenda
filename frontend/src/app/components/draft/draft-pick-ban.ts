@@ -72,7 +72,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   session: any = null;
   champions: any[] = [];
   championsByRole: any = {};
-  showanyModal: boolean = false;
+  showChampionModal: boolean = false; // ✅ CORREÇÃO: Nome correto para o HTML
   showConfirmationModal: boolean = false;
   confirmationData: any = null; // ✅ NOVO: Dados de confirmação dos jogadores
   isMyTurn: boolean = false;
@@ -211,7 +211,15 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
   ngOnChanges(changes: SimpleChanges) {
     // ✅ CRÍTICO: Processar imediatamente (sem debounce) para OnPush funcionar
-    console.log('🔥 [ngOnChanges] CHAMADO!', changes);
+    console.log('🔥🔥🔥 [ngOnChanges] CHAMADO!', {
+      hasMatchData: !!changes['matchData'],
+      matchDataValue: changes['matchData']?.currentValue,
+      currentAction: changes['matchData']?.currentValue?.currentAction,
+      currentPlayer: changes['matchData']?.currentValue?.currentPlayer,
+      timeRemaining: changes['matchData']?.currentValue?.timeRemaining,
+      previousValue: changes['matchData']?.previousValue?.currentAction,
+      isFirstChange: changes['matchData']?.firstChange
+    });
     this.processNgOnChanges(changes);
 
     // ✅ DESABILITADO: Debouncing estava atrasando a atualização
@@ -336,22 +344,31 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
   // ✅ CONFIGURAÇÃO DE LISTENERS DO BACKEND
   private setupBackendListeners(): void {
+    console.log('🎯 [setupBackendListeners] Configurando listeners - matchId atual:', this.matchId);
+
     // Listener para mensagens de timer via WebSocket
     document.addEventListener('draftTimerUpdate', (event: any) => {
-      console.log('⏰ [draftTimerUpdate] Evento recebido:', {
+      console.log('⏰⏰⏰ [draftTimerUpdate] EVENTO RECEBIDO!', {
         eventMatchId: event.detail?.matchId,
         componentMatchId: this.matchId,
         timeRemaining: event.detail?.timeRemaining,
         matches: event.detail?.matchId === this.matchId
       });
-      
-      if (event.detail?.matchId === this.matchId) {
+
+      // ✅ CRÍTICO: Comparar como números (converter strings)
+      const eventMatchId = Number(event.detail?.matchId);
+      const componentMatchId = Number(this.matchId);
+
+      if (eventMatchId === componentMatchId) {
+        console.log('✅ [draftTimerUpdate] MatchId BATE! Atualizando timer...');
         logDraft('⏰ [DraftPickBan] Timer atualizado via WebSocket:', event.detail);
         this.updateTimerFromBackend(event.detail);
       } else {
-        console.warn('⚠️ [draftTimerUpdate] MatchId não bate!', {
-          eventMatchId: event.detail?.matchId,
-          componentMatchId: this.matchId
+        console.warn('⚠️ [draftTimerUpdate] MatchId NÃO BATE!', {
+          eventMatchId,
+          componentMatchId,
+          eventType: typeof event.detail?.matchId,
+          componentType: typeof this.matchId
         });
       }
     });
@@ -366,17 +383,23 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
     // Listener para draftUpdate via WebSocket
     document.addEventListener('draftUpdate', (event: any) => {
-      console.log('🔄 [draftUpdate] Evento recebido:', {
+      console.log('🔄🔄🔄 [draftUpdate] EVENTO RECEBIDO!', {
         eventMatchId: event.detail?.matchId,
         componentMatchId: this.matchId,
         hasPhases: !!(event.detail?.phases || event.detail?.actions),
         currentAction: event.detail?.currentAction,
         currentIndex: event.detail?.currentIndex,
+        currentPlayer: event.detail?.currentPlayer,
         timeRemaining: event.detail?.timeRemaining,
         matches: event.detail?.matchId === this.matchId
       });
-      
-      if (event.detail?.matchId === this.matchId) {
+
+      // ✅ CRÍTICO: Comparar como números (converter strings)
+      const eventMatchId = Number(event.detail?.matchId);
+      const componentMatchId = Number(this.matchId);
+
+      if (eventMatchId === componentMatchId) {
+        console.log('✅ [draftUpdate] MatchId BATE! Processando update...');
         logDraft('🔄 [DraftPickBan] draftUpdate recebido via WebSocket:', event.detail);
         saveLogToRoot(`🚀 [WebSocket] draftUpdate recebido - atualizando session diretamente`);
 
@@ -393,7 +416,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
           const newCurrentPlayer = updateData.currentPlayer !== undefined ? updateData.currentPlayer : this.session.currentPlayer;
           const newTimeRemaining = updateData.timeRemaining !== undefined ? updateData.timeRemaining : this.timeRemaining;
-          
+
           console.log('🔄 [draftUpdate] Valores extraídos:', {
             newPhases: newPhases?.length || 0,
             newCurrentAction,
@@ -422,12 +445,12 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           };
 
           this.timeRemaining = newTimeRemaining;
-          
+
           console.log(`⏰ [draftUpdate] Timer atualizado para ${this.timeRemaining}s`);
 
           // ✅ Atualizar estado do draft
           this.updateDraftState();
-          
+
           // ✅ CRÍTICO: Forçar detecção de mudanças SEMPRE
           this.cdr.markForCheck();
           this.cdr.detectChanges();
@@ -948,7 +971,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
           // Atualizar estado da interface para mostrar modal de confirmação
           this.isMyTurn = false;
-          this.showanyModal = false;
+          this.showChampionModal = false;
           this.showConfirmationModal = true;
           this.cdr.detectChanges();
           return;
@@ -1019,12 +1042,12 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     if (this.isEditingMode) {
       logDraft('🔄 [updateInterfaceState] Modo de edição ativo - mantendo modal de campeão aberto');
       saveLogToRoot(`🎯 [updateInterfaceState] Modo de edição ativo - preservando estado do modal`);
-      saveLogToRoot(`🔍 [updateInterfaceState] Estado preservado: showanyModal=${this.showanyModal}, showConfirmationModal=${this.showConfirmationModal}`);
+      saveLogToRoot(`🔍 [updateInterfaceState] Estado preservado: showChampionModal=${this.showChampionModal}, showConfirmationModal=${this.showConfirmationModal}`);
 
       // ✅ NOVO: Garantir que o modal de campeão está aberto durante edição
-      if (!this.showanyModal) {
+      if (!this.showChampionModal) {
         saveLogToRoot(`⚠️ [updateInterfaceState] CORREÇÃO: Modal de campeão estava fechado durante edição - reabrindo`);
-        this.showanyModal = true;
+        this.showChampionModal = true;
       }
 
       // ✅ NOVO: Garantir que o modal de confirmação está fechado durante edição
@@ -1033,7 +1056,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         this.showConfirmationModal = false;
       }
 
-      saveLogToRoot(`🎯 [updateInterfaceState] Estado final modo edição: showanyModal=${this.showanyModal}, showConfirmationModal=${this.showConfirmationModal}`);
+      saveLogToRoot(`🎯 [updateInterfaceState] Estado final modo edição: showChampionModal=${this.showChampionModal}, showConfirmationModal=${this.showConfirmationModal}`);
       this.cdr.detectChanges();
       return;
     }
@@ -1045,44 +1068,56 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     if (isDraftCompleted) {
       logDraft('🎯 [updateInterfaceState] Draft completado - mostrando modal de confirmação');
       saveLogToRoot(`✅ [updateInterfaceState] Draft completado - mostrando modal de confirmação`);
-      this.showanyModal = false;
+      this.showChampionModal = false;
       this.showConfirmationModal = true;
       this.cdr.detectChanges();
       return;
     }
 
     // ✅ MELHORADO: Verificar se deve mostrar o modal de campeões
-    const shouldShowModal = this.isMyTurn &&
-      (this.currentPlayerTurn?.action === 'pick' || this.currentPlayerTurn?.action === 'ban') &&
-      this.session &&
-      this.session.currentAction < (this.session.phases?.length || 0);
+    const actionIsPick = this.currentPlayerTurn?.action === 'pick';
+    const actionIsBan = this.currentPlayerTurn?.action === 'ban';
+    const actionIsValid = actionIsPick || actionIsBan;
+    const hasSession = !!this.session;
+    const isBeforeEnd = this.session && this.session.currentAction < (this.session.phases?.length || 0);
 
-    // ✅ DEBUG CRÍTICO: Logs detalhados
-    console.log('🔍 [updateInterfaceState] DEBUG Modal:', {
-      isMyTurn: this.isMyTurn,
-      currentPlayerTurnAction: this.currentPlayerTurn?.action,
-      hasSession: !!this.session,
-      currentAction: this.session?.currentAction,
-      phasesLength: this.session?.phases?.length || 0,
-      shouldShowModal: shouldShowModal
+    const shouldShowModal = this.isMyTurn && actionIsValid && hasSession && isBeforeEnd;
+
+    // ✅ DEBUG CRÍTICO: Logs SUPER detalhados
+    console.log('🔍🔍🔍 [updateInterfaceState] DEBUG COMPLETO DO MODAL:', {
+      '1_isMyTurn': this.isMyTurn,
+      '2_currentPlayerTurn': this.currentPlayerTurn,
+      '3_action': this.currentPlayerTurn?.action,
+      '4_actionIsPick': actionIsPick,
+      '5_actionIsBan': actionIsBan,
+      '6_actionIsValid': actionIsValid,
+      '7_hasSession': hasSession,
+      '8_currentAction': this.session?.currentAction,
+      '9_phasesLength': this.session?.phases?.length || 0,
+      '10_isBeforeEnd': isBeforeEnd,
+      '11_shouldShowModal': shouldShowModal,
+      '12_currentPlayer_local': this.currentPlayer?.summonerName || this.currentPlayer?.displayName,
+      '13_currentPlayer_session': this.session?.currentPlayer
     });
+
+    saveLogToRoot(`🔍 [updateInterfaceState] MODAL DEBUG: isMyTurn=${this.isMyTurn}, action=${this.currentPlayerTurn?.action}, shouldShowModal=${shouldShowModal}`);
 
     if (shouldShowModal) {
       console.log('✅ [updateInterfaceState] ABRINDO MODAL DE CAMPEÕES!');
       logDraft('🔄 [updateInterfaceState] É minha vez de pick ou ban - mostrando modal');
       saveLogToRoot(`✅ [updateInterfaceState] Mostrando modal de campeões para ação: ${this.currentPlayerTurn?.action}`);
-      this.showanyModal = true;
+      this.showChampionModal = true;
       this.showConfirmationModal = false;
     } else {
       console.log('❌ [updateInterfaceState] NÃO ABRIR MODAL');
       logDraft('🔄 [updateInterfaceState] Não é minha vez ou condições não atendidas - ocultando modal');
       saveLogToRoot(`❌ [updateInterfaceState] Ocultando modal. isMyTurn=${this.isMyTurn}, action=${this.currentPlayerTurn?.action}, currentAction=${this.session?.currentAction}, phasesLength=${this.session?.phases?.length || 0}`);
-      this.showanyModal = false;
+      this.showChampionModal = false;
     }
 
     // ✅ NOVO: Log detalhado do estado da interface
     const interfaceState = {
-      showanyModal: this.showanyModal,
+      showChampionModal: this.showChampionModal,
       showConfirmationModal: this.showConfirmationModal,
       isMyTurn: this.isMyTurn,
       currentAction: this.session?.currentAction,
@@ -1782,34 +1817,37 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     event.target.src = 'assets/images/champion-placeholder.svg';
   }
 
-  openanyModal(): void {
-    logDraft('🎯 [openanyModal] === ABRINDO MODAL DE CAMPEÕES ===');
-    saveLogToRoot(`🎯 [openanyModal] Tentando abrir modal de campeões`);
+  openChampionModal(): void {
+    console.log('🎯🎯🎯 [openChampionModal] BOTÃO CLICADO - Abrindo modal!');
+    logDraft('🎯 [openChampionModal] === ABRINDO MODAL DE CAMPEÕES ===');
+    saveLogToRoot(`🎯 [openChampionModal] Tentando abrir modal de campeões`);
 
     if (!this.session) {
-      logDraft('❌ [openanyModal] Session não existe - não abrindo modal');
-      saveLogToRoot(`❌ [openanyModal] Session não existe`);
+      console.log('❌ [openChampionModal] Session não existe');
+      logDraft('❌ [openChampionModal] Session não existe - não abrindo modal');
+      saveLogToRoot(`❌ [openChampionModal] Session não existe`);
       return;
     }
 
     // ✅ CORREÇÃO: Forçar atualização do estado antes de verificar se é a vez
     this.updateDraftState();
 
-    if (!this.isMyTurn) {
-      logDraft('❌ [openanyModal] Não é a vez do jogador, não abrindo modal');
-      saveLogToRoot(`❌ [openanyModal] Não é a vez do jogador. isMyTurn=${this.isMyTurn}`);
-      return;
-    }
+    // ✅ PERMITIR reabrir modal mesmo se não for mais a vez (caso tenha fechado sem querer)
+    console.log('✅ [openChampionModal] Abrindo modal - isMyTurn:', this.isMyTurn);
+
     if (this.session.phase === 'completed' || this.session.currentAction >= this.session.phases.length) {
-      logDraft('❌ [openanyModal] Sessão completada ou inválida - não abrindo modal');
-      saveLogToRoot(`❌ [openanyModal] Sessão completada ou inválida. phase=${this.session.phase}, currentAction=${this.session.currentAction}, phases.length=${this.session.phases.length}`);
+      console.log('❌ [openChampionModal] Draft completado');
+      logDraft('❌ [openChampionModal] Sessão completada ou inválida - não abrindo modal');
+      saveLogToRoot(`❌ [openChampionModal] Sessão completada ou inválida. phase=${this.session.phase}, currentAction=${this.session.currentAction}, phases.length=${this.session.phases.length}`);
       return;
     }
 
-    this.showanyModal = true;
+    this.showChampionModal = true;
     this.cdr.markForCheck();
-    logDraft('🎯 [openanyModal] === FIM DA ABERTURA DO MODAL ===');
-    saveLogToRoot(`✅ [openanyModal] Modal aberto com sucesso. showanyModal=${this.showanyModal}`);
+    this.cdr.detectChanges();
+    console.log('✅ [openChampionModal] Modal ABERTO! showChampionModal =', this.showChampionModal);
+    logDraft('🎯 [openChampionModal] === FIM DA ABERTURA DO MODAL ===');
+    saveLogToRoot(`✅ [openChampionModal] Modal aberto com sucesso. showChampionModal=${this.showChampionModal}`);
   }
 
   openConfirmationModal(): void {
@@ -1863,7 +1901,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       // Resetar modo de edição
       this.isEditingMode = false;
       this.currentEditingPlayer = null;
-      this.showanyModal = false;
+      this.showChampionModal = false;
       this.showConfirmationModal = true; // Voltar para modal de confirmação
       this.cdr.detectChanges();
       return;
@@ -1894,7 +1932,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     currentPhase.champion = champion;
     currentPhase.locked = true;
     currentPhase.timeRemaining = 0;
-    this.showanyModal = false;
+    this.showChampionModal = false;
 
     if (!this.botService.isBot(this.currentPlayer)) {
       this.isWaitingBackend = true;
@@ -2084,7 +2122,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     saveLogToRoot(`✏️ [onConfirmationModalEditPick] Editando pick: ${JSON.stringify(data)}`);
 
     // ✅ PRIMEIRO: Log do estado atual ANTES de qualquer alteração
-    saveLogToRoot(`🔍 [onConfirmationModalEditPick] ANTES: showanyModal=${this.showanyModal}, showConfirmationModal=${this.showConfirmationModal}, isEditingMode=${this.isEditingMode}`);
+    saveLogToRoot(`🔍 [onConfirmationModalEditPick] ANTES: showanyModal=${this.showChampionModal}, showConfirmationModal=${this.showConfirmationModal}, isEditingMode=${this.isEditingMode}`);
 
     // ✅ CRÍTICO: Definir modo de edição PRIMEIRO para bloquear updateInterfaceState
     this.isEditingMode = true;
@@ -2113,8 +2151,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
     // ✅ ALTERAR MODAIS: Fechar confirmação e abrir campeão
     this.showConfirmationModal = false;
-    this.showanyModal = true;
-    saveLogToRoot(`🔄 [onConfirmationModalEditPick] MODAIS ALTERADOS: showanyModal=${this.showanyModal}, showConfirmationModal=${this.showConfirmationModal}`);
+    this.showChampionModal = true;
+    saveLogToRoot(`🔄 [onConfirmationModalEditPick] MODAIS ALTERADOS: showanyModal=${this.showChampionModal}, showConfirmationModal=${this.showConfirmationModal}`);
 
     logDraft('✅ [onConfirmationModalEditPick] Modal de edição configurado');
     saveLogToRoot(`✅ [onConfirmationModalEditPick] Modo edição ativado para jogador: ${data.playerId}`);
@@ -2123,7 +2161,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     const sessionOk = this.session ? 'true' : 'false';
     const phaseOk = this.session?.phase !== 'completed' ? 'true' : 'false';
     const actionOk = this.session ? this.session.currentAction < this.session.phases.length : 'session_null';
-    saveLogToRoot(`🔍 [onConfirmationModalEditPick] CONDIÇÕES TEMPLATE: isVisible=${this.showanyModal}, session=${sessionOk}, phase!='completed'=${phaseOk}, currentAction<phases.length=${actionOk}`);
+    saveLogToRoot(`🔍 [onConfirmationModalEditPick] CONDIÇÕES TEMPLATE: isVisible=${this.showChampionModal}, session=${sessionOk}, phase!='completed'=${phaseOk}, currentAction<phases.length=${actionOk}`);
 
     // ✅ FORÇAR detecção de mudanças IMEDIATAMENTE
     this.cdr.detectChanges();
@@ -2131,18 +2169,18 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
     // ✅ VERIFICAÇÃO: Timeout para garantir que o estado não foi sobrescrito
     setTimeout(() => {
-      saveLogToRoot(`🕒 [onConfirmationModalEditPick] VERIFICAÇÃO (100ms): showanyModal=${this.showanyModal}, showConfirmationModal=${this.showConfirmationModal}, isEditingMode=${this.isEditingMode}`);
+      saveLogToRoot(`🕒 [onConfirmationModalEditPick] VERIFICAÇÃO (100ms): showanyModal=${this.showChampionModal}, showConfirmationModal=${this.showConfirmationModal}, isEditingMode=${this.isEditingMode}`);
 
       // ✅ DIAGNÓSTICO: Verificar condições do template APÓS timeout
       const sessionOk2 = this.session ? 'true' : 'false';
       const phaseOk2 = this.session?.phase !== 'completed' ? 'true' : 'false';
       const actionOk2 = this.session ? this.session.currentAction < this.session.phases.length : 'session_null';
-      saveLogToRoot(`🔍 [onConfirmationModalEditPick] CONDIÇÕES TEMPLATE (100ms): isVisible=${this.showanyModal}, session=${sessionOk2}, phase!='completed'=${phaseOk2}, currentAction<phases.length=${actionOk2}`);
+      saveLogToRoot(`🔍 [onConfirmationModalEditPick] CONDIÇÕES TEMPLATE (100ms): isVisible=${this.showChampionModal}, session=${sessionOk2}, phase!='completed'=${phaseOk2}, currentAction<phases.length=${actionOk2}`);
 
-      if (!this.showanyModal || this.showConfirmationModal || !this.isEditingMode) {
+      if (!this.showChampionModal || this.showConfirmationModal || !this.isEditingMode) {
         saveLogToRoot(`🚨 [onConfirmationModalEditPick] ESTADO INCORRETO - CORRIGINDO`);
         this.isEditingMode = true;
-        this.showanyModal = true;
+        this.showChampionModal = true;
         this.showConfirmationModal = false;
         this.cdr.detectChanges();
         saveLogToRoot(`🔧 [onConfirmationModalEditPick] Estado corrigido`);
@@ -2198,7 +2236,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       saveLogToRoot(`✅ [changePlayerPick] Pick alterado com sucesso: ${JSON.stringify(response)}`);
 
       // Fechar modal de campeão e reabrir modal de confirmação
-      this.showanyModal = false;
+      this.showChampionModal = false;
       this.showConfirmationModal = true;
       this.cdr.detectChanges();
 
@@ -2256,7 +2294,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       // ✅ FINALIZAR EDIÇÃO e abrir modal de confirmação
       this.isEditingMode = false;
       this.currentEditingPlayer = null;
-      this.showanyModal = false;
+      this.showChampionModal = false;
       this.showConfirmationModal = true; // ✅ REABRIR modal de confirmação
       this.cdr.detectChanges();
       saveLogToRoot(`✅ [updatePlayerPick] Pick atualizado e modal de confirmação reaberto`);
@@ -2275,7 +2313,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   // ✅ MÉTODOS DE TIMER E TIMEOUT
   updateTimerFromBackend(data: any): void {
     console.log('⏰ [updateTimerFromBackend] Chamado com:', data);
-    
+
     // ✅ CORREÇÃO: Backend é a ÚNICA fonte de verdade para o timer
     if (!data || typeof data.timeRemaining !== 'number') {
       console.warn('⚠️ [updateTimerFromBackend] Dados inválidos:', data);
@@ -2318,7 +2356,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
     if (isTimeoutForCurrentPlayer) {
       logDraft('⏰ [DraftPickBan] Timeout para o jogador atual, fechando modais');
-      this.showanyModal = false;
+      this.showChampionModal = false;
       this.showConfirmationModal = false;
       this.isWaitingBackend = false;
     }
