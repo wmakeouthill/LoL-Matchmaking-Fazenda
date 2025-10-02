@@ -1,5 +1,14 @@
-<div class="champion-modal-overlay" *ngIf="isVisible && session && (isEditingMode || (session.phase !== 'completed' && session.currentAction < session.phases.length))" (click)="closeModal()" (keydown.escape)="closeModal()">
-  <div class="champion-modal" (click)="$event.stopPropagation()" (keydown)="$event.stopPropagation()">
+<div
+  class="champion-modal-overlay"
+  *ngIf="isVisible && session && (isEditingMode || (session.phase !== 'completed' && session.currentAction < session.phases.length))"
+  (click)="closeModal()"
+  (keydown.escape)="closeModal()"
+>
+  <div
+    class="champion-modal"
+    (click)="$event.stopPropagation()"
+    (keydown)="$event.stopPropagation()"
+  >
     <!-- Header do Modal -->
     <div class="modal-header" [style.border-color]="getCurrentTeamColor()">
       <div class="modal-title">
@@ -7,8 +16,11 @@
         <div class="modal-title-text">
           <h2>{{ getCurrentActionText() }}</h2>
           <p class="modal-subtitle">
-            {{ getCurrentPlayerNameForModal() }} - {{ getCurrentPlayerTeamForModal() }}
-            <span class="you-indicator" *ngIf="isCurrentPlayerForModal()">(Você)</span>
+            {{ getCurrentPlayerNameForModal() }} - {{
+            getCurrentPlayerTeamForModal() }}
+            <span class="you-indicator" *ngIf="isCurrentPlayerForModal()"
+              >(Você)</span
+            >
           </p>
         </div>
       </div>
@@ -20,9 +32,7 @@
         </div>
       </div>
 
-      <button class="modal-close-btn" (click)="closeModal()">
-        ✕
-      </button>
+      <button class="modal-close-btn" (click)="closeModal()">✕</button>
     </div>
 
     <!-- Conteúdo do Modal -->
@@ -33,22 +43,46 @@
         <div class="modal-role-filter">
           <div class="filter-label">Filtrar por Lane:</div>
           <div class="role-buttons">
-            <button class="role-btn" [class.active]="selectedRole === 'all'" (click)="selectRoleInModal('all')">
+            <button
+              class="role-btn"
+              [class.active]="selectedRole === 'all'"
+              (click)="selectRoleInModal('all')"
+            >
               Todos ({{ champions.length }})
             </button>
-            <button class="role-btn" [class.active]="selectedRole === 'top'" (click)="selectRoleInModal('top')">
+            <button
+              class="role-btn"
+              [class.active]="selectedRole === 'top'"
+              (click)="selectRoleInModal('top')"
+            >
               🛡️ Top ({{ championsByRole.top.length || 0 }})
             </button>
-            <button class="role-btn" [class.active]="selectedRole === 'jungle'" (click)="selectRoleInModal('jungle')">
+            <button
+              class="role-btn"
+              [class.active]="selectedRole === 'jungle'"
+              (click)="selectRoleInModal('jungle')"
+            >
               🌲 Jungle ({{ championsByRole.jungle.length || 0 }})
             </button>
-            <button class="role-btn" [class.active]="selectedRole === 'mid'" (click)="selectRoleInModal('mid')">
+            <button
+              class="role-btn"
+              [class.active]="selectedRole === 'mid'"
+              (click)="selectRoleInModal('mid')"
+            >
               ⚡ Mid ({{ championsByRole.mid.length || 0 }})
             </button>
-            <button class="role-btn" [class.active]="selectedRole === 'adc'" (click)="selectRoleInModal('adc')">
+            <button
+              class="role-btn"
+              [class.active]="selectedRole === 'adc'"
+              (click)="selectRoleInModal('adc')"
+            >
               🏹 ADC ({{ championsByRole.adc.length || 0 }})
             </button>
-            <button class="role-btn" [class.active]="selectedRole === 'support'" (click)="selectRoleInModal('support')">
+            <button
+              class="role-btn"
+              [class.active]="selectedRole === 'support'"
+              (click)="selectRoleInModal('support')"
+            >
               💎 Support ({{ championsByRole.support.length || 0 }})
             </button>
           </div>
@@ -57,17 +91,27 @@
         <!-- Search -->
         <div class="modal-search-container">
           <div class="search-wrapper">
-            <input id="modal-champion-search" type="text" [(ngModel)]="searchFilter"
-              placeholder="Buscar campeão pelo nome..." class="modal-champion-search" autocomplete="off">
+            <input
+              id="modal-champion-search"
+              type="text"
+              [(ngModel)]="searchFilter"
+              placeholder="Buscar campeão pelo nome..."
+              class="modal-champion-search"
+              autocomplete="off"
+            />
             <span class="search-icon">🔍</span>
           </div>
-          <span class="search-results-count">{{ getModalFilteredChampions().length }} campeões encontrados</span>
+          <span class="search-results-count"
+            >{{ getModalFilteredChampions().length }} campeões encontrados</span
+          >
         </div>
       </div>
 
       <!-- Grid de Campeões -->
       <div class="modal-champions-grid">
-        <div class="modal-champion-card" *ngFor="let champion of getModalFilteredChampions()"
+        <div
+          class="modal-champion-card"
+          *ngFor="let champion of getModalFilteredChampions()"
           [class.selected]="selectedChampion?.id === champion.id"
           [class.banned]="isChampionBanned(champion)"
           [class.picked]="isChampionPicked(champion)"
@@ -77,9 +121,15 @@
           (keydown.space)="onChampionCardClick(champion)"
           [attr.tabindex]="isChampionBanned(champion) || isChampionPicked(champion) ? -1 : 0"
           [style.cursor]="isChampionBanned(champion) || isChampionPicked(champion) ? 'not-allowed' : 'pointer'"
-          [style.opacity]="isChampionBanned(champion) || isChampionPicked(champion) ? '0.6' : '1'">
-          <img [src]="champion.image" [alt]="champion.name" class="modal-champion-portrait"
-            (error)="onImageError($event, champion)" loading="lazy">
+          [style.opacity]="isChampionBanned(champion) || isChampionPicked(champion) ? '0.6' : '1'"
+        >
+          <img
+            [src]="champion.image"
+            [alt]="champion.name"
+            class="modal-champion-portrait"
+            (error)="onImageError($event, champion)"
+            loading="lazy"
+          />
           <span class="modal-champion-label">{{ champion.name }}</span>
           <div class="banned-overlay" *ngIf="isChampionBanned(champion)">
             <span class="banned-text">BANIDO</span>
@@ -90,7 +140,10 @@
         </div>
 
         <!-- Estado vazio -->
-        <div *ngIf="getModalFilteredChampions().length === 0" class="modal-no-champions">
+        <div
+          *ngIf="getModalFilteredChampions().length === 0"
+          class="modal-no-champions"
+        >
           <div class="no-champions-icon">😔</div>
           <div class="no-champions-text">Nenhum campeão encontrado</div>
           <div class="no-champions-hint">Tente ajustar os filtros ou busca</div>
@@ -102,24 +155,31 @@
     <div class="modal-footer">
       <div class="modal-selection-preview" *ngIf="selectedChampion">
         <div class="preview-content">
-          <img [src]="selectedChampion.image" [alt]="selectedChampion.name" class="preview-img">
+          <img
+            [src]="selectedChampion.image"
+            [alt]="selectedChampion.name"
+            class="preview-img"
+          />
           <div class="preview-info">
             <span class="preview-name">{{ selectedChampion.name }}</span>
-            <span class="preview-action">
-              {{ getCurrentActionText() }}
-            </span>
+            <span class="preview-action"> {{ getCurrentActionText() }} </span>
           </div>
         </div>
       </div>
 
       <div class="modal-actions">
-        <button class="btn btn-secondary cancel-btn" (click)="cancelModalSelection()">
+        <button
+          class="btn btn-secondary cancel-btn"
+          (click)="cancelModalSelection()"
+        >
           ❌ Cancelar
         </button>
-        <button class="btn btn-primary confirm-btn"
+        <button
+          class="btn btn-primary confirm-btn"
           [class.disabled]="!selectedChampion || isChampionBanned(selectedChampion) || isChampionPicked(selectedChampion)"
           [disabled]="!selectedChampion || isChampionBanned(selectedChampion) || isChampionPicked(selectedChampion)"
-          (click)="confirmModalSelection()">
+          (click)="confirmModalSelection()"
+        >
           {{ getCurrentActionIcon() }} Confirmar {{ getCurrentActionText() }}
         </button>
       </div>
