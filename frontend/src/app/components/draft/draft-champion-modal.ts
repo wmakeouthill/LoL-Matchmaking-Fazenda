@@ -92,11 +92,16 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
 
   private async loadanys() {
     try {
+      console.log('🔄 [DraftanyModal] Carregando campeões...');
       this.championService.preloadChampions().subscribe({
         next: (loaded: boolean) => {
+          console.log('✅ [DraftanyModal] ChampionService preloaded:', loaded);
           if (loaded) {
-            this.champions = []; // TODO: Implementar getAllChampions se necessário
+            // ✅ CORREÇÃO CRÍTICA: Buscar TODOS os campeões do ChampionService
+            this.champions = this.championService.getAllChampions();
+            console.log(`✅ [DraftanyModal] ${this.champions.length} campeões carregados!`);
             this.organizeChampionsByRole();
+            this.changeDetectorRef.detectChanges(); // ✅ Forçar atualização da interface
           }
         },
         error: (error: any) => {

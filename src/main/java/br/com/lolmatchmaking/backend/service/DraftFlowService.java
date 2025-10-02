@@ -169,8 +169,9 @@ public class DraftFlowService {
 
         // ✅ Persistir o estado inicial no banco
         persist(matchId, st);
-        
-        // ✅ CORREÇÃO: NÃO fazer broadcast aqui, o MatchFoundService já envia draft_starting
+
+        // ✅ CORREÇÃO: NÃO fazer broadcast aqui, o MatchFoundService já envia
+        // draft_starting
         // broadcastUpdate(st, false);
 
         log.info("📡 [DraftFlow] startDraft - Estado criado e persistido para matchId={}", matchId);
@@ -181,12 +182,34 @@ public class DraftFlowService {
     private List<DraftAction> buildDefaultActionSequence() {
         List<DraftAction> list = new ArrayList<>();
         int i = 0;
-        int[] banTeams = { 1, 2, 1, 2, 1, 2, 1, 2, 1, 2 };
-        for (int t : banTeams)
+
+        // ✅ CORREÇÃO: Seguir sequência EXATA do draft ranqueado do LoL
+
+        // Ações 0-5: Primeira fase de bans (6 bans - 3 por time)
+        // Ordem: Blue Ban 1, Red Ban 1, Blue Ban 2, Red Ban 2, Blue Ban 3, Red Ban 3
+        int[] firstBanTeams = { 1, 2, 1, 2, 1, 2 };
+        for (int t : firstBanTeams)
             list.add(new DraftAction(i++, "ban", t, null, null));
-        int[] pickTeams = { 1, 2, 2, 1, 1, 2, 2, 1, 1, 2 };
-        for (int t : pickTeams)
+
+        // Ações 6-11: Primeira fase de picks (6 picks - 3 por time)
+        // Ordem: Blue Pick 1, Red Pick 1, Red Pick 2, Blue Pick 2, Blue Pick 3, Red
+        // Pick 3
+        int[] firstPickTeams = { 1, 2, 2, 1, 1, 2 };
+        for (int t : firstPickTeams)
             list.add(new DraftAction(i++, "pick", t, null, null));
+
+        // Ações 12-15: Segunda fase de bans (4 bans - 2 por time)
+        // Ordem: Red Ban 4, Blue Ban 4, Red Ban 5, Blue Ban 5
+        int[] secondBanTeams = { 2, 1, 2, 1 };
+        for (int t : secondBanTeams)
+            list.add(new DraftAction(i++, "ban", t, null, null));
+
+        // Ações 16-19: Segunda fase de picks (4 picks - 2 por time)
+        // Ordem: Red Pick 4, Blue Pick 4, Blue Pick 5, Red Pick 5
+        int[] secondPickTeams = { 2, 1, 1, 2 };
+        for (int t : secondPickTeams)
+            list.add(new DraftAction(i++, "pick", t, null, null));
+
         return list;
     }
 
@@ -373,6 +396,7 @@ public class DraftFlowService {
     private void broadcastUpdate(DraftState st, boolean confirmationOnly) {
         try {
             long remainingMs = calcRemainingMs(st);
+            long elapsed = System.currentTimeMillis() - st.getLastActionStartMs();
 
             // ✅ Calcular jogador atual
             String currentPlayer = null;
@@ -391,9 +415,9 @@ public class DraftFlowService {
             updateData.put(KEY_CONFIRMATIONS, st.getConfirmations());
             updateData.put("currentPlayer", currentPlayer); // ✅ Nome do jogador da vez
 
-            log.debug(
-                    "📡 [DraftFlow] Broadcasting update - matchId={}, currentIndex={}, currentPlayer={}, remainingMs={}",
-                    st.getMatchId(), currentIdx, currentPlayer, remainingMs);
+            log.info(
+                    "📡 [DraftFlow] Broadcasting update - matchId={}, currentIndex={}, currentPlayer={}, elapsed={}ms, remainingMs={}, timeout={}ms",
+                    st.getMatchId(), currentIdx, currentPlayer, elapsed, remainingMs, getActionTimeoutMs());
 
             // ✅ Buscar dados completos dos times do banco
             customMatchRepository.findById(st.getMatchId()).ifPresent(cm -> {
@@ -495,6 +519,8 @@ public class DraftFlowService {
             updateData.put(KEY_REMAINING_MS, remainingMs);
             updateData.put(KEY_ACTION_TIMEOUT_MS, getActionTimeoutMs());
             updateData.put("confirmationOnly", confirmationOnly);
+            // ✅ CORREÇÃO CRÍTICA: Frontend espera timeRemaining em SEGUNDOS
+            updateData.put("timeRemaining", (int) Math.ceil(remainingMs / 1000.0));
 
             String payload = mapper.writeValueAsString(updateData);
 
@@ -772,10 +798,11 @@ public class DraftFlowService {
         List<String> team1List = new ArrayList<>(st.getTeam1Players());
         List<String> team2List = new ArrayList<>(st.getTeam2Players());
 
-        // Mapear ação para jogador específico seguindo a sequência do draft ranqueado
+        // ✅ CORREÇÃO: Mapear ação para jogador seguindo a NOVA sequência corrigida
+        // A sequência agora é: 6 bans, 6 picks, 4 bans, 4 picks
         int playerIndex;
         switch (actionIndex) {
-            // Primeira fase de bans (ações 0-5)
+            // Primeira fase de bans (ações 0-5): 1-2-1-2-1-2
             case 0:
                 playerIndex = 0;
                 break; // team1[0] - Top
@@ -795,7 +822,7 @@ public class DraftFlowService {
                 playerIndex = 2;
                 break; // team2[2] - Mid
 
-            // Primeira fase de picks (ações 6-11)
+            // Primeira fase de picks (ações 6-11): 1-2-2-1-1-2
             case 6:
                 playerIndex = 0;
                 break; // team1[0] - Top (First Pick)
@@ -815,7 +842,7 @@ public class DraftFlowService {
                 playerIndex = 2;
                 break; // team2[2] - Mid
 
-            // Segunda fase de bans (ações 12-15)
+            // Segunda fase de bans (ações 12-15): 2-1-2-1
             case 12:
                 playerIndex = 3;
                 break; // team2[3] - ADC
@@ -829,7 +856,7 @@ public class DraftFlowService {
                 playerIndex = 4;
                 break; // team1[4] - Support
 
-            // Segunda fase de picks (ações 16-19)
+            // Segunda fase de picks (ações 16-19): 2-1-1-2
             case 16:
                 playerIndex = 3;
                 break; // team2[3] - ADC
@@ -851,7 +878,10 @@ public class DraftFlowService {
         // Retornar jogador do time correto
         List<String> currentTeamPlayers = team == 1 ? team1List : team2List;
         if (playerIndex < currentTeamPlayers.size()) {
-            return currentTeamPlayers.get(playerIndex);
+            String selectedPlayer = currentTeamPlayers.get(playerIndex);
+            log.debug("✅ [DraftFlow] Ação {}: Time {} → Jogador[{}] = {}",
+                    actionIndex, team, playerIndex, selectedPlayer);
+            return selectedPlayer;
         }
 
         log.warn("⚠️ [DraftFlow] PlayerIndex {} fora do range para time {} (size: {})",
