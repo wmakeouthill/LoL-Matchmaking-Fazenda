@@ -1,12 +1,14 @@
 package br.com.lolmatchmaking.backend.controller;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import br.com.lolmatchmaking.backend.service.DraftService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
+@Slf4j
 @RestController
 @RequestMapping("/api")
 @RequiredArgsConstructor
@@ -73,8 +75,13 @@ public class DraftController {
 
     @PostMapping("/match/draft-action")
     public ResponseEntity<Map<String, Object>> processDraftAction(@RequestBody DraftActionRequest req) {
+        log.info(
+                "🎯 [DraftController] POST /match/draft-action - matchId={}, actionIndex={}, championId={}, playerId={}",
+                req.matchId(), req.actionIndex(), req.championId(), req.playerId());
+
         if (req.matchId() == null || req.actionIndex() == null || req.championId() == null
                 || req.playerId() == null) {
+            log.warn("⚠️ [DraftController] Requisição inválida: {}", req);
             return ResponseEntity.badRequest().body(Map.of(
                     KEY_SUCCESS, false,
                     KEY_ERROR, "matchId, actionIndex, championId e playerId são obrigatórios"));

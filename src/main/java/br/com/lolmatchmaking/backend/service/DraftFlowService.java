@@ -838,77 +838,81 @@ public class DraftFlowService {
         List<String> team1List = new ArrayList<>(st.getTeam1Players());
         List<String> team2List = new ArrayList<>(st.getTeam2Players());
 
-        // ✅ CORREÇÃO: Mapear ação para jogador seguindo a NOVA sequência corrigida
-        // A sequência agora é: 6 bans, 6 picks, 4 bans, 4 picks
+        // ✅ ORDEM CORRETA DO DRAFT PROFISSIONAL
+        // Fase 1 - Bans: Top Azul → Top Vermelho → JG Azul → JG Vermelho → Mid Azul →
+        // Mid Vermelho
+        // Fase 2 - Picks: Azul (1) → Vermelho (2) → Azul (2) → Vermelho (1)
+        // Fase 3 - Bans: ADC Azul → ADC Vermelho → Suporte Azul → Suporte Vermelho
+        // Fase 4 - Picks: Vermelho (2) → Azul (2) → Vermelho Last Pick
         int playerIndex;
         switch (actionIndex) {
-            // Primeira fase de bans (ações 0-5): 1-2-1-2-1-2
+            // FASE 1 - BANS (ações 0-5): Top → Jungle → Mid de ambos os times
             case 0:
                 playerIndex = 0;
-                break; // team1[0] - Top
+                break; // team1[0] - Top Azul
             case 1:
                 playerIndex = 0;
-                break; // team2[0] - Top
+                break; // team2[0] - Top Vermelho
             case 2:
                 playerIndex = 1;
-                break; // team1[1] - Jungle
+                break; // team1[1] - Jungle Azul
             case 3:
                 playerIndex = 1;
-                break; // team2[1] - Jungle
+                break; // team2[1] - Jungle Vermelho
             case 4:
                 playerIndex = 2;
-                break; // team1[2] - Mid
+                break; // team1[2] - Mid Azul
             case 5:
                 playerIndex = 2;
-                break; // team2[2] - Mid
+                break; // team2[2] - Mid Vermelho
 
-            // Primeira fase de picks (ações 6-11): 1-2-2-1-1-2
+            // FASE 2 - PICKS (ações 6-11): Azul 1 → Vermelho 2 → Azul 2 → Vermelho 1
             case 6:
                 playerIndex = 0;
-                break; // team1[0] - Top (First Pick)
+                break; // team1[0] - Top Azul (First Pick)
             case 7:
                 playerIndex = 0;
-                break; // team2[0] - Top
+                break; // team2[0] - Top Vermelho
             case 8:
                 playerIndex = 1;
-                break; // team2[1] - Jungle
+                break; // team2[1] - Jungle Vermelho
             case 9:
                 playerIndex = 1;
-                break; // team1[1] - Jungle
+                break; // team1[1] - Jungle Azul
             case 10:
                 playerIndex = 2;
-                break; // team1[2] - Mid
+                break; // team1[2] - Mid Azul
             case 11:
                 playerIndex = 2;
-                break; // team2[2] - Mid
+                break; // team2[2] - Mid Vermelho
 
-            // Segunda fase de bans (ações 12-15): 2-1-2-1
+            // FASE 3 - BANS (ações 12-15): ADC e Suporte de ambos os times
             case 12:
                 playerIndex = 3;
-                break; // team2[3] - ADC
+                break; // team1[3] - ADC Azul
             case 13:
                 playerIndex = 3;
-                break; // team1[3] - ADC
+                break; // team2[3] - ADC Vermelho
             case 14:
                 playerIndex = 4;
-                break; // team2[4] - Support
+                break; // team1[4] - Suporte Azul
             case 15:
                 playerIndex = 4;
-                break; // team1[4] - Support
+                break; // team2[4] - Suporte Vermelho
 
-            // Segunda fase de picks (ações 16-19): 2-1-1-2
+            // FASE 4 - PICKS (ações 16-19): Vermelho 2 → Azul 2 → Vermelho Last Pick
             case 16:
                 playerIndex = 3;
-                break; // team2[3] - ADC
+                break; // team2[3] - ADC Vermelho
             case 17:
-                playerIndex = 3;
-                break; // team1[3] - ADC
-            case 18:
                 playerIndex = 4;
-                break; // team1[4] - Support
+                break; // team2[4] - Suporte Vermelho
+            case 18:
+                playerIndex = 3;
+                break; // team1[3] - ADC Azul
             case 19:
                 playerIndex = 4;
-                break; // team2[4] - Support (Last Pick)
+                break; // team1[4] - Suporte Azul (Last Pick)
 
             default:
                 log.warn("⚠️ [DraftFlow] Ação {} fora do range esperado (0-19)", actionIndex);
