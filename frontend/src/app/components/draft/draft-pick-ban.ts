@@ -444,9 +444,16 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
             currentPlayer: newCurrentPlayer
           };
 
-          this.timeRemaining = newTimeRemaining;
+          console.log(`⏰ [draftUpdate] Timer recebido: ${newTimeRemaining}s`);
 
-          console.log(`⏰ [draftUpdate] Timer atualizado para ${this.timeRemaining}s`);
+          // ✅ CORREÇÃO: Atualizar timer usando método dedicado (evita duplicação)
+          if (updateData.timeRemaining !== undefined) {
+            this.updateTimerFromBackend({ timeRemaining: newTimeRemaining });
+          } else {
+            // Fallback se timeRemaining não vier no updateData
+            this.timeRemaining = newTimeRemaining;
+            this.cdr.markForCheck();
+          }
 
           // ✅ Atualizar estado do draft
           this.updateDraftState();
@@ -1984,7 +1991,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         const requestData = {
           matchId: effectiveMatchId,
           playerId: playerIdentifier,
-          championId: champion.key || champion.id,  // ✅ CORREÇÃO: usar key (ID numérico) em vez de id (nome)
+          championId: champion.id,  // ✅ Usando nome do campeão (ex: "Ahri")
           action: currentPhase.action,
           actionIndex: this.session.currentAction
         };
@@ -2024,7 +2031,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           const fallbackRequestData = {
             matchId: effectiveMatchId,
             playerId: currentPhase.playerName || currentPhase.playerId,
-            championId: champion.key || champion.id,  // ✅ CORREÇÃO: usar key (ID numérico) em vez de id (nome)
+            championId: champion.id,  // ✅ Usando nome do campeão (ex: "Ahri")
             action: currentPhase.action,
             actionIndex: this.session.currentAction
           };

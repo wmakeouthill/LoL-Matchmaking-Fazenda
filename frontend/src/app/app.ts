@@ -427,7 +427,7 @@ export class App implements OnInit, OnDestroy {
         // ✅ Atualizar draftData com as informações recebidas
         if (this.inDraftPhase && this.draftData) {
           const updateData = message.data || message;
-          
+
           console.log('📋 [App] updateData extraído:', {
             hasPhases: !!updateData.phases,
             phasesLength: updateData.phases?.length || 0,
@@ -451,17 +451,17 @@ export class App implements OnInit, OnDestroy {
 
           const newCurrentPlayer = updateData.currentPlayer !== undefined ? updateData.currentPlayer : this.draftData.currentPlayer;
 
-          // ✅ NOVO: Processar timer (backend envia em millisegundos)
-          const newTimeRemaining = updateData.remainingMs !== undefined
-            ? Math.ceil(updateData.remainingMs / 1000) // ✅ Converter ms para segundos
-            : (updateData.timeRemainingMs !== undefined
-              ? Math.ceil(updateData.timeRemainingMs / 1000)
-              : 30);
-          
-          console.log('📋 [App] Timer calculado:', {
+          // ✅ CORREÇÃO CRÍTICA: Backend JÁ envia timeRemaining em SEGUNDOS!
+          const newTimeRemaining = updateData.timeRemaining !== undefined
+            ? updateData.timeRemaining // ✅ Já vem em segundos do backend
+            : (updateData.remainingMs !== undefined
+              ? Math.ceil(updateData.remainingMs / 1000) // Fallback: converter ms para segundos
+              : 30); // Fallback final
+
+          console.log('📋 [App] Timer extraído do backend:', {
+            timeRemaining: updateData.timeRemaining,
             remainingMs: updateData.remainingMs,
-            timeRemainingMs: updateData.timeRemainingMs,
-            calculatedSeconds: newTimeRemaining
+            finalSeconds: newTimeRemaining
           });
 
           // ✅ CRÍTICO: Criar NOVO objeto SEMPRE (para OnPush detectar)
