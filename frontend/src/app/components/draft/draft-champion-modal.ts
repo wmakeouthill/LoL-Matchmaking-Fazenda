@@ -2,6 +2,8 @@ import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, OnChanges, S
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ChampionService } from '../../services/champion.service';
+import { Subject } from 'rxjs';
+import { debounceTime, distinctUntilChanged } from 'rxjs/operators';
 
 interface PickBanPhase {
   team: 'blue' | 'red';
@@ -53,6 +55,10 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
   // ✅ REMOVIDO: Timer local - não precisamos mais
   // modalTimer: any = null;
 
+  // ✅ CORREÇÃO #4: Subject para debounce na pesquisa
+  private readonly searchSubject = new Subject<string>();
+  filteredChampions: any[] = [];
+
   // PROPRIEDADES PARA CACHE
   private _cachedBannedanys: any[] | null = null;
   private _cachedBlueTeamPicks: any[] | null = null;
@@ -66,10 +72,24 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
 
   ngOnInit() {
     this.loadanys();
+
+    // ✅ CORREÇÃO #4: Setup do debounce para pesquisa em tempo real
+    this.searchSubject
+      .pipe(
+        debounceTime(500),
+        distinctUntilChanged()
+      )
+      .subscribe((searchTerm) => {
+        this.searchFilter = searchTerm;
+        this.changeDetectorRef.markForCheck();
+      });
+
+    // Inicializa com todos os campeões
+    this.filteredChampions = [...this.champions];
   }
 
   ngOnDestroy() {
-    // Cleanup resources if needed
+    this.searchSubject.complete();
   }
 
   ngOnChanges(changes: SimpleChanges) {
@@ -88,6 +108,24 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
     if (changes['currentPlayer'] && changes['currentPlayer'].currentValue !== changes['currentPlayer'].previousValue) {
       this.invalidateCache();
     }
+
+    // ✅ CORREÇÃO CRÍTICA: Detectar mudanças no timer e forçar atualização
+    if (changes['timeRemaining']) {
+      console.log('⏰ [DraftanyModal] Timer atualizado:', changes['timeRemaining'].currentValue);
+      console.log('⏰ [DraftanyModal] Timer anterior:', changes['timeRemaining'].previousValue);
+      this.changeDetectorRef.markForCheck();
+
+      // ✅ CORREÇÃO: Forçar atualização adicional para garantir que o timer seja exibido
+      setTimeout(() => {
+        this.changeDetectorRef.detectChanges();
+        console.log('⏰ [DraftanyModal] Timer após timeout no ngOnChanges:', this.timeRemaining);
+      }, 0);
+
+      // ✅ CORREÇÃO: Verificar status do timer após mudança
+      setTimeout(() => {
+        this.checkTimerStatus();
+      }, 50);
+    }
   }
 
   private async loadanys() {
@@ -100,8 +138,14 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
             // ✅ CORREÇÃO CRÍTICA: Buscar TODOS os campeões do ChampionService
             this.champions = this.championService.getAllChampions();
             console.log(`✅ [DraftanyModal] ${this.champions.length} campeões carregados!`);
+            console.log('🔍 [DraftanyModal] Primeiros 5 campeões:', this.champions.slice(0, 5).map(c => ({ id: c.id, name: c.name })));
             this.organizeChampionsByRole();
             this.changeDetectorRef.detectChanges(); // ✅ Forçar atualização da interface
+
+            // ✅ CORREÇÃO: Verificar status do timer após carregar campeões
+            setTimeout(() => {
+              this.checkTimerStatus();
+            }, 100);
           }
         },
         error: (error: any) => {
@@ -114,26 +158,27 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   private organizeChampionsByRole() {
-    // TODO: Implementar getChampionsByRole se necessário
-    this.championsByRole = {}; // Temporário - implementar quando necessário
-    /*
-    this.championService.getChampionsByRole().subscribe({
-      next: (championsByRole) => {
-        this.championsByRole = championsByRole;
-      },
-      error: (error) => {
-        console.error('Erro ao organizar campeões por role:', error);
-        // Fallback manual se necessário
-        this.championsByRole = {
-          top: this.champions.filter(c => c.tags?.includes('Fighter') || c.tags?.includes('Tank')),
-          jungle: this.champions.filter(c => c.tags?.includes('Fighter') || c.tags?.includes('Assassin')),
-          mid: this.champions.filter(c => c.tags?.includes('Mage') || c.tags?.includes('Assassin')),
-          adc: this.champions.filter(c => c.tags?.includes('Marksman')),
-          support: this.champions.filter(c => c.tags?.includes('Support'))
-            };
-          }
-        });
-        */
+    // ✅ CORREÇÃO: Implementar organização por role manualmente
+    console.log('🔄 [DraftanyModal] Organizando campeões por role...');
+
+    this.championsByRole = {
+      top: this.champions.filter(c => c.tags?.includes('Fighter') || c.tags?.includes('Tank')),
+      jungle: this.champions.filter(c => c.tags?.includes('Fighter') || c.tags?.includes('Assassin')),
+      mid: this.champions.filter(c => c.tags?.includes('Mage') || c.tags?.includes('Assassin')),
+      adc: this.champions.filter(c => c.tags?.includes('Marksman')),
+      support: this.champions.filter(c => c.tags?.includes('Support'))
+    };
+
+    console.log('✅ [DraftanyModal] Campeões organizados por role:', {
+      top: this.championsByRole.top.length,
+      jungle: this.championsByRole.jungle.length,
+      mid: this.championsByRole.mid.length,
+      adc: this.championsByRole.adc.length,
+      support: this.championsByRole.support.length
+    });
+
+    // ✅ CORREÇÃO: Forçar atualização após organizar por role
+    this.changeDetectorRef.markForCheck();
   }
 
   // MÉTODOS PARA COMPARAÇÃO DE JOGADORES
@@ -172,6 +217,7 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   // MÉTODOS PARA VERIFICAR ESTADO DOS CAMPEÕES
+  // ✅ CORREÇÃO #3: Método corrigido para usar estrutura correta do backend
   getBannedChampions(): any[] {
     if (this.isCacheValid() && this._cachedBannedanys) {
       return this._cachedBannedanys;
@@ -181,109 +227,36 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
       return [];
     }
 
-    // ✅ LOG SUPER DETALHADO: Verificar estrutura real da sessão
-    console.log('🔥 [getBannedanys] SESSION STRUCTURE ANALYSIS:', {
-      sessionKeys: Object.keys(this.session),
-      hasActions: !!this.session.actions,
-      actionsType: Array.isArray(this.session.actions),
-      actionsLength: this.session.actions?.length || 0,
-      firstActionSample: this.session.actions?.[0],
-      hasPhases: !!this.session.phases,
-      phasesLength: this.session.phases?.length || 0,
-      firstPhaseSample: this.session.phases?.[0]
-    });
-
     let bannedanys: any[] = [];
 
-    // ✅ CORREÇÃO: Usar actions em vez de phases para obter dados reais
-    if (this.session.actions && this.session.actions.length > 0) {
-      console.log('🔍 [getBannedanys] Analisando actions:', this.session.actions.map((action: any, index: number) => ({
-        index,
-        keys: Object.keys(action),
-        action: action.action,
-        type: action.type,
-        team: action.team,
-        locked: action.locked,
-        completed: action.completed,
-        championId: action.championId,
-        championName: action.champion?.name
-      })));
+    // ✅ CORREÇÃO: Backend envia "phases" (que contém actions) com estrutura: { type, team, championId, byPlayer }
+    if (this.session.phases && this.session.phases.length > 0) {
+      console.log('🔍 [getBannedChampions] Buscando bans nas phases (actions do backend)');
 
-      // Testar diferentes estruturas possíveis
-      let banActions = [];
+      const banActions = this.session.phases.filter((action: any) => {
+        // ✅ CORREÇÃO: Backend envia "type" não "action"
+        const isBan = action.type === 'ban';
+        // ✅ CORREÇÃO: Backend envia "championId" e "byPlayer", não "champion" e "locked"
+        const hasChampion = action.championId && action.byPlayer;
+        return isBan && hasChampion;
+      });
 
-      // Teste 1: action.action === 'ban'
-      banActions = this.session.actions.filter((action: any) =>
-        action.action === 'ban' && action.champion && action.locked
-      );
-      console.log('🔍 [getBannedanys] Teste 1 (action.action === "ban"):', banActions.length, banActions);
+      console.log(`🔍 [getBannedChampions] Encontrados ${banActions.length} bans`);
 
-      // Teste 2: action.type === 'ban'
-      const banActions2 = this.session.actions.filter((action: any) =>
-        action.type === 'ban' && action.champion && action.locked
-      );
-      console.log('🔍 [getBannedanys] Teste 2 (action.type === "ban"):', banActions2.length, banActions2);
-
-      // Teste 3: action.completed && algum tipo de ban
-      const banActions3 = this.session.actions.filter((action: any) =>
-        action.completed && action.champion && (action.action === 'ban' || action.type === 'ban')
-      );
-      console.log('🔍 [getBannedanys] Teste 3 (action.completed):', banActions3.length, banActions3);
-
-      // Usar o teste que retornar mais resultados
-      if (banActions2.length > banActions.length) {
-        banActions = banActions2;
-      }
-      if (banActions3.length > banActions.length) {
-        banActions = banActions3;
-      }
-
+      // ✅ Converter championId para objeto champion
       bannedanys = banActions
-        .map((action: any) => action.champion)
-        .filter((champion: any, index: number, self: any[]) =>
-          index === self.findIndex(champ => champ.id === champion.id)
-        );
-    } else {
-      // ✅ FALLBACK: Usar dados diretos dos bans se disponível no session
-      const sessionAny = this.session as any;
-      if (sessionAny.team1Bans || sessionAny.team2Bans) {
-        const team1Bans = sessionAny.team1Bans || [];
-        const team2Bans = sessionAny.team2Bans || [];
-        bannedanys = [...team1Bans, ...team2Bans]
-          .filter((ban: any) => ban.champion)
-          .map((ban: any) => ban.champion)
-          .filter((champion: any, index: number, self: any[]) =>
-            index === self.findIndex(champ => champ.id === champion.id || champ.key === champion.key || champ.name === champion.name)
-          );
+        .map((action: any) => {
+          const championId = parseInt(action.championId, 10);
+          const champion = this.getChampionFromCache(championId);
+          if (!champion) {
+            console.warn(`⚠️ [getBannedChampions] Campeão ${championId} não encontrado no cache`);
+          }
+          return champion;
+        })
+        .filter(champion => champion !== null);
 
-        console.log('🔍 [getBannedanys] Usando team1Bans/team2Bans:', {
-          team1BansCount: team1Bans.length,
-          team2BansCount: team2Bans.length,
-          totalBans: bannedanys.length
-        });
-      } else {
-        // Fallback final para phases (pode estar vazio)
-        const bannedPhases = this.session.phases.filter(phase => phase.action === 'ban' && phase.champion);
-        bannedanys = bannedPhases
-          .map(phase => phase.champion)
-          .filter((champion, index, self): champion is any =>
-            champion !== undefined && index === self.findIndex(champ => champ && champ.id === champion.id)
-          );
-
-        console.log('🔍 [getBannedanys] Usando phases como fallback:', bannedPhases.length);
-      }
+      console.log(`✅ [getBannedChampions] ${bannedanys.length} campeões banidos carregados`);
     }
-
-    // ✅ LOG DETALHADO: Investigar dados de ban
-    console.log('🚫 [getBannedanys] Dados de ban:', {
-      totalPhases: this.session.phases?.length || 0,
-      totalActions: this.session.actions?.length || 0,
-      bannedCount: bannedanys.length,
-      banDetails: bannedanys.map(champion => ({
-        championId: champion?.id,
-        championName: champion?.name
-      }))
-    });
 
     this._cachedBannedanys = bannedanys;
     this._lastCacheUpdate = Date.now();
@@ -291,79 +264,49 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
     return bannedanys;
   }
 
-  // 🔧 [REFACTOR] Métodos auxiliares para reduzir complexidade cognitiva
-  private getPickActionsFromSession(team: 'blue' | 'red'): any[] {
-    if (!this.session?.actions || this.session.actions.length === 0) {
-      return [];
+  // ✅ NOVO: Método auxiliar para buscar campeão do cache
+  private getChampionFromCache(championId: number): any {
+    const cache = (this.championService as any).championsCache as Map<string, any>;
+    if (!cache) {
+      console.warn('⚠️ [getChampionFromCache] Cache não disponível');
+      return null;
     }
 
-    // Testar diferentes estruturas de ação
-    const test1 = this.session.actions.filter((action: any) =>
-      action.team === team && action.action === 'pick' && action.champion && action.locked
-    );
-
-    const test2 = this.session.actions.filter((action: any) =>
-      action.team === team && action.type === 'pick' && action.champion && action.locked
-    );
-
-    const test3 = this.session.actions.filter((action: any) =>
-      action.team === team && (action.action === 'pick' || action.type === 'pick') &&
-      action.champion && action.completed
-    );
-
-    console.log(`🎯 [getPickActions] TESTS (${team}):`, {
-      test1: test1.length, test2: test2.length, test3: test3.length
-    });
-
-    // Retornar o teste com mais resultados
-    return [test1, test2, test3].reduce((best, current) =>
-      current.length > best.length ? current : best, []
-    );
-  }
-
-  private getPicksFromFallback(team: 'blue' | 'red'): any[] {
-    if (!this.session) return [];
-
-    const sessionAny = this.session as any;
-
-    // ✅ PRIORIDADE 1: Tentar usar pick_ban_data se disponível
-    if (sessionAny.pick_ban_data?.actions) {
-      try {
-        const actions = JSON.parse(sessionAny.pick_ban_data.actions);
-        const teamCode = team === 'blue' ? 'team1' : 'team2';
-
-        const picks = actions
-          .filter((action: any) => action.team === teamCode && action.type === 'pick' && action.champion)
-          .map((action: any) => action.champion);
-
-        if (picks.length > 0) {
-          console.log(`🎯 [fallback] ${team} usando pick_ban_data:`, picks.length);
-          return picks;
-        }
-      } catch (error) {
-        console.warn('❌ [fallback] Erro ao parsear pick_ban_data.actions:', error);
+    // Tentar buscar diretamente pelo key
+    for (const champ of cache.values()) {
+      if (champ.key === championId.toString() || parseInt(champ.key, 10) === championId) {
+        return champ;
       }
     }
 
-    // ✅ PRIORIDADE 2: Usar team1Picks/team2Picks
-    const teamPicksProperty = team === 'blue' ? 'team1Picks' : 'team2Picks';
-
-    if (sessionAny[teamPicksProperty]) {
-      return sessionAny[teamPicksProperty]
-        .filter((pick: any) => pick.champion)
-        .map((pick: any) => pick.champion);
-    }
-
-    // ✅ FALLBACK FINAL: Usar dados dos times
-    const teamData = team === 'blue' ?
-      (this.session.blueTeam || []) :
-      (this.session.redTeam || []);
-
-    return teamData
-      .filter((player: any) => player.champion)
-      .map((player: any) => player.champion);
+    console.warn(`⚠️ [getChampionFromCache] Campeão ${championId} não encontrado em ${cache.size} campeões`);
+    return null;
   }
 
+  // ✅ CORREÇÃO #2: Método para obter URL correta da imagem do campeão
+  getChampionImageUrl(champion: any): string {
+    if (!champion) {
+      return 'assets/img/champion_placeholder.png';
+    }
+
+    const DD_VERSION = '15.19.1';
+    const DD_BASE_URL = `https://ddragon.leagueoflegends.com/cdn/${DD_VERSION}`;
+
+    // Tentar usar champion.image.full (formato padrão do Data Dragon)
+    if (champion.image?.full) {
+      return `${DD_BASE_URL}/img/champion/${champion.image.full}`;
+    }
+
+    // Fallback: tentar usar champion.id (nome interno do campeão)
+    if (champion.id) {
+      return `${DD_BASE_URL}/img/champion/${champion.id}.png`;
+    }
+
+    // Último fallback: usar placeholder
+    return 'assets/img/champion_placeholder.png';
+  }
+
+  // ✅ CORREÇÃO #3: Método corrigido para usar estrutura correta do backend
   getTeamPicks(team: 'blue' | 'red'): any[] {
     // ✅ CACHE: Verificar cache primeiro
     if (team === 'blue' && this.isCacheValid() && this._cachedBlueTeamPicks) {
@@ -375,26 +318,39 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
 
     if (!this.session) return [];
 
-    console.log(`🔥 [getTeamPicks-${team}] ANALYSIS:`, {
-      hasActions: !!this.session.actions,
-      actionsLength: this.session.actions?.length || 0
-    });
-
     let teamPicks: any[] = [];
 
-    // ✅ PRIORIDADE 1: Usar actions da sessão
-    const pickActions = this.getPickActionsFromSession(team);
-    if (pickActions.length > 0) {
-      teamPicks = pickActions.map((action: any) => action.champion);
-    } else {
-      // ✅ FALLBACK: Usar dados alternativos
-      teamPicks = this.getPicksFromFallback(team);
-    }
+    // ✅ CORREÇÃO: Backend envia "phases" com estrutura: { type, team, championId, byPlayer }
+    if (this.session.phases && this.session.phases.length > 0) {
+      const teamNumber = team === 'blue' ? 1 : 2;
+      console.log(`🔍 [getTeamPicks] Buscando picks do time ${team} (teamNumber: ${teamNumber})`);
 
-    console.log(`🎯 [getTeamPicks] FINAL (${team}):`, {
-      count: teamPicks.length,
-      details: teamPicks.map(p => ({ id: p.id, name: p.name }))
-    });
+      const pickActions = this.session.phases.filter((action: any) => {
+        // ✅ CORREÇÃO: Backend envia "type" não "action"
+        const isPick = action.type === 'pick';
+        // ✅ CORREÇÃO: Backend envia "team" como número (1 ou 2)
+        const isCorrectTeam = action.team === teamNumber;
+        // ✅ CORREÇÃO: Backend envia "championId" e "byPlayer"
+        const hasChampion = action.championId && action.byPlayer;
+        return isPick && isCorrectTeam && hasChampion;
+      });
+
+      console.log(`🔍 [getTeamPicks] Encontrados ${pickActions.length} picks para time ${team}`);
+
+      // ✅ Converter championId para objeto champion
+      teamPicks = pickActions
+        .map((action: any) => {
+          const championId = parseInt(action.championId, 10);
+          const champion = this.getChampionFromCache(championId);
+          if (!champion) {
+            console.warn(`⚠️ [getTeamPicks] Campeão ${championId} não encontrado no cache`);
+          }
+          return champion;
+        })
+        .filter(champion => champion !== null);
+
+      console.log(`✅ [getTeamPicks] ${teamPicks.length} picks do time ${team} carregados`);
+    }
 
     // ✅ CACHE: Atualizar cache
     if (team === 'blue') {
@@ -407,24 +363,33 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
     return teamPicks;
   }
 
+  // ✅ CORREÇÃO #3: Método corrigido para comparação robusta
   isChampionBanned(champion: any): boolean {
     const bannedChampions = this.getBannedChampions();
 
-    // ✅ CORREÇÃO: Comparação robusta considerando diferentes formatos de ID
-    const isBanned = bannedChampions.some(banned => {
-      // Comparar por ID string (ex: "Aatrox" vs "Aatrox")
-      if (banned.id && champion.id && banned.id === champion.id) {
-        return true;
-      }
+    // ✅ DEBUG: Log para investigação
+    if (champion.name === 'K\'Sante' || champion.name === 'Fizz' || champion.name === 'Xin Zhao' || champion.name === 'Cho\'Gath') {
+      console.log(`🔍 [isChampionBanned] Verificando ${champion.name} (key: ${champion.key})`, {
+        bannedCount: bannedChampions.length,
+        bannedKeys: bannedChampions.map(b => b.key)
+      });
+    }
 
-      // Comparar por key/championId numérico (ex: "266" vs 266 vs "266")
-      const bannedKey = banned.key?.toString() || banned.id?.toString();
-      const championKey = champion.key?.toString() || champion.id?.toString();
+    // ✅ CORREÇÃO: Comparação usando key numérico (padrão do Data Dragon)
+    const isBanned = bannedChampions.some(banned => {
+      // Prioridade 1: Comparar por key numérico
+      const bannedKey = banned.key?.toString();
+      const championKey = champion.key?.toString();
       if (bannedKey && championKey && bannedKey === championKey) {
         return true;
       }
 
-      // Comparar por nome (fallback)
+      // Prioridade 2: Comparar por ID (nome do campeão)
+      if (banned.id && champion.id && banned.id === champion.id) {
+        return true;
+      }
+
+      // Prioridade 3: Comparar por nome (fallback)
       if (banned.name && champion.name && banned.name === champion.name) {
         return true;
       }
@@ -432,99 +397,35 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
       return false;
     });
 
-    // ✅ LOG DETALHADO: Investigar por que bans não estão sendo detectados
-    console.log('🚫 [isanyBanned] Verificando ban:', {
-      championId: champion.id,
-      championKey: champion.key,
-      championName: champion.name,
-      bannedChampionsCount: bannedChampions.length,
-      bannedChampions: bannedChampions.map(banned => ({
-        id: banned.id,
-        key: banned.key,
-        name: banned.name
-      })),
-      comparisons: bannedChampions.map(banned => ({
-        bannedId: banned.id,
-        bannedKey: banned.key,
-        bannedName: banned.name,
-        idMatch: banned.id === champion.id,
-        keyMatch: (banned.key?.toString() || banned.id?.toString()) === (champion.key?.toString() || champion.id?.toString()),
-        nameMatch: banned.name === champion.name
-      })),
-      isBanned: isBanned
-    });
-
-    // ✅ NOVO: Log para arquivo para debug
-    if (typeof window !== 'undefined' && (window as any).electronAPI?.fs) {
-      const fs = (window as any).electronAPI.fs;
-      const path = (window as any).electronAPI.path;
-      const process = (window as any).electronAPI.process;
-      const logPath = path.join(process.cwd(), 'ban-check-debug.log');
-      const logLine = `[${new Date().toISOString()}] isChampionBanned: ${champion.name} (id:${champion.id}, key:${champion.key}) - Banido: ${isBanned} - Bans: ${bannedChampions.length}\n`;
-      fs.appendFile(logPath, logLine, () => { });
-    }
-
     return isBanned;
   }
 
+  // ✅ CORREÇÃO #3: Método corrigido para comparação robusta
   isChampionPicked(champion: any): boolean {
     const bluePicks = this.getTeamPicks('blue');
     const redPicks = this.getTeamPicks('red');
 
-    // ✅ CORREÇÃO: Comparação robusta considerando diferentes formatos de ID
+    // ✅ CORREÇÃO: Comparação usando key numérico (padrão do Data Dragon)
     const isPicked = [...bluePicks, ...redPicks].some(picked => {
-      // Comparar por ID string (ex: "Aatrox" vs "Aatrox")
-      if (picked.id && champion.id && picked.id === champion.id) {
-        return true;
-      }
-
-      // Comparar por key/championId numérico (ex: "266" vs 266 vs "266")
-      const pickedKey = picked.key?.toString() || picked.id?.toString();
-      const championKey = champion.key?.toString() || champion.id?.toString();
+      // Prioridade 1: Comparar por key numérico
+      const pickedKey = picked.key?.toString();
+      const championKey = champion.key?.toString();
       if (pickedKey && championKey && pickedKey === championKey) {
         return true;
       }
 
-      // Comparar por nome (fallback)
+      // Prioridade 2: Comparar por ID (nome do campeão)
+      if (picked.id && champion.id && picked.id === champion.id) {
+        return true;
+      }
+
+      // Prioridade 3: Comparar por nome (fallback)
       if (picked.name && champion.name && picked.name === champion.name) {
         return true;
       }
 
       return false;
     });
-
-    // ✅ LOG DETALHADO: Investigar por que picks não estão sendo detectados
-    console.log('🎯 [isanyPicked] Verificando pick:', {
-      championId: champion.id,
-      championKey: champion.key,
-      championName: champion.name,
-      bluePicksCount: bluePicks.length,
-      redPicksCount: redPicks.length,
-      allPicks: [...bluePicks, ...redPicks].map(picked => ({
-        id: picked.id,
-        key: picked.key,
-        name: picked.name
-      })),
-      comparisons: [...bluePicks, ...redPicks].map(picked => ({
-        pickedId: picked.id,
-        pickedKey: picked.key,
-        pickedName: picked.name,
-        idMatch: picked.id === champion.id,
-        keyMatch: (picked.key?.toString() || picked.id?.toString()) === (champion.key?.toString() || champion.id?.toString()),
-        nameMatch: picked.name === champion.name
-      })),
-      isPicked: isPicked
-    });
-
-    // ✅ NOVO: Log para arquivo para debug
-    if (typeof window !== 'undefined' && (window as any).electronAPI?.fs) {
-      const fs = (window as any).electronAPI.fs;
-      const path = (window as any).electronAPI.path;
-      const process = (window as any).electronAPI.process;
-      const logPath = path.join(process.cwd(), 'pick-check-debug.log');
-      const logLine = `[${new Date().toISOString()}] isanyPicked: ${champion.name} (id:${champion.id}, key:${champion.key}) - Pickado: ${isPicked} - Picks: ${bluePicks.length + redPicks.length}\n`;
-      fs.appendFile(logPath, logLine, () => { });
-    }
 
     return isPicked;
   }
@@ -588,6 +489,9 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
     this._cachedModalFilteredanys = filtered;
     this._lastCacheUpdate = Date.now();
 
+    // ✅ CORREÇÃO: Forçar atualização após filtrar
+    this.changeDetectorRef.markForCheck();
+
     return filtered;
   }
 
@@ -596,6 +500,11 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
     this.selectedRole = role;
     this.invalidateCache();
     this.changeDetectorRef.markForCheck();
+  }
+
+  // ✅ CORREÇÃO #4: Método para pesquisa em tempo real com debounce
+  onSearchChange(searchTerm: string): void {
+    this.searchSubject.next(searchTerm);
   }
 
   // ✅ NOVO: Método unificado para clique em campeão
@@ -873,7 +782,39 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
   // MÉTODO PARA QUANDO O MODAL SE TORNA VISÍVEL
   onModalShow(): void {
     if (this.isVisible) {
+      console.log('🔄 [DraftanyModal] Modal aberto - recarregando campeões...');
+      console.log('⏰ [DraftanyModal] Timer atual no modal:', this.timeRemaining);
       this.invalidateCache();
+      this.loadanys(); // ✅ CORREÇÃO: Recarregar campeões quando modal abrir
+      this.changeDetectorRef.markForCheck();
+
+      // ✅ CORREÇÃO: Forçar atualização adicional para garantir que o timer seja exibido
+      setTimeout(() => {
+        this.changeDetectorRef.detectChanges();
+        console.log('⏰ [DraftanyModal] Timer após timeout:', this.timeRemaining);
+      }, 100);
+
+      // ✅ CORREÇÃO: Verificar status do timer
+      setTimeout(() => {
+        this.checkTimerStatus();
+      }, 200);
     }
+  }
+
+  // ✅ NOVO: Método para forçar atualização do timer
+  forceTimerUpdate(): void {
+    console.log('⏰ [DraftanyModal] Forçando atualização do timer:', this.timeRemaining);
+    this.changeDetectorRef.markForCheck();
+    this.changeDetectorRef.detectChanges();
+  }
+
+  // ✅ NOVO: Método para verificar se o timer está funcionando
+  checkTimerStatus(): void {
+    console.log('⏰ [DraftanyModal] Status do timer:', {
+      timeRemaining: this.timeRemaining,
+      isVisible: this.isVisible,
+      session: !!this.session,
+      currentAction: this.session?.currentAction
+    });
   }
 }

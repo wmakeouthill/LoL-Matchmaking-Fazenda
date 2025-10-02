@@ -95,6 +95,7 @@
               id="modal-champion-search"
               type="text"
               [(ngModel)]="searchFilter"
+              (ngModelChange)="onSearchChange($event)"
               placeholder="Buscar campeão pelo nome..."
               class="modal-champion-search"
               autocomplete="off"
@@ -112,19 +113,19 @@
         <div
           class="modal-champion-card"
           *ngFor="let champion of getModalFilteredChampions()"
-          [class.selected]="selectedChampion?.id === champion.id"
+          [class.selected]="selectedany?.id === champion.id"
           [class.banned]="isChampionBanned(champion)"
           [class.picked]="isChampionPicked(champion)"
           [class.disabled]="isChampionBanned(champion) || isChampionPicked(champion)"
-          (click)="onChampionCardClick(champion)"
-          (keydown.enter)="onChampionCardClick(champion)"
-          (keydown.space)="onChampionCardClick(champion)"
+          (click)="onanyCardClick(champion)"
+          (keydown.enter)="onanyCardClick(champion)"
+          (keydown.space)="onanyCardClick(champion)"
           [attr.tabindex]="isChampionBanned(champion) || isChampionPicked(champion) ? -1 : 0"
           [style.cursor]="isChampionBanned(champion) || isChampionPicked(champion) ? 'not-allowed' : 'pointer'"
           [style.opacity]="isChampionBanned(champion) || isChampionPicked(champion) ? '0.6' : '1'"
         >
           <img
-            [src]="champion.image"
+            [src]="getChampionImageUrl(champion)"
             [alt]="champion.name"
             class="modal-champion-portrait"
             (error)="onImageError($event, champion)"
@@ -153,15 +154,15 @@
 
     <!-- Footer do Modal com Confirmação -->
     <div class="modal-footer">
-      <div class="modal-selection-preview" *ngIf="selectedChampion">
+      <div class="modal-selection-preview" *ngIf="selectedany">
         <div class="preview-content">
           <img
-            [src]="selectedChampion.image"
-            [alt]="selectedChampion.name"
+            [src]="getChampionImageUrl(selectedany)"
+            [alt]="selectedany.name"
             class="preview-img"
           />
           <div class="preview-info">
-            <span class="preview-name">{{ selectedChampion.name }}</span>
+            <span class="preview-name">{{ selectedany.name }}</span>
             <span class="preview-action"> {{ getCurrentActionText() }} </span>
           </div>
         </div>
@@ -176,8 +177,8 @@
         </button>
         <button
           class="btn btn-primary confirm-btn"
-          [class.disabled]="!selectedChampion || isChampionBanned(selectedChampion) || isChampionPicked(selectedChampion)"
-          [disabled]="!selectedChampion || isChampionBanned(selectedChampion) || isChampionPicked(selectedChampion)"
+          [class.disabled]="!selectedany || isChampionBanned(selectedany) || isChampionPicked(selectedany)"
+          [disabled]="!selectedany || isChampionBanned(selectedany) || isChampionPicked(selectedany)"
           (click)="confirmModalSelection()"
         >
           {{ getCurrentActionIcon() }} Confirmar {{ getCurrentActionText() }}

@@ -1846,7 +1846,20 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     this.cdr.markForCheck();
     this.cdr.detectChanges();
     console.log('✅ [openChampionModal] Modal ABERTO! showChampionModal =', this.showChampionModal);
+    console.log('⏰ [openChampionModal] Timer atual no modal:', this.timeRemaining);
     logDraft('🎯 [openChampionModal] === FIM DA ABERTURA DO MODAL ===');
+
+    // ✅ CORREÇÃO: Forçar atualização adicional para garantir que o timer seja exibido
+    setTimeout(() => {
+      this.cdr.detectChanges();
+      console.log('⏰ [openChampionModal] Timer após timeout:', this.timeRemaining);
+    }, 100);
+
+    // ✅ CORREÇÃO: Forçar atualização adicional para garantir que o timer seja exibido
+    setTimeout(() => {
+      this.cdr.detectChanges();
+      console.log('⏰ [openChampionModal] Timer após segundo timeout:', this.timeRemaining);
+    }, 500);
     saveLogToRoot(`✅ [openChampionModal] Modal aberto com sucesso. showChampionModal=${this.showChampionModal}`);
   }
 
@@ -1971,7 +1984,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         const requestData = {
           matchId: effectiveMatchId,
           playerId: playerIdentifier,
-          championId: champion.id,
+          championId: champion.key || champion.id,  // ✅ CORREÇÃO: usar key (ID numérico) em vez de id (nome)
           action: currentPhase.action,
           actionIndex: this.session.currentAction
         };
@@ -2011,7 +2024,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           const fallbackRequestData = {
             matchId: effectiveMatchId,
             playerId: currentPhase.playerName || currentPhase.playerId,
-            championId: champion.id,
+            championId: champion.key || champion.id,  // ✅ CORREÇÃO: usar key (ID numérico) em vez de id (nome)
             action: currentPhase.action,
             actionIndex: this.session.currentAction
           };
@@ -2326,12 +2339,23 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     this.timeRemaining = data.timeRemaining;
 
     console.log(`⏰ [updateTimerFromBackend] Timer: ${oldTimeRemaining}s → ${data.timeRemaining}s`);
+    console.log(`⏰ [updateTimerFromBackend] Modal visível: ${this.showChampionModal}`);
     saveLogToRoot(`⏰ [updateTimerFromBackend] Timer atualizado: ${oldTimeRemaining}s → ${data.timeRemaining}s`);
     logDraft(`⏰ [updateTimerFromBackend] Timer do backend: ${data.timeRemaining}s`);
 
     // ✅ CRÍTICO: Forçar atualização da interface
     this.cdr.markForCheck();
     this.cdr.detectChanges();
+
+    // ✅ CORREÇÃO: Se o modal estiver aberto, forçar atualização específica
+    if (this.showChampionModal) {
+      console.log('⏰ [updateTimerFromBackend] Modal aberto - forçando atualização específica');
+      // Forçar nova detecção de mudanças para o modal
+      setTimeout(() => {
+        this.cdr.detectChanges();
+        console.log('⏰ [updateTimerFromBackend] Timer após timeout no modal:', this.timeRemaining);
+      }, 0);
+    }
 
     // ✅ CORREÇÃO: Verificar se timer expirou
     if (data.timeRemaining <= 0) {
