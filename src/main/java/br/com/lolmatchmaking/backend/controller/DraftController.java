@@ -153,4 +153,63 @@ public class DraftController {
                     KEY_ERROR, "Erro ao processar ação: " + e.getMessage()));
         }
     }
+
+    // ✅ NOVO: Endpoint para confirmação final individual (TODOS os 10 jogadores)
+    record ConfirmFinalDraftRequest(String playerId) {
+    }
+
+    @PostMapping("/match/{matchId}/confirm-final-draft")
+    public ResponseEntity<Map<String, Object>> confirmFinalDraft(
+            @PathVariable Long matchId,
+            @RequestBody ConfirmFinalDraftRequest req) {
+
+        log.info("╔════════════════════════════════════════════════════════════════╗");
+        log.info("║  ✅ [DraftController] CONFIRMAÇÃO FINAL RECEBIDA              ║");
+        log.info("╚════════════════════════════════════════════════════════════════╝");
+        log.info("📥 POST /match/{}/confirm-final-draft", matchId);
+        log.info("👤 Player ID: {}", req.playerId());
+
+        if (req.playerId() == null || req.playerId().trim().isEmpty()) {
+            log.warn("⚠️ [DraftController] playerId não fornecido");
+            return ResponseEntity.badRequest().body(Map.of(
+                    KEY_SUCCESS, false,
+                    KEY_ERROR, "playerId é obrigatório"));
+        }
+
+        try {
+            // ✅ Chamar DraftFlowService para registrar confirmação individual
+            Map<String, Object> result = draftFlowService.confirmFinalDraft(matchId, req.playerId());
+
+            boolean allConfirmed = (boolean) result.getOrDefault("allConfirmed", false);
+            int confirmedCount = (int) result.getOrDefault("confirmedCount", 0);
+            int totalPlayers = (int) result.getOrDefault("totalPlayers", 10);
+
+            log.info("✅ [DraftController] Confirmação registrada: {}/{} jogadores confirmaram",
+                    confirmedCount, totalPlayers);
+
+            if (allConfirmed) {
+                log.info("╔════════════════════════════════════════════════════════════════╗");
+                log.info("║  🎮 [DraftController] TODOS CONFIRMARAM - INICIANDO JOGO      ║");
+                log.info("╚════════════════════════════════════════════════════════════════╝");
+            }
+
+            return ResponseEntity.ok(Map.of(
+                    KEY_SUCCESS, true,
+                    "allConfirmed", allConfirmed,
+                    "confirmedCount", confirmedCount,
+                    "totalPlayers", totalPlayers,
+                    "message", allConfirmed
+                            ? "Todos confirmaram! Iniciando jogo..."
+                            : String.format("Confirmado! Aguardando %d jogadores...", totalPlayers - confirmedCount)));
+
+        } catch (Exception e) {
+            log.error("╔════════════════════════════════════════════════════════════════╗");
+            log.error("║  💥 [DraftController] ERRO AO CONFIRMAR                       ║");
+            log.error("╚════════════════════════════════════════════════════════════════╝");
+            log.error("❌ Exceção: {}", e.getMessage(), e);
+            return ResponseEntity.status(500).body(Map.of(
+                    KEY_SUCCESS, false,
+                    KEY_ERROR, "Erro ao confirmar: " + e.getMessage()));
+        }
+    }
 }

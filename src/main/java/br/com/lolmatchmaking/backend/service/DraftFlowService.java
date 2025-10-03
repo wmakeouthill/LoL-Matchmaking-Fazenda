@@ -24,9 +24,13 @@ public class DraftFlowService {
     private final SessionRegistry sessionRegistry;
     private final DataDragonService dataDragonService;
     private final ObjectMapper mapper = new ObjectMapper();
+    private final GameInProgressService gameInProgressService;
 
     @Value("${app.draft.action-timeout-ms:30000}")
     private long configuredActionTimeoutMs;
+
+    // ✅ NOVO: Tracking de confirmações finais (TODOS os 10 jogadores)
+    private final Map<Long, Set<String>> finalConfirmations = new ConcurrentHashMap<>();
 
     public record DraftAction(
             int index,
@@ -1565,5 +1569,162 @@ public class DraftFlowService {
         long elapsed = System.currentTimeMillis() - st.getLastActionStartMs();
         long remaining = getActionTimeoutMs() - elapsed;
         return Math.max(0, remaining);
+    }
+
+    /**
+     * ✅ NOVO: Confirma draft final - TODOS os 10 jogadores devem confirmar
+     * Quando todos confirmarem, inicia o jogo automaticamente
+     */
+    @Transactional
+    public Map<String, Object> confirmFinalDraft(Long matchId, String playerId) {
+        log.info("╔════════════════════════════════════════════════════════════════╗");
+        log.info("║  ✅ [DraftFlow] CONFIRMAÇÃO FINAL                             ║");
+        log.info("╚════════════════════════════════════════════════════════════════╝");
+        log.info("🎯 Match ID: {}", matchId);
+        log.info("👤 Player ID: {}", playerId);
+
+        // 1. Verificar se o draft existe
+        DraftState state = states.get(matchId);
+        if (state == null) {
+            log.warn("⚠️ [DraftFlow] Draft não encontrado para match {}", matchId);
+            throw new RuntimeException("Draft não encontrado");
+        }
+
+        // 2. Verificar se draft está completo
+        if (state.getCurrentIndex() < state.getActions().size()) {
+            log.warn("⚠️ [DraftFlow] Draft ainda não foi completado: {}/{} ações",
+                    state.getCurrentIndex(), state.getActions().size());
+            throw new RuntimeException("Draft ainda não está completo");
+        }
+
+        // 3. Obter ou criar set de confirmações para este match
+        Set<String> confirmations = finalConfirmations.computeIfAbsent(matchId, k -> ConcurrentHashMap.newKeySet());
+
+        // 4. Adicionar confirmação do jogador
+        boolean wasNewConfirmation = confirmations.add(playerId);
+
+        if (wasNewConfirmation) {
+            log.info("✅ [DraftFlow] Confirmação registrada para: {}", playerId);
+        } else {
+            log.info("ℹ️ [DraftFlow] Jogador {} já havia confirmado", playerId);
+        }
+
+        // 5. Contar total de jogadores
+        int totalPlayers = state.getTeam1Players().size() + state.getTeam2Players().size();
+        int confirmedCount = confirmations.size();
+
+        log.info("📊 [DraftFlow] Confirmações: {}/{} jogadores", confirmedCount, totalPlayers);
+        log.info("📋 [DraftFlow] Jogadores confirmados: {}", confirmations);
+
+        // 6. Broadcast atualização de confirmações para todos
+        broadcastConfirmationUpdate(matchId, confirmations, totalPlayers);
+
+        // 7. Verificar se TODOS confirmaram
+        boolean allConfirmed = confirmedCount >= totalPlayers;
+
+        if (allConfirmed) {
+            log.info("╔════════════════════════════════════════════════════════════════╗");
+            log.info("║  🎮 [DraftFlow] TODOS OS 10 JOGADORES CONFIRMARAM!            ║");
+            log.info("╚════════════════════════════════════════════════════════════════╝");
+
+            // 8. Finalizar draft e iniciar jogo
+            finalizeDraftAndStartGame(matchId, state);
+
+            // 9. Limpar confirmações da memória
+            finalConfirmations.remove(matchId);
+            states.remove(matchId);
+        }
+
+        // 10. Retornar resultado
+        return Map.of(
+                "success", true,
+                "allConfirmed", allConfirmed,
+                "confirmedCount", confirmedCount,
+                "totalPlayers", totalPlayers);
+    }
+
+    /**
+     * ✅ NOVO: Broadcast atualização de confirmações para todos os jogadores
+     */
+    private void broadcastConfirmationUpdate(Long matchId, Set<String> confirmations, int totalPlayers) {
+        try {
+            Map<String, Object> payload = Map.of(
+                    "type", "draft_confirmation_update",
+                    "matchId", matchId,
+                    "confirmations", new ArrayList<>(confirmations),
+                    "confirmedCount", confirmations.size(),
+                    "totalPlayers", totalPlayers,
+                    "allConfirmed", confirmations.size() >= totalPlayers);
+
+            String json = mapper.writeValueAsString(payload);
+            sessionRegistry.all().forEach(ws -> {
+                try {
+                    ws.sendMessage(new TextMessage(json));
+                } catch (Exception e) {
+                    log.warn("⚠️ Erro ao enviar atualização de confirmação", e);
+                }
+            });
+
+            log.info("📡 [DraftFlow] Broadcast: {}/{} jogadores confirmaram", confirmations.size(), totalPlayers);
+
+        } catch (Exception e) {
+            log.error("❌ [DraftFlow] Erro ao broadcast confirmação", e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Finaliza draft e inicia o jogo
+     */
+    @Transactional
+    private void finalizeDraftAndStartGame(Long matchId, DraftState state) {
+        try {
+            log.info("🏁 [DraftFlow] Finalizando draft e iniciando jogo...");
+
+            // 1. Atualizar status da partida para "game_ready"
+            customMatchRepository.findById(matchId).ifPresent(cm -> {
+                cm.setStatus("game_ready");
+                customMatchRepository.save(cm);
+                log.info("✅ [DraftFlow] Status atualizado: draft → game_ready");
+            });
+
+            // 2. Broadcast evento match_game_ready (compatibilidade)
+            broadcastGameReady(matchId);
+
+            // 3. Chamar GameInProgressService para iniciar jogo
+            gameInProgressService.startGame(matchId);
+
+            log.info("✅ [DraftFlow] Draft finalizado, jogo iniciado com sucesso!");
+
+        } catch (Exception e) {
+            log.error("❌ [DraftFlow] Erro ao finalizar draft", e);
+            throw new RuntimeException("Erro ao finalizar draft: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Broadcast evento game_ready
+     */
+    private void broadcastGameReady(Long matchId) {
+        try {
+            Map<String, Object> payload = Map.of(
+                    "type", "match_game_ready",
+                    "matchId", matchId,
+                    "status", "game_ready",
+                    "message", "Todos confirmaram! Jogo iniciando...");
+
+            String json = mapper.writeValueAsString(payload);
+            sessionRegistry.all().forEach(ws -> {
+                try {
+                    ws.sendMessage(new TextMessage(json));
+                } catch (Exception e) {
+                    log.warn("⚠️ Erro ao enviar game_ready", e);
+                }
+            });
+
+            log.info("📡 [DraftFlow] Broadcast: match_game_ready");
+
+        } catch (Exception e) {
+            log.error("❌ [DraftFlow] Erro ao broadcast game_ready", e);
+        }
     }
 }

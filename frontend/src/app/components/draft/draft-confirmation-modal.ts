@@ -1,6 +1,9 @@
 import { Component, Input, Output, EventEmitter, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { HttpClient } from '@angular/common/http';
+import { firstValueFrom } from 'rxjs';
 import { ChampionService } from '../../services/champion.service';
+import { ApiService } from '../../services/api';
 
 function logConfirmationModal(...args: any[]) {
   const fs = (window as any).electronAPI?.fs;
@@ -105,7 +108,16 @@ export class DraftConfirmationModalComponent implements OnChanges {
   private _lastCacheUpdate: number = 0;
   private readonly CACHE_DURATION = 100;
 
-  constructor(private readonly championService: ChampionService) { }
+  // HTTP properties
+  private readonly baseUrl: string;
+
+  constructor(
+    private readonly championService: ChampionService,
+    private readonly http: HttpClient,
+    private readonly apiService: ApiService
+  ) {
+    this.baseUrl = this.apiService.getBaseUrl();
+  }
 
   // ✅ NOVO: Buscar campeão no cache pelo ID
   private getChampionFromCache(championId: number): any {
@@ -962,20 +974,76 @@ export class DraftConfirmationModalComponent implements OnChanges {
     this.onClose.emit();
   }
 
-  confirmFinalDraft(): void {
+  async confirmFinalDraft(): Promise<void> {
     console.log('🟢 [CONFIRM-FINAL-DRAFT] === CONFIRMANDO DRAFT FINAL ===');
     console.log('🟢 [CONFIRM-FINAL-DRAFT] Session:', this.session);
     console.log('🟢 [CONFIRM-FINAL-DRAFT] CurrentPlayer:', this.currentPlayer);
 
     logConfirmationModal('✅ [confirmFinalDraft] === CONFIRMANDO DRAFT FINAL ===');
 
-    // ✅ NOVO: Mostrar feedback de carregamento
+    // ✅ Validar dados necessários
+    if (!this.session?.id) {
+      console.error('❌ [confirmFinalDraft] Session ID não disponível');
+      this.confirmationMessage = 'Erro: Session não disponível';
+      return;
+    }
+
+    if (!this.currentPlayer?.summonerName) {
+      console.error('❌ [confirmFinalDraft] Player não disponível');
+      this.confirmationMessage = 'Erro: Jogador não identificado';
+      return;
+    }
+
+    // ✅ Mostrar feedback de carregamento
     this.isConfirming = true;
     this.confirmationMessage = 'Confirmando sua seleção...';
 
-    console.log('🟢 [CONFIRM-FINAL-DRAFT] Emitindo evento onConfirm...');
-    this.onConfirm.emit();
-    console.log('🟢 [CONFIRM-FINAL-DRAFT] Evento onConfirm emitido!');
+    try {
+      const url = `${this.baseUrl}/match/${this.session.id}/confirm-final-draft`;
+      const body = {
+        playerId: this.currentPlayer.summonerName
+      };
+
+      console.log('� [confirmFinalDraft] Enviando confirmação:', { url, body });
+      logConfirmationModal('📤 [confirmFinalDraft] Enviando HTTP POST:', url);
+
+      const response: any = await firstValueFrom(
+        this.http.post(url, body, {
+          headers: { 'Content-Type': 'application/json' }
+        })
+      );
+
+      console.log('✅ [confirmFinalDraft] Resposta recebida:', response);
+      logConfirmationModal('✅ [confirmFinalDraft] Confirmação registrada:', response);
+
+      // ✅ Atualizar UI com resposta
+      if (response.success) {
+        const { allConfirmed, confirmedCount, totalPlayers, message } = response;
+
+        this.confirmationMessage = message ||
+          (allConfirmed
+            ? 'Todos confirmaram! Iniciando partida...'
+            : `Confirmado! Aguardando ${totalPlayers - confirmedCount} jogadores...`);
+
+        console.log(`📊 [confirmFinalDraft] Confirmações: ${confirmedCount}/${totalPlayers}`);
+
+        if (allConfirmed) {
+          console.log('🎮 [confirmFinalDraft] TODOS CONFIRMARAM! Aguardando game_started...');
+          // ✅ Modal será fechado quando receber evento game_started via WebSocket
+        } else {
+          this.isConfirming = false;
+        }
+      } else {
+        throw new Error(response.message || 'Falha ao confirmar');
+      }
+
+    } catch (error: any) {
+      console.error('❌ [confirmFinalDraft] Erro ao confirmar:', error);
+      logConfirmationModal('❌ [confirmFinalDraft] Erro:', error);
+
+      this.isConfirming = false;
+      this.confirmationMessage = error?.error?.error || error?.message || 'Erro ao confirmar. Tente novamente.';
+    }
   }
 
   cancelFinalDraft(): void {

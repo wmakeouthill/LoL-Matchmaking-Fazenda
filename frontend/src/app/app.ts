@@ -2474,6 +2474,60 @@ export class App implements OnInit, OnDestroy {
     this.addNotification('success', 'Draft Iniciado!', 'A fase de seleção de campeões começou.');
   }
 
+  // ✅ NOVO: Handler para conclusão do draft (todos os 10 jogadores confirmaram)
+  onPickBanComplete(event: any): void {
+    logApp('🎮 [App] onPickBanComplete chamado:', event);
+
+    if (!event) {
+      logApp('❌ [App] Evento vazio recebido em onPickBanComplete');
+      return;
+    }
+
+    // ✅ NOVO: Se recebemos gameData do backend, usar diretamente
+    if (event.gameData) {
+      logApp('✅ [App] gameData recebido do backend:', event.gameData);
+
+      this.gameData = event.gameData;
+      this.inGamePhase = true;
+      this.inDraftPhase = false;
+      this.showMatchFound = false;
+      this.isInQueue = false;
+
+      if (event.gameData.matchId) {
+        this.lastMatchId = event.gameData.matchId;
+      }
+
+      this.addNotification('success', 'Jogo Iniciado!', 'A partida começou com todos os jogadores prontos.');
+      this.cdr.detectChanges();
+      return;
+    }
+
+    // ✅ FALLBACK: Processar confirmationData se gameData não estiver disponível
+    logApp('⚠️ [App] gameData não disponível, tentando processar confirmationData...');
+
+    if (event.status === 'in_progress') {
+      this.inGamePhase = true;
+      this.inDraftPhase = false;
+      this.showMatchFound = false;
+      this.isInQueue = false;
+
+      // Tentar construir gameData do session/confirmationData
+      if (event.confirmationData || event.session) {
+        const pickBanData = event.confirmationData || event.session;
+        this.gameData = {
+          matchId: event.matchData?.matchId || event.session?.id,
+          team1: pickBanData.teams?.blue?.players || [],
+          team2: pickBanData.teams?.red?.players || [],
+          status: 'in_progress',
+          startedAt: new Date()
+        };
+      }
+
+      this.addNotification('success', 'Jogo Iniciado!', 'A partida começou.');
+      this.cdr.detectChanges();
+    }
+  }
+
   // ✅ NOVO: Processar game_in_progress detectado via polling
   private async handleGameInProgressFromPolling(response: any): Promise<void> {
     console.log('🎮 [App] === GAME IN PROGRESS DETECTADO VIA POLLING ===');
