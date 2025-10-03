@@ -464,6 +464,17 @@ export class App implements OnInit, OnDestroy {
             finalSeconds: newTimeRemaining
           });
 
+          // ✅ NOVA ESTRUTURA HIERÁRQUICA: Processar teams.blue/red
+          console.log('🔨 [App] Processando estrutura hierárquica:', {
+            hasTeams: !!updateData.teams,
+            hasTeamsBlue: !!updateData.teams?.blue,
+            hasTeamsRed: !!updateData.teams?.red,
+            bluePlayers: updateData.teams?.blue?.players?.length || 0,
+            redPlayers: updateData.teams?.red?.players?.length || 0,
+            currentPhase: updateData.currentPhase,
+            currentTeam: updateData.currentTeam
+          });
+
           // ✅ CRÍTICO: Criar NOVO objeto SEMPRE (para OnPush detectar)
           const oldDraftData = this.draftData;
           this.draftData = {
@@ -473,11 +484,18 @@ export class App implements OnInit, OnDestroy {
             currentAction: newCurrentAction,
             currentIndex: newCurrentAction,
             currentPlayer: newCurrentPlayer,
-            timeRemaining: newTimeRemaining, // ✅ NOVO: Incluir timer
+            timeRemaining: newTimeRemaining, // ✅ Timer via @Input (OnPush)
+
+            // ✅ NOVA ESTRUTURA HIERÁRQUICA
+            teams: updateData.teams || this.draftData.teams, // teams.blue/red com players e actions
+            currentPhase: updateData.currentPhase || this.draftData.currentPhase, // ban1/pick1/ban2/pick2
+            currentTeam: updateData.currentTeam || this.draftData.currentTeam, // blue/red
+            currentActionType: updateData.currentActionType || this.draftData.currentActionType, // ban/pick
+
             _updateTimestamp: Date.now() // ✅ FORÇA mudança de referência
           };
 
-          console.log(`✅ [App] Draft atualizado: currentAction=${this.draftData.currentAction}, currentPlayer=${this.draftData.currentPlayer}, phases=${this.draftData.phases?.length}, timer=${newTimeRemaining}s`);
+          console.log(`✅ [App] Draft atualizado: currentAction=${this.draftData.currentAction}, currentPlayer=${this.draftData.currentPlayer}, phases=${this.draftData.phases?.length}, timer=${newTimeRemaining}s, teams=${!!this.draftData.teams}`);
           console.log(`🔍 [App] Referência mudou:`, {
             old: oldDraftData,
             new: this.draftData,
