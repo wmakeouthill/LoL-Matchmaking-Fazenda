@@ -583,14 +583,23 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         logDraft('🎯 [DraftPickBan] game_ready recebido via WebSocket:', event.detail);
         saveLogToRoot(`✅ [WebSocket] Jogo pronto - todos confirmaram`);
 
-        // ✅ NOVO: Fechar modal de confirmação e emitir evento de conclusão
+        // ✅ NOVO: Fechar modal de confirmação
         this.showConfirmationModal = false;
-        this.confirmationData = event.detail.pickBanData || this.confirmationData;
+        this.cdr.detectChanges();
+      }
+    });
 
+    // ✅ NOVO: Listener para quando o jogo inicia (com gameData completo)
+    document.addEventListener('game_started', (event: any) => {
+      if (event.detail?.matchId === this.matchId) {
+        logDraft('🎯 [DraftPickBan] game_started recebido via WebSocket:', event.detail);
+        saveLogToRoot(`🎮 [WebSocket] Jogo iniciado - transicionando para in_progress`);
+
+        // ✅ NOVO: Emitir evento de conclusão com gameData completo
         this.onPickBanComplete.emit({
           matchData: this.matchData,
           session: this.session,
-          confirmationData: this.confirmationData,
+          gameData: event.detail.gameData, // ✅ gameData com teams + champions
           status: 'in_progress'
         });
 
