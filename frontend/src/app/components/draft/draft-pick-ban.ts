@@ -1260,14 +1260,42 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   getBannedChampions(): any[] {
     if (!this.session) return [];
 
-    const bannedanys = this.session.phases
-      .filter((phase: any) => phase.action === 'ban' && phase.champion && phase.locked)
-      .map((phase: any) => phase.champion!)
-      .filter((champion: any, index: number, self: any[]) =>
-        index === self.findIndex((c: any) => c.id === champion.id)
-      );
+    const bannedChampions: any[] = [];
 
-    return bannedanys;
+    // ✅ Usar allBans da estrutura hierárquica (mais simples e direto)
+    if (this.session.teams) {
+      // Time azul
+      const blueBans = this.session.teams.blue?.allBans || [];
+      blueBans.forEach((championId: string) => {
+        const champion = this.getChampionFromCache(parseInt(championId, 10));
+        if (champion) {
+          bannedChampions.push(champion);
+        }
+      });
+
+      // Time vermelho
+      const redBans = this.session.teams.red?.allBans || [];
+      redBans.forEach((championId: string) => {
+        const champion = this.getChampionFromCache(parseInt(championId, 10));
+        if (champion) {
+          bannedChampions.push(champion);
+        }
+      });
+
+      console.log(`✅ [getBannedChampions] Encontrados ${bannedChampions.length} bans:`, bannedChampions.map(c => c.name));
+    }
+    // FALLBACK: Estrutura antiga (phases)
+    else if (this.session.phases) {
+      const bannedFromPhases = this.session.phases
+        .filter((phase: any) => phase.action === 'ban' && phase.champion && phase.locked)
+        .map((phase: any) => phase.champion!)
+        .filter((champion: any, index: number, self: any[]) =>
+          index === self.findIndex((c: any) => c.id === champion.id)
+        );
+      bannedChampions.push(...bannedFromPhases);
+    }
+
+    return bannedChampions;
   }
 
   // ✅ NOVO: Buscar campeão do cache do ChampionService (síncrono)
@@ -2406,29 +2434,101 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   /**
    * Obtém todos os bans de um time
    */
-  getTeamBans(teamColor: 'blue' | 'red'): string[] {
+  getTeamBans(teamColor: 'blue' | 'red'): any[] {
+    // ✅ Retornar objetos de campeão com image como URL string (igual aos picks)
     if (this.session?.teams?.[teamColor]?.allBans) {
-      return this.session.teams[teamColor].allBans;
+      const bans = this.session.teams[teamColor].allBans;
+      return bans.map((championId: string) => {
+        const champion = this.getChampionFromCache(parseInt(championId, 10));
+        if (champion) {
+          // ✅ CORREÇÃO: Retornar com image como string URL (igual findPickInActions)
+          return {
+            id: champion.key,
+            name: champion.name,
+            image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/${champion.id}.png`
+          };
+        }
+        // Fallback: retornar objeto básico se não encontrar no cache
+        return {
+          id: championId,
+          name: `Champion ${championId}`,
+          image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/Unknown.png`
+        };
+      }).filter((c: any) => c !== null);
     }
+
     // Fallback: buscar na estrutura flat
     const teamNumber = teamColor === 'blue' ? 1 : 2;
-    return this.session?.phases
+    const championIds = this.session?.phases
       ?.filter((action: any) => action.type === 'ban' && action.team === teamNumber && action.championId)
       ?.map((action: any) => action.championId) || [];
+
+    // Converter IDs em objetos de campeão com image como URL string
+    return championIds.map((championId: string) => {
+      const champion = this.getChampionFromCache(parseInt(championId, 10));
+      if (champion) {
+        return {
+          id: champion.key,
+          name: champion.name,
+          image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/${champion.id}.png`
+        };
+      }
+      return {
+        id: championId,
+        name: `Champion ${championId}`,
+        image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/Unknown.png`
+      };
+    });
   }
 
   /**
-   * Obtém todos os picks de um time
+   * Obtém todos os picks de um time (como objetos de campeão)
    */
-  getTeamPicks(teamColor: 'blue' | 'red'): string[] {
+  getTeamPicks(teamColor: 'blue' | 'red'): any[] {
+    // ✅ Retornar objetos de campeão com image como URL string (igual aos bans)
     if (this.session?.teams?.[teamColor]?.allPicks) {
-      return this.session.teams[teamColor].allPicks;
+      const picks = this.session.teams[teamColor].allPicks;
+      return picks.map((championId: string) => {
+        const champion = this.getChampionFromCache(parseInt(championId, 10));
+        if (champion) {
+          // ✅ CORREÇÃO: Retornar com image como string URL (igual findPickInActions)
+          return {
+            id: champion.key,
+            name: champion.name,
+            image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/${champion.id}.png`
+          };
+        }
+        // Fallback: retornar objeto básico se não encontrar no cache
+        return {
+          id: championId,
+          name: `Champion ${championId}`,
+          image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/Unknown.png`
+        };
+      }).filter((c: any) => c !== null);
     }
+
     // Fallback: buscar na estrutura flat
     const teamNumber = teamColor === 'blue' ? 1 : 2;
-    return this.session?.phases
+    const championIds = this.session?.phases
       ?.filter((action: any) => action.type === 'pick' && action.team === teamNumber && action.championId)
       ?.map((action: any) => action.championId) || [];
+
+    // Converter IDs em objetos de campeão com image como URL string
+    return championIds.map((championId: string) => {
+      const champion = this.getChampionFromCache(parseInt(championId, 10));
+      if (champion) {
+        return {
+          id: champion.key,
+          name: champion.name,
+          image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/${champion.id}.png`
+        };
+      }
+      return {
+        id: championId,
+        name: `Champion ${championId}`,
+        image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/Unknown.png`
+      };
+    });
   }
 
   /**

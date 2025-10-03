@@ -36,6 +36,36 @@ interface CustomPickBanSession {
   redTeam: any[];
   currentPlayerIndex: number;
   actions?: any[]; // ✅ NOVO: Ações do draft com dados completos
+  teams?: { // ✅ NOVO: Estrutura hierárquica
+    blue: {
+      players: Array<{
+        summonerName: string;
+        assignedLane: string;
+        actions: Array<{
+          type: 'ban' | 'pick';
+          championId: string;
+          championName?: string;
+          status: 'completed' | 'pending';
+        }>;
+      }>;
+      allBans: string[]; // ✅ NOVO: IDs dos campeões banidos
+      allPicks: string[]; // ✅ NOVO: IDs dos campeões escolhidos
+    };
+    red: {
+      players: Array<{
+        summonerName: string;
+        assignedLane: string;
+        actions: Array<{
+          type: 'ban' | 'pick';
+          championId: string;
+          championName?: string;
+          status: 'completed' | 'pending';
+        }>;
+      }>;
+      allBans: string[]; // ✅ NOVO: IDs dos campeões banidos
+      allPicks: string[]; // ✅ NOVO: IDs dos campeões escolhidos
+    };
+  };
 }
 
 interface TeamSlot {
@@ -76,6 +106,34 @@ export class DraftConfirmationModalComponent implements OnChanges {
   private readonly CACHE_DURATION = 100;
 
   constructor(private readonly championService: ChampionService) { }
+
+  // ✅ NOVO: Buscar campeão no cache pelo ID
+  private getChampionFromCache(championId: number): any {
+    const cache = (this.championService as any).championsCache as Map<string, any>;
+    if (!cache) return null;
+
+    // Tentar buscar diretamente pelo key
+    let champion = cache.get(championId.toString());
+
+    if (!champion) {
+      // FALLBACK: Buscar em todos os campeões pelo ID alternativo
+      for (const [, champ] of cache.entries()) {
+        if (champ.key === championId.toString() || parseInt(champ.key, 10) === championId) {
+          champion = champ;
+          logConfirmationModal(`✅ [getChampionFromCache] Campeão ${championId} encontrado via fallback: ${champ.name}`);
+          break;
+        }
+      }
+    } else {
+      logConfirmationModal(`✅ [getChampionFromCache] Campeão ${championId} encontrado: ${champion.name}`);
+    }
+
+    if (!champion) {
+      logConfirmationModal(`⚠️ [getChampionFromCache] Campeão ${championId} NÃO encontrado`);
+    }
+
+    return champion;
+  }
 
   ngOnChanges(changes: SimpleChanges): void {
     // ✅ NOVO: Invalidar cache quando session ou isVisible mudam
@@ -269,52 +327,61 @@ export class DraftConfirmationModalComponent implements OnChanges {
 
     logConfirmationModal(`🎯 [getTeamPicks] === OBTENDO PICKS DO TIME ${team.toUpperCase()} ===`);
 
-    // ✅ CORREÇÃO: Usar actions em vez de phases para obter dados reais
     let teamPicks: any[] = [];
 
-    if (this.session.actions && this.session.actions.length > 0) {
-      // Usar dados das actions (fonte de verdade)
-      const teamIndex = team === 'blue' ? 1 : 2;
+    // ✅ CORREÇÃO: Usar estrutura hierárquica (teams.blue/red.players[].actions)
+    if (this.session.teams) {
+      const teamData = team === 'blue' ? this.session.teams.blue : this.session.teams.red;
 
-      logConfirmationModal(`🎯 [getTeamPicks] Usando actions - teamIndex procurado: ${teamIndex}`);
-      logConfirmationModal(`🎯 [getTeamPicks] Actions disponíveis:`, this.session.actions.map((action: any, index: number) => ({
-        index,
-        teamIndex: action.teamIndex,
-        action: action.action,
-        champion: action.champion?.name || 'Sem champion',
-        locked: action.locked,
-        playerId: action.playerId,
-        playerName: action.playerName
-      })));
+      if (teamData?.players) {
+        logConfirmationModal(`🎯 [getTeamPicks] Usando estrutura hierárquica - ${teamData.players.length} jogadores`);
+
+        teamData.players.forEach((player: any) => {
+          player.actions?.forEach((action: any) => {
+            if (action.type === 'pick' && action.championId && action.status === 'completed') {
+              // Buscar campeão no cache
+              const champion = this.getChampionFromCache(parseInt(action.championId, 10));
+              if (champion) {
+                // ✅ CORREÇÃO: Retornar com image como string URL (igual aos bans)
+                teamPicks.push({
+                  id: champion.key,
+                  name: champion.name,
+                  image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/${champion.id}.png`
+                });
+                logConfirmationModal(`✅ [getTeamPicks] Pick encontrado:`, {
+                  player: player.summonerName,
+                  champion: champion.name,
+                  championId: action.championId
+                });
+              }
+            }
+          });
+        });
+      }
+    }
+    // FALLBACK 1: Estrutura antiga (actions)
+    else if (this.session.actions && this.session.actions.length > 0) {
+      const teamIndex = team === 'blue' ? 1 : 2;
+      logConfirmationModal(`🎯 [getTeamPicks] Usando actions (fallback) - teamIndex: ${teamIndex}`);
 
       teamPicks = this.session.actions
         .filter((action: any) => {
-          const match = action.teamIndex === teamIndex &&
+          return action.teamIndex === teamIndex &&
             action.action === 'pick' &&
             action.champion &&
             action.locked;
-
-          if (match) {
-            logConfirmationModal(`🎯 [getTeamPicks] Pick encontrado:`, {
-              teamIndex: action.teamIndex,
-              champion: action.champion.name,
-              playerId: action.playerId,
-              playerName: action.playerName
-            });
-          }
-
-          return match;
         })
         .map((action: any) => action.champion);
-    } else {
-      // Fallback para phases (pode estar vazio)
-      logConfirmationModal(`🎯 [getTeamPicks] Usando phases (fallback)`);
+    }
+    // FALLBACK 2: Estrutura muito antiga (phases)
+    else if (this.session.phases) {
+      logConfirmationModal(`🎯 [getTeamPicks] Usando phases (fallback antigo)`);
       teamPicks = this.session.phases
         .filter(phase => phase.team === team && phase.action === 'pick' && phase.champion)
         .map(phase => phase.champion!);
     }
 
-    logConfirmationModal(`🎯 [getTeamPicks] Picks finais do time ${team}:`, teamPicks.map(pick => pick.name));
+    logConfirmationModal(`🎯 [getTeamPicks] Picks finais do time ${team}: ${teamPicks.length} picks`, teamPicks.map(pick => pick.name));
 
     if (team === 'blue') {
       this._cachedBlueTeamPicks = teamPicks;
@@ -329,13 +396,38 @@ export class DraftConfirmationModalComponent implements OnChanges {
   getTeamBans(team: 'blue' | 'red'): any[] {
     if (!this.session) return [];
 
-    // ✅ CORREÇÃO: Usar actions em vez de phases para obter dados reais
-    let teamBans: any[] = [];
+    logConfirmationModal(`🎯 [getTeamBans] Obtendo bans do time ${team}`);
 
+    // ✅ Usar allBans da estrutura hierárquica (mais simples e direto)
+    if (this.session.teams?.[team]?.allBans) {
+      const bans = this.session.teams[team].allBans;
+      logConfirmationModal(`✅ [getTeamBans] Encontrados ${bans.length} IDs de bans`, bans);
+
+      return bans.map((championId: string) => {
+        const champion = this.getChampionFromCache(parseInt(championId, 10));
+        if (champion) {
+          logConfirmationModal(`✅ [getTeamBans] Campeão ${champion.name} (ID: ${championId}) encontrado no cache`);
+          // ✅ CORREÇÃO: Retornar com image como string URL (igual draft-pick-ban.ts)
+          return {
+            id: champion.key,
+            name: champion.name,
+            image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/${champion.id}.png`
+          };
+        }
+        // Fallback: retornar objeto básico se não encontrar no cache
+        logConfirmationModal(`⚠️ [getTeamBans] Campeão ID ${championId} NÃO encontrado no cache`);
+        return {
+          id: championId,
+          name: `Champion ${championId}`,
+          image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/Unknown.png`
+        };
+      });
+    }
+
+    // Fallback para actions (estrutura antiga)
     if (this.session.actions && this.session.actions.length > 0) {
-      // Usar dados das actions (fonte de verdade)
       const teamIndex = team === 'blue' ? 1 : 2;
-      teamBans = this.session.actions
+      return this.session.actions
         .filter((action: any) => {
           return action.teamIndex === teamIndex &&
             action.action === 'ban' &&
@@ -343,14 +435,16 @@ export class DraftConfirmationModalComponent implements OnChanges {
             action.locked;
         })
         .map((action: any) => action.champion);
-    } else {
-      // Fallback para phases (pode estar vazio)
-      teamBans = this.session.phases
+    }
+
+    // Fallback para phases (estrutura muito antiga)
+    if (this.session.phases) {
+      return this.session.phases
         .filter(phase => phase.team === team && phase.action === 'ban' && phase.champion)
         .map(phase => phase.champion!);
     }
 
-    return teamBans;
+    return [];
   }
 
   // MÉTODOS PARA ORGANIZAR TIMES POR LANE
