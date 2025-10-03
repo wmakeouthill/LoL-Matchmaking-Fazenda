@@ -592,6 +592,13 @@ public class DraftFlowService {
                         @SuppressWarnings("unchecked")
                         Map<String, Object> pickBanData = mapper.readValue(cm.getPickBanDataJson(), Map.class);
 
+                        // ✅ ESTRUTURA HIERÁRQUICA (teams.blue/red)
+                        Object teamsData = pickBanData.get("teams");
+                        if (teamsData != null) {
+                            updateData.put("teams", teamsData);
+                            log.debug("✅ [DraftFlow] Broadcast com estrutura hierárquica (teams.blue/red)");
+                        }
+
                         // ✅ Buscar dados completos usando KEY_TEAM1 e KEY_TEAM2 ("team1" e "team2")
                         Object team1Data = pickBanData.get(KEY_TEAM1);
                         Object team2Data = pickBanData.get(KEY_TEAM2);
@@ -916,8 +923,23 @@ public class DraftFlowService {
 
         team.put("players", cleanPlayers);
 
-        log.debug("✅ [buildCleanTeamData] Time {} construído com {} players (estrutura limpa)", teamName,
-                cleanPlayers.size());
+        // ✅ Adicionar allBans e allPicks para compatibilidade com o frontend
+        List<String> allBans = actions.stream()
+                .filter(a -> a.team() == teamNumber && "ban".equals(a.type()))
+                .filter(a -> a.championId() != null && !SKIPPED.equals(a.championId()))
+                .map(DraftAction::championId)
+                .toList();
+        team.put("allBans", allBans);
+
+        List<String> allPicks = actions.stream()
+                .filter(a -> a.team() == teamNumber && "pick".equals(a.type()))
+                .filter(a -> a.championId() != null && !SKIPPED.equals(a.championId()))
+                .map(DraftAction::championId)
+                .toList();
+        team.put("allPicks", allPicks);
+
+        log.debug("✅ [buildCleanTeamData] Time {} construído: {} players, {} bans, {} picks", teamName,
+                cleanPlayers.size(), allBans.size(), allPicks.size());
         return team;
     }
 
@@ -986,6 +1008,14 @@ public class DraftFlowService {
                 try {
                     @SuppressWarnings("unchecked")
                     Map<String, Object> pickBanData = mapper.readValue(cm.getPickBanDataJson(), Map.class);
+
+                    // ✅ ESTRUTURA HIERÁRQUICA (teams.blue/red)
+                    Object teamsData = pickBanData.get("teams");
+                    if (teamsData != null) {
+                        result.put("teams", teamsData);
+                    }
+
+                    // ✅ COMPATIBILIDADE (team1/team2 flat)
                     Object team1Data = pickBanData.get(KEY_TEAM1);
                     Object team2Data = pickBanData.get(KEY_TEAM2);
 
