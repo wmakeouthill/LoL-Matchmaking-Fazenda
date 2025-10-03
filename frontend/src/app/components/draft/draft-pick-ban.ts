@@ -1800,9 +1800,26 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
   // ✅ MÉTODOS DE AÇÃO
   async onanySelected(champion: any): Promise<void> {
+    console.log('🚀🚀🚀 [onanySelected] MÉTODO CHAMADO!');
+    console.log('🚀 Champion:', champion);
+    console.log('🚀 currentPlayer:', this.currentPlayer);
+    console.log('🚀 matchId:', this.matchId);
+
     logDraft('🎯 [onanySelected] === CAMPEÃO SELECIONADO ===');
     logDraft('🎯 [onanySelected] Campeão selecionado:', champion.name);
-    saveLogToRoot(`🎯 [onanySelected] Campeão selecionado: ${champion.name} (ID: ${champion.id})`);
+
+    // ✅ LOGS DETALHADOS DE DEBUG
+    const currentPhasePreview = this.session?.phases?.[this.session?.currentAction];
+    saveLogToRoot(`\n========== [onanySelected] INÍCIO DA AÇÃO ==========`);
+    saveLogToRoot(`🎯 Campeão: ${champion.name} (ID: ${champion.id})`);
+    saveLogToRoot(`🎯 MatchId: ${this.matchId}`);
+    saveLogToRoot(`🎯 Current Action Index: ${this.session?.currentAction}`);
+    saveLogToRoot(`🎯 Fase Atual: ${currentPhasePreview?.action} (Team: ${currentPhasePreview?.team})`);
+    saveLogToRoot(`🎯 Jogador da Vez: ${currentPhasePreview?.playerName} (ID: ${currentPhasePreview?.playerId})`);
+    saveLogToRoot(`🎯 Current Player: ${this.currentPlayer?.summonerName || this.currentPlayer?.displayName}`);
+    saveLogToRoot(`🎯 Is Editing Mode: ${this.isEditingMode}`);
+    saveLogToRoot(`🎯 Total Phases: ${this.session?.phases?.length || 0}`);
+    saveLogToRoot(`====================================================\n`);
 
     if (!this.session) {
       logDraft('❌ [onanySelected] Session não existe');
@@ -1895,8 +1912,12 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           actionIndex: this.session.currentAction
         };
 
+        console.log('📡📡📡 [onanySelected] ENVIANDO PARA BACKEND!');
+        console.log('📡 URL:', url);
+        console.log('📡 Request:', requestData);
         logDraft('🎯 [onanySelected] Enviando ação para backend:', requestData);
-        saveLogToRoot(`🎯 [onanySelected] Enviando ação: ${JSON.stringify(requestData)}`);
+        saveLogToRoot(`🎯 [onanySelected] === ENVIANDO POST === URL: ${url}`);
+        saveLogToRoot(`🎯 [onanySelected] Request Data: ${JSON.stringify(requestData)}`);
 
         const response = await firstValueFrom(this.http.post(url, requestData, {
           headers: {
@@ -1905,8 +1926,15 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           }
         }));
 
+        console.log('✅✅✅ [onanySelected] RESPOSTA RECEBIDA:', response);
+
+        // ✅ LOGS DETALHADOS DA RESPOSTA
+        saveLogToRoot(`\n========== [onanySelected] RESPOSTA DO BACKEND ==========`);
+        saveLogToRoot(`✅ Status: SUCCESS`);
+        saveLogToRoot(`✅ Resposta completa: ${JSON.stringify(response, null, 2)}`);
+        saveLogToRoot(`=========================================================\n`);
+
         logDraft('✅ [onanySelected] Ação enviada para backend com sucesso');
-        saveLogToRoot(`✅ [onanySelected] Ação enviada para backend com sucesso. Resposta: ${JSON.stringify(response)}`);
 
         // ✅ OTIMIZAÇÃO: Sincronização imediata após ação + retry automático
         this.syncSessionWithRetry();

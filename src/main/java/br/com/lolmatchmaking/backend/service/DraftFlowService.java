@@ -50,8 +50,11 @@ public class DraftFlowService {
             this.matchId = matchId;
             this.actions = actions;
             this.currentIndex = 0;
-            this.team1Players = team1 == null ? Set.of() : new HashSet<>(team1);
-            this.team2Players = team2 == null ? Set.of() : new HashSet<>(team2);
+            // ✅ CORREÇÃO CRÍTICA: Usar LinkedHashSet para MANTER A ORDEM dos jogadores
+            // HashSet não garante ordem, então a posição dos jogadores ficava aleatória
+            // LinkedHashSet mantém a ordem de inserção (Top, Jungle, Mid, ADC, Support)
+            this.team1Players = team1 == null ? Set.of() : new LinkedHashSet<>(team1);
+            this.team2Players = team2 == null ? Set.of() : new LinkedHashSet<>(team2);
             this.lastActionStartMs = System.currentTimeMillis();
         }
 
@@ -260,15 +263,27 @@ public class DraftFlowService {
 
     @Transactional
     public synchronized boolean processAction(long matchId, int actionIndex, String championId, String byPlayer) {
-        log.info("🔵 [processAction] === INICIANDO ===");
-        log.info("🔵 [processAction] matchId={}, actionIndex={}, championId={}, byPlayer={}",
-                matchId, actionIndex, championId, byPlayer);
+        log.info("\n========================================");
+        log.info("🔵 [processAction] === INICIANDO AÇÃO ===");
+        log.info("========================================");
+        log.info("📋 MatchId: {}", matchId);
+        log.info("📋 Action Index: {}", actionIndex);
+        log.info("📋 Champion ID: {}", championId);
+        log.info("📋 By Player: {}", byPlayer);
 
         DraftState st = states.get(matchId);
         if (st == null) {
             log.warn("❌ [processAction] DraftState não encontrado para matchId={}", matchId);
+            log.info("========================================\n");
             return false;
         }
+
+        // ✅ LOGS DETALHADOS DO ESTADO ATUAL
+        log.info("📊 Estado do Draft:");
+        log.info("   - Current Index: {}", st.getCurrentIndex());
+        log.info("   - Total Actions: {}", st.getActions().size());
+        log.info("   - Team1 Players: {}", st.getTeam1Players());
+        log.info("   - Team2 Players: {}", st.getTeam2Players());
 
         // ✅ CORREÇÃO #6: Normalizar championId antes de processar
         final String normalizedChampionId = normalizeChampionId(championId);
@@ -290,11 +305,23 @@ public class DraftFlowService {
             return false;
         }
         log.info("✅ [processAction] actionIndex validado: {}", actionIndex);
+
         DraftAction prev = st.actions.get(actionIndex);
-        // valida se jogador pertence ao time da ação
+        log.info("🔍 [processAction] Ação atual: type={}, team={}", prev.type(), prev.team());
+
+        // ✅ Calcular jogador esperado para esta ação
+        String expectedPlayer = getPlayerForTeamAndIndex(st, prev.team(), actionIndex);
+        log.info("🔍 [processAction] Jogador esperado: {}", expectedPlayer);
+        log.info("🔍 [processAction] Jogador recebido: {}", byPlayer);
+
+        // ✅ Validar se o jogador pertence ao time da ação
         if (!st.isPlayerInTeam(byPlayer, prev.team())) {
+            log.warn("❌ [processAction] Jogador {} NÃO pertence ao time {}", byPlayer, prev.team());
+            log.warn("❌ [processAction] Team1 players: {}", st.getTeam1Players());
+            log.warn("❌ [processAction] Team2 players: {}", st.getTeam2Players());
             return false;
         }
+        log.info("✅ [processAction] Jogador {} pertence ao team{}", byPlayer, prev.team());
         boolean alreadyUsed = st.actions.stream()
                 .filter(a -> a.championId() != null && !SKIPPED.equalsIgnoreCase(a.championId()))
                 .anyMatch(a -> normalizedChampionId.equalsIgnoreCase(a.championId()));
@@ -315,9 +342,46 @@ public class DraftFlowService {
         st.getActions().set(actionIndex, updated);
         st.advance();
         st.markActionStart();
+
+        // ✅ LOGS ANTES DE PERSISTIR
+        log.info("💾 Salvando ação no banco de dados...");
         persist(matchId, st);
+        log.info("✅ Ação salva com sucesso!");
+
+        // ✅ LOGS DETALHADOS DA AÇÃO SALVA
+        log.info("\n========================================");
+        log.info("✅ [processAction] === AÇÃO SALVA COM SUCESSO ===");
+        log.info("========================================");
+        log.info("🎯 Ação #{}: {} {} por {}",
+                actionIndex,
+                updated.type().toUpperCase(),
+                championName != null ? championName : normalizedChampionId,
+                byPlayer);
+        log.info("🎯 Team: {}", updated.team());
+        log.info("🎯 Champion ID normalizado: {}", normalizedChampionId);
+        log.info("🎯 Champion Name: {}", championName);
+        log.info("🎯 Próxima ação: {} / {}", st.getCurrentIndex(), st.getActions().size());
+
+        // ✅ MOSTRAR PEDAÇO DO JSON SALVO
+        try {
+            DraftAction savedAction = st.getActions().get(actionIndex);
+            log.info("📄 JSON da ação salva:");
+            log.info("   {{");
+            log.info("     \"index\": {},", savedAction.index());
+            log.info("     \"type\": \"{}\",", savedAction.type());
+            log.info("     \"team\": {},", savedAction.team());
+            log.info("     \"championId\": \"{}\",", savedAction.championId());
+            log.info("     \"championName\": \"{}\",", savedAction.championName());
+            log.info("     \"byPlayer\": \"{}\"", savedAction.byPlayer());
+            log.info("   }}");
+        } catch (Exception e) {
+            log.warn("⚠️ Erro ao exibir JSON da ação: {}", e.getMessage());
+        }
+        log.info("========================================\n");
+
         broadcastUpdate(st, false);
         if (st.getCurrentIndex() >= st.getActions().size()) {
+            log.info("🏁 [processAction] Draft completo! Broadcast de conclusão...");
             broadcastDraftCompleted(st);
         }
         return true;
@@ -440,13 +504,23 @@ public class DraftFlowService {
                         snapshot.put(KEY_TEAM2, team2Fallback);
                     }
 
-                    // ✅ SUBSTITUIR POR ESTRUTURA LIMPA (sem duplicação)
-                    log.info("🔨 [persist] Gerando JSON LIMPO (apenas teams + metadados)");
+                    // ✅ ESTRUTURA LIMPA + COMPATIBILIDADE
+                    log.info("🔨 [persist] Gerando JSON LIMPO (teams + metadados + team1/team2 para compatibilidade)");
                     Map<String, Object> cleanData = buildHierarchicalDraftData(st);
 
-                    // ✅ JSON LIMPO: apenas teams.blue/red + metadados
+                    // ✅ JSON FINAL: teams.blue/red (limpo) + team1/team2 (compatibilidade) +
+                    // metadados
                     Map<String, Object> finalSnapshot = new HashMap<>();
+
+                    // ✅ 1. Estrutura limpa (teams hierárquicos)
                     finalSnapshot.put("teams", cleanData.get("teams"));
+
+                    // ✅ 2. Compatibilidade (team1/team2 flat) - NECESSÁRIO para
+                    // buildHierarchicalDraftData funcionar
+                    finalSnapshot.put(KEY_TEAM1, snapshot.get(KEY_TEAM1));
+                    finalSnapshot.put(KEY_TEAM2, snapshot.get(KEY_TEAM2));
+
+                    // ✅ 3. Metadados
                     finalSnapshot.put("currentIndex", cleanData.get("currentIndex"));
                     finalSnapshot.put("currentPhase", cleanData.get("currentPhase"));
                     finalSnapshot.put("currentPlayer", cleanData.get("currentPlayer"));
@@ -457,7 +531,7 @@ public class DraftFlowService {
                     customMatchRepository.save(cm);
 
                     log.info(
-                            "✅ [persist] JSON LIMPO salvo: {} keys (sem duplicação: team1/team2/actions/confirmations removidos)",
+                            "✅ [persist] JSON salvo: {} keys (teams LIMPO + team1/team2 compatibilidade)",
                             finalSnapshot.keySet().size());
 
                     log.debug("✅ [DraftFlow] Draft state persistido para match {}", matchId);
@@ -685,34 +759,64 @@ public class DraftFlowService {
     /**
      * ✅ ESTRUTURA HIERÁRQUICA LIMPA (SEM DUPLICAÇÃO)
      * Constrói JSON limpo: apenas teams.blue/red com players e ações + metadados
+     * 🔥 CORREÇÃO: Constrói times diretamente da memória (DraftState), não do
+     * banco!
      */
     private Map<String, Object> buildHierarchicalDraftData(DraftState st) {
         log.info("🔨 [buildHierarchicalDraftData] Construindo estrutura LIMPA para match {}", st.getMatchId());
 
         Map<String, Object> result = new HashMap<>();
 
+        // ✅ CORREÇÃO CRÍTICA: Buscar dados dos times da MEMÓRIA ou do BANCO
         customMatchRepository.findById(st.getMatchId()).ifPresent(cm -> {
             try {
-                // ✅ 1. Buscar dados dos times do banco
-                if (cm.getPickBanDataJson() == null || cm.getPickBanDataJson().isEmpty()) {
-                    log.warn("⚠️ [buildHierarchicalDraftData] pick_ban_data vazio para match {}", st.getMatchId());
-                    return;
+                List<Map<String, Object>> team1Players = null;
+                List<Map<String, Object>> team2Players = null;
+
+                // ✅ 1. Tentar buscar do banco (se existir estrutura antiga)
+                if (cm.getPickBanDataJson() != null && !cm.getPickBanDataJson().isEmpty()) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> pickBanData = mapper.readValue(cm.getPickBanDataJson(), Map.class);
+
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> team1FromDB = (List<Map<String, Object>>) pickBanData.get(KEY_TEAM1);
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> team2FromDB = (List<Map<String, Object>>) pickBanData.get(KEY_TEAM2);
+
+                    if (team1FromDB != null && !team1FromDB.isEmpty()) {
+                        team1Players = team1FromDB;
+                    }
+                    if (team2FromDB != null && !team2FromDB.isEmpty()) {
+                        team2Players = team2FromDB;
+                    }
                 }
 
-                @SuppressWarnings("unchecked")
-                Map<String, Object> pickBanData = mapper.readValue(cm.getPickBanDataJson(), Map.class);
-
-                @SuppressWarnings("unchecked")
-                List<Map<String, Object>> team1Players = (List<Map<String, Object>>) pickBanData.get(KEY_TEAM1);
-                @SuppressWarnings("unchecked")
-                List<Map<String, Object>> team2Players = (List<Map<String, Object>>) pickBanData.get(KEY_TEAM2);
-
-                if (team1Players == null || team2Players == null) {
-                    log.warn("⚠️ [buildHierarchicalDraftData] Times vazios para match {}", st.getMatchId());
-                    return;
+                // ✅ 2. FALLBACK: Se não existe no banco, criar da memória (DraftState)
+                if (team1Players == null || team1Players.isEmpty()) {
+                    log.info("📝 [buildHierarchicalDraftData] Criando team1 da MEMÓRIA (DraftState)");
+                    team1Players = new ArrayList<>();
+                    int idx = 0;
+                    for (String playerName : st.getTeam1Players()) {
+                        Map<String, Object> playerObj = new HashMap<>();
+                        playerObj.put("summonerName", playerName);
+                        playerObj.put("teamIndex", idx++);
+                        team1Players.add(playerObj);
+                    }
                 }
 
-                // ✅ 2. Construir estrutura hierárquica teams.blue/red (SEM duplicação)
+                if (team2Players == null || team2Players.isEmpty()) {
+                    log.info("📝 [buildHierarchicalDraftData] Criando team2 da MEMÓRIA (DraftState)");
+                    team2Players = new ArrayList<>();
+                    int idx = 5; // Team 2 começa no índice 5
+                    for (String playerName : st.getTeam2Players()) {
+                        Map<String, Object> playerObj = new HashMap<>();
+                        playerObj.put("summonerName", playerName);
+                        playerObj.put("teamIndex", idx++);
+                        team2Players.add(playerObj);
+                    }
+                }
+
+                // ✅ 3. Construir estrutura hierárquica teams.blue/red (SEM duplicação)
                 Map<String, Object> teams = new HashMap<>();
                 teams.put("blue", buildCleanTeamData("Blue Team", team1Players, st.getActions(), 1));
                 teams.put("red", buildCleanTeamData("Red Team", team2Players, st.getActions(), 2));
@@ -726,11 +830,11 @@ public class DraftFlowService {
             }
         });
 
-        // ✅ 3. Adicionar APENAS metadados necessários
+        // ✅ 4. Adicionar APENAS metadados necessários
         result.put("currentIndex", st.getCurrentIndex());
         result.put("currentPhase", getCurrentPhaseName(st.getCurrentIndex()));
 
-        // ✅ 4. Calcular jogador e time atual
+        // ✅ 5. Calcular jogador e time atual
         if (st.getCurrentIndex() < st.getActions().size()) {
             DraftAction currentAction = st.getActions().get(st.getCurrentIndex());
             String currentPlayer = getPlayerForTeamAndIndex(st, currentAction.team(), st.getCurrentIndex());
@@ -1093,15 +1197,16 @@ public class DraftFlowService {
         List<String> team1List = new ArrayList<>(st.getTeam1Players());
         List<String> team2List = new ArrayList<>(st.getTeam2Players());
 
-        // ✅ ORDEM CORRETA DO DRAFT PROFISSIONAL
-        // Fase 1 - Bans: Top Azul → Top Vermelho → JG Azul → JG Vermelho → Mid Azul →
-        // Mid Vermelho
-        // Fase 2 - Picks: Azul (1) → Vermelho (2) → Azul (2) → Vermelho (1)
-        // Fase 3 - Bans: ADC Azul → ADC Vermelho → Suporte Azul → Suporte Vermelho
-        // Fase 4 - Picks: Vermelho (2) → Azul (2) → Vermelho Last Pick
+        // ✅ ORDEM CORRETA DO DOCUMENTO "pergunas draft.md"
+        // Fase 1 - Bans (6): Top Azul → Top Vermelho → Jungle Azul → Jungle Vermelho →
+        // Mid Azul → Mid Vermelho
+        // Fase 2 - Picks (6): Azul pick 1 → Vermelho pick 2 → Azul pick 2 → Vermelho
+        // pick 1 → Azul pick 1
+        // Fase 3 - Bans (4): ADC Azul → ADC Vermelho → Suporte Azul → Suporte Vermelho
+        // Fase 4 - Picks (4): Vermelho pick 2 → Azul pick 2 → Vermelho Last Pick
         int playerIndex;
         switch (actionIndex) {
-            // FASE 1 - BANS (ações 0-5): Top → Jungle → Mid de ambos os times
+            // ✅ FASE 1 - BANS (ações 0-5): Alternado Top/Jungle/Mid
             case 0:
                 playerIndex = 0;
                 break; // team1[0] - Top Azul
@@ -1121,27 +1226,29 @@ public class DraftFlowService {
                 playerIndex = 2;
                 break; // team2[2] - Mid Vermelho
 
-            // FASE 2 - PICKS (ações 6-11): Azul 1 → Vermelho 2 → Azul 2 → Vermelho 1
+            // ✅ FASE 2 - PICKS (ações 6-11): Azul 1 → Vermelho 2 (top+jungle) → Azul 2
+            // (jungle+mid) → Vermelho 1 (mid)
             case 6:
                 playerIndex = 0;
-                break; // team1[0] - Top Azul (First Pick)
+                break; // team1[0] - Azul Pick 1: Top
             case 7:
                 playerIndex = 0;
-                break; // team2[0] - Top Vermelho
+                break; // team2[0] - Vermelho Pick 1: Top
             case 8:
                 playerIndex = 1;
-                break; // team2[1] - Jungle Vermelho
+                break; // team2[1] - Vermelho Pick 2: Jungle
             case 9:
                 playerIndex = 1;
-                break; // team1[1] - Jungle Azul
+                break; // team1[1] - Azul Pick 2: Jungle
             case 10:
                 playerIndex = 2;
-                break; // team1[2] - Mid Azul
+                break; // team1[2] - Azul Pick 3: Mid
             case 11:
                 playerIndex = 2;
-                break; // team2[2] - Mid Vermelho
+                break; // team2[2] - Vermelho Pick 3: Mid
 
-            // FASE 3 - BANS (ações 12-15): ADC e Suporte de ambos os times
+            // ✅ FASE 3 - BANS (ações 12-15): ADC Azul → ADC Vermelho → Suporte Azul →
+            // Suporte Vermelho
             case 12:
                 playerIndex = 3;
                 break; // team1[3] - ADC Azul
@@ -1155,19 +1262,20 @@ public class DraftFlowService {
                 playerIndex = 4;
                 break; // team2[4] - Suporte Vermelho
 
-            // FASE 4 - PICKS (ações 16-19): Vermelho 2 → Azul 2 → Vermelho Last Pick
+            // ✅ FASE 4 - PICKS (ações 16-19): Vermelho 2 (adc+sup) → Azul 2 (adc+sup - last
+            // pick)
             case 16:
                 playerIndex = 3;
-                break; // team2[3] - ADC Vermelho
+                break; // team2[3] - Vermelho Pick 4: ADC
             case 17:
-                playerIndex = 4;
-                break; // team2[4] - Suporte Vermelho
-            case 18:
                 playerIndex = 3;
-                break; // team1[3] - ADC Azul
+                break; // team1[3] - Azul Pick 4: ADC
+            case 18:
+                playerIndex = 4;
+                break; // team1[4] - Azul Pick 5: Support (LAST PICK)
             case 19:
                 playerIndex = 4;
-                break; // team1[4] - Suporte Azul (Last Pick)
+                break; // team2[4] - Vermelho Pick 5: Support
 
             default:
                 log.warn("⚠️ [DraftFlow] Ação {} fora do range esperado (0-19)", actionIndex);
@@ -1178,7 +1286,7 @@ public class DraftFlowService {
         List<String> currentTeamPlayers = team == 1 ? team1List : team2List;
         if (playerIndex < currentTeamPlayers.size()) {
             String selectedPlayer = currentTeamPlayers.get(playerIndex);
-            log.debug("✅ [DraftFlow] Ação {}: Time {} → Jogador[{}] = {}",
+            log.info("✅ [DraftFlow] Ação {}: Team{} → Lane[{}] → Player: {}",
                     actionIndex, team, playerIndex, selectedPlayer);
             return selectedPlayer;
         }
