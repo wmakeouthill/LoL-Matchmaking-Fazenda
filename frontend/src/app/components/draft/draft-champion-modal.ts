@@ -536,6 +536,7 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
 
     console.log('✅ [onanyCardClick] any livre, selecionando...');
     this.selectany(champion);
+    console.log('👉 [onanyCardClick] Campeão selecionado, aguardando confirmação do usuário...');
   }
 
   selectany(champion: any): void {
@@ -618,34 +619,46 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
   // MÉTODOS PARA CONFIRMAÇÃO
   confirmModalSelection(): void {
     if (!this.selectedany) {
+      console.log('❌ [confirmModalSelection] Nenhum campeão selecionado');
       return;
     }
 
     if (this.isChampionBanned(this.selectedany) || this.isChampionPicked(this.selectedany)) {
+      console.log('❌ [confirmModalSelection] Campeão banido ou já escolhido');
       return;
     }
 
     // ✅ CORREÇÃO: Log detalhado da seleção para debug
-    console.log('🎯 [DraftanyModal] === CONFIRMANDO SELEÇÃO ===');
-    console.log('🎯 [DraftanyModal] Campeão selecionado:', this.selectedany.name);
-    console.log('🎯 [DraftanyModal] ID do campeão:', this.selectedany.id);
-    console.log('🎯 [DraftanyModal] Sessão atual:', this.session?.currentAction);
-    console.log('🎯 [DraftanyModal] Fase atual:', this.session?.phases?.[this.session?.currentAction || 0]);
+    console.log('🎯 [confirmModalSelection] === CONFIRMANDO SELEÇÃO ===');
+    console.log('🎯 [confirmModalSelection] Campeão selecionado:', this.selectedany.name);
+    console.log('🎯 [confirmModalSelection] ID do campeão:', this.selectedany.id);
+    console.log('🎯 [confirmModalSelection] Sessão atual:', this.session?.currentAction);
+    console.log('🎯 [confirmModalSelection] Fase atual:', this.session?.phases?.[this.session?.currentAction || 0]);
 
-    // ✅ CORREÇÃO: Emitir o campeão selecionado
-    this.onanySelected.emit(this.selectedany);
+    // ✅ CRÍTICO: Guardar referência antes de limpar
+    const championToEmit = this.selectedany;
 
-    // ✅ CORREÇÃO: Limpar seleção e cache
-    this.selectedany = null;
-    this.invalidateCache();
+    // ✅ CORREÇÃO: Emitir o campeão selecionado ANTES de fechar
+    console.log('📤 [confirmModalSelection] EMITINDO EVENTO onanySelected...');
+    this.onanySelected.emit(championToEmit);
+    console.log('✅ [confirmModalSelection] Evento emitido com sucesso');
 
-    // ✅ CORREÇÃO: Fechar modal
-    this.closeModal();
+    // ✅ CORREÇÃO: Fechar modal com delay para garantir que o evento seja processado
+    setTimeout(() => {
+      console.log('🚪 [confirmModalSelection] Fechando modal...');
 
-    // ✅ CORREÇÃO: Forçar atualização
-    this.changeDetectorRef.markForCheck();
+      // ✅ CORREÇÃO: Limpar seleção e cache
+      this.selectedany = null;
+      this.invalidateCache();
 
-    console.log('✅ [DraftanyModal] Seleção confirmada e modal fechado');
+      // ✅ CORREÇÃO: Fechar modal
+      this.closeModal();
+
+      // ✅ CORREÇÃO: Forçar atualização
+      this.changeDetectorRef.markForCheck();
+
+      console.log('✅ [confirmModalSelection] Modal fechado');
+    }, 100); // Delay de 100ms para garantir processamento do evento
   }
 
   cancelModalSelection(): void {
