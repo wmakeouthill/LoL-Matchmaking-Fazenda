@@ -1879,28 +1879,38 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     if (effectiveMatchId) {
       saveLogToRoot(`🎯 [onanySelected] Usando matchId: ${effectiveMatchId}`);
       try {
-        // ✅ CORREÇÃO: Priorizar summonerName para compatibilidade com backend
+        // 🔍 DEBUG: Mostrar TODO o conteúdo de currentPlayer
+        saveLogToRoot(`🔍 [onanySelected] currentPlayer COMPLETO: ${JSON.stringify(this.currentPlayer, null, 2)}`);
+        saveLogToRoot(`🔍 [onanySelected] currentPhase.playerName: ${currentPhase.playerName}`);
+        saveLogToRoot(`🔍 [onanySelected] currentPhase.playerId: ${currentPhase.playerId}`);
+
+        // ✅ CORREÇÃO CRÍTICA: Priorizar gameName#tagLine que é o formato usado no backend
         let playerIdentifier = '';
 
-        // Prioridade 1: summonerName (o que o backend espera principalmente)
-        if (this.currentPlayer?.summonerName) {
-          playerIdentifier = this.currentPlayer.summonerName;
-          saveLogToRoot(`🎯 [onanySelected] Usando summonerName: ${playerIdentifier}`);
-        } else if (this.currentPlayer?.displayName) {
-          playerIdentifier = this.currentPlayer.displayName;
-          saveLogToRoot(`🎯 [onanySelected] Usando displayName: ${playerIdentifier}`);
-        } else if (this.currentPlayer?.gameName && this.currentPlayer?.tagLine) {
+        // Prioridade 1: gameName#tagLine (formato completo com tag, usado no backend)
+        if (this.currentPlayer?.gameName && this.currentPlayer?.tagLine) {
           playerIdentifier = `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`;
           saveLogToRoot(`🎯 [onanySelected] Usando gameName#tagLine: ${playerIdentifier}`);
-        } else if (this.currentPlayer?.puuid) {
-          playerIdentifier = this.currentPlayer.puuid;
-          saveLogToRoot(`🎯 [onanySelected] Usando PUUID como fallback: ${playerIdentifier}`);
-        } else if (currentPhase.playerId) {
-          playerIdentifier = currentPhase.playerId;
-          saveLogToRoot(`🎯 [onanySelected] Usando playerId da fase: ${playerIdentifier}`);
+        } else if (this.currentPlayer?.displayName) {
+          // Prioridade 2: displayName (pode incluir tag)
+          playerIdentifier = this.currentPlayer.displayName;
+          saveLogToRoot(`🎯 [onanySelected] Usando displayName: ${playerIdentifier}`);
         } else if (currentPhase.playerName) {
+          // Prioridade 3: playerName da fase (vem do backend com formato correto)
           playerIdentifier = currentPhase.playerName;
           saveLogToRoot(`🎯 [onanySelected] Usando playerName da fase: ${playerIdentifier}`);
+        } else if (currentPhase.playerId) {
+          // Prioridade 4: playerId da fase
+          playerIdentifier = currentPhase.playerId;
+          saveLogToRoot(`🎯 [onanySelected] Usando playerId da fase: ${playerIdentifier}`);
+        } else if (this.currentPlayer?.summonerName) {
+          // Prioridade 5: summonerName (pode não ter tag)
+          playerIdentifier = this.currentPlayer.summonerName;
+          saveLogToRoot(`🎯 [onanySelected] Usando summonerName: ${playerIdentifier}`);
+        } else if (this.currentPlayer?.puuid) {
+          // Última opção: PUUID
+          playerIdentifier = this.currentPlayer.puuid;
+          saveLogToRoot(`🎯 [onanySelected] Usando PUUID como fallback: ${playerIdentifier}`);
         }
 
         const url = `${this.baseUrl}/match/draft-action`;
