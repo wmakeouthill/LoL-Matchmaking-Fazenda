@@ -392,6 +392,12 @@ export class App implements OnInit, OnDestroy {
   private handleBackendMessage(message: any): void {
     // Processar mensagens básicas; expandir conforme necessário
     if (!message || !message.type) return;
+
+    // ✅ NOVO: Despachar evento customizado para o document (para listeners em outros componentes)
+    const customEvent = new CustomEvent(message.type, { detail: message });
+    document.dispatchEvent(customEvent);
+    console.log(`📡 [App] Evento customizado despachado: ${message.type}`);
+
     switch (message.type) {
       case 'queue_status':
         if (message.status) {

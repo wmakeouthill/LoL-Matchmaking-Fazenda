@@ -229,7 +229,70 @@ export class DraftConfirmationModalComponent implements OnChanges {
       }
 
       this.forceRefresh();
+
+      // ✅ NOVO: Auto-confirmar bots quando o modal abrir
+      if (changes['isVisible']?.currentValue === true && this.session) {
+        this.autoConfirmBots();
+      }
     }
+  }
+
+  // ✅ NOVO: Auto-confirmar bots para facilitar testes
+  private async autoConfirmBots(): Promise<void> {
+    if (!this.session) {
+      return;
+    }
+
+    logConfirmationModal('🤖 [autoConfirmBots] Iniciando auto-confirmação de bots...');
+
+    // Pegar todos os jogadores (blue + red)
+    const allPlayers: any[] = [];
+
+    if (this.session.blueTeam) {
+      allPlayers.push(...this.session.blueTeam);
+    }
+    if (this.session.redTeam) {
+      allPlayers.push(...this.session.redTeam);
+    }
+
+    // Filtrar apenas bots
+    const bots = allPlayers.filter(p => this.isPlayerBot(p));
+
+    logConfirmationModal(`🤖 [autoConfirmBots] Encontrados ${bots.length} bots para auto-confirmar`);
+
+    // Auto-confirmar cada bot com delay pequeno
+    for (const bot of bots) {
+      const botId = this.getPlayerIdentifier(bot);
+
+      // Verificar se já confirmou
+      if (this.confirmationData?.confirmations?.[botId]?.confirmed) {
+        logConfirmationModal(`⏭️ [autoConfirmBots] Bot ${botId} já confirmou`);
+        continue;
+      }
+
+      try {
+        logConfirmationModal(`✅ [autoConfirmBots] Confirmando bot: ${botId}`);
+
+        const url = `${this.baseUrl}/match/${this.session.id}/confirm-final-draft`;
+        const body = { playerId: botId };
+
+        const response = await firstValueFrom(
+          this.http.post<any>(url, body, {
+            headers: { 'Content-Type': 'application/json' }
+          })
+        );
+
+        logConfirmationModal(`✅ [autoConfirmBots] Bot ${botId} confirmado. Total: ${response.confirmedCount}/${response.totalPlayers}`);
+
+        // Pequeno delay para não sobrecarregar
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+      } catch (error: any) {
+        logConfirmationModal(`❌ [autoConfirmBots] Erro ao confirmar bot ${botId}:`, error.message);
+      }
+    }
+
+    logConfirmationModal('🤖 [autoConfirmBots] Auto-confirmação de bots concluída');
   }
 
   // ✅ NOVO: Verificar se jogador confirmou

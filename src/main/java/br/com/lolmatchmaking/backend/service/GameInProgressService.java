@@ -141,10 +141,21 @@ public class GameInProgressService {
             if (teams != null && teams.containsKey("blue") && teams.containsKey("red")) {
                 log.info("✅ [GameInProgress] Usando estrutura teams.blue/red");
 
+                // ✅ CORREÇÃO: blue/red são objetos com {players, allBans, allPicks}
                 @SuppressWarnings("unchecked")
-                List<Map<String, Object>> blueTeam = (List<Map<String, Object>>) teams.get("blue");
+                Map<String, Object> blueTeamObj = (Map<String, Object>) teams.get("blue");
                 @SuppressWarnings("unchecked")
-                List<Map<String, Object>> redTeam = (List<Map<String, Object>>) teams.get("red");
+                Map<String, Object> redTeamObj = (Map<String, Object>) teams.get("red");
+
+                // ✅ Extrair a lista de players de dentro do objeto
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> blueTeam = (List<Map<String, Object>>) blueTeamObj.get("players");
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> redTeam = (List<Map<String, Object>>) redTeamObj.get("players");
+
+                log.info("✅ [GameInProgress] Blue team: {} players, Red team: {} players",
+                        blueTeam != null ? blueTeam.size() : 0,
+                        redTeam != null ? redTeam.size() : 0);
 
                 // ✅ Criar GamePlayers com championId/championName extraídos das actions
                 team1 = createGamePlayersWithChampions(blueTeam, draftResults);

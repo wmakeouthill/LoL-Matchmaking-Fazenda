@@ -578,9 +578,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     });
 
     // ✅ NOVO: Listener para quando todos confirmaram (jogo pronto)
-    document.addEventListener('game_ready', (event: any) => {
+    document.addEventListener('match_game_ready', (event: any) => {
       if (event.detail?.matchId === this.matchId) {
-        logDraft('🎯 [DraftPickBan] game_ready recebido via WebSocket:', event.detail);
+        logDraft('🎯 [DraftPickBan] match_game_ready recebido via WebSocket:', event.detail);
         saveLogToRoot(`✅ [WebSocket] Jogo pronto - todos confirmaram`);
 
         // ✅ NOVO: Fechar modal de confirmação
