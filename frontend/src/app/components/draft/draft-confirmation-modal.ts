@@ -1096,14 +1096,21 @@ export class DraftConfirmationModalComponent implements OnChanges {
       tagLine: this.currentPlayer?.tagLine
     });
 
+    // ✅ CORREÇÃO: Usar gameName#tagLine para identificar jogador (formato esperado pelo gateway)
+    const playerIdentifier = slot.player.gameName && slot.player.tagLine
+      ? `${slot.player.gameName}#${slot.player.tagLine}`
+      : slot.player.summonerName || slot.player.id;
+
+    console.log('🔴 [BOTÃO CLICADO] Player identifier:', playerIdentifier);
+
     if (this.isPlayerBot(slot.player)) {
       console.log('🔴 [BOTÃO CLICADO] Confirmando pick de BOT');
       logConfirmationModal('🎯 [onButtonClick] Confirmando pick de bot');
-      this.confirmBotPick(slot.player.id || slot.player.summonerName, slot.phaseIndex);
+      this.confirmBotPick(playerIdentifier, slot.phaseIndex);
     } else {
       console.log('🔴 [BOTÃO CLICADO] Iniciando EDIÇÃO de pick humano');
       logConfirmationModal('🎯 [onButtonClick] Iniciando edição de pick humano');
-      this.startEditingPick(slot.player.id || slot.player.summonerName, slot.phaseIndex);
+      this.startEditingPick(playerIdentifier, slot.phaseIndex);
     }
   }
 
