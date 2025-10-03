@@ -2330,24 +2330,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       console.log(`🔍 [updatePlayerPick] champion.key: ${champion.key}`);
       console.log(`🔍 [updatePlayerPick] champion.name: ${champion.name}`);
 
-      // ✅ CORREÇÃO: Buscar o summonerName correto da fase que está sendo editada
-      const phaseIndex = this.currentEditingPlayer.phaseIndex;
-      console.log(`✅ [updatePlayerPick] phaseIndex: ${phaseIndex}`);
-
-      const targetPhase = this.session?.phases?.[phaseIndex];
-      console.log(`✅ [updatePlayerPick] targetPhase: ${JSON.stringify(targetPhase)}`);
-
-      if (!targetPhase) {
-        console.error(`❌ [updatePlayerPick] Fase ${phaseIndex} não encontrada!`);
-        throw new Error(`Fase ${phaseIndex} não encontrada`);
-      }
-
-      // ✅ USAR o byPlayer da fase (summonerName do jogador)
-      const correctPlayerId = targetPhase.byPlayer || targetPhase.playerName || targetPhase.playerId || playerId;
-      console.log(`🔧 [updatePlayerPick] correctPlayerId: ${correctPlayerId} (original: ${playerId})`);
-      console.log(`🔍 [updatePlayerPick] targetPhase.byPlayer: ${targetPhase.byPlayer}`);
-      console.log(`🔍 [updatePlayerPick] targetPhase.playerName: ${targetPhase.playerName}`);
-      console.log(`🔍 [updatePlayerPick] targetPhase.playerId: ${targetPhase.playerId}`);
+      // ✅ SIMPLIFICADO: Usar o playerId que vem do modal (já é o summonerName correto)
+      console.log(`🔧 [updatePlayerPick] Usando playerId do modal: ${playerId}`);
 
       // ✅ CRÍTICO: Usar champion.key (que é o ID numérico como string)
       const championId = champion.key || champion.id;
@@ -2356,7 +2340,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       // ✅ CORREÇÃO CRÍTICA: baseUrl já contém /api, então NÃO adicionar de novo
       const fullUrl = `${this.baseUrl}/draft/${this.matchId}/changePick`;
       const requestBody = {
-        playerId: correctPlayerId,
+        playerId: playerId,
         championId: Number(championId),
         confirmed: true
       };
