@@ -316,16 +316,51 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
                 oldRedTeam
           };
 
-          // ✅ NOVO: Atualizar timer se vier no currentValue
+          // ✅ CORREÇÃO CRÍTICA: Atualizar timer via @Input (OnPush funciona)
           if (currentValue.timeRemaining !== undefined) {
             this.timeRemaining = currentValue.timeRemaining;
-            console.log(`⏰ [processNgOnChanges] Timer atualizado: ${this.timeRemaining}s`);
+            console.log(`⏰ [processNgOnChanges] Timer atualizado via @Input: ${this.timeRemaining}s`);
+          }
+
+          // ✅ NOVA ESTRUTURA HIERÁRQUICA: Processar teams.blue/red se existirem
+          if (currentValue.teams) {
+            console.log('🔨 [processNgOnChanges] Estrutura hierárquica detectada:', {
+              hasBlue: !!currentValue.teams.blue,
+              hasRed: !!currentValue.teams.red,
+              bluePlayers: currentValue.teams.blue?.players?.length || 0,
+              redPlayers: currentValue.teams.red?.players?.length || 0,
+              currentPhase: currentValue.currentPhase,
+              currentTeam: currentValue.currentTeam
+            });
+
+            // ✅ Armazenar estrutura hierárquica na session
+            this.session.teams = currentValue.teams;
+            this.session.currentPhase = currentValue.currentPhase;
+            this.session.currentTeam = currentValue.currentTeam;
+            this.session.currentActionType = currentValue.currentActionType;
+
+            // ✅ ATUALIZAR blueTeam/redTeam a partir da estrutura hierárquica
+            if (currentValue.teams.blue?.players?.length > 0) {
+              this.session.blueTeam = currentValue.teams.blue.players;
+            }
+            if (currentValue.teams.red?.players?.length > 0) {
+              this.session.redTeam = currentValue.teams.red.players;
+            }
+
+            console.log('✅ [processNgOnChanges] Estrutura hierárquica processada:', {
+              blueTeamSize: this.session.blueTeam?.length || 0,
+              redTeamSize: this.session.redTeam?.length || 0,
+              currentPhase: this.session.currentPhase,
+              currentTeam: this.session.currentTeam
+            });
           }
 
           console.log('✅ [processNgOnChanges] Session após atualização:', {
             phasesLength: this.session.phases?.length || 0,
             currentAction: this.session.currentAction,
             currentPlayer: this.session.currentPlayer,
+            hasTeams: !!this.session.teams,
+            timeRemaining: this.timeRemaining,
             phasesFirst3: this.session.phases?.slice(0, 3) || []
           });
 
@@ -1235,94 +1270,6 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     return bannedanys;
   }
 
-  getTeamPicks(team: 'blue' | 'red'): any[] {
-    if (!this.session) return [];
-
-    // ✅ CORREÇÃO: Buscar picks das phases (que vêm do backend como actions)
-    if (this.session.phases?.length > 0) {
-      const teamNumber = team === 'blue' ? 1 : 2;
-
-      const teamPicks = this.session.phases
-        .filter((action: any) => {
-          // ✅ CRÍTICO: Backend envia "type" e "team", não "action" e "teamIndex"
-          const isCorrectTeam = action.team === teamNumber;
-          const isPick = action.type === 'pick';
-          const hasChampion = action.championId && action.byPlayer;
-
-          return isCorrectTeam && isPick && hasChampion;
-        })
-        .map((action: any) => {
-          // ✅ CRÍTICO: Buscar campeão do ChampionService
-          const championId = parseInt(action.championId, 10);
-          const champion = this.getChampionFromCache(championId);
-
-          if (champion) {
-            return {
-              id: champion.key,
-              name: champion.name,
-              image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/${champion.id}.png`
-            };
-          }
-
-          // Fallback se campeão não estiver no cache
-          return {
-            id: action.championId,
-            name: `Champion ${action.championId}`,
-            image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/Unknown.png`
-          };
-        });
-
-      console.log(`🔍 [getTeamPicks] Time ${team}: ${teamPicks.length} picks`, teamPicks);
-      return teamPicks;
-    }
-
-    return [];
-  }
-
-  getTeamBans(team: 'blue' | 'red'): any[] {
-    if (!this.session) return [];
-
-    // ✅ CORREÇÃO: Buscar bans das phases (que vêm do backend como actions)
-    if (this.session.phases?.length > 0) {
-      const teamNumber = team === 'blue' ? 1 : 2;
-
-      const teamBans = this.session.phases
-        .filter((action: any) => {
-          // ✅ CRÍTICO: Backend envia "type" e "team", não "action" e "teamIndex"
-          const isCorrectTeam = action.team === teamNumber;
-          const isBan = action.type === 'ban';
-          const hasChampion = action.championId && action.byPlayer;
-
-          return isCorrectTeam && isBan && hasChampion;
-        })
-        .map((action: any) => {
-          // ✅ CRÍTICO: Buscar campeão do ChampionService
-          const championId = parseInt(action.championId, 10);
-          const champion = this.getChampionFromCache(championId);
-
-          if (champion) {
-            return {
-              id: champion.key,
-              name: champion.name,
-              image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/${champion.id}.png`
-            };
-          }
-
-          // Fallback se campeão não estiver no cache
-          return {
-            id: action.championId,
-            name: `Champion ${action.championId}`,
-            image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/Unknown.png`
-          };
-        });
-
-      console.log(`🔍 [getTeamBans] Time ${team}: ${teamBans.length} bans`, teamBans);
-      return teamBans;
-    }
-
-    return [];
-  }
-
   // ✅ NOVO: Buscar campeão do cache do ChampionService (síncrono)
   private getChampionFromCache(championId: number): any {
     const cache = (this.championService as any).championsCache as Map<string, any>;
@@ -1455,7 +1402,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     const bluePicks = this.getTeamPicks('blue');
     const redPicks = this.getTeamPicks('red');
 
-    return [...bluePicks, ...redPicks].some(c => c.id === champion.id);
+    // ✅ CORREÇÃO: getTeamPicks agora retorna string[] (championIds), não objects
+    const allPicks = [...bluePicks, ...redPicks];
+    return allPicks.some(championId => championId === champion.id || championId === champion.key);
   }
 
   private checkPlayerMatch(teamPlayer: any, searchPlayer: any): boolean {
@@ -1568,57 +1517,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     return this.findPickInPhases(foundPlayer, team);
   }
 
-  getPlayerBans(team: 'blue' | 'red', player: any): any[] {
-    if (!this.session) return [];
-
-    const teamPlayers = team === 'blue' ? this.session.blueTeam : this.session.redTeam;
-    const foundPlayer = teamPlayers.find((p: any) => this.botService.comparePlayers(p, player));
-    if (!foundPlayer) return [];
-
-    // ✅ MELHORADO: Usar dados das ações se disponíveis
-    if (this.session.actions && this.session.actions.length > 0) {
-      const teamIndex = team === 'blue' ? 1 : 2;
-
-      // Buscar ações de ban para este jogador
-      const banActions = this.session.actions.filter((action: any) => {
-        const isCorrectTeam = action.teamIndex === teamIndex;
-        const isCorrectPlayer = action.playerName === foundPlayer.summonerName ||
-          action.playerName === foundPlayer.name ||
-          action.playerName === foundPlayer.displayName;
-        const isBanAction = action.action === 'ban';
-        const hasany = action.champion && action.locked;
-
-        return isCorrectTeam && isCorrectPlayer && isBanAction && hasany;
-      });
-
-      return banActions.map((action: any) => action.champion);
-    }
-
-    // Fallback para o método antigo
-    const banPhases = this.session.phases.filter((phase: any) =>
-      phase.action === 'ban' &&
-      phase.champion &&
-      phase.locked
-    );
-
-    const playerBans: any[] = [];
-
-    for (const banPhase of banPhases) {
-      const phasePlayerName = banPhase.playerName || banPhase.playerId || '';
-
-      const isPhasePlayer = this.botService.comparePlayerWithId(foundPlayer, phasePlayerName) ||
-        this.botService.comparePlayerWithId(foundPlayer, banPhase.playerId || '') ||
-        (banPhase.playerIndex !== undefined && foundPlayer.teamIndex === banPhase.playerIndex);
-
-      if (isPhasePlayer) {
-        if (banPhase.champion) {
-          playerBans.push(banPhase.champion);
-        }
-      }
-    }
-
-    return playerBans;
-  }
+  // ✅ REMOVIDO: Método duplicado getPlayerBans() - usar getPlayerBans(playerName, teamColor) na seção de métodos hierárquicos
 
   getCurrentPlayerName(): string {
     // ✅ LOG DEBUG: Sempre logar a chamada do método
@@ -2397,6 +2296,124 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   // ✅ MÉTODOS AUXILIARES
+
+  // ✅ NOVA ESTRUTURA HIERÁRQUICA: Métodos helper para acessar dados
+
+  /**
+   * Obtém o time azul da estrutura hierárquica ou fallback para flat
+   */
+  getBlueTeam(): any[] {
+    if (this.session?.teams?.blue?.players) {
+      return this.session.teams.blue.players;
+    }
+    return this.session?.blueTeam || [];
+  }
+
+  /**
+   * Obtém o time vermelho da estrutura hierárquica ou fallback para flat
+   */
+  getRedTeam(): any[] {
+    if (this.session?.teams?.red?.players) {
+      return this.session.teams.red.players;
+    }
+    return this.session?.redTeam || [];
+  }
+
+  /**
+   * Obtém todas as ações (bans/picks) de um jogador específico
+   */
+  getPlayerActions(playerName: string, teamColor: 'blue' | 'red'): any[] {
+    if (this.session?.teams?.[teamColor]?.players) {
+      const player = this.session.teams[teamColor].players.find(
+        (p: any) => p.summonerName === playerName
+      );
+      return player?.actions || [];
+    }
+    // Fallback: buscar na estrutura flat
+    return this.session?.phases?.filter((action: any) => action.byPlayer === playerName) || [];
+  }
+
+  /**
+   * Obtém apenas os bans de um jogador
+   */
+  getPlayerBans(playerName: string, teamColor: 'blue' | 'red'): any[] {
+    if (this.session?.teams?.[teamColor]?.players) {
+      const player = this.session.teams[teamColor].players.find(
+        (p: any) => p.summonerName === playerName
+      );
+      return player?.bans || [];
+    }
+    // Fallback: buscar na estrutura flat
+    return this.session?.phases?.filter((action: any) =>
+      action.byPlayer === playerName && action.type === 'ban'
+    ) || [];
+  }
+
+  /**
+   * Obtém apenas os picks de um jogador
+   */
+  getPlayerPicks(playerName: string, teamColor: 'blue' | 'red'): any[] {
+    if (this.session?.teams?.[teamColor]?.players) {
+      const player = this.session.teams[teamColor].players.find(
+        (p: any) => p.summonerName === playerName
+      );
+      return player?.picks || [];
+    }
+    // Fallback: buscar na estrutura flat
+    return this.session?.phases?.filter((action: any) =>
+      action.byPlayer === playerName && action.type === 'pick'
+    ) || [];
+  }
+
+  /**
+   * Obtém todos os bans de um time
+   */
+  getTeamBans(teamColor: 'blue' | 'red'): string[] {
+    if (this.session?.teams?.[teamColor]?.allBans) {
+      return this.session.teams[teamColor].allBans;
+    }
+    // Fallback: buscar na estrutura flat
+    const teamNumber = teamColor === 'blue' ? 1 : 2;
+    return this.session?.phases
+      ?.filter((action: any) => action.type === 'ban' && action.team === teamNumber && action.championId)
+      ?.map((action: any) => action.championId) || [];
+  }
+
+  /**
+   * Obtém todos os picks de um time
+   */
+  getTeamPicks(teamColor: 'blue' | 'red'): string[] {
+    if (this.session?.teams?.[teamColor]?.allPicks) {
+      return this.session.teams[teamColor].allPicks;
+    }
+    // Fallback: buscar na estrutura flat
+    const teamNumber = teamColor === 'blue' ? 1 : 2;
+    return this.session?.phases
+      ?.filter((action: any) => action.type === 'pick' && action.team === teamNumber && action.championId)
+      ?.map((action: any) => action.championId) || [];
+  }
+
+  /**
+   * Obtém a fase atual do draft (ban1, pick1, ban2, pick2)
+   */
+  getCurrentPhase(): string {
+    return this.session?.currentPhase || 'ban1';
+  }
+
+  /**
+   * Obtém o time atual da ação (blue/red)
+   */
+  getCurrentTeam(): string {
+    return this.session?.currentTeam || 'blue';
+  }
+
+  /**
+   * Obtém o tipo da ação atual (ban/pick)
+   */
+  getCurrentActionType(): string {
+    return this.session?.currentActionType || 'ban';
+  }
+
   private isBlueTeam(team: any): boolean {
     if (team === 1) return true;
     if (typeof team === 'string') {

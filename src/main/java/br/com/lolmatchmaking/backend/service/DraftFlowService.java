@@ -28,7 +28,13 @@ public class DraftFlowService {
     @Value("${app.draft.action-timeout-ms:30000}")
     private long configuredActionTimeoutMs;
 
-    public record DraftAction(int index, String type, int team, String championId, String byPlayer) {
+    public record DraftAction(
+            int index,
+            String type,
+            int team,
+            String championId,
+            String championName, // ✅ CORREÇÃO: Adicionar nome do campeão para o frontend
+            String byPlayer) {
     }
 
     public static class DraftState {
@@ -135,7 +141,14 @@ public class DraftFlowService {
                             int team = ((Number) am.getOrDefault("team", 1)).intValue();
                             String championId = (String) am.get("championId");
                             String byPlayer = (String) am.get("byPlayer");
-                            actions.add(new DraftAction(idx, type, team, championId, byPlayer));
+
+                            // ✅ CORREÇÃO: Buscar championName do Data Dragon
+                            String championName = null;
+                            if (championId != null && !championId.isBlank() && !SKIPPED.equalsIgnoreCase(championId)) {
+                                championName = dataDragonService.getChampionName(championId);
+                            }
+
+                            actions.add(new DraftAction(idx, type, team, championId, championName, byPlayer));
                         }
                         List<String> team1 = parseCSV(cm.getTeam1PlayersJson());
                         List<String> team2 = parseCSV(cm.getTeam2PlayersJson());
@@ -189,26 +202,26 @@ public class DraftFlowService {
         // Ordem: Blue Ban 1, Red Ban 1, Blue Ban 2, Red Ban 2, Blue Ban 3, Red Ban 3
         int[] firstBanTeams = { 1, 2, 1, 2, 1, 2 };
         for (int t : firstBanTeams)
-            list.add(new DraftAction(i++, "ban", t, null, null));
+            list.add(new DraftAction(i++, "ban", t, null, null, null)); // ⭐ +1 null para championName
 
         // Ações 6-11: Primeira fase de picks (6 picks - 3 por time)
         // Ordem: Blue Pick 1, Red Pick 1, Red Pick 2, Blue Pick 2, Blue Pick 3, Red
         // Pick 3
         int[] firstPickTeams = { 1, 2, 2, 1, 1, 2 };
         for (int t : firstPickTeams)
-            list.add(new DraftAction(i++, "pick", t, null, null));
+            list.add(new DraftAction(i++, "pick", t, null, null, null)); // ⭐ +1 null para championName
 
         // Ações 12-15: Segunda fase de bans (4 bans - 2 por time)
         // Ordem: Red Ban 4, Blue Ban 4, Red Ban 5, Blue Ban 5
         int[] secondBanTeams = { 2, 1, 2, 1 };
         for (int t : secondBanTeams)
-            list.add(new DraftAction(i++, "ban", t, null, null));
+            list.add(new DraftAction(i++, "ban", t, null, null, null)); // ⭐ +1 null para championName
 
         // Ações 16-19: Segunda fase de picks (4 picks - 2 por time)
         // Ordem: Red Pick 4, Blue Pick 4, Blue Pick 5, Red Pick 5
         int[] secondPickTeams = { 2, 1, 1, 2 };
         for (int t : secondPickTeams)
-            list.add(new DraftAction(i++, "pick", t, null, null));
+            list.add(new DraftAction(i++, "pick", t, null, null, null)); // ⭐ +1 null para championName
 
         return list;
     }
@@ -247,24 +260,36 @@ public class DraftFlowService {
 
     @Transactional
     public synchronized boolean processAction(long matchId, int actionIndex, String championId, String byPlayer) {
+        log.info("🔵 [processAction] === INICIANDO ===");
+        log.info("🔵 [processAction] matchId={}, actionIndex={}, championId={}, byPlayer={}",
+                matchId, actionIndex, championId, byPlayer);
+
         DraftState st = states.get(matchId);
         if (st == null) {
+            log.warn("❌ [processAction] DraftState não encontrado para matchId={}", matchId);
             return false;
         }
 
         // ✅ CORREÇÃO #6: Normalizar championId antes de processar
         final String normalizedChampionId = normalizeChampionId(championId);
         if (normalizedChampionId == null) {
-            log.warn("⚠️ [processAction] championId inválido após normalização: {}", championId);
+            log.warn("❌ [processAction] championId inválido após normalização: {}", championId);
+            return false;
+        }
+        log.info("✅ [processAction] championId normalizado: {} -> {}", championId, normalizedChampionId);
+
+        if (st.getCurrentIndex() >= st.getActions().size()) { // draft já completo
+            log.warn("❌ [processAction] Draft já completo: currentIndex={}, totalActions={}",
+                    st.getCurrentIndex(), st.getActions().size());
             return false;
         }
 
-        if (st.getCurrentIndex() >= st.getActions().size()) { // draft já completo
-            return false;
-        }
         if (actionIndex != st.currentIndex) {
+            log.warn("❌ [processAction] actionIndex diferente: esperado={}, recebido={}",
+                    st.currentIndex, actionIndex);
             return false;
         }
+        log.info("✅ [processAction] actionIndex validado: {}", actionIndex);
         DraftAction prev = st.actions.get(actionIndex);
         // valida se jogador pertence ao time da ação
         if (!st.isPlayerInTeam(byPlayer, prev.team())) {
@@ -276,7 +301,17 @@ public class DraftFlowService {
         if (alreadyUsed) {
             return false;
         }
-        DraftAction updated = new DraftAction(prev.index(), prev.type(), prev.team(), normalizedChampionId, byPlayer);
+
+        // ✅ CORREÇÃO: Buscar nome do campeão antes de criar DraftAction
+        String championName = dataDragonService.getChampionName(normalizedChampionId);
+
+        DraftAction updated = new DraftAction(
+                prev.index(),
+                prev.type(),
+                prev.team(),
+                normalizedChampionId,
+                championName, // ⭐ ADICIONAR championName
+                byPlayer);
         st.getActions().set(actionIndex, updated);
         st.advance();
         st.markActionStart();
@@ -405,8 +440,25 @@ public class DraftFlowService {
                         snapshot.put(KEY_TEAM2, team2Fallback);
                     }
 
-                    cm.setPickBanDataJson(mapper.writeValueAsString(snapshot));
+                    // ✅ SUBSTITUIR POR ESTRUTURA LIMPA (sem duplicação)
+                    log.info("🔨 [persist] Gerando JSON LIMPO (apenas teams + metadados)");
+                    Map<String, Object> cleanData = buildHierarchicalDraftData(st);
+
+                    // ✅ JSON LIMPO: apenas teams.blue/red + metadados
+                    Map<String, Object> finalSnapshot = new HashMap<>();
+                    finalSnapshot.put("teams", cleanData.get("teams"));
+                    finalSnapshot.put("currentIndex", cleanData.get("currentIndex"));
+                    finalSnapshot.put("currentPhase", cleanData.get("currentPhase"));
+                    finalSnapshot.put("currentPlayer", cleanData.get("currentPlayer"));
+                    finalSnapshot.put("currentTeam", cleanData.get("currentTeam"));
+                    finalSnapshot.put("currentActionType", cleanData.get("currentActionType"));
+
+                    cm.setPickBanDataJson(mapper.writeValueAsString(finalSnapshot));
                     customMatchRepository.save(cm);
+
+                    log.info(
+                            "✅ [persist] JSON LIMPO salvo: {} keys (sem duplicação: team1/team2/actions/confirmations removidos)",
+                            finalSnapshot.keySet().size());
 
                     log.debug("✅ [DraftFlow] Draft state persistido para match {}", matchId);
                 } catch (Exception e) {
@@ -562,6 +614,20 @@ public class DraftFlowService {
             // ✅ CORREÇÃO CRÍTICA: Frontend espera timeRemaining em SEGUNDOS
             updateData.put("timeRemaining", (int) Math.ceil(remainingMs / 1000.0));
 
+            // ✅ ADICIONAR ESTRUTURA LIMPA (sem duplicação team1/team2/actions)
+            log.info("🔨 [broadcastUpdate] Adicionando JSON LIMPO ao broadcast");
+            Map<String, Object> cleanData = buildHierarchicalDraftData(st);
+            if (cleanData.containsKey("teams")) {
+                updateData.put("teams", cleanData.get("teams"));
+                updateData.put("currentPhase", cleanData.get("currentPhase"));
+                updateData.put("currentPlayer", cleanData.get("currentPlayer"));
+                updateData.put("currentTeam", cleanData.get("currentTeam"));
+                updateData.put("currentActionType", cleanData.get("currentActionType"));
+                updateData.put(KEY_CURRENT_INDEX, cleanData.get("currentIndex"));
+                log.info(
+                        "✅ [broadcastUpdate] JSON LIMPO adicionado: apenas teams + metadados (sem team1/team2/actions)");
+            }
+
             String payload = mapper.writeValueAsString(updateData);
 
             sessionRegistry.all().forEach(ws -> {
@@ -606,6 +672,184 @@ public class DraftFlowService {
             log.error("Erro broadcast draft_confirmed", e);
         }
         // Transição para fase game_ready
+        customMatchRepository.findById(st.getMatchId()).ifPresent(cm -> {
+            try {
+                cm.setStatus("game_ready");
+                customMatchRepository.save(cm);
+            } catch (Exception ex) {
+                log.warn("Falha atualizar status game_ready matchId={} ", st.getMatchId(), ex);
+            }
+        });
+    }
+
+    /**
+     * ✅ ESTRUTURA HIERÁRQUICA LIMPA (SEM DUPLICAÇÃO)
+     * Constrói JSON limpo: apenas teams.blue/red com players e ações + metadados
+     */
+    private Map<String, Object> buildHierarchicalDraftData(DraftState st) {
+        log.info("🔨 [buildHierarchicalDraftData] Construindo estrutura LIMPA para match {}", st.getMatchId());
+
+        Map<String, Object> result = new HashMap<>();
+
+        customMatchRepository.findById(st.getMatchId()).ifPresent(cm -> {
+            try {
+                // ✅ 1. Buscar dados dos times do banco
+                if (cm.getPickBanDataJson() == null || cm.getPickBanDataJson().isEmpty()) {
+                    log.warn("⚠️ [buildHierarchicalDraftData] pick_ban_data vazio para match {}", st.getMatchId());
+                    return;
+                }
+
+                @SuppressWarnings("unchecked")
+                Map<String, Object> pickBanData = mapper.readValue(cm.getPickBanDataJson(), Map.class);
+
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> team1Players = (List<Map<String, Object>>) pickBanData.get(KEY_TEAM1);
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> team2Players = (List<Map<String, Object>>) pickBanData.get(KEY_TEAM2);
+
+                if (team1Players == null || team2Players == null) {
+                    log.warn("⚠️ [buildHierarchicalDraftData] Times vazios para match {}", st.getMatchId());
+                    return;
+                }
+
+                // ✅ 2. Construir estrutura hierárquica teams.blue/red (SEM duplicação)
+                Map<String, Object> teams = new HashMap<>();
+                teams.put("blue", buildCleanTeamData("Blue Team", team1Players, st.getActions(), 1));
+                teams.put("red", buildCleanTeamData("Red Team", team2Players, st.getActions(), 2));
+                result.put("teams", teams);
+
+                log.info("✅ [buildHierarchicalDraftData] Estrutura LIMPA: blue={} players, red={} players",
+                        team1Players.size(), team2Players.size());
+
+            } catch (Exception e) {
+                log.error("❌ [buildHierarchicalDraftData] Erro ao construir estrutura hierárquica", e);
+            }
+        });
+
+        // ✅ 3. Adicionar APENAS metadados necessários
+        result.put("currentIndex", st.getCurrentIndex());
+        result.put("currentPhase", getCurrentPhaseName(st.getCurrentIndex()));
+
+        // ✅ 4. Calcular jogador e time atual
+        if (st.getCurrentIndex() < st.getActions().size()) {
+            DraftAction currentAction = st.getActions().get(st.getCurrentIndex());
+            String currentPlayer = getPlayerForTeamAndIndex(st, currentAction.team(), st.getCurrentIndex());
+            result.put("currentPlayer", currentPlayer);
+            result.put("currentTeam", currentAction.team() == 1 ? "blue" : "red");
+            result.put("currentActionType", currentAction.type());
+        }
+
+        log.info("✅ [buildHierarchicalDraftData] JSON LIMPO gerado: {} keys (sem duplicação)", result.keySet().size());
+        return result;
+    }
+
+    /**
+     * ✅ Constrói dados LIMPOS de um time (sem duplicação)
+     * Apenas: name, teamNumber, averageMmr, players (com actions)
+     */
+    private Map<String, Object> buildCleanTeamData(
+            String teamName,
+            List<Map<String, Object>> players,
+            List<DraftAction> actions,
+            int teamNumber) {
+
+        Map<String, Object> team = new HashMap<>();
+        team.put("name", teamName);
+        team.put("teamNumber", teamNumber);
+
+        // ✅ Calcular MMR médio do time
+        double avgMmr = players.stream()
+                .mapToInt(p -> {
+                    Object mmrObj = p.get("mmr");
+                    if (mmrObj instanceof Number) {
+                        return ((Number) mmrObj).intValue();
+                    }
+                    return 0;
+                })
+                .average()
+                .orElse(0);
+        team.put("averageMmr", (int) Math.round(avgMmr));
+
+        // ✅ Adicionar APENAS players essenciais com suas ações
+        List<Map<String, Object>> cleanPlayers = new ArrayList<>();
+
+        for (Map<String, Object> player : players) {
+            String playerName = (String) player.get("summonerName");
+
+            if (playerName == null || playerName.isEmpty()) {
+                log.warn("⚠️ [buildCleanTeamData] Player sem summonerName, pulando");
+                continue;
+            }
+
+            // ✅ Criar objeto limpo do player (apenas campos essenciais)
+            Map<String, Object> cleanPlayer = new HashMap<>();
+            cleanPlayer.put("summonerName", playerName);
+            cleanPlayer.put("playerId", player.get("playerId"));
+            cleanPlayer.put("mmr", player.get("mmr"));
+            cleanPlayer.put("assignedLane", player.get("assignedLane"));
+            cleanPlayer.put("teamIndex", player.get("teamIndex"));
+
+            // ✅ Buscar TODAS as ações deste jogador (bans E picks juntos)
+            List<Map<String, Object>> playerActions = actions.stream()
+                    .filter(a -> a.team() == teamNumber)
+                    .filter(a -> playerName.equals(a.byPlayer()))
+                    .map(a -> {
+                        Map<String, Object> actionData = new HashMap<>();
+                        actionData.put("index", a.index());
+                        actionData.put("type", a.type());
+                        actionData.put("championId", a.championId());
+                        actionData.put("championName", a.championName());
+                        actionData.put("phase", getPhaseLabel(a.index()));
+                        actionData.put("status", a.championId() == null ? "pending" : "completed");
+                        return actionData;
+                    })
+                    .collect(java.util.stream.Collectors.toList());
+
+            cleanPlayer.put("actions", playerActions);
+
+            cleanPlayers.add(cleanPlayer);
+        }
+
+        team.put("players", cleanPlayers);
+
+        log.debug("✅ [buildCleanTeamData] Time {} construído com {} players (estrutura limpa)", teamName,
+                cleanPlayers.size());
+        return team;
+    }
+
+    /**
+     * Retorna o nome da fase atual baseado no índice da ação
+     */
+    private String getCurrentPhaseName(int actionIndex) {
+        if (actionIndex < 6)
+            return "ban1";
+        if (actionIndex < 12)
+            return "pick1";
+        if (actionIndex < 16)
+            return "ban2";
+        if (actionIndex < 20)
+            return "pick2";
+        return "completed";
+    }
+
+    /**
+     * Retorna o label da fase para uma ação específica
+     */
+    private String getPhaseLabel(int actionIndex) {
+        if (actionIndex < 6)
+            return "ban1";
+        if (actionIndex < 12)
+            return "pick1";
+        if (actionIndex < 16)
+            return "ban2";
+        if (actionIndex < 20)
+            return "pick2";
+        return "completed";
+    }
+
+    // ✅ FIM DA NOVA ESTRUTURA HIERÁRQUICA
+
+    private void broadcastTimeout(DraftState st) {
         customMatchRepository.findById(st.getMatchId()).ifPresent(cm -> {
             try {
                 cm.setStatus("game_ready");
@@ -773,8 +1017,13 @@ public class DraftFlowService {
                 log.error("❌ [DraftFlow] Match {} - Jogador NULL para ação {} (team {})",
                         st.getMatchId(), currentIdx, currentAction.team());
                 // Pular esta ação
-                DraftAction skipped = new DraftAction(currentAction.index(), currentAction.type(), currentAction.team(),
-                        SKIPPED, "NO_PLAYER");
+                DraftAction skipped = new DraftAction(
+                        currentAction.index(),
+                        currentAction.type(),
+                        currentAction.team(),
+                        SKIPPED,
+                        "SKIPPED", // ⭐ championName = "SKIPPED" também
+                        "NO_PLAYER");
                 st.getActions().set(currentIdx, skipped);
                 st.advance();
                 st.markActionStart();
@@ -795,7 +1044,13 @@ public class DraftFlowService {
                 int idx = st.getCurrentIndex();
                 DraftAction prev = st.getActions().get(idx);
                 log.warn("⏰ [DraftFlow] Timeout na ação {} - marcando como SKIPPED", idx);
-                DraftAction skipped = new DraftAction(prev.index(), prev.type(), prev.team(), SKIPPED, TIMEOUT_PLAYER);
+                DraftAction skipped = new DraftAction(
+                        prev.index(),
+                        prev.type(),
+                        prev.team(),
+                        SKIPPED,
+                        "SKIPPED", // ⭐ championName = "SKIPPED" também
+                        TIMEOUT_PLAYER);
                 st.getActions().set(idx, skipped);
                 st.advance();
                 st.markActionStart();
@@ -947,8 +1202,13 @@ public class DraftFlowService {
             if (championId == null) {
                 log.warn("⚠️ [DraftFlow] Nenhum campeão disponível para bot {}, pulando", botName);
                 // Marcar como SKIPPED se não houver campeões disponíveis
-                DraftAction skipped = new DraftAction(currentAction.index(), currentAction.type(), currentAction.team(),
-                        SKIPPED, botName);
+                DraftAction skipped = new DraftAction(
+                        currentAction.index(),
+                        currentAction.type(),
+                        currentAction.team(),
+                        SKIPPED,
+                        "SKIPPED", // ⭐ championName = "SKIPPED" também
+                        botName);
                 st.getActions().set(actionIndex, skipped);
                 st.advance();
                 st.markActionStart();
