@@ -428,7 +428,16 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         currentIndex: event.detail?.currentIndex,
         currentPlayer: event.detail?.currentPlayer,
         timeRemaining: event.detail?.timeRemaining,
+        timeRemainingMs: event.detail?.timeRemainingMs,
+        remainingMs: event.detail?.remainingMs,
         matches: event.detail?.matchId === this.matchId
+      });
+      console.log('⏰⏰⏰ [draftUpdate] TIMER VALUES:', {
+        timeRemaining: event.detail?.timeRemaining,
+        timeRemainingMs: event.detail?.timeRemainingMs,
+        remainingMs: event.detail?.remainingMs,
+        hasTimeRemaining: event.detail?.timeRemaining !== undefined,
+        typeofTimeRemaining: typeof event.detail?.timeRemaining
       });
 
       // ✅ CRÍTICO: Comparar como números (converter strings)
@@ -2296,63 +2305,70 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
   // ✅ NOVO: Método para atualizar pick específico de um jogador
   async updatePlayerPick(playerId: string, champion: any): Promise<void> {
+    console.log('🔄 [updatePlayerPick] === ATUALIZANDO PICK ===');
+    console.log(`🔄 [updatePlayerPick] Atualizando pick de ${playerId} para ${champion.name}`);
     logDraft('🔄 [updatePlayerPick] === ATUALIZANDO PICK ===');
-    saveLogToRoot(`🔄 [updatePlayerPick] Atualizando pick de ${playerId} para ${champion.name}`);
 
     try {
+      console.log('✅ [updatePlayerPick] Dentro do try block');
+
       if (!this.matchId) {
+        console.error('❌ [updatePlayerPick] matchId não disponível!');
         throw new Error('matchId não disponível');
       }
+      console.log(`✅ [updatePlayerPick] matchId: ${this.matchId}`);
 
       if (!this.currentEditingPlayer) {
+        console.error('❌ [updatePlayerPick] currentEditingPlayer não disponível!');
         throw new Error('currentEditingPlayer não disponível');
       }
+      console.log(`✅ [updatePlayerPick] currentEditingPlayer: ${JSON.stringify(this.currentEditingPlayer)}`);
 
       // ✅ DEBUG: Mostrar estrutura completa do champion
-      saveLogToRoot(`🔍 [updatePlayerPick] Champion completo: ${JSON.stringify(champion, null, 2)}`);
-      saveLogToRoot(`🔍 [updatePlayerPick] champion.id: ${champion.id}`);
-      saveLogToRoot(`🔍 [updatePlayerPick] champion.key: ${champion.key}`);
-      saveLogToRoot(`🔍 [updatePlayerPick] champion.name: ${champion.name}`);
+      console.log(`🔍 [updatePlayerPick] Champion completo: ${JSON.stringify(champion, null, 2)}`);
+      console.log(`🔍 [updatePlayerPick] champion.id: ${champion.id}`);
+      console.log(`🔍 [updatePlayerPick] champion.key: ${champion.key}`);
+      console.log(`🔍 [updatePlayerPick] champion.name: ${champion.name}`);
 
       // ✅ CORREÇÃO: Buscar o summonerName correto da fase que está sendo editada
       const phaseIndex = this.currentEditingPlayer.phaseIndex;
+      console.log(`✅ [updatePlayerPick] phaseIndex: ${phaseIndex}`);
+
       const targetPhase = this.session?.phases?.[phaseIndex];
+      console.log(`✅ [updatePlayerPick] targetPhase: ${JSON.stringify(targetPhase)}`);
 
       if (!targetPhase) {
+        console.error(`❌ [updatePlayerPick] Fase ${phaseIndex} não encontrada!`);
         throw new Error(`Fase ${phaseIndex} não encontrada`);
       }
 
-      // ✅ USAR o playerName da fase (que é o summonerName correto)
-      const correctPlayerId = targetPhase.playerName || targetPhase.playerId;
-      saveLogToRoot(`🔧 [updatePlayerPick] Usando playerId correto: ${correctPlayerId} (original: ${playerId})`);
-
-      // ✅ DEBUG: Log do currentPlayer completo
-      saveLogToRoot(`🔍 [updatePlayerPick] currentPlayer completo: ${JSON.stringify(this.currentPlayer, null, 2)}`);
-      saveLogToRoot(`🔍 [updatePlayerPick] currentPlayer.summonerName: ${this.currentPlayer?.summonerName}`);
-      saveLogToRoot(`🔍 [updatePlayerPick] currentPlayer.gameName: ${this.currentPlayer?.gameName}`);
-      saveLogToRoot(`🔍 [updatePlayerPick] currentPlayer.tagLine: ${this.currentPlayer?.tagLine}`);
+      // ✅ USAR o byPlayer da fase (summonerName do jogador)
+      const correctPlayerId = targetPhase.byPlayer || targetPhase.playerName || targetPhase.playerId || playerId;
+      console.log(`🔧 [updatePlayerPick] correctPlayerId: ${correctPlayerId} (original: ${playerId})`);
+      console.log(`🔍 [updatePlayerPick] targetPhase.byPlayer: ${targetPhase.byPlayer}`);
+      console.log(`🔍 [updatePlayerPick] targetPhase.playerName: ${targetPhase.playerName}`);
+      console.log(`🔍 [updatePlayerPick] targetPhase.playerId: ${targetPhase.playerId}`);
 
       // ✅ CRÍTICO: Usar champion.key (que é o ID numérico como string)
       const championId = champion.key || champion.id;
-      saveLogToRoot(`🔍 [updatePlayerPick] championId final: ${championId}`);
+      console.log(`🔍 [updatePlayerPick] championId final: ${championId}`);
 
-      // ✅ DEBUG: Log da URL completa
-      const fullUrl = `${this.baseUrl}/match/change-pick`;
+      // ✅ CORREÇÃO CRÍTICA: baseUrl já contém /api, então NÃO adicionar de novo
+      const fullUrl = `${this.baseUrl}/draft/${this.matchId}/changePick`;
       const requestBody = {
-        matchId: this.matchId,
         playerId: correctPlayerId,
-        championId: championId
+        championId: Number(championId),
+        confirmed: true
       };
-      saveLogToRoot(`🔍 [updatePlayerPick] URL completa: ${fullUrl}`);
-      saveLogToRoot(`🔍 [updatePlayerPick] Request body: ${JSON.stringify(requestBody, null, 2)}`);
+      console.log(`🔍 [updatePlayerPick] baseUrl: ${this.baseUrl}`);
+      console.log(`🔍 [updatePlayerPick] URL completa: ${fullUrl}`);
+      console.log(`🔍 [updatePlayerPick] Request body: ${JSON.stringify(requestBody, null, 2)}`);
 
+      console.log('📤 [updatePlayerPick] Enviando requisição HTTP...');
       const response = await firstValueFrom(this.http.post(fullUrl, requestBody));
+      console.log('✅ [updatePlayerPick] Resposta recebida:', response);
 
       logDraft('✅ [updatePlayerPick] Pick atualizado com sucesso:', response);
-      saveLogToRoot(`✅ [updatePlayerPick] Pick atualizado: ${JSON.stringify(response)}`);
-
-      // ✅ CRÍTICO: NÃO forçar sync HTTP - aguardar WebSocket + ngOnChanges
-      // await this.syncSessionWithBackend();
 
       // ✅ FINALIZAR EDIÇÃO e abrir modal de confirmação
       this.isEditingMode = false;
@@ -2360,15 +2376,16 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       this.showChampionModal = false;
       this.showConfirmationModal = true; // ✅ REABRIR modal de confirmação
       this.cdr.detectChanges();
-      saveLogToRoot(`✅ [updatePlayerPick] Pick atualizado e modal de confirmação reaberto`);
+      console.log(`✅ [updatePlayerPick] Pick atualizado e modal de confirmação reaberto`);
     } catch (error) {
-      logDraft('❌ [updatePlayerPick] Erro:', error);
-      saveLogToRoot(`❌ [updatePlayerPick] Erro detalhado: ${JSON.stringify(error, null, 2)}`);
-      saveLogToRoot(`❌ [updatePlayerPick] Erro string: ${String(error)}`);
+      console.error('❌ [updatePlayerPick] ERRO:', error);
+      console.error(`❌ [updatePlayerPick] Erro detalhado: ${JSON.stringify(error, null, 2)}`);
+      console.error(`❌ [updatePlayerPick] Erro string: ${String(error)}`);
       if (error instanceof Error) {
-        saveLogToRoot(`❌ [updatePlayerPick] Error.message: ${error.message}`);
-        saveLogToRoot(`❌ [updatePlayerPick] Error.stack: ${error.stack}`);
+        console.error(`❌ [updatePlayerPick] Error.message: ${error.message}`);
+        console.error(`❌ [updatePlayerPick] Error.stack: ${error.stack}`);
       }
+      logDraft('❌ [updatePlayerPick] Erro:', error);
       throw error;
     }
   }
