@@ -69,6 +69,26 @@ public class DraftController {
         return ResponseEntity.ok(Map.of(KEY_SUCCESS, true));
     }
 
+    // ✅ NOVO: Endpoint para editar picks no modal de confirmação
+    record ChangePickPathRequest(String playerId, Integer championId, Boolean confirmed) {
+    }
+
+    @PostMapping("/draft/{matchId}/changePick")
+    public ResponseEntity<Map<String, Object>> changePickPath(
+            @PathVariable Long matchId,
+            @RequestBody ChangePickPathRequest req) {
+        log.info("🔄 [DraftController] changePick chamado: matchId={}, playerId={}, championId={}",
+                matchId, req.playerId(), req.championId());
+
+        if (req.playerId() == null || req.championId() == null) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of(KEY_ERROR, "playerId e championId são obrigatórios"));
+        }
+
+        draftService.changePick(matchId, req.playerId(), String.valueOf(req.championId()));
+        return ResponseEntity.ok(Map.of(KEY_SUCCESS, true));
+    }
+
     // ✅ CORREÇÃO #1: Endpoint para processar ações de draft (pick/ban)
     record DraftActionRequest(Long matchId, Integer actionIndex, String championId, String playerId, String action) {
     }

@@ -1037,6 +1037,17 @@ public class DraftFlowService {
             cleanPlayer.put("assignedLane", player.get("assignedLane"));
             cleanPlayer.put("teamIndex", player.get("teamIndex"));
 
+            // ✅ ADICIONAR gameName e tagLine se existirem no formato summonerName
+            if (playerName.contains("#")) {
+                String[] parts = playerName.split("#", 2);
+                cleanPlayer.put("gameName", parts[0]);
+                cleanPlayer.put("tagLine", parts[1]);
+            } else {
+                // Se não tiver "#", usar o nome completo como gameName
+                cleanPlayer.put("gameName", playerName);
+                cleanPlayer.put("tagLine", "");
+            }
+
             // ✅ Buscar TODAS as ações deste jogador (bans E picks juntos)
             List<Map<String, Object>> playerActions = actions.stream()
                     .filter(a -> a.team() == teamNumber)

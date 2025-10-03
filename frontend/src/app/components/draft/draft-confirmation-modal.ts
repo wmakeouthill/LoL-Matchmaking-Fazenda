@@ -1069,50 +1069,8 @@ export class DraftConfirmationModalComponent implements OnChanges {
     return shouldShow;
   }
 
-  // MÉTODO PARA DEBUG DE CLIQUE
-  onButtonClick(slot: any): void {
-    console.log('🔴 [BOTÃO CLICADO] === INÍCIO ===');
-    console.log('🔴 [BOTÃO CLICADO] Slot:', slot);
-    console.log('🔴 [BOTÃO CLICADO] Player:', slot.player);
-    console.log('🔴 [BOTÃO CLICADO] Champion:', slot.champion);
-    console.log('🔴 [BOTÃO CLICADO] PhaseIndex:', slot.phaseIndex);
-
-    logConfirmationModal('🎯 [onButtonClick] === BOTÃO CLICADO ===');
-    logConfirmationModal('🎯 [onButtonClick] slot completo:', slot);
-    logConfirmationModal('🎯 [onButtonClick] player:', {
-      id: slot.player?.id,
-      summonerName: slot.player?.summonerName,
-      name: slot.player?.name,
-      gameName: slot.player?.gameName,
-      tagLine: slot.player?.tagLine,
-      teamIndex: slot.player?.teamIndex
-    });
-    logConfirmationModal('🎯 [onButtonClick] phaseIndex:', slot.phaseIndex);
-    logConfirmationModal('🎯 [onButtonClick] isBot:', this.isPlayerBot(slot.player));
-    logConfirmationModal('🎯 [onButtonClick] currentPlayer:', {
-      id: this.currentPlayer?.id,
-      summonerName: this.currentPlayer?.summonerName,
-      gameName: this.currentPlayer?.gameName,
-      tagLine: this.currentPlayer?.tagLine
-    });
-
-    // ✅ CORREÇÃO: Usar gameName#tagLine para identificar jogador (formato esperado pelo gateway)
-    const playerIdentifier = slot.player.gameName && slot.player.tagLine
-      ? `${slot.player.gameName}#${slot.player.tagLine}`
-      : slot.player.summonerName || slot.player.id;
-
-    console.log('🔴 [BOTÃO CLICADO] Player identifier:', playerIdentifier);
-
-    if (this.isPlayerBot(slot.player)) {
-      console.log('🔴 [BOTÃO CLICADO] Confirmando pick de BOT');
-      logConfirmationModal('🎯 [onButtonClick] Confirmando pick de bot');
-      this.confirmBotPick(playerIdentifier, slot.phaseIndex);
-    } else {
-      console.log('🔴 [BOTÃO CLICADO] Iniciando EDIÇÃO de pick humano');
-      logConfirmationModal('🎯 [onButtonClick] Iniciando edição de pick humano');
-      this.startEditingPick(playerIdentifier, slot.phaseIndex);
-    }
-  }
+  // ❌ MÉTODO OBSOLETO - Removido conforme requisito (botões individuais foram removidos)
+  // O único botão de edição é o "Editar Minha Seleção" no rodapé, que usa startEditingCurrentPlayer()
 
   // MÉTODOS PARA EDIÇÃO
   startEditingPick(playerId: string, phaseIndex: number): void {
@@ -1133,84 +1091,131 @@ export class DraftConfirmationModalComponent implements OnChanges {
   }
 
   // ✅ NOVO: Método para editar o pick do jogador atual via botão principal
-  startEditingCurrentPlayer(): void {
-    logConfirmationModal('🎯 [startEditingCurrentPlayer] === INICIANDO EDIÇÃO DO JOGADOR ATUAL ===');
+  async startEditingCurrentPlayer(): Promise<void> {
+    console.log('🎯 [EDITAR MEU PICK] === INICIANDO ===');
+    logConfirmationModal('🎯 [startEditingCurrentPlayer] === INICIANDO EDIÇÃO DO JOGADOR LOGADO ===');
 
-    if (!this.currentPlayer || !this.session) {
-      logConfirmationModal('❌ [startEditingCurrentPlayer] currentPlayer ou session não disponível');
+    if (!this.session) {
+      console.error('❌ [EDITAR MEU PICK] Session não disponível');
+      logConfirmationModal('❌ [startEditingCurrentPlayer] Session não disponível');
       return;
     }
 
-    const currentPlayerFormatted = this.currentPlayer.gameName && this.currentPlayer.tagLine
-      ? `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`
-      : this.currentPlayer.summonerName || this.currentPlayer.name;
+    // ✅ PASSO 1: Buscar dados do jogador LOGADO via LCU (Electron Gateway)
+    const electronAPI = (window as any).electronAPI;
+    if (!electronAPI || !electronAPI.lcu || !electronAPI.lcu.getCurrentSummoner) {
+      console.error('❌ [EDITAR MEU PICK] Electron API não disponível');
+      logConfirmationModal('❌ [startEditingCurrentPlayer] Electron API não disponível');
+      return;
+    }
 
-    logConfirmationModal('🔍 [startEditingCurrentPlayer] Buscando pick do jogador:', currentPlayerFormatted);
+    try {
+      console.log('🔍 [EDITAR MEU PICK] Buscando jogador atual do LCU...');
+      const lcuSummoner = await electronAPI.lcu.getCurrentSummoner();
 
-    // Buscar nas actions em vez de phases
-    let playerActionIndex = -1;
-    let matchedPlayerId = '';
+      if (!lcuSummoner) {
+        console.error('❌ [EDITAR MEU PICK] Não foi possível obter dados do LCU');
+        logConfirmationModal('❌ [startEditingCurrentPlayer] LCU summoner não encontrado');
+        return;
+      }
 
-    // Verificar se há actions na session
-    if (this.session.actions && Array.isArray(this.session.actions)) {
-      for (let i = 0; i < this.session.actions.length; i++) {
-        const action = this.session.actions[i];
-        if (action.action === 'pick' && action.champion) {
-          logConfirmationModal('🔍 [startEditingCurrentPlayer] Verificando action:', {
-            index: i,
-            action: action.action,
-            playerId: action.playerId,
-            playerName: action.playerName,
-            champion: action.champion
+      console.log('✅ [EDITAR MEU PICK] Dados do LCU:', {
+        gameName: lcuSummoner.gameName,
+        tagLine: lcuSummoner.tagLine,
+        displayName: lcuSummoner.displayName
+      });
+
+      // ✅ PASSO 2: Construir identificador gameName#tagLine
+      const gameName = lcuSummoner.gameName || lcuSummoner.displayName;
+      const tagLine = lcuSummoner.tagLine || '';
+      const playerIdentifier = tagLine ? `${gameName}#${tagLine}` : gameName;
+
+      console.log('🎯 [EDITAR MEU PICK] Identificador do jogador:', playerIdentifier);
+      logConfirmationModal('🎯 [startEditingCurrentPlayer] playerIdentifier:', playerIdentifier);
+
+      // ✅ DEBUG: Mostrar TODAS as phases disponíveis
+      console.log('📋 [EDITAR MEU PICK] TODAS AS PHASES:', JSON.stringify(this.session.phases, null, 2));
+      console.log('📋 [EDITAR MEU PICK] Total de phases:', this.session.phases?.length || 0);
+
+      // ✅ PASSO 3: Buscar o pick deste jogador nas phases
+      let phaseIndex = -1;
+      let currentChampionId: string | null = null;
+
+      if (this.session.phases) {
+        console.log('🔍 [EDITAR MEU PICK] Procurando pick para:', playerIdentifier);
+
+        for (let i = 0; i < this.session.phases.length; i++) {
+          const phase = this.session.phases[i];
+
+          // ✅ CORREÇÃO: O campo correto é 'byPlayer', não 'playerName' ou 'playerId'
+          const phasePlayer = (phase as any).byPlayer || phase.playerName || phase.playerId;
+
+          console.log(`🔍 [EDITAR MEU PICK] Phase ${i}:`, {
+            type: (phase as any).type || phase.action,
+            byPlayer: phasePlayer,
+            championId: (phase as any).championId || phase.champion?.id || 'SEM CAMPEÃO',
+            championName: (phase as any).championName
           });
 
-          if (action.playerId === currentPlayerFormatted ||
-            action.playerName === currentPlayerFormatted ||
-            this.comparePlayerWithId(this.currentPlayer, action.playerId || '')) {
-            playerActionIndex = i;
-            matchedPlayerId = action.playerId || action.playerName || currentPlayerFormatted;
-            logConfirmationModal('✅ [startEditingCurrentPlayer] Pick encontrado no index:', playerActionIndex);
-            break;
+          // ✅ Verificar se é um PICK (type='pick' no backend)
+          const isPick = (phase as any).type === 'pick' || phase.action === 'pick';
+          const hasChampion = (phase as any).championId || phase.champion?.id;
+
+          if (isPick && hasChampion) {
+            console.log(`  ➡️ É um PICK! Comparando:`);
+            console.log(`     playerIdentifier: "${playerIdentifier}"`);
+            console.log(`     phasePlayer (byPlayer): "${phasePlayer}"`);
+            console.log(`     Igualdade: ${phasePlayer === playerIdentifier}`);
+
+            // ✅ Comparar byPlayer com o identificador construído
+            if (phasePlayer === playerIdentifier) {
+              phaseIndex = i;
+              currentChampionId = (phase as any).championId || phase.champion?.id || null;
+              console.log('✅✅✅ [EDITAR MEU PICK] Pick ENCONTRADO!', {
+                phaseIndex,
+                currentChampionId,
+                playerName: phase.playerName
+              });
+              break;
+            }
           }
         }
       }
-    }
 
-    // Se não encontrou nas actions, tentar nas phases (fallback)
-    if (playerActionIndex === -1 && this.session.phases) {
-      logConfirmationModal('🔍 [startEditingCurrentPlayer] Buscando nas phases como fallback');
-      for (let i = 0; i < this.session.phases.length; i++) {
-        const phase = this.session.phases[i];
-        if (phase.action === 'pick' && phase.champion) {
-          if (this.comparePlayerWithId(this.currentPlayer, phase.playerId || '') ||
-            phase.playerId === currentPlayerFormatted ||
-            phase.playerName === currentPlayerFormatted) {
-            playerActionIndex = i;
-            matchedPlayerId = phase.playerId || phase.playerName || currentPlayerFormatted;
-            break;
-          }
-        }
+      if (phaseIndex === -1) {
+        console.error('❌ [EDITAR MEU PICK] Pick NÃO encontrado para:', playerIdentifier);
+        console.error('❌ [EDITAR MEU PICK] Verifique os logs acima para ver todas as phases');
+        logConfirmationModal('❌ [startEditingCurrentPlayer] Pick não encontrado');
+        alert('❌ Não foi possível encontrar seu pick no draft. Verifique se você participou deste draft.');
+        return;
       }
+
+      // ✅ PASSO 4: Iniciar edição com o identificador correto
+      console.log('🚀 [EDITAR MEU PICK] Iniciando edição:', {
+        playerIdentifier,
+        phaseIndex,
+        currentChampionId
+      });
+
+      logConfirmationModal('🎯 [startEditingCurrentPlayer] Iniciando edição:', {
+        playerId: playerIdentifier,
+        phaseIndex: phaseIndex
+      });
+
+      this.startEditingPick(playerIdentifier, phaseIndex);
+
+    } catch (error) {
+      console.error('❌ [EDITAR MEU PICK] Erro ao buscar dados do LCU:', error);
+      logConfirmationModal('❌ [startEditingCurrentPlayer] Erro:', error);
+      alert('❌ Erro ao buscar seus dados do League of Legends. Verifique se o cliente está aberto.');
     }
-
-    // Se ainda não encontrou, usar fallback final
-    if (playerActionIndex === -1) {
-      logConfirmationModal('❌ [startEditingCurrentPlayer] Usando fallback final - pick não encontrado');
-      matchedPlayerId = this.currentPlayer.id?.toString() || currentPlayerFormatted;
-      playerActionIndex = 0;
-    }
-
-    logConfirmationModal('🎯 [startEditingCurrentPlayer] Iniciando edição:', {
-      playerId: matchedPlayerId,
-      phaseIndex: playerActionIndex
-    });
-
-    this.startEditingPick(matchedPlayerId, playerActionIndex);
   }
 
   confirmBotPick(playerId: string, phaseIndex: number): void {
-    // Para bots, apenas confirmar (não editar)
-    // Pode ser implementado conforme necessário
+    console.log('🤖 [CONFIRMAR BOT] Confirmando pick de bot:', playerId);
+    // Para bots, apenas confirmar automaticamente (não precisa editar)
+    // Pode ser implementado no futuro se necessário
+    logConfirmationModal('🤖 [confirmBotPick] Bot confirmado automaticamente:', playerId);
   }
 
   // MÉTODOS PARA CACHE

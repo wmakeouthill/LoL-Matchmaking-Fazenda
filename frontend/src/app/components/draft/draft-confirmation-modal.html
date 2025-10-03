@@ -48,9 +48,6 @@
                   <span class="champion-name">{{ slot.champion.name }}</span>
                 </div>
                 <div class="champion-placeholder" *ngIf="!slot.champion">?</div>
-                <button class="edit-btn" *ngIf="shouldShowEditButton(slot)" (click)="onButtonClick(slot)">
-                  {{ isPlayerBot(slot.player) ? 'Confirmar Bot' : 'Editar' }}
-                </button>
               </div>
             </div>
           </div>
@@ -93,9 +90,6 @@
                   <span class="champion-name">{{ slot.champion.name }}</span>
                 </div>
                 <div class="champion-placeholder" *ngIf="!slot.champion">?</div>
-                <button class="edit-btn" *ngIf="shouldShowEditButton(slot)" (click)="onButtonClick(slot)">
-                  {{ isPlayerBot(slot.player) ? 'Confirmar Bot' : 'Editar' }}
-                </button>
               </div>
             </div>
           </div>
