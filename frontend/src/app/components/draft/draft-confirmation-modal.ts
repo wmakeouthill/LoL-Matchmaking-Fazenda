@@ -109,42 +109,113 @@ export class DraftConfirmationModalComponent implements OnChanges {
 
   // ✅ NOVO: Buscar campeão no cache pelo ID
   private getChampionFromCache(championId: number): any {
+    logConfirmationModal(`🔍 [getChampionFromCache] Buscando campeão com ID: ${championId}`);
+
     const cache = (this.championService as any).championsCache as Map<string, any>;
-    if (!cache) return null;
+    if (!cache) {
+      logConfirmationModal(`❌ [getChampionFromCache] Cache não disponível`);
+      return null;
+    }
+
+    logConfirmationModal(`🔍 [getChampionFromCache] Cache tem ${cache.size} campeões`);
 
     // Tentar buscar diretamente pelo key
     let champion = cache.get(championId.toString());
 
     if (!champion) {
+      logConfirmationModal(`🔍 [getChampionFromCache] Não encontrado diretamente, tentando fallback...`);
       // FALLBACK: Buscar em todos os campeões pelo ID alternativo
-      for (const [, champ] of cache.entries()) {
+      for (const [key, champ] of cache.entries()) {
         if (champ.key === championId.toString() || parseInt(champ.key, 10) === championId) {
           champion = champ;
-          logConfirmationModal(`✅ [getChampionFromCache] Campeão ${championId} encontrado via fallback: ${champ.name}`);
+          logConfirmationModal(`✅ [getChampionFromCache] Campeão ${championId} encontrado via fallback: ${champ.name} (key: ${key})`);
           break;
         }
       }
     } else {
-      logConfirmationModal(`✅ [getChampionFromCache] Campeão ${championId} encontrado: ${champion.name}`);
+      logConfirmationModal(`✅ [getChampionFromCache] Campeão ${championId} encontrado diretamente: ${champion.name}`);
+      logConfirmationModal(`✅ [getChampionFromCache] Champion object:`, JSON.stringify(champion, null, 2));
     }
 
     if (!champion) {
-      logConfirmationModal(`⚠️ [getChampionFromCache] Campeão ${championId} NÃO encontrado`);
+      logConfirmationModal(`⚠️ [getChampionFromCache] Campeão ${championId} NÃO encontrado no cache`);
+      // Log primeiros 5 campeões do cache para debug
+      let count = 0;
+      for (const [key, champ] of cache.entries()) {
+        if (count < 5) {
+          logConfirmationModal(`   Cache[${key}]: ${champ.name} (key: ${champ.key})`);
+          count++;
+        }
+      }
     }
 
     return champion;
   }
 
   ngOnChanges(changes: SimpleChanges): void {
+    // ✅ NOVO: Logs extremamente detalhados para DEBUG
+    console.log('🔵 [CONFIRMATION-MODAL] ngOnChanges CHAMADO');
+    console.log('🔵 [CONFIRMATION-MODAL] isVisible:', this.isVisible);
+    console.log('🔵 [CONFIRMATION-MODAL] session exists:', !!this.session);
+    console.log('🔵 [CONFIRMATION-MODAL] confirmationData:', this.confirmationData);
+
     // ✅ NOVO: Invalidar cache quando session ou isVisible mudam
     if (changes['session'] || changes['isVisible']) {
       logConfirmationModal('🔄 [ngOnChanges] Detectada mudança na session ou visibilidade');
+      console.log('🔵 [CONFIRMATION-MODAL] Changes detectadas:', {
+        sessionChanged: !!changes['session'],
+        visibilityChanged: !!changes['isVisible'],
+        newSession: changes['session']?.currentValue ? 'presente' : 'ausente',
+        newVisibility: changes['isVisible']?.currentValue
+      });
+
       logConfirmationModal('🔄 [ngOnChanges] Changes:', {
         sessionChanged: !!changes['session'],
         visibilityChanged: !!changes['isVisible'],
         newSession: changes['session']?.currentValue ? 'presente' : 'ausente',
         newVisibility: changes['isVisible']?.currentValue
       });
+
+      // ✅ LOG DETALHADO: Mostrar estrutura teams recebida do backend
+      if (changes['session']?.currentValue) {
+        const newSession = changes['session'].currentValue;
+        console.log('🔵 [CONFIRMATION-MODAL] === ESTRUTURA SESSION COMPLETA ===');
+        console.log('🔵 [CONFIRMATION-MODAL] Session:', JSON.stringify(newSession, null, 2));
+
+        logConfirmationModal('📥 [ngOnChanges] === ESTRUTURA SESSION RECEBIDA ===');
+        logConfirmationModal('📥 Session completa:', JSON.stringify(newSession, null, 2));
+
+        if (newSession.teams) {
+          console.log('🔵 [CONFIRMATION-MODAL] === ESTRUTURA TEAMS ===');
+          console.log('🔵 [CONFIRMATION-MODAL] Teams.blue:', JSON.stringify(newSession.teams.blue, null, 2));
+          console.log('🔵 [CONFIRMATION-MODAL] Teams.red:', JSON.stringify(newSession.teams.red, null, 2));
+
+          logConfirmationModal('📥 [ngOnChanges] === ESTRUTURA TEAMS ===');
+          logConfirmationModal('📥 Teams.blue:', JSON.stringify(newSession.teams.blue, null, 2));
+          logConfirmationModal('📥 Teams.red:', JSON.stringify(newSession.teams.red, null, 2));
+
+          if (newSession.teams.blue?.allBans) {
+            console.log('🔵 [CONFIRMATION-MODAL] Blue allBans:', newSession.teams.blue.allBans);
+            logConfirmationModal('📥 Blue allBans:', newSession.teams.blue.allBans);
+          }
+          if (newSession.teams.blue?.allPicks) {
+            console.log('🔵 [CONFIRMATION-MODAL] Blue allPicks:', newSession.teams.blue.allPicks);
+            logConfirmationModal('📥 Blue allPicks:', newSession.teams.blue.allPicks);
+          }
+          if (newSession.teams.red?.allBans) {
+            console.log('🔵 [CONFIRMATION-MODAL] Red allBans:', newSession.teams.red.allBans);
+            logConfirmationModal('📥 Red allBans:', newSession.teams.red.allBans);
+          }
+          if (newSession.teams.red?.allPicks) {
+            console.log('🔵 [CONFIRMATION-MODAL] Red allPicks:', newSession.teams.red.allPicks);
+            logConfirmationModal('📥 Red allPicks:', newSession.teams.red.allPicks);
+          }
+        } else {
+          console.log('⚠️ [CONFIRMATION-MODAL] Session SEM estrutura teams!');
+          logConfirmationModal('⚠️ [ngOnChanges] Session SEM estrutura teams!');
+        }
+      }
+
       this.forceRefresh();
     }
   }
@@ -316,14 +387,27 @@ export class DraftConfirmationModalComponent implements OnChanges {
   }
 
   getTeamPicks(team: 'blue' | 'red'): any[] {
+    console.log('🟢 [CONFIRMATION-MODAL] getTeamPicks chamado para:', team);
+
     if (team === 'blue' && this.isCacheValid() && this._cachedBlueTeamPicks) {
+      console.log('🟢 [CONFIRMATION-MODAL] Retornando cache Blue:', this._cachedBlueTeamPicks);
       return this._cachedBlueTeamPicks;
     }
     if (team === 'red' && this.isCacheValid() && this._cachedRedTeamPicks) {
+      console.log('🟢 [CONFIRMATION-MODAL] Retornando cache Red:', this._cachedRedTeamPicks);
       return this._cachedRedTeamPicks;
     }
 
-    if (!this.session) return [];
+    if (!this.session) {
+      console.log('❌ [CONFIRMATION-MODAL] Session não existe!');
+      return [];
+    }
+
+    console.log('🟢 [CONFIRMATION-MODAL] Session existe:', {
+      hasTeams: !!this.session.teams,
+      hasActions: !!this.session.actions,
+      hasPhases: !!this.session.phases
+    });
 
     logConfirmationModal(`🎯 [getTeamPicks] === OBTENDO PICKS DO TIME ${team.toUpperCase()} ===`);
 
@@ -332,22 +416,35 @@ export class DraftConfirmationModalComponent implements OnChanges {
     // ✅ CORREÇÃO: Usar estrutura hierárquica (teams.blue/red.players[].actions)
     if (this.session.teams) {
       const teamData = team === 'blue' ? this.session.teams.blue : this.session.teams.red;
+      console.log('🟢 [CONFIRMATION-MODAL] teamData:', teamData);
 
       if (teamData?.players) {
+        console.log('🟢 [CONFIRMATION-MODAL] Iterando players:', teamData.players.length);
         logConfirmationModal(`🎯 [getTeamPicks] Usando estrutura hierárquica - ${teamData.players.length} jogadores`);
 
         teamData.players.forEach((player: any) => {
+          console.log('🟢 [CONFIRMATION-MODAL] Player:', player.summonerName, 'Actions:', player.actions);
+
           player.actions?.forEach((action: any) => {
+            console.log('🟢 [CONFIRMATION-MODAL] Action:', action);
+
             if (action.type === 'pick' && action.championId && action.status === 'completed') {
+              console.log('🟢 [CONFIRMATION-MODAL] Pick encontrado! ChampionId:', action.championId);
+
               // Buscar campeão no cache
               const champion = this.getChampionFromCache(parseInt(action.championId, 10));
+              console.log('🟢 [CONFIRMATION-MODAL] Champion do cache:', champion);
+
               if (champion) {
                 // ✅ CORREÇÃO: Retornar com image como string URL (igual aos bans)
-                teamPicks.push({
+                const pickData = {
                   id: champion.key,
                   name: champion.name,
-                  image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/${champion.id}.png`
-                });
+                  image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/${champion.id}.png`,
+                  championId: action.championId
+                };
+                console.log('🟢 [CONFIRMATION-MODAL] Adicionando pick:', pickData);
+                teamPicks.push(pickData);
                 logConfirmationModal(`✅ [getTeamPicks] Pick encontrado:`, {
                   player: player.summonerName,
                   champion: champion.name,
@@ -591,19 +688,54 @@ export class DraftConfirmationModalComponent implements OnChanges {
       teamPlayers: teamPlayers.map(p => ({
         name: p.summonerName || p.name,
         teamIndex: p.teamIndex,
-        assignedLane: p.assignedLane
+        assignedLane: p.assignedLane,
+        hasActions: !!p.actions,
+        actionsCount: p.actions?.length || 0
       })),
-      teamPicks: teamPicks.map(p => p.name || 'Unknown pick')
+      teamPicks: teamPicks.map(p => ({
+        name: p.name || 'Unknown',
+        id: p.id,
+        image: p.image
+      }))
     });
 
-    // ✅ CORREÇÃO CRÍTICA: Associar picks por jogador específico, não por índice
+    // ✅ LOG DETALHADO: Mostrar estrutura completa dos players
+    teamPlayers.forEach((p, idx) => {
+      logConfirmationModal(`📋 [organizeTeamByLanes] Player ${idx}:`, JSON.stringify(p, null, 2));
+    });
+
+    // ✅ CORREÇÃO CRÍTICA: Associar picks por jogador específico usando estrutura hierárquica
     const slots = teamPlayers.map((player, index) => {
       const phaseIndex = this.getPhaseIndexForPlayer(player) || 0;
 
-      // ✅ NOVO: Encontrar o pick específico deste jogador usando actions
-      let playerany = undefined;
+      // ✅ PRIORIDADE 1: Encontrar pick nas actions do próprio player (estrutura hierárquica)
+      let playerChampion = undefined;
 
-      if (this.session?.actions) {
+      if (player.actions && Array.isArray(player.actions)) {
+        const pickAction = player.actions.find((action: any) =>
+          action.type === 'pick' && action.championId && action.status === 'completed'
+        );
+
+        if (pickAction) {
+          const champion = this.getChampionFromCache(parseInt(pickAction.championId, 10));
+          if (champion) {
+            // ✅ Retornar com image como URL string
+            playerChampion = {
+              id: champion.key,
+              name: champion.name,
+              image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/${champion.id}.png`
+            };
+            logConfirmationModal('🎯 [organizeTeamByLanes] Pick encontrado nas actions do player:', {
+              playerName: player.summonerName || player.name,
+              championName: champion.name,
+              championId: pickAction.championId
+            });
+          }
+        }
+      }
+
+      // ✅ FALLBACK 1: Buscar na estrutura antiga (actions)
+      if (!playerChampion && this.session?.actions) {
         const playerAction = this.session.actions.find((action: any) => {
           return action.action === 'pick' &&
             action.locked &&
@@ -612,8 +744,8 @@ export class DraftConfirmationModalComponent implements OnChanges {
         });
 
         if (playerAction) {
-          playerany = playerAction.champion;
-          logConfirmationModal('🎯 [organizeTeamByLanes] Pick encontrado via actions para:', {
+          playerChampion = playerAction.champion;
+          logConfirmationModal('🎯 [organizeTeamByLanes] Pick encontrado via actions (fallback) para:', {
             playerName: player.summonerName || player.name,
             championName: playerAction.champion.name,
             actionPlayerId: playerAction.playerId
@@ -621,10 +753,10 @@ export class DraftConfirmationModalComponent implements OnChanges {
         }
       }
 
-      // ✅ FALLBACK: Se não encontrou via actions, usar índice (comportamento antigo)
-      if (!playerany && teamPicks[index]) {
-        playerany = teamPicks[index];
-        logConfirmationModal('🎯 [organizeTeamByLanes] Pick encontrado via índice (fallback) para:', {
+      // ✅ FALLBACK 2: Se não encontrou via actions, usar índice do array teamPicks
+      if (!playerChampion && teamPicks[index]) {
+        playerChampion = teamPicks[index];
+        logConfirmationModal('🎯 [organizeTeamByLanes] Pick encontrado via índice (fallback 2) para:', {
           playerName: player.summonerName || player.name,
           championName: teamPicks[index].name,
           index: index
@@ -637,13 +769,13 @@ export class DraftConfirmationModalComponent implements OnChanges {
         playerTeamIndex: player.teamIndex,
         playerLane: player.assignedLane || player.lane,
         phaseIndex: phaseIndex,
-        hasany: !!playerany,
-        championName: playerany?.name || 'Sem champion'
+        hasChampion: !!playerChampion,
+        championName: playerChampion?.name || 'Sem champion'
       });
 
       return {
         player,
-        champion: playerany,
+        champion: playerChampion,
         phaseIndex: phaseIndex
       };
     });
@@ -831,13 +963,19 @@ export class DraftConfirmationModalComponent implements OnChanges {
   }
 
   confirmFinalDraft(): void {
+    console.log('🟢 [CONFIRM-FINAL-DRAFT] === CONFIRMANDO DRAFT FINAL ===');
+    console.log('🟢 [CONFIRM-FINAL-DRAFT] Session:', this.session);
+    console.log('🟢 [CONFIRM-FINAL-DRAFT] CurrentPlayer:', this.currentPlayer);
+
     logConfirmationModal('✅ [confirmFinalDraft] === CONFIRMANDO DRAFT FINAL ===');
 
     // ✅ NOVO: Mostrar feedback de carregamento
     this.isConfirming = true;
     this.confirmationMessage = 'Confirmando sua seleção...';
 
+    console.log('🟢 [CONFIRM-FINAL-DRAFT] Emitindo evento onConfirm...');
     this.onConfirm.emit();
+    console.log('🟢 [CONFIRM-FINAL-DRAFT] Evento onConfirm emitido!');
   }
 
   cancelFinalDraft(): void {
@@ -933,6 +1071,12 @@ export class DraftConfirmationModalComponent implements OnChanges {
 
   // MÉTODO PARA DEBUG DE CLIQUE
   onButtonClick(slot: any): void {
+    console.log('🔴 [BOTÃO CLICADO] === INÍCIO ===');
+    console.log('🔴 [BOTÃO CLICADO] Slot:', slot);
+    console.log('🔴 [BOTÃO CLICADO] Player:', slot.player);
+    console.log('🔴 [BOTÃO CLICADO] Champion:', slot.champion);
+    console.log('🔴 [BOTÃO CLICADO] PhaseIndex:', slot.phaseIndex);
+
     logConfirmationModal('🎯 [onButtonClick] === BOTÃO CLICADO ===');
     logConfirmationModal('🎯 [onButtonClick] slot completo:', slot);
     logConfirmationModal('🎯 [onButtonClick] player:', {
@@ -953,9 +1097,11 @@ export class DraftConfirmationModalComponent implements OnChanges {
     });
 
     if (this.isPlayerBot(slot.player)) {
+      console.log('🔴 [BOTÃO CLICADO] Confirmando pick de BOT');
       logConfirmationModal('🎯 [onButtonClick] Confirmando pick de bot');
       this.confirmBotPick(slot.player.id || slot.player.summonerName, slot.phaseIndex);
     } else {
+      console.log('🔴 [BOTÃO CLICADO] Iniciando EDIÇÃO de pick humano');
       logConfirmationModal('🎯 [onButtonClick] Iniciando edição de pick humano');
       this.startEditingPick(slot.player.id || slot.player.summonerName, slot.phaseIndex);
     }
@@ -963,13 +1109,19 @@ export class DraftConfirmationModalComponent implements OnChanges {
 
   // MÉTODOS PARA EDIÇÃO
   startEditingPick(playerId: string, phaseIndex: number): void {
+    console.log('🟡 [START-EDITING-PICK] === INICIANDO EDIÇÃO ===');
+    console.log('🟡 [START-EDITING-PICK] playerId:', playerId);
+    console.log('🟡 [START-EDITING-PICK] phaseIndex:', phaseIndex);
+
     logConfirmationModal('🎯 [startEditingPick] === INICIANDO EDIÇÃO ===');
     logConfirmationModal('🎯 [startEditingPick] playerId:', playerId);
     logConfirmationModal('🎯 [startEditingPick] phaseIndex:', phaseIndex);
     logConfirmationModal('🎯 [startEditingPick] currentPlayer:', this.currentPlayer);
     logConfirmationModal('🎯 [startEditingPick] session presente:', !!this.session);
 
+    console.log('🟡 [START-EDITING-PICK] Emitindo evento onEditPick...');
     this.onEditPick.emit({ playerId, phaseIndex });
+    console.log('🟡 [START-EDITING-PICK] Evento onEditPick emitido!');
     logConfirmationModal('🎯 [startEditingPick] Evento onEditPick emitido com sucesso');
   }
 

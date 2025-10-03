@@ -618,13 +618,21 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
 
   // MÉTODOS PARA CONFIRMAÇÃO
   confirmModalSelection(): void {
+    console.log('🟣 [CHAMPION-MODAL] === CONFIRMANDO SELEÇÃO ===');
+    console.log('🟣 [CHAMPION-MODAL] selectedChampion existe?', !!this.selectedany);
+
     if (!this.selectedany) {
-      console.log('❌ [confirmModalSelection] Nenhum campeão selecionado');
+      console.log('❌ [CHAMPION-MODAL] Nenhum campeão selecionado');
       return;
     }
 
+    console.log('🟣 [CHAMPION-MODAL] Champion:', this.selectedany);
+    console.log('🟣 [CHAMPION-MODAL] Champion.name:', this.selectedany.name);
+    console.log('🟣 [CHAMPION-MODAL] Champion.id:', this.selectedany.id);
+    console.log('🟣 [CHAMPION-MODAL] Champion.key:', this.selectedany.key);
+
     if (this.isChampionBanned(this.selectedany) || this.isChampionPicked(this.selectedany)) {
-      console.log('❌ [confirmModalSelection] Campeão banido ou já escolhido');
+      console.log('❌ [CHAMPION-MODAL] Campeão banido ou já escolhido');
       return;
     }
 
@@ -637,10 +645,13 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
 
     // ✅ CRÍTICO: Guardar referência antes de limpar
     const championToEmit = this.selectedany;
+    console.log('🟣 [CHAMPION-MODAL] Champion a ser emitido:', championToEmit);
 
     // ✅ CORREÇÃO: Emitir o campeão selecionado ANTES de fechar
+    console.log('📤 [CHAMPION-MODAL] EMITINDO EVENTO onChampionSelected...');
     console.log('📤 [confirmModalSelection] EMITINDO EVENTO onanySelected...');
     this.onanySelected.emit(championToEmit);
+    console.log('✅ [CHAMPION-MODAL] Evento onChampionSelected EMITIDO!');
     console.log('✅ [confirmModalSelection] Evento emitido com sucesso');
 
     // ✅ CORREÇÃO: Fechar modal com delay para garantir que o evento seja processado

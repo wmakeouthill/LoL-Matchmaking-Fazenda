@@ -313,7 +313,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
                 oldBlueTeam,
             redTeam: (currentValue.redTeam && currentValue.redTeam.length > 0) ? currentValue.redTeam :
               (currentValue.team2 && currentValue.team2.length > 0) ? currentValue.team2 :
-                oldRedTeam
+                oldRedTeam,
+            // ✅ CRÍTICO: Preservar estrutura teams
+            teams: currentValue.teams || this.session?.teams
           };
 
           // ✅ CORREÇÃO CRÍTICA: Atualizar timer via @Input (OnPush funciona)
@@ -476,8 +478,17 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
             actions: newPhases,
             currentAction: newCurrentAction,
             currentIndex: newCurrentAction,
-            currentPlayer: newCurrentPlayer
+            currentPlayer: newCurrentPlayer,
+            // ✅ CRÍTICO: Usar teams do evento se disponível, senão preservar o existente
+            teams: updateData.teams || this.session?.teams
           };
+
+          // ✅ LOG DEBUG: Verificar se teams foi incluído
+          console.log('🔍 [draftUpdate] teams após atualização:', {
+            hasTeams: !!this.session.teams,
+            fromEvent: !!updateData.teams,
+            fromSession: !!this.session?.teams
+          });
 
           console.log(`⏰ [draftUpdate] Timer recebido: ${newTimeRemaining}s`);
 
@@ -618,7 +629,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
               team1Bans: backup.session.team1Bans || [],
               team2Picks: backup.session.team2Picks || [],
               team2Bans: backup.session.team2Bans || [],
-              currentAction: backup.session.currentAction || this.session?.currentAction || 0
+              currentAction: backup.session.currentAction || this.session?.currentAction || 0,
+              // ✅ CRÍTICO: Preservar estrutura teams do backup
+              teams: backup.session.teams || this.session?.teams
             };
 
             saveLogToRoot(`✅ [tryRestoreFromBackup] ${backup.session.actions.length} ações restauradas do backup`);
@@ -676,7 +689,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       currentPlayer: this.matchData.currentPlayer,  // ✅ CRÍTICO: Incluir jogador da vez
       currentPlayerIndex: 0,
       extendedTime: 0,
-      phase: this.matchData.phase || 'bans'
+      phase: this.matchData.phase || 'bans',
+      // ✅ CRÍTICO: Incluir estrutura teams se vier do backend
+      teams: this.matchData.teams
     };
 
     // ✅ Normalizar dados dos times
@@ -787,8 +802,16 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     const backendCurrentAction = response.session.currentAction;
     const currentCurrentAction = this.session?.currentAction || 0;
 
+    console.log('🔍 [mergeSessionData] === DADOS RECEBIDOS ===', {
+      hasTeams: !!response.session.teams,
+      teamsBlue: !!response.session.teams?.blue,
+      teamsRed: !!response.session.teams?.red,
+      currentAction: backendCurrentAction
+    });
+
     logDraft(`🔄 [mergeSessionData] === INICIANDO MERGE ===`);
     logDraft(`🔄 [mergeSessionData] currentAction: ${currentCurrentAction} → ${backendCurrentAction}`);
+    logDraft(`🔄 [mergeSessionData] teams presente: ${!!response.session.teams}`);
     saveLogToRoot(`🔄 [mergeSessionData] currentAction: ${currentCurrentAction} → ${backendCurrentAction}`);
 
     if (backendCurrentAction === undefined || backendCurrentAction < 0) {
@@ -827,7 +850,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       // ✅ CORREÇÃO: Usar teams do backend para garantir consistência
       blueTeam: response.session.blueTeam || response.session.team1 || this.session?.blueTeam || [],
       redTeam: response.session.redTeam || response.session.team2 || this.session?.redTeam || [],
-      phases: response.session.phases || this.session?.phases || []
+      phases: response.session.phases || this.session?.phases || [],
+      // ✅ CRÍTICO: Incluir estrutura teams que vem do backend!
+      teams: response.session.teams || this.session?.teams
     };
 
     // ✅ NOVO: Extrair dados de confirmação
@@ -839,9 +864,23 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     logDraft(`✅ [mergeSessionData] Dados de confirmação extraídos:`, this.confirmationData);
 
     // ✅ NOVO: Log após a atualização
+    console.log('✅ [mergeSessionData] === APÓS MERGE ===', {
+      sessionHasTeams: !!this.session.teams,
+      sessionTeamsBlue: !!this.session.teams?.blue,
+      sessionTeamsRed: !!this.session.teams?.red,
+      currentAction: this.session.currentAction
+    });
+
     logDraft(`✅ [mergeSessionData] Merge concluído - currentAction atualizado: ${oldSession.currentAction} → ${this.session.currentAction}`);
+    logDraft(`✅ [mergeSessionData] teams recebido do backend:`, response.session.teams ? 'PRESENTE' : 'AUSENTE');
+    if (response.session.teams) {
+      logDraft(`✅ [mergeSessionData] teams.blue:`, response.session.teams.blue ? 'OK' : 'MISSING');
+      logDraft(`✅ [mergeSessionData] teams.red:`, response.session.teams.red ? 'OK' : 'MISSING');
+    }
+    logDraft(`✅ [mergeSessionData] teams na session após merge:`, this.session.teams ? 'PRESENTE' : 'AUSENTE');
     saveLogToRoot(`✅ [mergeSessionData] Ações atualizadas: ${actionsToUse.length}, currentAction: ${backendCurrentAction}`);
     saveLogToRoot(`🔄 [mergeSessionData] Session.currentAction agora é: ${this.session.currentAction}`);
+    saveLogToRoot(`🔄 [mergeSessionData] Session.teams presente: ${!!this.session.teams}`);
   }
 
   private async syncSessionWithBackend(): Promise<void> {
@@ -1828,7 +1867,18 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
   // ✅ MÉTODOS DE AÇÃO
   async onanySelected(champion: any): Promise<void> {
-    console.log('🚀🚀🚀 [onanySelected] MÉTODO CHAMADO!');
+    console.log('�🔴🔴 [CHAMPION-SELECTED] === EVENTO RECEBIDO ===');
+    console.log('🔴 [CHAMPION-SELECTED] Champion:', champion);
+    console.log('🔴 [CHAMPION-SELECTED] Champion.name:', champion?.name);
+    console.log('🔴 [CHAMPION-SELECTED] Champion.id:', champion?.id);
+    console.log('🔴 [CHAMPION-SELECTED] Champion.key:', champion?.key);
+    console.log('🔴 [CHAMPION-SELECTED] currentPlayer:', this.currentPlayer);
+    console.log('🔴 [CHAMPION-SELECTED] matchId:', this.matchId);
+    console.log('🔴 [CHAMPION-SELECTED] isEditingMode:', this.isEditingMode);
+    console.log('🔴 [CHAMPION-SELECTED] currentEditingPlayer:', this.currentEditingPlayer);
+    console.log('🔴 [CHAMPION-SELECTED] session:', this.session);
+
+    console.log('�🚀🚀🚀 [onanySelected] MÉTODO CHAMADO!');
     console.log('🚀 Champion:', champion);
     console.log('🚀 currentPlayer:', this.currentPlayer);
     console.log('🚀 matchId:', this.matchId);
@@ -2103,14 +2153,25 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   async onConfirmationModalEditPick(data: { playerId: string, phaseIndex: number }): Promise<void> {
+    console.log('🔵 [EDIT-PICK] === RECEBIDO EVENTO DE EDIÇÃO ===');
+    console.log('🔵 [EDIT-PICK] Data:', data);
+    console.log('🔵 [EDIT-PICK] playerId:', data.playerId);
+    console.log('🔵 [EDIT-PICK] phaseIndex:', data.phaseIndex);
+
     logDraft('🎯 [onConfirmationModalEditPick] === EDITANDO PICK ===', data);
     saveLogToRoot(`✏️ [onConfirmationModalEditPick] Editando pick: ${JSON.stringify(data)}`);
 
     // ✅ PRIMEIRO: Log do estado atual ANTES de qualquer alteração
+    console.log('🔵 [EDIT-PICK] Estado ANTES:', {
+      showChampionModal: this.showChampionModal,
+      showConfirmationModal: this.showConfirmationModal,
+      isEditingMode: this.isEditingMode
+    });
     saveLogToRoot(`🔍 [onConfirmationModalEditPick] ANTES: showanyModal=${this.showChampionModal}, showConfirmationModal=${this.showConfirmationModal}, isEditingMode=${this.isEditingMode}`);
 
     // ✅ CRÍTICO: Definir modo de edição PRIMEIRO para bloquear updateInterfaceState
     this.isEditingMode = true;
+    console.log('🔵 [EDIT-PICK] Modo de edição ATIVADO!');
     saveLogToRoot(`🔒 [onConfirmationModalEditPick] MODO EDIÇÃO ATIVADO: isEditingMode=${this.isEditingMode}`);
 
     // ✅ Armazenar dados da edição ANTES de alterar modais
@@ -2247,6 +2308,12 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         throw new Error('currentEditingPlayer não disponível');
       }
 
+      // ✅ DEBUG: Mostrar estrutura completa do champion
+      saveLogToRoot(`🔍 [updatePlayerPick] Champion completo: ${JSON.stringify(champion, null, 2)}`);
+      saveLogToRoot(`🔍 [updatePlayerPick] champion.id: ${champion.id}`);
+      saveLogToRoot(`🔍 [updatePlayerPick] champion.key: ${champion.key}`);
+      saveLogToRoot(`🔍 [updatePlayerPick] champion.name: ${champion.name}`);
+
       // ✅ CORREÇÃO: Buscar o summonerName correto da fase que está sendo editada
       const phaseIndex = this.currentEditingPlayer.phaseIndex;
       const targetPhase = this.session?.phases?.[phaseIndex];
@@ -2259,16 +2326,27 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       const correctPlayerId = targetPhase.playerName || targetPhase.playerId;
       saveLogToRoot(`🔧 [updatePlayerPick] Usando playerId correto: ${correctPlayerId} (original: ${playerId})`);
 
+      // ✅ DEBUG: Log do currentPlayer completo
+      saveLogToRoot(`🔍 [updatePlayerPick] currentPlayer completo: ${JSON.stringify(this.currentPlayer, null, 2)}`);
+      saveLogToRoot(`🔍 [updatePlayerPick] currentPlayer.summonerName: ${this.currentPlayer?.summonerName}`);
+      saveLogToRoot(`🔍 [updatePlayerPick] currentPlayer.gameName: ${this.currentPlayer?.gameName}`);
+      saveLogToRoot(`🔍 [updatePlayerPick] currentPlayer.tagLine: ${this.currentPlayer?.tagLine}`);
+
+      // ✅ CRÍTICO: Usar champion.key (que é o ID numérico como string)
+      const championId = champion.key || champion.id;
+      saveLogToRoot(`🔍 [updatePlayerPick] championId final: ${championId}`);
+
       // ✅ DEBUG: Log da URL completa
       const fullUrl = `${this.baseUrl}/match/change-pick`;
-      saveLogToRoot(`🔍 [updatePlayerPick] URL completa: ${fullUrl}`);
-      saveLogToRoot(`🔍 [updatePlayerPick] baseUrl: "${this.baseUrl}"`);
-
-      const response = await firstValueFrom(this.http.post(fullUrl, {
+      const requestBody = {
         matchId: this.matchId,
         playerId: correctPlayerId,
-        championId: Number(champion.id)
-      }));
+        championId: championId
+      };
+      saveLogToRoot(`🔍 [updatePlayerPick] URL completa: ${fullUrl}`);
+      saveLogToRoot(`🔍 [updatePlayerPick] Request body: ${JSON.stringify(requestBody, null, 2)}`);
+
+      const response = await firstValueFrom(this.http.post(fullUrl, requestBody));
 
       logDraft('✅ [updatePlayerPick] Pick atualizado com sucesso:', response);
       saveLogToRoot(`✅ [updatePlayerPick] Pick atualizado: ${JSON.stringify(response)}`);
@@ -2592,7 +2670,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       this.session = {
         ...this.session,
         currentAction: data.currentAction,
-        lastAction: data.lastAction
+        lastAction: data.lastAction,
+        // ✅ CRÍTICO: Preservar estrutura teams
+        teams: this.session?.teams
       };
     }
 
@@ -2615,7 +2695,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     if (data.currentAction !== undefined) {
       this.session = {
         ...this.session,
-        currentAction: data.currentAction
+        currentAction: data.currentAction,
+        // ✅ CRÍTICO: Preservar estrutura teams
+        teams: this.session?.teams
       };
     }
 
@@ -2668,7 +2750,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         team1Stats: data.team1Stats,
         team2Stats: data.team2Stats,
         lastAction: data.lastAction,
-        lastSyncTime: Date.now()
+        lastSyncTime: Date.now(),
+        // ✅ CRÍTICO: Preservar estrutura teams do backend
+        teams: pickBanData.teams || this.session?.teams
       };
     }
 

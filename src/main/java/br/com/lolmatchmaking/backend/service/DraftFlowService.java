@@ -403,6 +403,123 @@ public class DraftFlowService {
         }
     }
 
+    /**
+     * ✅ NOVO: Permite alterar um pick já realizado durante a fase de confirmação
+     * Usado quando o jogador clica em "Editar" no modal de confirmação
+     */
+    @Transactional
+    public synchronized void changePick(Long matchId, String playerId, String newChampionId) {
+        log.info("\n========================================");
+        log.info("🔄 [changePick] === ALTERANDO PICK ===");
+        log.info("========================================");
+        log.info("📋 MatchId: {}", matchId);
+        log.info("📋 Player ID recebido: {}", playerId);
+        log.info("📋 New Champion ID: {}", newChampionId);
+
+        DraftState st = states.get(matchId);
+        if (st == null) {
+            log.warn("❌ [changePick] DraftState não encontrado para matchId={}", matchId);
+            return;
+        }
+
+        // ✅ DEBUG: Mostrar todos os jogadores nos times
+        log.info("🔍 [changePick] Players do Time 1: {}", st.getTeam1Players());
+        log.info("🔍 [changePick] Players do Time 2: {}", st.getTeam2Players());
+
+        // ✅ DEBUG: Mostrar todas as ações de pick
+        log.info("🔍 [changePick] Todas as ações de pick:");
+        for (int i = 0; i < st.getActions().size(); i++) {
+            DraftAction action = st.getActions().get(i);
+            if ("pick".equals(action.type())) {
+                log.info("   [{}] type={}, byPlayer='{}', champion={}",
+                        i, action.type(), action.byPlayer(), action.championName());
+            }
+        }
+
+        // ✅ Normalizar championId
+        final String normalizedChampionId = normalizeChampionId(newChampionId);
+        if (normalizedChampionId == null) {
+            log.warn("❌ [changePick] championId inválido: {}", newChampionId);
+            return;
+        }
+        log.info("✅ [changePick] championId normalizado: {} -> {}", newChampionId, normalizedChampionId);
+
+        // ✅ Buscar a ação de pick deste jogador (comparação mais flexível)
+        int actionIndex = -1;
+        for (int i = 0; i < st.getActions().size(); i++) {
+            DraftAction action = st.getActions().get(i);
+            if ("pick".equals(action.type())) {
+                String actionPlayer = action.byPlayer();
+                log.info("🔍 [changePick] Comparando '{}' com '{}'", playerId, actionPlayer);
+
+                // ✅ COMPARAÇÃO FLEXÍVEL: tentar match exato ou parcial
+                if (playerId.equals(actionPlayer) ||
+                        actionPlayer.contains(playerId) ||
+                        playerId.contains(actionPlayer)) {
+                    actionIndex = i;
+                    log.info("✅ [changePick] MATCH encontrado no index {}", i);
+                    break;
+                }
+            }
+        }
+
+        if (actionIndex == -1) {
+            log.warn("❌ [changePick] Pick não encontrado para jogador: {}", playerId);
+            log.warn("❌ [changePick] Nenhuma ação de pick corresponde a este jogador");
+            return;
+        }
+
+        DraftAction oldAction = st.getActions().get(actionIndex);
+        log.info("🔍 [changePick] Pick anterior: {} (index={})", oldAction.championName(), actionIndex);
+
+        // ✅ Verificar se o novo campeão já está sendo usado (exceto pelo próprio
+        // jogador)
+        boolean alreadyUsed = st.getActions().stream()
+                .filter(a -> a.championId() != null && !SKIPPED.equalsIgnoreCase(a.championId()))
+                .filter(a -> !playerId.equals(a.byPlayer())) // Ignorar o próprio jogador
+                .anyMatch(a -> normalizedChampionId.equalsIgnoreCase(a.championId()));
+
+        if (alreadyUsed) {
+            log.warn("❌ [changePick] Campeão {} já está sendo usado por outro jogador", normalizedChampionId);
+            return;
+        }
+
+        // ✅ Buscar nome do novo campeão
+        String championName = dataDragonService.getChampionName(normalizedChampionId);
+
+        // ✅ Criar nova ação atualizada
+        DraftAction updatedAction = new DraftAction(
+                oldAction.index(),
+                oldAction.type(),
+                oldAction.team(),
+                normalizedChampionId,
+                championName,
+                playerId);
+
+        // ✅ Atualizar a ação
+        st.getActions().set(actionIndex, updatedAction);
+
+        // ✅ Remover confirmação do jogador (precisa confirmar novamente)
+        st.getConfirmations().remove(playerId);
+
+        // ✅ Salvar no banco
+        log.info("💾 Salvando alteração no banco de dados...");
+        persist(matchId, st);
+        log.info("✅ Alteração salva com sucesso!");
+
+        log.info("\n========================================");
+        log.info("✅ [changePick] === PICK ALTERADO COM SUCESSO ===");
+        log.info("========================================");
+        log.info("🎯 Jogador: {}", playerId);
+        log.info("🎯 Campeão antigo: {}", oldAction.championName());
+        log.info("🎯 Campeão novo: {}", championName);
+        log.info("🎯 Confirmação removida - jogador precisa confirmar novamente");
+        log.info("========================================\n");
+
+        // ✅ Broadcast da atualização
+        broadcastUpdate(st, true);
+    }
+
     public Optional<DraftState> getState(long matchId) {
         return Optional.ofNullable(states.get(matchId));
     }
@@ -596,7 +713,11 @@ public class DraftFlowService {
                         Object teamsData = pickBanData.get("teams");
                         if (teamsData != null) {
                             updateData.put("teams", teamsData);
-                            log.debug("✅ [DraftFlow] Broadcast com estrutura hierárquica (teams.blue/red)");
+                            log.info("✅✅✅ [DraftFlow] Broadcast COM estrutura teams.blue/red!");
+                            log.info("✅✅✅ [DraftFlow] teams Data: {}", mapper.writeValueAsString(teamsData));
+                        } else {
+                            log.warn("⚠️⚠️⚠️ [DraftFlow] Broadcast SEM estrutura teams! pickBanData keys: {}",
+                                    pickBanData.keySet());
                         }
 
                         // ✅ Buscar dados completos usando KEY_TEAM1 e KEY_TEAM2 ("team1" e "team2")
@@ -707,9 +828,25 @@ public class DraftFlowService {
                 updateData.put(KEY_CURRENT_INDEX, cleanData.get("currentIndex"));
                 log.info(
                         "✅ [broadcastUpdate] JSON LIMPO adicionado: apenas teams + metadados (sem team1/team2/actions)");
+
+                // ✅ LOG DETALHADO: Mostrar estrutura teams enviada
+                try {
+                    String teamsJson = mapper.writerWithDefaultPrettyPrinter()
+                            .writeValueAsString(cleanData.get("teams"));
+                    log.info("📤 [broadcastUpdate] === ESTRUTURA TEAMS ENVIADA ===");
+                    log.info("{}", teamsJson);
+                    log.info("==============================================");
+                } catch (Exception e) {
+                    log.warn("⚠️ Erro ao serializar teams para log: {}", e.getMessage());
+                }
             }
 
             String payload = mapper.writeValueAsString(updateData);
+
+            // ✅ LOG DETALHADO: Mostrar payload completo do broadcast
+            log.info("📤 [broadcastUpdate] === PAYLOAD COMPLETO DO BROADCAST ===");
+            log.info("{}", mapper.writerWithDefaultPrettyPrinter().writeValueAsString(updateData));
+            log.info("====================================================");
 
             sessionRegistry.all().forEach(ws -> {
                 try {

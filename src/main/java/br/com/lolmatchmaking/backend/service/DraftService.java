@@ -29,6 +29,7 @@ public class DraftService {
     private final DiscordService discordService;
     private final GameInProgressService gameInProgressService;
     private final ObjectMapper objectMapper;
+    private final DraftFlowService draftFlowService; // ✅ NOVO: Para delegar changePick
 
     // Configurações do draft
     private static final int DRAFT_TIMEOUT_SECONDS = 30;
@@ -180,25 +181,31 @@ public class DraftService {
     }
 
     /**
-     * Muda pick de um jogador
+     * ✅ ATUALIZADO: Muda pick de um jogador usando DraftFlowService
+     * Delega para o DraftFlowService que gerencia o estado real do draft
      */
     public boolean changePick(Long matchId, String playerId, String championId) {
-        DraftData draft = activeDrafts.get(matchId);
-        if (draft == null) {
+        log.info("🔄 [DraftService.changePick] Delegando para DraftFlowService");
+        log.info("   - matchId: {}", matchId);
+        log.info("   - playerId: {}", playerId);
+        log.info("   - championId: {}", championId);
+
+        try {
+            // ✅ Delegar para DraftFlowService (gerencia o estado real)
+            draftFlowService.changePick(matchId, playerId, championId);
+
+            // ✅ Também atualizar cache local (legacy - compatibilidade)
+            DraftData draft = activeDrafts.get(matchId);
+            if (draft != null) {
+                draft.getPicks().put(playerId, championId);
+            }
+
+            log.info("✅ [DraftService.changePick] Pick alterado com sucesso");
+            return true;
+        } catch (Exception e) {
+            log.error("❌ [DraftService.changePick] Erro ao alterar pick", e);
             return false;
         }
-
-        // Atualizar pick do jogador
-        draft.getPicks().put(playerId, championId);
-
-        // Broadcast da mudança
-        Map<String, Object> data = new HashMap<>();
-        data.put("matchId", matchId);
-        data.put("playerId", playerId);
-        data.put("championId", championId);
-        webSocketService.broadcastToAll("draft_pick_changed", data);
-
-        return true;
     }
 
     /**
