@@ -1,0 +1,79 @@
+databaseChangeLog:
+  # 1. Adicionar coluna lcu_match_data na tabela custom_matches
+  - changeSet:
+      id: add-lcu-match-data-column
+      author: migration
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - columnExists:
+                tableName: custom_matches
+                columnName: lcu_match_data
+      changes:
+        - addColumn:
+            tableName: custom_matches
+            columns:
+              - column:
+                  name: lcu_match_data
+                  type: TEXT
+                  remarks: 'JSON completo da partida do LCU para vinculação e histórico'
+
+  # 2. Criar índice para riot_game_id
+  - changeSet:
+      id: add-index-riot-game-id
+      author: migration
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - indexExists:
+                tableName: custom_matches
+                indexName: idx_custom_matches_riot_game_id
+      changes:
+        - createIndex:
+            tableName: custom_matches
+            indexName: idx_custom_matches_riot_game_id
+            columns:
+              - column:
+                  name: riot_game_id
+
+  # 3. Criar índice composto para status + completed_at
+  - changeSet:
+      id: add-index-status-completed
+      author: migration
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - indexExists:
+                tableName: custom_matches
+                indexName: idx_custom_matches_status_completed
+      changes:
+        - createIndex:
+            tableName: custom_matches
+            indexName: idx_custom_matches_status_completed
+            columns:
+              - column:
+                  name: status
+              - column:
+                  name: completed_at
+
+  # 4. Modificar coluna value da tabela settings para suportar emojis (utf8mb4)
+  - changeSet:
+      id: fix-settings-value-utf8mb4
+      author: migration
+      changes:
+        - modifyDataType:
+            tableName: settings
+            columnName: value
+            newDataType: MEDIUMTEXT
+        - sql:
+            sql: ALTER TABLE settings MODIFY COLUMN `value` MEDIUMTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Valor da configuração (suporta emojis e caracteres especiais)'
+            dbms: mysql
+
+  # 5. Modificar coluna settings_key para suportar utf8mb4
+  - changeSet:
+      id: fix-settings-key-utf8mb4
+      author: migration
+      changes:
+        - sql:
+            sql: ALTER TABLE settings MODIFY COLUMN settings_key VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL
+            dbms: mysql

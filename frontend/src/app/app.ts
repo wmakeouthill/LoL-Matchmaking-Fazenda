@@ -630,6 +630,36 @@ export class App implements OnInit, OnDestroy {
           document.dispatchEvent(event);
         }
         break;
+      case 'game_started':
+        console.log('🎮 [App] Game started recebido:', message);
+        const gameData = message.gameData || message.data || message;
+
+        console.log('🎮 [App] Extraindo gameData:', {
+          matchId: gameData.matchId,
+          status: gameData.status,
+          team1Length: gameData.team1?.length || 0,
+          team2Length: gameData.team2?.length || 0,
+          hasPickBanData: !!gameData.pickBanData
+        });
+
+        // ✅ Atualizar estado para game in progress
+        this.gameData = gameData;
+        this.inGamePhase = true;
+        this.inDraftPhase = false;
+        this.showMatchFound = false;
+        this.matchFoundData = null;
+        this.draftData = null;
+
+        console.log('✅ [App] Estado atualizado para game in progress:', {
+          inGamePhase: this.inGamePhase,
+          inDraftPhase: this.inDraftPhase,
+          gameDataMatchId: this.gameData?.matchId
+        });
+
+        this.cdr.detectChanges();
+
+        this.addNotification('success', 'Jogo Iniciado!', 'A partida está em andamento');
+        break;
       default:
         // outras mensagens tratadas por componentes específicos
         break;
@@ -1995,19 +2025,72 @@ export class App implements OnInit, OnDestroy {
     });
   }
 
-  simulateLastMatch(): void {
-    console.log('🎮 [App] Simulando última partida ranqueada');
+  async simulateLastMatch(): Promise<void> {
+    console.log('🎮 [App] Simulando última partida PERSONALIZADA do LCU...');
 
-    this.apiService.simulateLastMatch().subscribe({
-      next: (response) => {
-        console.log('✅ [App] Última partida simulada:', response);
-        this.addNotification('success', 'Partida Simulada', 'Última partida ranqueada foi simulada com sucesso');
-      },
-      error: (error) => {
-        console.error('❌ [App] Erro ao simular última partida:', error);
-        this.addNotification('error', 'Erro na Simulação', 'Falha ao simular última partida');
+    try {
+      // 1. Buscar histórico completo do LCU (limite maior para encontrar personalizadas)
+      const response: any = await firstValueFrom(this.apiService.getLCUMatchHistoryAll(0, 20, false));
+
+      if (!response?.success || !response?.matches || response.matches.length === 0) {
+        this.addNotification('error', 'Sem Partidas', 'Nenhuma partida encontrada no histórico do LCU. Certifique-se de que o League of Legends está aberto.');
+        console.error('❌ [App] Nenhuma partida encontrada:', response);
+        return;
       }
-    });
+
+      // 2. Filtrar apenas partidas PERSONALIZADAS (CUSTOM_GAME)
+      const customMatches = response.matches.filter((m: any) => m.gameType === 'CUSTOM_GAME');
+      console.log(`🔍 [App] Encontradas ${customMatches.length} partidas personalizadas de ${response.matches.length} totais`);
+
+      if (customMatches.length === 0) {
+        this.addNotification('error', 'Sem Partidas Personalizadas', 'Nenhuma partida personalizada encontrada no histórico. Jogue uma partida personalizada primeiro!');
+        console.error('❌ [App] Nenhuma partida personalizada encontrada');
+        return;
+      }
+
+      // 3. Pegar a primeira (última) partida personalizada
+      const lastMatchSummary = customMatches[0];
+      console.log('✅ [App] Última partida personalizada encontrada (resumo):', lastMatchSummary);
+      console.log('🔍 [App] GameId:', lastMatchSummary.gameId);
+
+      // 4. Buscar detalhes COMPLETOS da partida usando gameId
+      console.log('📡 [App] Buscando detalhes completos da partida...');
+      const lastMatch: any = await firstValueFrom(this.apiService.getLCUGameDetails(lastMatchSummary.gameId));
+
+      if (!lastMatch || !lastMatch.participants || lastMatch.participants.length !== 10) {
+        console.error('❌ [App] Detalhes da partida inválidos:', lastMatch);
+        this.addNotification('error', 'Erro nos Detalhes',
+          `Não foi possível buscar detalhes completos da partida. Participantes: ${lastMatch?.participants?.length || 0}`);
+        return;
+      }
+
+      console.log('✅ [App] Detalhes completos da partida carregados:', {
+        gameId: lastMatch.gameId,
+        participantsCount: lastMatch.participants?.length,
+        participantIdentitiesCount: lastMatch.participantIdentities?.length
+      });
+
+      // 5. Enviar para backend simular como partida IN_PROGRESS
+      console.log('📡 [App] Enviando partida para backend criar como IN_PROGRESS...');
+      const simulateResponse: any = await firstValueFrom(this.apiService.simulateLastLcuMatch(lastMatch));
+
+      if (simulateResponse?.success) {
+        this.addNotification(
+          'success',
+          'Entrando na Partida!',
+          `Partida simulada criada. Redirecionando para Game In Progress...`
+        );
+        console.log('✅ [App] Partida simulada criada - aguardando broadcast game_started:', simulateResponse);
+        // O WebSocket receberá game_started e redirecionará automaticamente
+      } else {
+        this.addNotification('error', 'Erro na Simulação', simulateResponse?.error || 'Erro desconhecido');
+        console.error('❌ [App] Erro na simulação:', simulateResponse);
+      }
+
+    } catch (error) {
+      console.error('❌ [App] Erro ao simular partida:', error);
+      this.addNotification('error', 'Erro na Simulação', 'Falha ao simular última partida. Verifique os logs.');
+    }
   }
 
   cleanupTestMatches(): void {

@@ -94,6 +94,9 @@ public class CustomMatch {
     @Column(name = "owner_heartbeat")
     private Long ownerHeartbeat;
 
+    @Column(name = "lcu_match_data", columnDefinition = "TEXT")
+    private String lcuMatchData; // ✅ NOVO: JSON completo da partida do LCU
+
     @Column(name = "created_at")
     private Instant createdAt;
 

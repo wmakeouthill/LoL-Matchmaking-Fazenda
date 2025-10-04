@@ -5,3 +5,5 @@ databaseChangeLog:
       file: db/changelog/changes/0002-add-missing-columns.yaml
   - include:
       file: db/changelog/changes/0003-fix-settings-column.yaml
+  - include:
+      file: db/changelog/changes/0004-add-lcu-match-data-and-fix-settings.yaml
