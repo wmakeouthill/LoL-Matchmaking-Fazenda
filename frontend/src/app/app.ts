@@ -61,9 +61,25 @@ export class App implements OnInit, OnDestroy {
   showMatchFound = false;
   inDraftPhase = false;
   draftData: any = null;
-  inGamePhase = false;
+
+  // ✅ DEBUG: Propriedade com setter para rastrear mudanças
+  private _inGamePhase = false;
+  get inGamePhase() {
+    return this._inGamePhase;
+  }
+  set inGamePhase(value: boolean) {
+    if (this._inGamePhase !== value) {
+      console.log(`🔄 [App] ⚠️ inGamePhase mudando de ${this._inGamePhase} para ${value}`);
+      console.trace('Stack trace da mudança:');
+    }
+    this._inGamePhase = value;
+  }
+
   gameData: any = null;
   gameResult: any = null;
+
+  // ✅ NOVO: Flag para indicar que o jogo foi restaurado
+  isRestoredMatch = false;
 
   // ✅ MANTIDO: Interface (sem lógica)
   notifications: Notification[] = [];
@@ -368,7 +384,12 @@ export class App implements OnInit, OnDestroy {
   }
 
   private async identifyPlayerSafely(): Promise<void> {
-    if (!this.currentPlayer) return;
+    console.log('🔍 [App] identifyPlayerSafely() chamado, currentPlayer:', !!this.currentPlayer);
+    if (!this.currentPlayer) {
+      console.warn('⚠️ [App] identifyPlayerSafely: Sem currentPlayer');
+      return;
+    }
+
     const data = {
       type: 'identify_player',
       playerData: {
@@ -383,6 +404,8 @@ export class App implements OnInit, OnDestroy {
         summonerLevel: this.currentPlayer.summonerLevel
       }
     };
+
+    console.log('📤 [App] Enviando identificação do jogador via WebSocket:', data.playerData.displayName);
     this.apiService.sendWebSocketMessage(data);
   }
 
@@ -397,12 +420,20 @@ export class App implements OnInit, OnDestroy {
    * Chamado ao iniciar app para restaurar draft/game em andamento
    */
   private async checkAndRestoreActiveMatch(): Promise<void> {
+    console.log('🔍 [App] ========== checkAndRestoreActiveMatch() INICIADO ==========');
     try {
       // Verificar se temos dados do jogador
       if (!this.currentPlayer) {
         console.log('⚠️ [App] Sem dados do jogador para verificar partida ativa');
         return;
       }
+
+      console.log('👤 [App] currentPlayer disponível:', {
+        displayName: this.currentPlayer.displayName,
+        summonerName: this.currentPlayer.summonerName,
+        gameName: this.currentPlayer.gameName,
+        tagLine: this.currentPlayer.tagLine
+      });
 
       // ✅ CORRIGIDO: Construir nome completo gameName#tagLine
       let playerName: string;
@@ -420,26 +451,31 @@ export class App implements OnInit, OnDestroy {
       }
 
       console.log('🔍 [App] Verificando se jogador tem partida ativa:', playerName);
+      console.log('📡 [App] Chamando apiService.getMyActiveMatch()...');
 
       const activeMatch: any = await firstValueFrom(
         this.apiService.getMyActiveMatch(playerName)
       );
 
+      console.log('📥 [App] Resposta do backend recebida:', activeMatch);
+
       if (!activeMatch || !activeMatch.id) {
-        console.log('✅ [App] Nenhuma partida ativa encontrada');
+        console.log('✅ [App] Nenhuma partida ativa encontrada (activeMatch vazio ou sem ID)');
         return;
       }
 
-      console.log('🎮 [App] Partida ativa encontrada:', {
+      console.log('🎮 [App] ✅ PARTIDA ATIVA ENCONTRADA!', {
         id: activeMatch.id,
         status: activeMatch.status,
         title: activeMatch.title,
-        type: activeMatch.type
+        type: activeMatch.type,
+        matchId: activeMatch.matchId
       });
 
       // Redirecionar baseado no status
       if (activeMatch.status === 'draft') {
         console.log('🎯 [App] Restaurando estado de DRAFT...');
+        this.isRestoredMatch = true; // ✅ MARCAR COMO RESTAURADO
         this.inDraftPhase = true;
         this.inGamePhase = false;
         this.showMatchFound = false;
@@ -457,9 +493,14 @@ export class App implements OnInit, OnDestroy {
 
       } else if (activeMatch.status === 'in_progress') {
         console.log('🎯 [App] Restaurando estado de GAME IN PROGRESS...');
+        console.log('🔍 [App] ANTES: inGamePhase =', this.inGamePhase, ', gameData =', this.gameData);
+
+        this.isRestoredMatch = true; // ✅ MARCAR COMO RESTAURADO
         this.inGamePhase = true;
         this.inDraftPhase = false;
         this.showMatchFound = false;
+
+        console.log('🔍 [App] APÓS FLAGS: inGamePhase =', this.inGamePhase, ', isRestoredMatch =', this.isRestoredMatch);
 
         // Montar dados do game
         this.gameData = {
@@ -483,10 +524,17 @@ export class App implements OnInit, OnDestroy {
           pickBanDataStructure: this.gameData.pickBanData ? Object.keys(this.gameData.pickBanData) : null
         });
 
+        console.log('🔍 [App] FINAL: inGamePhase =', this.inGamePhase, ', gameData exists =', !!this.gameData);
+        console.log('🔄 [App] Chamando detectChanges para forçar atualização da view...');
         this.cdr.detectChanges();
+        console.log('✅ [App] detectChanges concluído');
       }
 
     } catch (error: any) {
+      console.error('❌ [App] Erro ao verificar partida ativa:', error);
+      console.error('❌ [App] Status do erro:', error.status);
+      console.error('❌ [App] Mensagem do erro:', error.message);
+
       if (error.status === 404) {
         console.log('✅ [App] Nenhuma partida ativa (404)');
       } else {
@@ -499,10 +547,20 @@ export class App implements OnInit, OnDestroy {
     // Processar mensagens básicas; expandir conforme necessário
     if (!message || !message.type) return;
 
+    // ✅ LOG DETALHADO: Mostrar TODOS os eventos que chegam
+    console.log(`📡 [App] ========================================`);
+    console.log(`📡 [App] WebSocket Event: ${message.type}`);
+    console.log(`📡 [App] Estado atual antes do evento:`, {
+      inGamePhase: this.inGamePhase,
+      inDraftPhase: this.inDraftPhase,
+      isRestoredMatch: this.isRestoredMatch,
+      showMatchFound: this.showMatchFound
+    });
+    console.log(`📡 [App] ========================================`);
+
     // ✅ NOVO: Despachar evento customizado para o document (para listeners em outros componentes)
     const customEvent = new CustomEvent(message.type, { detail: message });
     document.dispatchEvent(customEvent);
-    console.log(`📡 [App] Evento customizado despachado: ${message.type}`);
 
     switch (message.type) {
       case 'queue_status':
@@ -530,6 +588,13 @@ export class App implements OnInit, OnDestroy {
         break;
       case 'match_cancelled':
         console.log('❌ [App] Match cancelado:', message);
+
+        // ✅ CORREÇÃO: NÃO resetar se for uma partida restaurada
+        if (this.isRestoredMatch) {
+          console.log('⚠️ [App] Ignorando match_cancelled pois partida foi restaurada');
+          break;
+        }
+
         // Limpar estado de match found
         this.showMatchFound = false;
         this.matchFoundData = null;
@@ -770,6 +835,17 @@ export class App implements OnInit, OnDestroy {
         // outras mensagens tratadas por componentes específicos
         break;
     }
+
+    // ✅ LOG FINAL: Estado após processar evento
+    console.log(`📡 [App] Estado após processar ${message.type}:`, {
+      inGamePhase: this.inGamePhase,
+      inDraftPhase: this.inDraftPhase,
+      isRestoredMatch: this.isRestoredMatch,
+      showMatchFound: this.showMatchFound,
+      hasGameData: !!this.gameData,
+      hasDraftData: !!this.draftData
+    });
+    console.log(`📡 [App] ========================================\n`);
   }
 
   private handleMatchFound(message: any): void {
@@ -859,11 +935,13 @@ export class App implements OnInit, OnDestroy {
   }
 
   private identifyCurrentPlayerOnConnect(): void {
+    console.log('🔍 [App] identifyCurrentPlayerOnConnect() chamado');
     this.identifyPlayerSafely().catch(() => { });
 
     // ✅ NOVO: Após identificar player, aguardar 5 segundos e verificar partida ativa
     setTimeout(() => {
       console.log('⏰ [App] 5 segundos após identificação - verificando partida ativa...');
+      console.log('👤 [App] currentPlayer atual:', this.currentPlayer);
       this.checkAndRestoreActiveMatch();
     }, 5000);
   }
@@ -2838,6 +2916,17 @@ export class App implements OnInit, OnDestroy {
   private async handleNoStatusFromPolling(): Promise<void> {
     console.log('🔄 [App] Status "none" detectado via polling');
 
+    // 🛡️ PROTEÇÃO: Não limpar estados se for uma partida restaurada
+    if (this.isRestoredMatch && (this.inDraftPhase || this.inGamePhase)) {
+      console.log('🛡️ [App] Partida restaurada detectada - ignorando status "none" do polling');
+      console.log('🛡️ [App] Estado preservado:', {
+        inDraftPhase: this.inDraftPhase,
+        inGamePhase: this.inGamePhase,
+        isRestoredMatch: this.isRestoredMatch
+      });
+      return;
+    }
+
     if (this.hasActiveStates()) {
       console.log('🔄 [App] Estados ativos detectados, verificando se devem ser limpos...');
 
@@ -2898,7 +2987,8 @@ export class App implements OnInit, OnDestroy {
       matchFoundData: !!this.matchFoundData,
       draftData: !!this.draftData,
       gameData: !!this.gameData,
-      lastMatchId: this.lastMatchId
+      lastMatchId: this.lastMatchId,
+      isRestoredMatch: this.isRestoredMatch
     });
 
     this.showMatchFound = false;
@@ -2908,8 +2998,24 @@ export class App implements OnInit, OnDestroy {
     this.draftData = null;
     this.gameData = null;
     this.lastMatchId = null;
+    this.isRestoredMatch = false; // ✅ RESETAR FLAG
 
     console.log('🔄 [App] Estados limpos com sucesso');
+  }
+
+  // ✅ NOVO: Handler para cancelamento de jogo
+  onGameCancel(): void {
+    console.log('❌ [App] onGameCancel() chamado - usuário cancelou o jogo');
+    this.clearActiveStates();
+    this.cdr.detectChanges();
+  }
+
+  // ✅ NOVO: Handler para conclusão de jogo
+  onGameComplete(result: any): void {
+    console.log('✅ [App] onGameComplete() chamado:', result);
+    this.clearActiveStates();
+    this.addNotification('success', 'Jogo Concluído!', 'A partida foi finalizada com sucesso');
+    this.cdr.detectChanges();
   }
 
   // ✅ NOVO: Garantir que está na fila

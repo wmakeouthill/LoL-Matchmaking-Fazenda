@@ -723,8 +723,13 @@ export class DashboardComponent implements OnInit, OnDestroy, OnChanges {
     this.matchHistoryError = null;
   }
   ngOnInit(): void {
+    console.log('⚠️ [DASHBOARD] ngOnInit called - Component being initialized!');
+    console.log('⚠️ [DASHBOARD] Player:', this.player?.displayName);
+    console.log('⚠️ [DASHBOARD] dataLoaded:', this.dataLoaded);
+
     // Se já temos dados do player, carregar imediatamente após champions
     if (this.player && !this.dataLoaded) {
+      console.log('⚠️ [DASHBOARD] Loading data...');
       this.ensureChampionsLoaded(() => {
         this.loadAllData();
         this.dataLoaded = true;
