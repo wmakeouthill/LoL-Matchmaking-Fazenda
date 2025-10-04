@@ -1727,4 +1727,65 @@ public class DraftFlowService {
             log.error("❌ [DraftFlow] Erro ao broadcast game_ready", e);
         }
     }
+
+    /**
+     * ✅ NOVO: Cancela partida e notifica todos os jogadores
+     */
+    @Transactional
+    public void cancelMatch(Long matchId) {
+        try {
+            log.info("❌ [DraftFlow] Cancelando partida: {}", matchId);
+
+            // 1. Verificar se partida existe
+            var match = customMatchRepository.findById(matchId)
+                    .orElseThrow(() -> new RuntimeException("Partida não encontrada: " + matchId));
+
+            log.info("📊 [DraftFlow] Partida encontrada - Status: {}", match.getStatus());
+
+            // 2. Deletar partida do banco de dados
+            customMatchRepository.deleteById(matchId);
+            log.info("🗑️ [DraftFlow] Partida deletada do banco de dados");
+
+            // 3. Limpar confirmações da memória
+            finalConfirmations.remove(matchId);
+            states.remove(matchId);
+            log.info("🧹 [DraftFlow] Cache de confirmações limpo");
+
+            // 4. Broadcast evento de cancelamento para todos os jogadores
+            broadcastMatchCancelled(matchId);
+
+            log.info("✅ [DraftFlow] Partida cancelada com sucesso!");
+
+        } catch (Exception e) {
+            log.error("❌ [DraftFlow] Erro ao cancelar partida", e);
+            throw new RuntimeException("Erro ao cancelar partida: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Broadcast evento de cancelamento
+     */
+    private void broadcastMatchCancelled(Long matchId) {
+        try {
+            Map<String, Object> payload = Map.of(
+                    "type", "match_cancelled",
+                    "matchId", matchId,
+                    "message", "Partida cancelada pelo líder");
+
+            String json = mapper.writeValueAsString(payload);
+            sessionRegistry.all().forEach(ws -> {
+                try {
+                    ws.sendMessage(new TextMessage(json));
+                    log.debug("📡 Evento match_cancelled enviado para sessão WebSocket");
+                } catch (Exception e) {
+                    log.warn("⚠️ Erro ao enviar match_cancelled", e);
+                }
+            });
+
+            log.info("📡 [DraftFlow] Broadcast: match_cancelled enviado para todos os jogadores");
+
+        } catch (Exception e) {
+            log.error("❌ [DraftFlow] Erro ao broadcast match_cancelled", e);
+        }
+    }
 }

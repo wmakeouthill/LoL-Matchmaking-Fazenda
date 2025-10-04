@@ -17,6 +17,7 @@ interface GameData {
   startTime: Date;
   pickBanData: any;
   isCustomGame: boolean;
+  matchId?: number; // ✅ ID da partida (enviado pelo backend)
   originalMatchId?: any;
   originalMatchData?: any;
   riotId?: string | null;
@@ -638,12 +639,48 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   }  // Cancel game
   async cancelGame() {
     logGameInProgress('❌ [GameInProgress] Cancelando partida...');
+    logGameInProgress('📊 [GameInProgress] gameData atual:', {
+      hasGameData: !!this.gameData,
+      gameDataKeys: this.gameData ? Object.keys(this.gameData) : [],
+      originalMatchId: this.gameData?.originalMatchId,
+      matchId: this.gameData?.matchId,
+      fullGameData: this.gameData
+    });
 
-    // ✅ CORREÇÃO: Remover chamada HTTP duplicada - o cancelamento será tratado via WebSocket no app component
-    // O app component agora envia mensagem WebSocket 'cancel_game_in_progress' que inclui Discord cleanup e retorno à fila
+    const matchId = this.gameData?.originalMatchId || this.gameData?.matchId;
 
-    // Emitir evento de cancelamento para o componente pai
-    this.onGameCancel.emit();
+    if (!matchId) {
+      logGameInProgress('⚠️ [GameInProgress] Nenhum ID de partida encontrado (originalMatchId e matchId ausentes)');
+      alert('Erro: ID da partida não encontrado');
+      return;
+    }
+
+    // Confirmar cancelamento
+    const confirmed = confirm('Tem certeza que deseja cancelar esta partida? Todos os jogadores serão redirecionados para a tela inicial.');
+    if (!confirmed) {
+      logGameInProgress('🚫 [GameInProgress] Cancelamento abortado pelo usuário');
+      return;
+    }
+
+    try {
+      logGameInProgress('📡 [GameInProgress] Enviando requisição de cancelamento para matchId:', matchId);
+
+      // Chamar endpoint DELETE /api/match/{matchId}/cancel
+      const response: any = await firstValueFrom(
+        this.apiService.cancelMatchInProgress(matchId)
+      );
+
+      if (response?.success) {
+        logGameInProgress('✅ [GameInProgress] Partida cancelada com sucesso');
+        // O WebSocket vai receber o evento match_cancelled e redirecionar
+      } else {
+        logGameInProgress('⚠️ [GameInProgress] Resposta de cancelamento sem sucesso:', response);
+        alert('Erro ao cancelar partida: ' + (response?.error || 'Erro desconhecido'));
+      }
+    } catch (error) {
+      logGameInProgress('❌ [GameInProgress] Erro ao cancelar partida:', error);
+      alert('Erro ao cancelar partida. Verifique os logs.');
+    }
   }
   // Try to auto-resolve winner on component load (useful after app restart)
   private async tryAutoResolveWinner() {

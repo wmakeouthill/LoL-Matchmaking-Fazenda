@@ -212,4 +212,28 @@ public class DraftController {
                     KEY_ERROR, "Erro ao confirmar: " + e.getMessage()));
         }
     }
+
+    // ✅ NOVO: Endpoint para cancelar partida em progresso
+    @DeleteMapping("/match/{matchId}/cancel")
+    public ResponseEntity<Map<String, Object>> cancelMatch(@PathVariable Long matchId) {
+        log.info("╔════════════════════════════════════════════════════════════════╗");
+        log.info("║  ❌ [DraftController] CANCELANDO PARTIDA                      ║");
+        log.info("╚════════════════════════════════════════════════════════════════╝");
+        log.info("🎯 Match ID: {}", matchId);
+
+        try {
+            draftFlowService.cancelMatch(matchId);
+
+            log.info("✅ [DraftController] Partida cancelada com sucesso");
+            return ResponseEntity.ok(Map.of(
+                    KEY_SUCCESS, true,
+                    "message", "Partida cancelada com sucesso"));
+
+        } catch (Exception e) {
+            log.error("❌ [DraftController] Erro ao cancelar partida: {}", e.getMessage(), e);
+            return ResponseEntity.status(500).body(Map.of(
+                    KEY_SUCCESS, false,
+                    KEY_ERROR, "Erro ao cancelar partida: " + e.getMessage()));
+        }
+    }
 }
