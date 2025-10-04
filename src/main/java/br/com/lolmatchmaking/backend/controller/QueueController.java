@@ -214,6 +214,41 @@ public class QueueController {
         }
     }
 
+    /**
+     * ✅ NOVO: GET /api/queue/my-active-match
+     * Busca partida ativa (draft ou in_progress) do jogador logado
+     */
+    @GetMapping("/my-active-match")
+    public ResponseEntity<Map<String, Object>> getMyActiveMatch(
+            @RequestParam(required = true) String summonerName) {
+        try {
+            log.info("🔍 Buscando partida ativa para jogador: {}", summonerName);
+
+            if (summonerName == null || summonerName.trim().isEmpty()) {
+                log.warn("⚠️ SummonerName não fornecido");
+                return ResponseEntity.badRequest()
+                        .body(Map.of("success", false, "error", "summonerName é obrigatório"));
+            }
+
+            Map<String, Object> activeMatch = queueManagementService.getActiveMatchForPlayer(summonerName);
+
+            if (activeMatch == null || activeMatch.isEmpty()) {
+                log.info("✅ Nenhuma partida ativa encontrada para: {}", summonerName);
+                return ResponseEntity.notFound().build();
+            }
+
+            log.info("✅ Partida ativa encontrada - ID: {}, Status: {}",
+                    activeMatch.get("id"), activeMatch.get("status"));
+
+            return ResponseEntity.ok(activeMatch);
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao buscar partida ativa: {}", e.getMessage());
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
     // DTOs
     @Data
     public static class JoinQueueRequest {

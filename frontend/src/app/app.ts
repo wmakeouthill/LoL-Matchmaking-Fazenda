@@ -198,6 +198,9 @@ export class App implements OnInit, OnDestroy {
       console.log('🔄 [App] Passo 9: Iniciando polling inteligente...');
       this.startIntelligentPolling();
 
+      // ✅ REMOVIDO: Verificação movida para identifyCurrentPlayerOnConnect()
+      // (será executada 5 segundos APÓS o player ser carregado do LCU)
+
       console.log('✅ [App] === INICIALIZAÇÃO COMPLETA ===');
       this.isConnected = true;
 
@@ -387,6 +390,106 @@ export class App implements OnInit, OnDestroy {
   private handleInitializationError(error: any): void {
     console.error('❌ [App] Erro na inicialização:', error);
     this.addNotification('error', 'Erro de Inicialização', String(error?.message || error));
+  }
+
+  /**
+   * ✅ NOVO: Verifica se jogador tem partida ativa e restaura o estado
+   * Chamado ao iniciar app para restaurar draft/game em andamento
+   */
+  private async checkAndRestoreActiveMatch(): Promise<void> {
+    try {
+      // Verificar se temos dados do jogador
+      if (!this.currentPlayer) {
+        console.log('⚠️ [App] Sem dados do jogador para verificar partida ativa');
+        return;
+      }
+
+      // ✅ CORRIGIDO: Construir nome completo gameName#tagLine
+      let playerName: string;
+
+      if (this.currentPlayer.gameName && this.currentPlayer.tagLine) {
+        // Formato correto: gameName#tagLine
+        playerName = `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`;
+      } else if (this.currentPlayer.displayName) {
+        playerName = this.currentPlayer.displayName;
+      } else if (this.currentPlayer.summonerName) {
+        playerName = this.currentPlayer.summonerName;
+      } else {
+        console.log('⚠️ [App] Player não tem nome válido');
+        return;
+      }
+
+      console.log('🔍 [App] Verificando se jogador tem partida ativa:', playerName);
+
+      const activeMatch: any = await firstValueFrom(
+        this.apiService.getMyActiveMatch(playerName)
+      );
+
+      if (!activeMatch || !activeMatch.id) {
+        console.log('✅ [App] Nenhuma partida ativa encontrada');
+        return;
+      }
+
+      console.log('🎮 [App] Partida ativa encontrada:', {
+        id: activeMatch.id,
+        status: activeMatch.status,
+        title: activeMatch.title,
+        type: activeMatch.type
+      });
+
+      // Redirecionar baseado no status
+      if (activeMatch.status === 'draft') {
+        console.log('🎯 [App] Restaurando estado de DRAFT...');
+        this.inDraftPhase = true;
+        this.inGamePhase = false;
+        this.showMatchFound = false;
+
+        // Montar dados do draft
+        this.draftData = {
+          matchId: activeMatch.matchId || activeMatch.id,
+          state: activeMatch.draftState,
+          team1: activeMatch.team1,
+          team2: activeMatch.team2
+        };
+
+        console.log('✅ [App] Estado de draft restaurado:', this.draftData);
+        this.cdr.detectChanges();
+
+      } else if (activeMatch.status === 'in_progress') {
+        console.log('🎯 [App] Restaurando estado de GAME IN PROGRESS...');
+        this.inGamePhase = true;
+        this.inDraftPhase = false;
+        this.showMatchFound = false;
+
+        // Montar dados do game
+        this.gameData = {
+          matchId: activeMatch.matchId || activeMatch.id,
+          team1: Array.isArray(activeMatch.team1) ? activeMatch.team1 : [],
+          team2: Array.isArray(activeMatch.team2) ? activeMatch.team2 : [],
+          pickBanData: activeMatch.pickBanData,
+          sessionId: activeMatch.sessionId || `restored-${activeMatch.id}`,
+          gameId: activeMatch.gameId || String(activeMatch.id),
+          startTime: activeMatch.startTime ? new Date(activeMatch.startTime) : new Date(),
+          isCustomGame: activeMatch.isCustomGame !== false
+        };
+
+        console.log('✅ [App] Estado de game in progress restaurado:', {
+          matchId: this.gameData.matchId,
+          team1Count: this.gameData.team1?.length || 0,
+          team2Count: this.gameData.team2?.length || 0,
+          hasPickBanData: !!this.gameData.pickBanData
+        });
+
+        this.cdr.detectChanges();
+      }
+
+    } catch (error: any) {
+      if (error.status === 404) {
+        console.log('✅ [App] Nenhuma partida ativa (404)');
+      } else {
+        console.error('❌ [App] Erro ao verificar partida ativa:', error);
+      }
+    }
   }
 
   private handleBackendMessage(message: any): void {
@@ -754,6 +857,12 @@ export class App implements OnInit, OnDestroy {
 
   private identifyCurrentPlayerOnConnect(): void {
     this.identifyPlayerSafely().catch(() => { });
+
+    // ✅ NOVO: Após identificar player, aguardar 5 segundos e verificar partida ativa
+    setTimeout(() => {
+      console.log('⏰ [App] 5 segundos após identificação - verificando partida ativa...');
+      this.checkAndRestoreActiveMatch();
+    }, 5000);
   }
 
   private getCurrentPlayerIdentifiers(): string[] {
