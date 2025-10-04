@@ -477,7 +477,10 @@ export class App implements OnInit, OnDestroy {
           matchId: this.gameData.matchId,
           team1Count: this.gameData.team1?.length || 0,
           team2Count: this.gameData.team2?.length || 0,
-          hasPickBanData: !!this.gameData.pickBanData
+          hasPickBanData: !!this.gameData.pickBanData,
+          team1Sample: this.gameData.team1?.[0],
+          team2Sample: this.gameData.team2?.[0],
+          pickBanDataStructure: this.gameData.pickBanData ? Object.keys(this.gameData.pickBanData) : null
         });
 
         this.cdr.detectChanges();

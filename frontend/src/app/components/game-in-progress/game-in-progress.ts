@@ -154,70 +154,169 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     this.setupInitialState();
     this.normalizePickBanDataSafe();
 
-    // ✅ Preencher campeões dos jogadores a partir do pick_ban_data normalizado
-    this.hydratePlayersFromPickBanData();
+    // ✅ CORREÇÃO: Garantir que campeões sejam carregados antes de hidratar
+    this.loadChampionsAndHydrate();
 
     // Start game timer & live match linking
     this.startGameTimer();
     this.startLiveMatchLinking();
   }
 
+  /**
+   * ✅ NOVO: Carrega campeões do Data Dragon e depois hidrata os jogadores
+   */
+  private loadChampionsAndHydrate(): void {
+    // Tentar carregar qualquer campeão para forçar o carregamento do cache
+    this.championService.getChampionById(1).subscribe({
+      next: () => {
+        logGameInProgress('✅ Cache de campeões carregado, hidratando jogadores...');
+        // Aguardar um pouco para garantir que o cache foi populado
+        setTimeout(() => {
+          this.hydratePlayersFromPickBanData();
+        }, 100);
+      },
+      error: (err) => {
+        logGameInProgress('⚠️ Erro ao carregar cache de campeões:', err);
+        // Tentar hidratar mesmo assim
+        this.hydratePlayersFromPickBanData();
+      }
+    });
+  }
+
+  /**
+   * ✅ NOVO: Resolve nomes de campeões no pickBanData quando vêm como "Champion X"
+   */
+  private resolveChampionNamesInPickBanData(pickBanData: any): void {
+    if (!pickBanData) return;
+
+    const resolveChampionInAction = (action: any) => {
+      if (!action) return;
+
+      // Se já tem nome válido, não precisa resolver
+      if (action.championName && !action.championName.startsWith('Champion ')) return;
+
+      // Extrair championId
+      const championId = action.championId || action.champion_id || action.champion?.id;
+      if (!championId) return;
+
+      const idNum = typeof championId === 'string' ? parseInt(championId, 10) : championId;
+      const realName = this.getChampionNameById(idNum);
+
+      if (realName && realName !== 'Minion') {
+        action.championName = realName;
+        if (action.champion) {
+          action.champion.name = realName;
+        } else {
+          action.champion = { id: idNum, name: realName };
+        }
+      }
+    };
+
+    // Resolver em team1 e team2 (estrutura do banco)
+    if (pickBanData.team1 && Array.isArray(pickBanData.team1)) {
+      pickBanData.team1.forEach((player: any) => {
+        if (player.actions && Array.isArray(player.actions)) {
+          player.actions.forEach(resolveChampionInAction);
+        }
+      });
+    }
+
+    if (pickBanData.team2 && Array.isArray(pickBanData.team2)) {
+      pickBanData.team2.forEach((player: any) => {
+        if (player.actions && Array.isArray(player.actions)) {
+          player.actions.forEach(resolveChampionInAction);
+        }
+      });
+    }
+
+    // Resolver em teams.blue e teams.red (estrutura alternativa)
+    if (pickBanData.teams) {
+      if (pickBanData.teams.blue?.players) {
+        pickBanData.teams.blue.players.forEach((player: any) => {
+          if (player.actions && Array.isArray(player.actions)) {
+            player.actions.forEach(resolveChampionInAction);
+          }
+        });
+      }
+      if (pickBanData.teams.red?.players) {
+        pickBanData.teams.red.players.forEach((player: any) => {
+          if (player.actions && Array.isArray(player.actions)) {
+            player.actions.forEach(resolveChampionInAction);
+          }
+        });
+      }
+    }
+
+    // Resolver em actions diretas
+    if (pickBanData.actions && Array.isArray(pickBanData.actions)) {
+      pickBanData.actions.forEach(resolveChampionInAction);
+    }
+
+    logGameInProgress('✅ [GameInProgress] Nomes de campeões resolvidos no pickBanData');
+  }
+
   // ✅ NOVO: Hidratar campeões dos jogadores usando pick_ban_data (suporta resume/polling)
   private hydratePlayersFromPickBanData(): void {
     try {
       if (!this.gameData) return;
-      const pickBanData = (this as any)._normalizedPickBanData || this.gameData.pickBanData;
-      if (!pickBanData) return;
 
-      // Coletar picks de múltiplas fontes para robustez
-      const picksFromTeams = [
-        ...(pickBanData.team1Picks || []),
-        ...(pickBanData.team2Picks || [])
-      ];
-      const picksFromActions = Array.isArray(pickBanData.actions)
-        ? pickBanData.actions.filter((a: any) => (a.action === 'pick' || a.type === 'pick'))
-        : [];
-      const picks: any[] = [...picksFromTeams, ...picksFromActions];
-
-      if (picks.length === 0) return;
-
-      // Mapear por identificadores possíveis
-      const toKey = (v: any) => (typeof v === 'string' ? v.toLowerCase() : String(v || '').toLowerCase());
-      const pickByPlayer = new Map<string, any>();
-      for (const p of picks) {
-        const id1 = p.playerName ? toKey(p.playerName) : '';
-        const id2 = p.playerId ? toKey(p.playerId) : '';
-        if (id1) pickByPlayer.set(id1, p);
-        if (id2) pickByPlayer.set(id2, p);
-      }
-
-      const applyPick = (player: any) => {
+      // ✅ RESOLUÇÃO DIRETA: Resolver campeões diretamente nos jogadores de team1/team2
+      const resolvePlayerChampion = (player: any) => {
         if (!player) return;
-        // Não sobrescrever se já tem informação
-        if (player.championName || player.champion) return;
-        const key1 = player.summonerName ? toKey(player.summonerName) : '';
-        const key2 = player.name ? toKey(player.name) : '';
-        const found = (key1 && pickByPlayer.get(key1)) || (key2 && pickByPlayer.get(key2));
-        if (!found) return;
 
-        const id = found.champion?.id ?? found.championId ?? found.champion_id;
-        const idNum = typeof id === 'string' ? parseInt(id, 10) : id;
-        const name = found.champion?.name || (idNum != null ? this.getChampionNameById(idNum) : undefined);
-        if (idNum != null || name) {
-          player.champion = { id: idNum, name };
-          if (name) player.championName = name;
+        // Extrair championId das actions do jogador
+        let championId: number | null = null;
+
+        if (player.actions && Array.isArray(player.actions)) {
+          const pickAction = player.actions.find((a: any) =>
+            a.type === 'pick' || a.phase?.includes('pick')
+          );
+
+          if (pickAction) {
+            const id = pickAction.championId || pickAction.champion_id || pickAction.champion?.id;
+            championId = typeof id === 'string' ? parseInt(id, 10) : id;
+            logGameInProgress(`🔍 Extraído championId das actions: ${championId} para ${player.summonerName}`);
+          }
+        }
+
+        // Se não encontrou nas actions, tentar no próprio player
+        if (!championId) {
+          const id = player.championId || player.champion_id || player.champion?.id;
+          championId = typeof id === 'string' ? parseInt(id, 10) : id;
+          if (championId) {
+            logGameInProgress(`🔍 Extraído championId do player: ${championId} para ${player.summonerName}`);
+          }
+        }
+
+        // Resolver nome do campeão
+        if (championId) {
+          const championName = this.getChampionNameById(championId);
+          logGameInProgress(`🔍 Tentando resolver championId ${championId}: resultado = ${championName}`);
+
+          if (championName && championName !== 'Minion') {
+            player.championId = championId;
+            player.championName = championName;
+            player.champion = {
+              id: championId,
+              name: championName
+            };
+
+            logGameInProgress(`✅ Resolvido campeão para ${player.summonerName}: ${championName} (ID: ${championId})`);
+          }
         }
       };
 
       // Hidratar times
       if (Array.isArray(this.gameData.team1)) {
-        this.gameData.team1.forEach(applyPick);
+        logGameInProgress('🔍 Resolvendo campeões do Team 1...');
+        this.gameData.team1.forEach(resolvePlayerChampion);
       }
       if (Array.isArray(this.gameData.team2)) {
-        this.gameData.team2.forEach(applyPick);
+        logGameInProgress('🔍 Resolvendo campeões do Team 2...');
+        this.gameData.team2.forEach(resolvePlayerChampion);
       }
 
-      logGameInProgress('✅ [GameInProgress] Jogadores hidratados a partir do pick_ban_data');
+      logGameInProgress('✅ [GameInProgress] Jogadores hidratados com nomes de campeões');
     } catch (e) {
       logGameInProgress('⚠️ [GameInProgress] Falha ao hidratar jogadores via pick_ban_data:', e);
     }
@@ -1077,23 +1176,24 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
 
   // Get champion name by ID (helper method)
   getChampionNameById(championId: number): string | null {
-    // ✅ CORREÇÃO: Usar o ChampionService para resolver nomes de campeões
     if (!championId) return null;
 
     try {
-      // Tentar usar o ChampionService primeiro (método estático)
-      const championName = 'Unknown'; // TODO: Implementar se necessário
-      if (championName && championName !== 'Unknown') {
+      // ✅ CORREÇÃO: Usar o ChampionService que tem cache de todos os campeões
+      const championName = this.championService.getChampionName(championId);
+
+      // Se retornou "Champion X", significa que não está no cache
+      if (championName && !championName.startsWith('Champion ')) {
         return championName;
       }
+
+      // Se retornou no formato "Champion X", retornar null para indicar que não encontrou
+      logGameInProgress(`⚠️ Campeão ${championId} não encontrado no cache do ChampionService`);
+      return null;
     } catch (error) {
       logGameInProgress('⚠️ [GameInProgress] Erro ao usar ChampionService:', error);
+      return null;
     }
-
-    // ✅ FALLBACK: Se ChampionService falhar, usar o método do backend
-    // O backend agora resolve os nomes dos campeões usando DataDragonService
-    // Este método é mantido apenas para compatibilidade com dados antigos
-    return `Champion${championId}`;
   }
 
   // Helper methods for modal template
@@ -1609,6 +1709,8 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       'jungle': '🌲',
       'mid': '🔮',
       'adc': '🏹',
+      'bot': '🏹',      // ✅ CORRIGIDO: Adicionar "bot" como alias de "adc"
+      'bottom': '🏹',   // ✅ CORRIGIDO: Adicionar "bottom" como alias de "adc"
       'support': '🛡️',
       'fill': '❓'
     };
@@ -1623,6 +1725,8 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       'jungle': 'Jungle',
       'mid': 'Mid',
       'adc': 'ADC',
+      'bot': 'ADC',      // ✅ CORRIGIDO: Adicionar "bot" como alias de "ADC"
+      'bottom': 'ADC',   // ✅ CORRIGIDO: Adicionar "bottom" como alias de "ADC"
       'support': 'Support',
       'fill': 'Fill'
     };
