@@ -636,6 +636,16 @@ export class ApiService {
       .pipe(catchError(this.handleError));
   }
 
+  /**
+   * ✅ NOVO: Busca partida ativa (draft ou in_progress) do jogador
+   * Usado para restaurar estado ao reabrir app
+   */
+  getMyActiveMatch(summonerName: string): Observable<any> {
+    const params = { summonerName };
+    return this.http.get<any>(`${this.baseUrl}/queue/my-active-match`, { params })
+      .pipe(catchError(this.handleError));
+  }
+
   // Match endpoints (accept/decline)
   acceptMatch(matchId: number, playerId: number | null, playerName: string): Observable<any> {
     const payload = { matchId, playerName };

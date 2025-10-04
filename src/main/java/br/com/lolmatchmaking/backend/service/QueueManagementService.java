@@ -133,7 +133,8 @@ public class QueueManagementService {
                 queueCache.remove(summonerName);
             });
 
-            // ✅ NOVO: Buscar Player da tabela para pegar custom_mmr (current_mmr + custom_lp)
+            // ✅ NOVO: Buscar Player da tabela para pegar custom_mmr (current_mmr +
+            // custom_lp)
             int finalMmr = 0;
             Optional<Player> playerOpt = playerRepository.findBySummonerNameIgnoreCase(summonerName);
             if (playerOpt.isPresent()) {
@@ -307,10 +308,11 @@ public class QueueManagementService {
      * Normaliza nomes de lanes para um formato padrão (minúsculo)
      */
     private String normalizeLane(String lane) {
-        if (lane == null) return "fill";
-        
+        if (lane == null)
+            return "fill";
+
         String normalized = lane.toLowerCase().trim();
-        
+
         // Normalizar variações
         if (normalized.equals("adc") || normalized.equals("bot") || normalized.equals("bottom")) {
             return "bot";
@@ -327,7 +329,7 @@ public class QueueManagementService {
         if (normalized.equals("support") || normalized.equals("sup") || normalized.equals("supp")) {
             return "support";
         }
-        
+
         return "fill";
     }
 
@@ -341,23 +343,24 @@ public class QueueManagementService {
 
         log.info("🎯 [Balanceamento] Iniciando balanceamento de {} jogadores", players.size());
 
-        // ✅ CORREÇÃO: Ordenar por custom_mmr da tabela players (current_mmr + custom_lp)
+        // ✅ CORREÇÃO: Ordenar por custom_mmr da tabela players (current_mmr +
+        // custom_lp)
         // Para jogadores sem entrada na tabela (bots), usar customLp do QueuePlayer
         players.sort((a, b) -> {
             int mmrA = a.getCustomLp() != null ? a.getCustomLp() : 0;
             int mmrB = b.getCustomLp() != null ? b.getCustomLp() : 0;
-            
+
             // ✅ NOVO: Buscar custom_mmr real da tabela players se existir
             Optional<Player> playerA = playerRepository.findBySummonerNameIgnoreCase(a.getSummonerName());
             if (playerA.isPresent() && playerA.get().getCustomMmr() != null) {
                 mmrA = playerA.get().getCustomMmr();
             }
-            
+
             Optional<Player> playerB = playerRepository.findBySummonerNameIgnoreCase(b.getSummonerName());
             if (playerB.isPresent() && playerB.get().getCustomMmr() != null) {
                 mmrB = playerB.get().getCustomMmr();
             }
-            
+
             return Integer.compare(mmrB, mmrA); // Maior MMR primeiro
         });
 
@@ -370,10 +373,10 @@ public class QueueManagementService {
             if (playerEntity.isPresent() && playerEntity.get().getCustomMmr() != null) {
                 mmr = playerEntity.get().getCustomMmr();
             }
-            log.info("  {}. {} - MMR: {} - Primária: {} - Secundária: {}", 
-                i + 1, p.getSummonerName(), mmr, 
-                normalizeLane(p.getPrimaryLane()), 
-                normalizeLane(p.getSecondaryLane()));
+            log.info("  {}. {} - MMR: {} - Primária: {} - Secundária: {}",
+                    i + 1, p.getSummonerName(), mmr,
+                    normalizeLane(p.getPrimaryLane()),
+                    normalizeLane(p.getSecondaryLane()));
         }
 
         // Mapeamento de lanes para posições no time (usando minúsculo)
@@ -467,8 +470,8 @@ public class QueueManagementService {
             }
 
             // ✅ Log da atribuição
-            String status = assignedLane.equals(primaryLane) ? "1ª LANE" : 
-                           assignedLane.equals(secondaryLane) ? "2ª LANE" : "AUTO-FILL";
+            String status = assignedLane.equals(primaryLane) ? "1ª LANE"
+                    : assignedLane.equals(secondaryLane) ? "2ª LANE" : "AUTO-FILL";
             log.info("  ✅ {} → {} / {} → {}", player.getSummonerName(), assignedTeam, assignedLane, status);
         }
 
@@ -593,7 +596,8 @@ public class QueueManagementService {
 
     /**
      * Calcula a média de MMR de uma lista de jogadores
-     * ✅ Usa custom_mmr da tabela players (current_mmr + custom_lp) quando disponível
+     * ✅ Usa custom_mmr da tabela players (current_mmr + custom_lp) quando
+     * disponível
      */
     private int calculateAverageMMR(List<QueuePlayer> players) {
         return (int) players.stream()
@@ -718,6 +722,93 @@ public class QueueManagementService {
         } catch (Exception e) {
             log.error("❌ Erro ao resetar contador de bots", e);
             throw new RuntimeException("Erro ao resetar contador de bots", e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Busca partida ativa (draft ou in_progress) do jogador
+     * Usado para restaurar estado ao reabrir app
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> getActiveMatchForPlayer(String summonerName) {
+        try {
+            log.debug("🔍 Buscando partida ativa para summonerName: {}", summonerName);
+
+            // 1. Buscar player pelo summonerName
+            Player player = playerRepository.findBySummonerNameIgnoreCase(summonerName).orElse(null);
+
+            if (player == null) {
+                log.warn("⚠️ Player não encontrado: {}", summonerName);
+                return Collections.emptyMap();
+            }
+
+            if (player.getPuuid() == null || player.getPuuid().isEmpty()) {
+                log.warn("⚠️ Player {} não tem PUUID definido", player.getSummonerName());
+                return Collections.emptyMap();
+            }
+
+            log.debug("🔍 Buscando partida ativa para PUUID: {}", player.getPuuid());
+
+            // 2. Buscar partida ativa pelo PUUID
+            Optional<CustomMatch> activeMatchOpt = customMatchRepository
+                    .findActiveMatchByPlayerPuuid(player.getPuuid());
+
+            if (activeMatchOpt.isEmpty()) {
+                log.debug("✅ Nenhuma partida ativa encontrada para: {}", player.getSummonerName());
+                return Collections.emptyMap();
+            }
+
+            CustomMatch match = activeMatchOpt.get();
+
+            log.info("✅ Partida ativa encontrada - ID: {}, Status: {}, Title: {}",
+                    match.getId(), match.getStatus(), match.getTitle());
+
+            // 3. Converter para formato esperado pelo frontend
+            Map<String, Object> response = new HashMap<>();
+            response.put("id", match.getId());
+            response.put("matchId", match.getId());
+            response.put("status", match.getStatus());
+            response.put("title", match.getTitle());
+            response.put("createdAt", match.getCreatedAt());
+
+            // 4. Adicionar dados específicos por status
+            if ("draft".equals(match.getStatus())) {
+                response.put("type", "draft");
+                response.put("draftState", parseJsonSafely(match.getPickBanDataJson()));
+                response.put("team1", parseJsonSafely(match.getTeam1PlayersJson()));
+                response.put("team2", parseJsonSafely(match.getTeam2PlayersJson()));
+
+            } else if ("in_progress".equals(match.getStatus())) {
+                response.put("type", "game");
+                response.put("team1", parseJsonSafely(match.getTeam1PlayersJson()));
+                response.put("team2", parseJsonSafely(match.getTeam2PlayersJson()));
+                response.put("pickBanData", parseJsonSafely(match.getPickBanDataJson()));
+                response.put("startTime", match.getCreatedAt());
+                response.put("sessionId", "restored-" + match.getId());
+                response.put("gameId", String.valueOf(match.getId()));
+                response.put("isCustomGame", true);
+            }
+
+            return response;
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao buscar partida ativa para {}: {}", summonerName, e.getMessage(), e);
+            return Collections.emptyMap();
+        }
+    }
+
+    /**
+     * Helper: Parse JSON com tratamento de erros
+     */
+    private Object parseJsonSafely(String json) {
+        if (json == null || json.isEmpty() || json.equals("null")) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(json, Object.class);
+        } catch (JsonProcessingException e) {
+            log.warn("⚠️ Erro ao parsear JSON: {}", e.getMessage());
+            return json; // Retorna string original em caso de erro
         }
     }
 }
