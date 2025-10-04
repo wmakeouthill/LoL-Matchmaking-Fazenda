@@ -68,6 +68,21 @@ public class Match {
     @Column(name = "linked_results", columnDefinition = "TEXT")
     private String linkedResultsJson;
 
+    // ✅ NOVO: Campos para sistema de votação de partidas do LCU
+    /**
+     * ID da partida do LCU que foi vinculada após votação dos jogadores
+     */
+    @Column(name = "linked_lcu_game_id")
+    private Long linkedLcuGameId;
+
+    /**
+     * JSON completo com todos os dados da partida do LCU
+     * Inclui: participants, teams, game stats, KDA, items, runes, etc.
+     * Usado para exibir detalhes completos no histórico
+     */
+    @Column(name = "lcu_match_data", columnDefinition = "TEXT")
+    private String lcuMatchData;
+
     @PrePersist
     public void prePersist() {
         createdAt = Instant.now();
