@@ -2,7 +2,7 @@ import { Component, EventEmitter, Input, OnInit, OnDestroy, Output } from '@angu
 import { CommonModule } from '@angular/common';
 import { Subscription } from 'rxjs';
 import { ApiService } from '../../services/api';
-import { getChampionKeyById, getChampionIconUrl } from '../../utils/champion-data';
+import { getChampionKeyById } from '../../utils/champion-data';
 
 interface CustomMatch {
     gameId: number;
@@ -266,18 +266,6 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
         return match.participants.filter(p => p.teamId === teamId);
     }
 
-    isPlayerInOurMatch(participant: any, teamColor: 'blue' | 'red'): boolean {
-        const option = this.matchOptions[this.selectedMatchIndex || 0];
-        if (!option) return false;
-
-        const ourPlayersInTeam = option.ourPlayers[teamColor];
-        const participantName = (participant.summonerName || participant.riotIdGameName || '').toLowerCase();
-
-        return ourPlayersInTeam.some(p =>
-            (p.summonerName || p.riotIdGameName || '').toLowerCase() === participantName
-        );
-    }
-
     getChampionIconUrl(championId: number): string {
         const key = getChampionKeyById(championId);
         return `https://ddragon.leagueoflegends.com/cdn/14.1.1/img/champion/${key}.png`;
@@ -317,5 +305,161 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
             return (num / 1000).toFixed(1) + 'k';
         }
         return num.toString();
+    }
+
+    getPlayerTooltip(player: any): string {
+        const items = this.getPlayerItems(player)
+            .filter(id => id > 0)
+            .map(id => `Item ${id}`)
+            .join(', ');
+
+        return `${player.summonerName || player.riotIdGameName}
+Champion: ${this.getChampionName(player.championId)} (Nv. ${player.champLevel})
+KDA: ${player.kills}/${player.deaths}/${player.assists} (${this.getKDAFormattedRatio(player)})
+Dano: ${this.formatNumber(player.totalDamageDealtToChampions)}
+Gold: ${this.formatNumber(player.goldEarned)}
+CS: ${player.totalMinionsKilled + player.neutralMinionsKilled}
+Items: ${items || 'Nenhum'}`;
+    }
+
+    // ========== LANE ORGANIZATION METHODS (From match-history) ==========
+
+    organizeTeamByLanes(team: any[] | undefined): { [lane: string]: any } {
+        const organizedTeam: { [lane: string]: any } = {
+            'TOP': null,
+            'JUNGLE': null,
+            'MIDDLE': null,
+            'ADC': null,
+            'SUPPORT': null
+        };
+
+        if (!team || !Array.isArray(team)) {
+            return organizedTeam;
+        }
+
+        // First pass: assign players to their detected lanes
+        const assignedPlayers = new Set();
+        team.forEach((participant) => {
+            const lane = this.getParticipantLane(participant);
+
+            if (organizedTeam[lane] === null && !assignedPlayers.has(participant.puuid)) {
+                organizedTeam[lane] = participant;
+                assignedPlayers.add(participant.puuid);
+            }
+        });
+
+        // Second pass: fill empty lanes with remaining players
+        const unassignedPlayers = team.filter(participant => !assignedPlayers.has(participant.puuid));
+        const emptyLanes = Object.keys(organizedTeam).filter(lane => organizedTeam[lane] === null);
+
+        unassignedPlayers.forEach((participant, index) => {
+            if (index < emptyLanes.length) {
+                organizedTeam[emptyLanes[index]] = participant;
+                assignedPlayers.add(participant.puuid);
+            }
+        });
+
+        // Final pass: ensure all players are assigned
+        const lanes = ['TOP', 'JUNGLE', 'MIDDLE', 'ADC', 'SUPPORT'];
+        lanes.forEach((lane, index) => {
+            if (organizedTeam[lane] === null && team.length > index) {
+                const playerToAssign = team[index];
+                if (!assignedPlayers.has(playerToAssign.puuid)) {
+                    organizedTeam[lane] = playerToAssign;
+                    assignedPlayers.add(playerToAssign.puuid);
+                }
+            }
+        });
+
+        return organizedTeam;
+    }
+
+    private getParticipantLane(participant: any): string {
+        const lane = participant.teamPosition || participant.lane || 'UNKNOWN';
+        const role = participant.role || 'UNKNOWN';
+
+        switch (lane) {
+            case 'TOP':
+                return 'TOP';
+            case 'JUNGLE':
+                return 'JUNGLE';
+            case 'MIDDLE':
+            case 'MID':
+                return 'MIDDLE';
+            case 'BOTTOM':
+                if (role === 'DUO_CARRY' || participant.individualPosition === 'Bottom') {
+                    return 'ADC';
+                } else if (role === 'DUO_SUPPORT' || participant.individualPosition === 'Utility') {
+                    return 'SUPPORT';
+                }
+                return 'ADC';
+            case 'UTILITY':
+                return 'SUPPORT';
+            default:
+                // Fallback: detect by summoner spells (Smite = Jungle)
+                if (participant.summoner1Id === 11 || participant.summoner2Id === 11) {
+                    return 'JUNGLE';
+                }
+                return 'MIDDLE'; // Default fallback
+        }
+    }
+
+    getLaneIcon(lane: string): string {
+        const icons: { [key: string]: string } = {
+            'TOP': '🛡️',
+            'JUNGLE': '🌳',
+            'MIDDLE': '⚡',
+            'ADC': '🏹',
+            'SUPPORT': '💚'
+        };
+        return icons[lane] || '❓';
+    }
+
+    getLaneName(lane: string): string {
+        const names: { [key: string]: string } = {
+            'TOP': 'Topo',
+            'JUNGLE': 'Selva',
+            'MIDDLE': 'Meio',
+            'ADC': 'Atirador',
+            'SUPPORT': 'Suporte'
+        };
+        return names[lane] || lane;
+    }
+
+    getParticipantKDARatio(participant: any): number {
+        if (!participant || participant.deaths === 0) {
+            return (participant?.kills || 0) + (participant?.assists || 0);
+        }
+        return ((participant.kills || 0) + (participant.assists || 0)) / participant.deaths;
+    }
+
+    getParticipantItems(participant: any): number[] {
+        if (!participant) return [0, 0, 0, 0, 0, 0];
+        return [
+            participant.item0 || 0,
+            participant.item1 || 0,
+            participant.item2 || 0,
+            participant.item3 || 0,
+            participant.item4 || 0,
+            participant.item5 || 0
+        ];
+    }
+
+    getChampionImageUrl(championId: number): string {
+        const key = getChampionKeyById(championId);
+        return `https://ddragon.leagueoflegends.com/cdn/14.1.1/img/champion/${key}.png`;
+    }
+
+    getItemImageUrl(itemId: number): string {
+        return `https://ddragon.leagueoflegends.com/cdn/14.1.1/img/item/${itemId}.png`;
+    }
+
+    // Update isPlayerInOurMatch to work without team color parameter
+    isPlayerInOurMatch(participant: any): boolean {
+        const currentPlayerNames = this.currentPlayers.map(p =>
+            (p.summonerName || p.name || '').toLowerCase()
+        );
+        const participantName = (participant.summonerName || participant.riotIdGameName || '').toLowerCase();
+        return currentPlayerNames.includes(participantName);
     }
 }
