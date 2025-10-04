@@ -670,6 +670,14 @@ export class ApiService {
       );
   }
 
+  // ✅ NOVO: Simular última partida do LCU como partida customizada (para testes)
+  simulateLastLcuMatch(lcuMatchData: any): Observable<any> {
+    return this.http.post(`${this.baseUrl}/debug/simulate-last-match`, lcuMatchData)
+      .pipe(
+        catchError(this.handleError)
+      );
+  }
+
   getMatchHistory(playerId: string, offset: number = 0, limit: number = 10): Observable<any> {
     return this.http.get(`${this.baseUrl}/match-history/${playerId}?offset=${offset}&limit=${limit}`)
       .pipe(
