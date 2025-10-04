@@ -662,6 +662,14 @@ export class ApiService {
       );
   }
 
+  // ✅ NOVO: Cancelar partida em progresso (draft/in_progress)
+  cancelMatchInProgress(matchId: number): Observable<any> {
+    return this.http.delete(`${this.baseUrl}/match/${matchId}/cancel`)
+      .pipe(
+        catchError(this.handleError)
+      );
+  }
+
   getMatchHistory(playerId: string, offset: number = 0, limit: number = 10): Observable<any> {
     return this.http.get(`${this.baseUrl}/match-history/${playerId}?offset=${offset}&limit=${limit}`)
       .pipe(

@@ -463,6 +463,7 @@ public class GameInProgressService {
             gameDataMap.put("status", "in_progress");
             gameDataMap.put("startTime", gameData.getStartedAt().toString());
             gameDataMap.put("isCustomGame", true);
+            gameDataMap.put("originalMatchId", matchId); // ✅ CRÍTICO: Necessário para cancelamento
 
             // ✅ Converter GamePlayers para Maps
             List<Map<String, Object>> team1Maps = gameData.getTeam1().stream()

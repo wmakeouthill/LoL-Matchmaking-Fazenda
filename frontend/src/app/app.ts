@@ -424,8 +424,20 @@ export class App implements OnInit, OnDestroy {
         break;
       case 'match_cancelled':
         console.log('❌ [App] Match cancelado:', message);
+        // Limpar estado de match found
         this.showMatchFound = false;
         this.matchFoundData = null;
+
+        // ✅ NOVO: Limpar estado de draft e game in progress
+        if (this.inDraftPhase || this.inGamePhase) {
+          console.log('❌ [App] Redirecionando para tela inicial (partida cancelada)');
+          this.inDraftPhase = false;
+          this.inGamePhase = false;
+          this.draftData = null;
+          this.gameData = null;
+          alert('Partida cancelada. Você foi redirecionado para a tela inicial.');
+        }
+
         this.cdr.detectChanges();
         break;
       case 'draft_updated':
