@@ -152,20 +152,17 @@
         <span class="status-value connected">✅ Ativa</span>
       </div>
 
-      <div class="status-item" *ngIf="currentLiveMatchId">
-        <span class="status-label">Partida Vinculada:</span>
-        <span class="status-value linked">🔗 ID {{ currentLiveMatchId }}</span>
-      </div>
+      <!-- ❌ REMOVIDO: Sistema de vinculação automática -->
     </div>
 
-    <!-- Live Linking Info -->
-    <div class="linking-info" *ngIf="matchLinkingEnabled">
+    <!-- ❌ REMOVIDO: Live Linking Info -->
+    <div class="linking-info" *ngIf="false">
       <div class="linking-status">
         <span class="linking-icon">🔗</span>
         <div class="linking-text">
           <strong>Sistema de Vinculação Automática</strong>
-          <p *ngIf="!currentLiveMatchId">Procurando partida do LoL para vincular automaticamente...</p>
-          <p *ngIf="currentLiveMatchId">Partida vinculada! O resultado será detectado automaticamente.</p>
+          <p>Procurando partida do LoL para vincular automaticamente...</p>
+          <p>Partida vinculada! O resultado será detectado automaticamente.</p>
         </div>
       </div>
     </div>
@@ -228,14 +225,14 @@
         <div class="detection-buttons">
           <button class="btn btn-outline retry-detection-btn" (click)="retryAutoDetection()"
             [disabled]="isAutoDetecting">
-            <span class="btn-icon" *ngIf="!isAutoDetecting">🔄</span>
+            <span class="btn-icon" *ngIf="!isAutoDetecting">�️</span>
             <span class="btn-icon spinning" *ngIf="isAutoDetecting">⏳</span>
-            <span *ngIf="!isAutoDetecting">Tentar Detectar Vencedor</span>
-            <span *ngIf="isAutoDetecting">Detectando...</span>
+            <span *ngIf="!isAutoDetecting">Tentar Identificar Vencedor</span>
+            <span *ngIf="isAutoDetecting">Carregando partidas...</span>
           </button>
         </div>
         <p class="setting-description">
-          Tenta detectar o vencedor automaticamente via LCU ou comparando com o histórico.
+          Busca as últimas 3 partidas personalizadas do histórico e permite selecionar qual corresponde a esta partida.
         </p>
       </div>
     </div>
@@ -267,15 +264,15 @@
     } | json }}</pre>
   </div>
 
-  <!-- Match Confirmation Modal -->
-  <div class="modal-overlay" *ngIf="showMatchConfirmation" (click)="closeMatchConfirmation()" (keydown.escape)="closeMatchConfirmation()">
-    <div class="match-confirmation-modal" (click)="$event.stopPropagation()" (keydown)="$event.stopPropagation()">>
+  <!-- ❌ REMOVIDO: Match Confirmation Modal (detecção automática) -->
+  <div class="modal-overlay" *ngIf="false">
+    <div class="match-confirmation-modal">
       <div class="modal-header">
         <h3>🔍 Partida Detectada no League of Legends</h3>
-        <button class="close-btn" (click)="closeMatchConfirmation()">×</button>
+        <button class="close-btn">×</button>
       </div>
 
-      <div class="modal-content" *ngIf="detectedLCUMatch && matchComparisonResult"> <!-- Match Information -->
+      <div class="modal-content"> <!-- Match Information -->
         <div class="match-info-section">
           <div class="confidence-indicator">
             <div class="confidence-badge" [class.high-confidence]="matchComparisonResult.confidence >= 80"
@@ -397,13 +394,12 @@
     </div>
   </div>
 
-  <!-- NEW: LCU Match Confirmation Modal -->
-  <app-lcu-match-confirmation-modal
-    *ngIf="showLcuConfirmationModal"
-    [comparisonData]="lcuConfirmationData"
-    [isLeader]="isMatchLeader"
-    (confirmed)="onLcuMatchConfirmed($event)"
-    (rejected)="onLcuMatchRejected()"
-    (cancelled)="onLcuModalClosed()">
-  </app-lcu-match-confirmation-modal>
+  <!-- ✅ NOVO: Modal de Confirmação de Vencedor Manual -->
+  <app-winner-confirmation-modal
+    *ngIf="showWinnerConfirmationModal"
+    [customMatches]="customMatchesForConfirmation"
+    [currentPlayers]="getAllPlayers()"
+    (onConfirm)="onWinnerConfirmed($event)"
+    (onCancel)="onWinnerConfirmationCancelled()">
+  </app-winner-confirmation-modal>
 </div>

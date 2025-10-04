@@ -7,6 +7,7 @@ import { shareReplay } from 'rxjs/operators';
 import { ProfileIconService } from '../../services/profile-icon.service';
 import { BotService } from '../../services/bot.service';
 import { LcuMatchConfirmationModalComponent } from '../lcu-match-confirmation-modal/lcu-match-confirmation-modal';
+import { WinnerConfirmationModalComponent } from '../winner-confirmation-modal/winner-confirmation-modal.component';
 
 type TeamColor = 'blue' | 'red';
 
@@ -55,7 +56,7 @@ function logGameInProgress(...args: any[]) {
 @Component({
   selector: 'app-game-in-progress',
   standalone: true,
-  imports: [CommonModule, LcuMatchConfirmationModalComponent],
+  imports: [CommonModule, WinnerConfirmationModalComponent],
   templateUrl: './game-in-progress.html',
   styleUrl: './game-in-progress.scss'
 })
@@ -70,33 +71,17 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   gameStartTime: Date | null = null;
   gameDuration: number = 0;
 
-  // LCU detection
+  // LCU detection - DISABLED (detecção automática removida)
   lcuGameDetected: boolean = false;
-  lcuDetectionEnabled: boolean = true;
+  lcuDetectionEnabled: boolean = false; // ✅ DESABILITADO
 
   // Manual result declaration
   selectedWinner: TeamColor | null = null;
 
-  // NEW: LCU Match Confirmation Modal
-  showLcuConfirmationModal: boolean = false;
-  lcuConfirmationData: any = null;
-  isMatchLeader: boolean = false;
-
-  // Match confirmation modal (legacy - can be removed later)
-  showMatchConfirmation: boolean = false;
-  detectedLCUMatch: any = null;
-  matchComparisonResult: any = null;
-
-  // Auto detection state
+  // ✅ ÚNICO SISTEMA: Modal de confirmação de vencedor manual
+  showWinnerConfirmationModal: boolean = false;
+  customMatchesForConfirmation: any[] = [];
   isAutoDetecting: boolean = false;
-
-  // Live match linking
-  currentLiveMatchId: number | null = null;
-  matchLinkingEnabled: boolean = true;
-  lastLinkingAttempt: number = 0;
-  linkingAttempts: number = 0;
-  maxLinkingAttempts: number = 5;
-  linkingStartTime: number = 0;
 
   // Timers
   private gameTimer: Subscription | null = null;
@@ -200,9 +185,8 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     // ✅ CORREÇÃO: Garantir que campeões sejam carregados antes de hidratar
     this.loadChampionsAndHydrate();
 
-    // Start game timer & live match linking
+    // Start game timer only
     this.startGameTimer();
-    this.startLiveMatchLinking();
   }
 
   /**
@@ -407,7 +391,6 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   private setupInitialState(): void {
     this.gameStartTime = new Date();
     this.gameStatus = 'waiting';
-    this.linkingStartTime = Date.now(); // Inicializar tempo para vinculação
 
     logGameInProgress('✅ [GameInProgress] Partida inicializada com sucesso:', {
       sessionId: this.gameData?.sessionId,
@@ -507,7 +490,10 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       }
     });
   }
-  // Live match linking system - tries to link to actual LoL match every 2 minutes
+
+  // ❌ REMOVIDO: Sistema de detecção automática durante o jogo
+  // TODO sistema de "live match linking" foi removido - agora usa apenas votação manual
+  /*
   private startLiveMatchLinking() {
     if (!this.matchLinkingEnabled) return;
 
@@ -648,59 +634,30 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
 
     return { shouldLink, score, reason };
   }
+  */
 
+  // ❌ REMOVIDO: Detecção automática de fim de jogo via LCU
+  // Causava finalização automática sem confirmação do usuário
+  /*
   private startLCUDetection() {
-    if (!this.lcuDetectionEnabled) return;    // Check LCU every 5 seconds for game state
+    if (!this.lcuDetectionEnabled) return;
     this.lcuDetectionTimer = interval(5000).subscribe(() => {
       this.checkLCUStatus();
     });
   }
 
   private async checkLCUStatus() {
-    try {
-      const gameState = await firstValueFrom(this.apiService.getCurrentGame());
-
-      if (gameState?.success) {
-        const currentGame = gameState.data;
-
-        // Check if we're in a game
-        if (currentGame?.gameMode) {
-          if (!this.lcuGameDetected) {
-            this.onLCUGameDetected(currentGame);
-          }
-
-          // Check if game ended
-          if (currentGame.gamePhase === 'EndOfGame' || currentGame.gamePhase === 'PostGame') {
-            this.onLCUGameEnded(currentGame);
-          }
-        } else if (this.lcuGameDetected && this.gameStatus === 'in-progress') {
-          // Game was detected but now we're not in game anymore
-          this.onLCUGameEnded(null);
-        }
-      }
-    } catch (error) {
-      logGameInProgress('🔍 LCU não disponível para detecção automática:', error);
-    }
+    // ... código de detecção automática removido
   }
+
   private onLCUGameDetected(gameData: any) {
-    this.lcuGameDetected = true;
-    this.gameStatus = 'in-progress';
-    this.currentGameSession = gameData;
-  } private onLCUGameEnded(endGameData: any) {
-
-    if (endGameData?.teams) {
-      // Try to detect winner from LCU data
-      const winningTeam = endGameData.teams.find((team: any) => team.win === "Win" || team.win === true);
-      if (winningTeam) {
-        const winner = winningTeam.teamId === 100 ? 'blue' : 'red';
-        this.autoCompleteGame(winner, true);
-        return;
-      }
-    }
-
-    // If we can't detect winner automatically, ask user to declare
-    this.gameStatus = 'ended';
+    // ... código removido
   }
+
+  private onLCUGameEnded(endGameData: any) {
+    // ... código removido
+  }
+  */
 
   private autoCompleteGame(winner: TeamColor, detectedByLCU: boolean) {
     if (!this.gameData) return;
@@ -754,30 +711,26 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   confirmWinner() {
     if (!this.selectedWinner || !this.gameData) return;
 
-    // Se temos dados da partida detectada do LCU, incluir eles
-    if (this.detectedLCUMatch) {
-      logGameInProgress('✅ Confirmando vencedor com dados reais do LCU');
-      this.autoCompleteGameWithRealData(this.selectedWinner, true, this.detectedLCUMatch);
-    } else {
-      logGameInProgress('✅ Confirmando vencedor sem dados do LCU (manual)');
-      const result: GameResult = {
-        sessionId: this.gameData.sessionId,
-        gameId: this.generateGameId(),
-        winner: this.selectedWinner,
-        duration: this.gameDuration,
-        endTime: new Date(),
-        team1: this.gameData.team1,
-        team2: this.gameData.team2,
-        pickBanData: this.gameData.pickBanData,
-        detectedByLCU: false,
-        isCustomGame: true,
-        originalMatchId: this.gameData.originalMatchId,
-        originalMatchData: this.gameData.originalMatchData,
-        riotId: this.gameData.riotId
-      };
+    // ❌ REMOVIDO: detecção automática via LCU
+    // Agora sempre usa conclusão manual
+    logGameInProgress('✅ Confirmando vencedor (manual)');
+    const result: GameResult = {
+      sessionId: this.gameData.sessionId,
+      gameId: this.generateGameId(),
+      winner: this.selectedWinner,
+      duration: this.gameDuration,
+      endTime: new Date(),
+      team1: this.gameData.team1,
+      team2: this.gameData.team2,
+      pickBanData: this.gameData.pickBanData,
+      detectedByLCU: false,
+      isCustomGame: true,
+      originalMatchId: this.gameData.originalMatchId,
+      originalMatchData: this.gameData.originalMatchData,
+      riotId: this.gameData.riotId
+    };
 
-      this.onGameComplete.emit(result);
-    }
+    this.onGameComplete.emit(result);
   }  // Cancel game
   async cancelGame() {
     logGameInProgress('❌ [GameInProgress] Cancelando partida...');
@@ -824,71 +777,104 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       alert('Erro ao cancelar partida. Verifique os logs.');
     }
   }
-  // Try to auto-resolve winner on component load (useful after app restart)
-  private async tryAutoResolveWinner() {
 
-    // First, try to get winner from LCU
+  // ✅ NOVO: Callbacks do modal de confirmação de vencedor
+  onWinnerConfirmed(data: { match: any, winner: 'blue' | 'red' }) {
+    logGameInProgress('✅ Vencedor confirmado pelo usuário:', data.winner);
+    logGameInProgress('📊 Partida selecionada:', data.match);
+
+    // Fechar modal
+    this.showWinnerConfirmationModal = false;
+
+    // Completar jogo com dados da partida do LCU
+    this.autoCompleteGameWithRealData(data.winner, true, data.match);
+  }
+
+  onWinnerConfirmationCancelled() {
+    logGameInProgress('🚫 Confirmação de vencedor cancelada pelo usuário');
+    this.showWinnerConfirmationModal = false;
+    this.customMatchesForConfirmation = [];
+  }
+
+  // ✅ NOVO: Retorna todos os jogadores (team1 + team2)
+  getAllPlayers(): any[] {
+    if (!this.gameData) return [];
+    const team1 = this.gameData.team1 || [];
+    const team2 = this.gameData.team2 || [];
+    return [...team1, ...team2];
+  }
+
+  // ❌ REMOVIDO: Detecção automática de vencedor desabilitada
+  /*
+  private async tryAutoResolveWinner() {
+    // Este método não é mais usado - foi substituído pelo sistema manual de votação
     const lcuWinner = await this.tryGetWinnerFromLCU();
     if (lcuWinner) {
       this.autoCompleteGame(lcuWinner, true);
       return;
     }
-
-    // If LCU fails, try to compare with last custom match
     const historyWinner = await this.tryGetWinnerFromHistory();
     if (historyWinner) {
       this.autoCompleteGame(historyWinner, false);
     }
-  }  // Enhanced method to detect winner with automatic confirmation
+  }
+  */
+
+  // ✅ NOVO: Método para identificar vencedor manualmente via modal
   async retryAutoDetection() {
-    logGameInProgress('[DEBUG-SIMULATE] 🔄 Detectando vencedor via comparação com LCU...');
+    logGameInProgress('�️ Abrindo modal de confirmação de vencedor manual...');
 
     // Set loading state
     this.isAutoDetecting = true;
 
     try {
-      // Get LCU match history to compare
-      const historyResponse = await firstValueFrom(this.apiService.getLCUMatchHistoryAll(0, 30, false));
+      // ✅ Buscar últimas 3 partidas PERSONALIZADAS do histórico do LCU
+      const historyResponse = await firstValueFrom(this.apiService.getLCUMatchHistoryAll(0, 50, false));
 
       if (!historyResponse?.success || !historyResponse?.matches?.length) {
-        logGameInProgress('[DEBUG-SIMULATE] ⚠️ Nenhuma partida encontrada no histórico do LCU');
+        logGameInProgress('⚠️ Nenhuma partida encontrada no histórico do LCU');
         alert('Nenhuma partida encontrada no histórico do LCU. Certifique-se de que o League of Legends está aberto.');
+        this.isAutoDetecting = false;
         return;
       }
 
-      logGameInProgress('[DEBUG-SIMULATE] 🔍 Histórico LCU obtido:', historyResponse.matches.length, 'partidas');
+      // ✅ Filtrar apenas partidas personalizadas (queueId 0 ou gameType CUSTOM_GAME)
+      const customMatches = historyResponse.matches.filter((match: any) =>
+        match.queueId === 0 || match.gameType === 'CUSTOM_GAME'
+      );
 
-      // Try to find matching game
-      const matchResult = this.findMatchingLCUGame(historyResponse.matches);
-
-      if (!matchResult.match) {
-        logGameInProgress('[DEBUG-SIMULATE] ⚠️ Nenhuma partida correspondente encontrada');
-        logGameInProgress('[DEBUG-SIMULATE] 🔍 Dados da partida atual para comparação:');
-        logGameInProgress('[DEBUG-SIMULATE] 🔍 Team1:', this.gameData?.team1?.map(p => ({ name: p.summonerName, champion: p.champion, lane: p.lane })));
-        logGameInProgress('[DEBUG-SIMULATE] 🔍 Team2:', this.gameData?.team2?.map(p => ({ name: p.summonerName, champion: p.champion, lane: p.lane })));
-        alert('Nenhuma partida correspondente foi encontrada no histórico do LCU. Verifique se a partida foi concluída no League of Legends.');
+      if (customMatches.length === 0) {
+        logGameInProgress('⚠️ Nenhuma partida personalizada encontrada no histórico');
+        alert('Nenhuma partida personalizada encontrada no histórico do LCU.');
+        this.isAutoDetecting = false;
         return;
       }
 
-      logGameInProgress('[DEBUG-SIMULATE] ✅ Partida correspondente encontrada:', matchResult);
+      // ✅ Pegar apenas as últimas 3
+      const last3CustomMatches = customMatches.slice(0, 3);
 
-      // Store detected match data
-      this.detectedLCUMatch = matchResult.match;
-      this.matchComparisonResult = matchResult;
+      logGameInProgress('🔍 Últimas 3 partidas personalizadas encontradas:', last3CustomMatches.length);
+      logGameInProgress('🔍 Partidas:', last3CustomMatches.map((m: any) => ({
+        gameId: m.gameId,
+        gameCreation: m.gameCreation,
+        participants: m.participants?.length
+      })));
 
-      // Automatically confirm the match without showing modal
-      logGameInProgress('[DEBUG-SIMULATE] ⚡ Confirmando partida automaticamente...');
-      this.confirmDetectedMatch();
+      // ✅ Abrir modal de confirmação
+      this.customMatchesForConfirmation = last3CustomMatches;
+      this.showWinnerConfirmationModal = true;
+      this.isAutoDetecting = false;
 
     } catch (error) {
-      logGameInProgress('[DEBUG-SIMULATE] ❌ Erro ao detectar via histórico do LCU:', error);
+      logGameInProgress('❌ Erro ao buscar histórico do LCU:', error);
       alert('Erro ao acessar o histórico do LCU. Certifique-se de que o League of Legends está aberto.');
-    } finally {
-      // Reset loading state
       this.isAutoDetecting = false;
     }
   }
-  // Find matching LCU game based on current game data
+
+  // ❌ REMOVIDO: Sistema de busca e comparação de partidas LCU
+  // Agora usa apenas seleção manual das últimas 3 custom matches
+  /*
   private findMatchingLCUGame(lcuMatches: any[]): { match: any, confidence: number, reason: string } {
     if (!this.gameData) {
       return { match: null, confidence: 0, reason: 'Nenhum dado de jogo disponível' };
@@ -1152,8 +1138,10 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
 
     return similarity;
   }
+  */
 
-  // Modal actions
+  // ❌ REMOVIDO: Modals de confirmação de partida detectada automaticamente
+  /*
   confirmDetectedMatch(): void {
     if (!this.detectedLCUMatch || !this.matchComparisonResult) return;
 
@@ -1216,6 +1204,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     this.detectedLCUMatch = null;
     this.matchComparisonResult = null;
   }
+  */
 
   // Get champion name by ID (helper method)
   getChampionNameById(championId: number): string | null {
@@ -1277,43 +1266,35 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       this.lcuDetectionTimer = null;
     }
 
-    // Reset linking state
-    this.currentLiveMatchId = null;
-    this.matchLinkingEnabled = false;
+    // ❌ REMOVIDO: linking state
   }
 
   private generateGameId(): string {
     return 'game_' + Date.now() + '_' + Math.random().toString(36).substring(2, 11);
   }
 
-  // Try to get winner from current LCU game
+  // ❌ REMOVIDO: Métodos de detecção automática não são mais usados
+  /*
   private async tryGetWinnerFromLCU(): Promise<TeamColor | null> {
     try {
       const gameState = await firstValueFrom(this.apiService.getCurrentGame());
-
-      if (!gameState?.success || !gameState.data) {
-        logGameInProgress('📡 Nenhum jogo ativo no LCU');
-        return null;
-      }
-
-      const currentGame = gameState.data;      // Check if game has ended and get winner
+      if (!gameState?.success || !gameState.data) return null;
+      const currentGame = gameState.data;
       if (currentGame.gamePhase === 'EndOfGame' || currentGame.gamePhase === 'PostGame') {
         if (currentGame.teams) {
           const winningTeam = currentGame.teams.find((team: any) => team.win === "Win" || team.win === true);
-          if (winningTeam) {
-            return winningTeam.teamId === 100 ? 'blue' : 'red';
-          }
+          if (winningTeam) return winningTeam.teamId === 100 ? 'blue' : 'red';
         }
       }
-
       return null;
     } catch (error) {
-      logGameInProgress('❌ Erro ao verificar LCU:', error);
       return null;
     }
   }
+  */
 
-  // Try to get winner by comparing picks with last custom match
+  // ❌ REMOVIDO: Método de comparação com histórico não é mais usado
+  /*
   private async tryGetWinnerFromHistory(): Promise<TeamColor | null> {
     try {
       if (!this.currentPlayer?.id) {
@@ -1376,29 +1357,24 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       return null;
     }
   }
+  */
 
+  // ❌ REMOVIDO: Métodos auxiliares de comparação não são mais usados
+  /*
   private compareGameWithMatch(match: any): boolean {
-    // Simplified comparison logic
-    // You can enhance this based on your match data structure
-    return true; // For now, assume all matches are comparable
+    return true;
   }
 
   private extractWinnerFromMatch(match: any): TeamColor | null {
     if (!match.winner_team) return null;
     return match.winner_team === 1 ? 'blue' : 'red';
   }
-  // Toggle LCU detection
-  toggleLCUDetection(): void {
-    this.lcuDetectionEnabled = !this.lcuDetectionEnabled;
-    logGameInProgress('🔄 LCU Detection toggled:', this.lcuDetectionEnabled);
+  */
 
-    if (this.lcuDetectionEnabled) {
-      // Start LCU detection if enabled
-      this.startLCUDetection();
-    } else {
-      // Stop LCU detection if disabled
-      this.stopLCUDetection();
-    }
+  // ❌ REMOVIDO: Toggle LCU detection
+  // Detecção automática foi desabilitada
+  toggleLCUDetection(): void {
+    logGameInProgress('⚠️ LCU Detection automática foi desabilitada. Use votação manual.');
   }
 
   private stopLCUDetection(): void {
@@ -1792,7 +1768,9 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     return laneNames[lane?.toLowerCase()] || lane || 'Fill';
   }
 
-  // NEW: LCU Match Confirmation Modal Handlers
+  // ❌ REMOVIDO: Old LCU Match Confirmation Modal Handlers
+  // Sistema de detecção automática durante jogo foi removido
+  /*
   onLcuMatchConfirmed(comparisonData: any): void {
     console.log('🎯 LCU match confirmed by leader:', comparisonData);
 
@@ -2039,4 +2017,5 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       details: details
     };
   }
+  */
 }

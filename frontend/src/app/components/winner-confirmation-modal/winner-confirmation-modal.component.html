@@ -1,0 +1,106 @@
+<div class="modal-overlay" (click)="cancel()">
+  <div class="modal-container" (click)="$event.stopPropagation()">
+    <div class="modal-header">
+      <h2>🏆 Confirmar Vencedor da Partida</h2>
+      <button class="close-btn" (click)="cancel()">&times;</button>
+    </div>
+
+    <div class="modal-body">
+      <p class="description">
+        Selecione qual das últimas partidas personalizadas corresponde ao jogo que acabou de terminar:
+      </p>
+
+      <div class="matches-list">
+        <div
+          *ngFor="let option of matchOptions; let i = index"
+          class="match-card"
+          [class.selected]="selectedMatchIndex === i"
+          [class.has-winner]="option.winningTeam"
+          (click)="selectMatch(i)">
+
+          <div class="match-header">
+            <div class="match-info">
+              <span class="match-number">Partida #{{i + 1}}</span>
+              <span class="match-time">{{ option.formattedDate }}</span>
+              <span class="match-duration">⏱️ {{ option.formattedDuration }}</span>
+            </div>
+
+            <div class="winner-badge" *ngIf="option.winningTeam">
+              <span [class.blue-winner]="option.winningTeam === 'blue'"
+                    [class.red-winner]="option.winningTeam === 'red'">
+                Vencedor: {{ option.winningTeam === 'blue' ? 'Time Azul' : 'Time Vermelho' }}
+              </span>
+            </div>
+          </div>
+
+          <div class="match-teams">
+            <!-- Blue Team -->
+            <div class="team blue-team">
+              <div class="team-header">
+                <span class="team-icon">🔵</span>
+                <span class="team-name">Time Azul</span>
+                <span class="team-badge" *ngIf="option.winningTeam === 'blue'">👑</span>
+              </div>
+              <div class="players-list">
+                <div
+                  *ngFor="let player of getPlayersByTeam(option.match, 100)"
+                  class="player-item"
+                  [class.our-player]="isPlayerInOurMatch(player, 'blue')">
+                  <span class="player-champion">{{ getChampionName(player.championId) }}</span>
+                  <span class="player-name">{{ player.summonerName || player.riotIdGameName }}</span>
+                  <span class="our-player-badge" *ngIf="isPlayerInOurMatch(player, 'blue')">✓</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- VS Separator -->
+            <div class="vs-separator">VS</div>
+
+            <!-- Red Team -->
+            <div class="team red-team">
+              <div class="team-header">
+                <span class="team-icon">🔴</span>
+                <span class="team-name">Time Vermelho</span>
+                <span class="team-badge" *ngIf="option.winningTeam === 'red'">👑</span>
+              </div>
+              <div class="players-list">
+                <div
+                  *ngFor="let player of getPlayersByTeam(option.match, 200)"
+                  class="player-item"
+                  [class.our-player]="isPlayerInOurMatch(player, 'red')">
+                  <span class="player-champion">{{ getChampionName(player.championId) }}</span>
+                  <span class="player-name">{{ player.summonerName || player.riotIdGameName }}</span>
+                  <span class="our-player-badge" *ngIf="isPlayerInOurMatch(player, 'red')">✓</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="match-footer">
+            <span class="match-count">
+              Jogadores da nossa partida:
+              <strong>{{ option.ourPlayers.blue.length + option.ourPlayers.red.length }}/10</strong>
+            </span>
+          </div>
+        </div>
+
+        <div class="no-matches" *ngIf="matchOptions.length === 0">
+          <p>❌ Nenhuma partida personalizada encontrada no histórico.</p>
+          <p>Certifique-se de que a partida foi concluída no League of Legends.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" (click)="cancel()">
+        Cancelar
+      </button>
+      <button
+        class="btn btn-primary"
+        (click)="confirmSelection()"
+        [disabled]="selectedMatchIndex === null">
+        Confirmar Vencedor
+      </button>
+    </div>
+  </div>
+</div>
