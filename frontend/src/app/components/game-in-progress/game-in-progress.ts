@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { ApiService } from '../../services/api';
 import { ChampionService } from '../../services/champion.service';
 import { interval, Subscription, Observable, of, firstValueFrom } from 'rxjs';
+import { shareReplay } from 'rxjs/operators';
 import { ProfileIconService } from '../../services/profile-icon.service';
 import { BotService } from '../../services/bot.service';
 import { LcuMatchConfirmationModalComponent } from '../lcu-match-confirmation-modal/lcu-match-confirmation-modal';
@@ -104,6 +105,14 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   // Game tracking
   private currentGameSession: any = null;
 
+  // ✅ CACHE: Para evitar recalcular a cada ciclo de detecção de mudanças
+  private cachedTeamPlayers: Map<TeamColor, any[]> = new Map();
+  private cachedTeamBans: Map<TeamColor, any[]> = new Map();
+  private cachedTeamPicks: Map<TeamColor, any[]> = new Map();
+  private cachedIsBot: Map<string, boolean> = new Map(); // Cache para isBot
+  private cachedProfileIconUrls: Map<string, Observable<string | null>> = new Map(); // Cache para URLs de ícones
+  private cacheVersion: number = 0;
+
   constructor(
     private readonly apiService: ApiService,
     private readonly championService: ChampionService,
@@ -137,8 +146,42 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     // ✅ CORREÇÃO: Detectar quando gameData é recebido
     if (changes['gameData']?.currentValue && !changes['gameData']?.previousValue) {
       logGameInProgress('🎮 [GameInProgress] gameData recebido via ngOnChanges, inicializando jogo...');
+      this.invalidateCache(); // Limpar cache quando dados mudam
       this.initializeGame();
     }
+  }
+
+  /**
+   * ✅ NOVO: Invalidar cache quando dados mudam
+   */
+  private invalidateCache(): void {
+    this.cacheVersion++;
+    this.cachedTeamPlayers.clear();
+    this.cachedTeamBans.clear();
+    this.cachedTeamPicks.clear();
+    this.cachedIsBot.clear();
+    this.cachedProfileIconUrls.clear();
+  }
+
+  /**
+   * ✅ NOVO: Wrapper com cache para botService.isBot()
+   * Evita chamadas recursivas no template
+   */
+  isPlayerBot(player: any): boolean {
+    if (!player) return false;
+
+    // Criar chave única para o jogador
+    const key = player.id || player.summonerName || player.name || JSON.stringify(player);
+
+    // Verificar cache
+    if (this.cachedIsBot.has(key)) {
+      return this.cachedIsBot.get(key)!;
+    }
+
+    // Calcular e armazenar no cache
+    const isBot = this.botService.isBot(player);
+    this.cachedIsBot.set(key, isBot);
+    return isBot;
   }
 
   ngOnDestroy() {
@@ -1400,29 +1443,22 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   getTeamPlayers(team: TeamColor): any[] {
+    // ✅ CACHE: Retornar do cache se disponível
+    if (this.cachedTeamPlayers.has(team)) {
+      return this.cachedTeamPlayers.get(team)!;
+    }
+
     if (!this.gameData) {
-      logGameInProgress('⚠️ [GameInProgress] gameData não disponível');
       return [];
     }
 
     const players = team === 'blue' ? this.gameData.team1 : this.gameData.team2;
+    const result = players || [];
 
-    logGameInProgress(`🔍 [GameInProgress] Buscando jogadores do time ${team}:`, {
-      gameDataKeys: Object.keys(this.gameData),
-      hasTeam1: !!this.gameData.team1,
-      hasTeam2: !!this.gameData.team2,
-      team1Length: this.gameData.team1?.length || 0,
-      team2Length: this.gameData.team2?.length || 0,
-      requestedTeam: team,
-      playersFound: players?.length || 0,
-      players: players?.map((p: any) => ({
-        name: p.summonerName || p.name,
-        id: p.id,
-        champion: p.champion?.name
-      })) || []
-    });
+    // ✅ CACHE: Armazenar resultado
+    this.cachedTeamPlayers.set(team, result);
 
-    return players || [];
+    return result;
   }
 
   getMyTeam(): TeamColor | null {
@@ -1451,14 +1487,27 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
 
   /**
    * Retorna o Observable da URL do ícone de perfil se for humano, ou null se for bot
+   * ✅ COM CACHE para evitar chamadas recursivas ao LCU
    */
   getProfileIconUrlIfHuman(player: any): Observable<string | null> {
-    if (this.botService.isBot(player)) {
+    // ✅ CORREÇÃO: Usar método com cache
+    if (this.isPlayerBot(player)) {
       return of(null);
     }
     const identifier = player.summonerName || player.name || player.displayName || player.gameName;
     if (!identifier) return of(null);
-    return this.profileIconService.getProfileIconUrl(identifier);
+
+    // ✅ CACHE: Verificar se já temos o Observable em cache
+    if (this.cachedProfileIconUrls.has(identifier)) {
+      return this.cachedProfileIconUrls.get(identifier)!;
+    }
+
+    // ✅ CACHE: Criar Observable e armazenar em cache
+    const iconUrl$: Observable<string | null> = this.profileIconService.getProfileIconUrl(identifier).pipe(
+      shareReplay(1) // Compartilhar o resultado entre múltiplos subscribers
+    ) as Observable<string | null>;
+    this.cachedProfileIconUrls.set(identifier, iconUrl$);
+    return iconUrl$;
   }
 
   // Métodos de notificação simplificados (podem ser integrados com um serviço de notificações mais complexo)
@@ -1474,22 +1523,21 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
 
   // ✅ NOVO: Métodos para obter bans dos times
   getTeamBans(team: TeamColor): any[] {
+    // ✅ CACHE: Retornar do cache se disponível
+    if (this.cachedTeamBans.has(team)) {
+      return this.cachedTeamBans.get(team)!;
+    }
+
     // Usar pickBanData normalizado se existir
     const normalizedPickBan = (this as any)._normalizedPickBanData;
     const hasPickBan = !!(normalizedPickBan || this.gameData?.pickBanData);
     if (!hasPickBan) {
-      logGameInProgress('⚠️ [GameInProgress] pickBanData não disponível para bans');
+      this.cachedTeamBans.set(team, []);
       return [];
     }
 
     try {
       const pickBanData = normalizedPickBan || this.gameData?.pickBanData;
-      logGameInProgress(`🔍 [GameInProgress] Buscando bans do time ${team}:`, {
-        hasPickBanData: !!pickBanData,
-        hasPhases: !!pickBanData?.phases,
-        phasesLength: pickBanData?.phases?.length || 0,
-        pickBanDataStructure: pickBanData ? Object.keys(pickBanData) : []
-      });
 
       // ✅ CORREÇÃO: Extrair bans das phases (estrutura correta)
       if (Array.isArray(pickBanData?.phases)) {
@@ -1507,7 +1555,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
           }));
 
         if (teamBans.length > 0) {
-          logGameInProgress(`✅ [GameInProgress] Bans encontrados para time ${team} nas phases:`, teamBans);
+          this.cachedTeamBans.set(team, teamBans);
           return teamBans;
         }
         // Se não encontramos nas phases (campos não preenchidos), continuar para fallbacks abaixo
@@ -1521,7 +1569,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
           championId: b.champion?.id ?? b.championId
         }));
         if (bans.length > 0) {
-          logGameInProgress(`✅ [GameInProgress] Bans encontrados para time ${team} em team1Bans:`, bans);
+          this.cachedTeamBans.set(team, bans);
           return bans;
         }
       } else if (team === 'red' && pickBanData?.team2Bans) {
@@ -1531,7 +1579,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
           championId: b.champion?.id ?? b.championId
         }));
         if (bans.length > 0) {
-          logGameInProgress(`✅ [GameInProgress] Bans encontrados para time ${team} em team2Bans:`, bans);
+          this.cachedTeamBans.set(team, bans);
           return bans;
         }
       }
@@ -1557,7 +1605,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
             };
           });
         if (bans.length > 0) {
-          logGameInProgress(`✅ [GameInProgress] Bans encontrados para time ${team} em actions:`, bans);
+          this.cachedTeamBans.set(team, bans);
           return bans;
         }
       }
@@ -1574,34 +1622,41 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
           }));
 
         logGameInProgress(`✅ [GameInProgress] Bans da partida real encontrados para time ${team}:`, teamBans);
+        // ✅ CACHE: Armazenar resultado
+        this.cachedTeamBans.set(team, teamBans);
         return teamBans;
       }
 
       logGameInProgress(`⚠️ [GameInProgress] Nenhum ban encontrado para time ${team}`);
-      return [];
+      const emptyResult: any[] = [];
+      // ✅ CACHE: Armazenar resultado vazio
+      this.cachedTeamBans.set(team, emptyResult);
+      return emptyResult;
     } catch (error) {
       logGameInProgress('❌ [GameInProgress] Erro ao obter bans do time:', error);
-      return [];
+      const emptyResult: any[] = [];
+      this.cachedTeamBans.set(team, emptyResult);
+      return emptyResult;
     }
   }
 
   // ✅ NOVO: Método para obter picks dos times
   getTeamPicks(team: TeamColor): any[] {
+    // ✅ CACHE: Retornar do cache se disponível
+    if (this.cachedTeamPicks.has(team)) {
+      return this.cachedTeamPicks.get(team)!;
+    }
+
     const normalizedPickBan2 = (this as any)._normalizedPickBanData;
     const hasPickBan2 = !!(normalizedPickBan2 || this.gameData?.pickBanData);
     if (!hasPickBan2) {
-      logGameInProgress('⚠️ [GameInProgress] pickBanData não disponível para picks');
-      return [];
+      const emptyResult: any[] = [];
+      this.cachedTeamPicks.set(team, emptyResult);
+      return emptyResult;
     }
 
     try {
       const pickBanData = normalizedPickBan2 || this.gameData?.pickBanData;
-      logGameInProgress(`🔍 [GameInProgress] Buscando picks do time ${team}:`, {
-        hasPickBanData: !!pickBanData,
-        hasPhases: !!pickBanData?.phases,
-        phasesLength: pickBanData?.phases?.length || 0,
-        pickBanDataStructure: pickBanData ? Object.keys(pickBanData) : []
-      });
 
       // ✅ CORREÇÃO: Extrair picks das phases (estrutura correta)
       if (Array.isArray(pickBanData?.phases)) {
@@ -1620,7 +1675,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
           }));
 
         if (teamPicks.length > 0) {
-          logGameInProgress(`✅ [GameInProgress] Picks encontrados para time ${team} nas phases:`, teamPicks);
+          this.cachedTeamPicks.set(team, teamPicks);
           return teamPicks;
         }
         // Se fases não possuem campeões preenchidos, seguir com fallbacks
@@ -1635,7 +1690,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
           player: p.playerName || p.player
         }));
         if (picks.length > 0) {
-          logGameInProgress(`✅ [GameInProgress] Picks encontrados para time ${team} em team1Picks:`, picks);
+          this.cachedTeamPicks.set(team, picks);
           return picks;
         }
       } else if (team === 'red' && pickBanData?.team2Picks) {
@@ -1646,7 +1701,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
           player: p.playerName || p.player
         }));
         if (picks.length > 0) {
-          logGameInProgress(`✅ [GameInProgress] Picks encontrados para time ${team} em team2Picks:`, picks);
+          this.cachedTeamPicks.set(team, picks);
           return picks;
         }
       }
@@ -1673,7 +1728,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
             };
           });
         if (picks.length > 0) {
-          logGameInProgress(`✅ [GameInProgress] Picks encontrados para time ${team} em actions:`, picks);
+          this.cachedTeamPicks.set(team, picks);
           return picks;
         }
       }
@@ -1690,15 +1745,18 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
             player: pick.playerName || pick.summonerName
           }));
 
-        logGameInProgress(`✅ [GameInProgress] Picks da partida real encontrados para time ${team}:`, teamPicks);
+        this.cachedTeamPicks.set(team, teamPicks);
         return teamPicks;
       }
 
-      logGameInProgress(`⚠️ [GameInProgress] Nenhum pick encontrado para time ${team}`);
-      return [];
+      const emptyResult: any[] = [];
+      this.cachedTeamPicks.set(team, emptyResult);
+      return emptyResult;
     } catch (error) {
       logGameInProgress('❌ [GameInProgress] Erro ao obter picks do time:', error);
-      return [];
+      const emptyResult: any[] = [];
+      this.cachedTeamPicks.set(team, emptyResult);
+      return emptyResult;
     }
   }
 

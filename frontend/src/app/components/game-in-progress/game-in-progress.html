@@ -54,7 +54,7 @@
             <span class="lane-name">{{ getLaneName(player.assignedLane || player.lane || player.role) }}</span>
           </div>
           <div class="player-info">
-            <ng-container *ngIf="!(botService.isBot(player)); else botIcon">
+            <ng-container *ngIf="!isPlayerBot(player); else botIcon">
               <img *ngIf="getProfileIconUrlIfHuman(player) | async as iconUrl" [src]="iconUrl" width="24" height="24"
                 style="border-radius:50%;margin-right:6px;vertical-align:middle;" alt="Ícone de perfil" />
             </ng-container>
@@ -114,7 +114,7 @@
             <span class="lane-name">{{ getLaneName(player.assignedLane || player.lane || player.role) }}</span>
           </div>
           <div class="player-info">
-            <ng-container *ngIf="!(botService.isBot(player)); else botIconRed">
+            <ng-container *ngIf="!isPlayerBot(player); else botIconRed">
               <img *ngIf="getProfileIconUrlIfHuman(player) | async as iconUrl" [src]="iconUrl" width="24" height="24"
                 style="border-radius:50%;margin-right:6px;vertical-align:middle;" alt="Ícone de perfil" />
             </ng-container>
