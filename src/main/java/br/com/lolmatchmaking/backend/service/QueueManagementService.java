@@ -780,13 +780,33 @@ public class QueueManagementService {
 
             } else if ("in_progress".equals(match.getStatus())) {
                 response.put("type", "game");
-                response.put("team1", parseJsonSafely(match.getTeam1PlayersJson()));
-                response.put("team2", parseJsonSafely(match.getTeam2PlayersJson()));
-                response.put("pickBanData", parseJsonSafely(match.getPickBanDataJson()));
+
+                // ✅ CORREÇÃO: Hidratar jogadores com dados do pick_ban_data
+                Object pickBanData = parseJsonSafely(match.getPickBanDataJson());
+                Object team1 = parseJsonSafely(match.getTeam1PlayersJson());
+                Object team2 = parseJsonSafely(match.getTeam2PlayersJson());
+
+                // Se pick_ban_data tem estrutura completa com team1/team2, usar diretamente
+                if (pickBanData instanceof Map<?, ?>) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> pickBanMap = (Map<String, Object>) pickBanData;
+                    if (pickBanMap.containsKey("team1") && pickBanMap.get("team1") != null) {
+                        team1 = pickBanMap.get("team1");
+                    }
+                    if (pickBanMap.containsKey("team2") && pickBanMap.get("team2") != null) {
+                        team2 = pickBanMap.get("team2");
+                    }
+                }
+
+                response.put("team1", team1);
+                response.put("team2", team2);
+                response.put("pickBanData", pickBanData);
                 response.put("startTime", match.getCreatedAt());
                 response.put("sessionId", "restored-" + match.getId());
                 response.put("gameId", String.valueOf(match.getId()));
                 response.put("isCustomGame", true);
+
+                log.debug("✅ Retornando game in progress com team1/team2 hidratados");
             }
 
             return response;
