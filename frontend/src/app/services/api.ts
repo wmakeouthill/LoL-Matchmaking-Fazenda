@@ -1,7 +1,7 @@
 import { Injectable, Inject } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, throwError, Subject, firstValueFrom, of } from 'rxjs';
-import { catchError, retry, map, switchMap } from 'rxjs/operators';
+import { catchError, retry, map, switchMap, tap } from 'rxjs/operators';
 import { Player, RefreshPlayerResponse } from '../interfaces';
 
 interface QueueStatus {
@@ -1543,5 +1543,75 @@ export class ApiService {
       losses: soloQueue.losses,
       display: `${soloQueue.tier} ${soloQueue.rank}`
     };
+  }
+
+  // =================== MATCH VOTING API ===================
+
+  /**
+   * Votar em uma partida LCU para vincular à partida customizada
+   */
+  voteForMatch(matchId: number, lcuGameId: number): Observable<any> {
+    return this.http.post(`${this.baseUrl}/api/matches/${matchId}/vote`, {
+      playerId: this.getCurrentPlayerId(),
+      lcuGameId: lcuGameId
+    }).pipe(
+      tap(() => console.log(`✅ [API] Voto registrado: Match ${matchId}, LCU Game ${lcuGameId}`)),
+      catchError(error => {
+        console.error(`❌ [API] Erro ao votar:`, error);
+        return throwError(() => error);
+      })
+    );
+  }
+
+  /**
+   * Obter contadores de votos para uma partida
+   */
+  getMatchVotes(matchId: number): Observable<{ [lcuGameId: string]: number }> {
+    return this.http.get<{ [lcuGameId: string]: number }>(`${this.baseUrl}/api/matches/${matchId}/votes`).pipe(
+      tap(votes => console.log(`📊 [API] Votos recebidos para match ${matchId}:`, votes)),
+      catchError(error => {
+        console.error(`❌ [API] Erro ao obter votos:`, error);
+        return throwError(() => error);
+      })
+    );
+  }
+
+  /**
+   * Remover voto de uma partida
+   */
+  removeVote(matchId: number): Observable<any> {
+    return this.http.delete(`${this.baseUrl}/api/matches/${matchId}/vote`, {
+      body: { playerId: this.getCurrentPlayerId() }
+    }).pipe(
+      tap(() => console.log(`🗑️ [API] Voto removido: Match ${matchId}`)),
+      catchError(error => {
+        console.error(`❌ [API] Erro ao remover voto:`, error);
+        return throwError(() => error);
+      })
+    );
+  }
+
+  /**
+   * Obter ID do jogador atual (helper)
+   */
+  private getCurrentPlayerId(): number {
+    // Assumindo que o player ID está armazenado no sessionStorage ou em um estado
+    const playerIdStr = sessionStorage.getItem('currentPlayerId') || localStorage.getItem('currentPlayerId');
+    if (playerIdStr) {
+      return parseInt(playerIdStr, 10);
+    }
+
+    // Fallback: tentar obter do currentPlayer no sessionStorage
+    const currentPlayerStr = sessionStorage.getItem('currentPlayer');
+    if (currentPlayerStr) {
+      try {
+        const currentPlayer = JSON.parse(currentPlayerStr);
+        return currentPlayer.id;
+      } catch (e) {
+        console.error('❌ Erro ao parsear currentPlayer:', e);
+      }
+    }
+
+    throw new Error('Player ID não encontrado. Faça login primeiro.');
   }
 }

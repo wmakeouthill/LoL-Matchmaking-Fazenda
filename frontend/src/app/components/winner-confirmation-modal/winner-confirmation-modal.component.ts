@@ -1,5 +1,8 @@
-import { Component, EventEmitter, Input, OnInit, Output } from '@angular/core';
+import { Component, EventEmitter, Input, OnInit, OnDestroy, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { Subscription } from 'rxjs';
+import { ApiService } from '../../services/api';
+import { getChampionKeyById, getChampionIconUrl } from '../../utils/champion-data';
 
 interface CustomMatch {
     gameId: number;
@@ -21,6 +24,7 @@ interface MatchOption {
         blue: any[];
         red: any[];
     };
+    voteCount?: number; // Contador de votos para esta partida
 }
 
 @Component({
@@ -30,17 +34,118 @@ interface MatchOption {
     templateUrl: './winner-confirmation-modal.component.html',
     styleUrls: ['./winner-confirmation-modal.component.scss']
 })
-export class WinnerConfirmationModalComponent implements OnInit {
+export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
     @Input() customMatches: CustomMatch[] = [];
     @Input() currentPlayers: any[] = []; // Jogadores da partida atual
+    @Input() matchId: number | null = null; // ID da partida customizada para votação
     @Output() onConfirm = new EventEmitter<{ match: CustomMatch, winner: 'blue' | 'red' }>();
     @Output() onCancel = new EventEmitter<void>();
 
     matchOptions: MatchOption[] = [];
     selectedMatchIndex: number | null = null;
+    voteCounts: Map<number, number> = new Map(); // lcuGameId -> voteCount
+    myVotedGameId: number | null = null; // LCU game que o usuário votou
+    private wsSubscription?: Subscription;
+
+    constructor(private apiService: ApiService) { }
 
     ngOnInit() {
         this.processMatches();
+        this.setupWebSocketListeners();
+        this.loadInitialVotes();
+    }
+
+    ngOnDestroy() {
+        if (this.wsSubscription) {
+            this.wsSubscription.unsubscribe();
+        }
+    }
+
+    private setupWebSocketListeners() {
+        this.wsSubscription = this.apiService.onWebSocketMessage().subscribe({
+            next: (message) => {
+                const { type, data } = message;
+
+                if (type === 'match_vote_update') {
+                    this.handleVoteUpdate(data);
+                } else if (type === 'match_linked') {
+                    this.handleMatchLinked(data);
+                }
+            },
+            error: (error) => {
+                console.error('❌ [WinnerModal] Erro no WebSocket:', error);
+            }
+        });
+    }
+
+    private async loadInitialVotes() {
+        if (!this.matchId) return;
+
+        try {
+            // Carregar votos atuais do backend
+            const votes = await this.apiService.getMatchVotes(this.matchId).toPromise();
+            if (votes) {
+                this.voteCounts = new Map(Object.entries(votes).map(([k, v]) => [Number(k), Number(v)]));
+                this.updateVoteCountsInOptions();
+            }
+        } catch (error) {
+            console.error('❌ [WinnerModal] Erro ao carregar votos:', error);
+        }
+    }
+
+    private handleVoteUpdate(data: any) {
+        console.log('🗳️ [WinnerModal] Atualização de votos recebida:', data);
+
+        if (data.matchId !== this.matchId) return;
+
+        // Atualizar contadores de votos
+        if (data.voteCounts) {
+            this.voteCounts = new Map(Object.entries(data.voteCounts).map(([k, v]) => [Number(k), Number(v)]));
+            this.updateVoteCountsInOptions();
+        }
+    }
+
+    private handleMatchLinked(data: any) {
+        console.log('🔗 [WinnerModal] Partida vinculada:', data);
+
+        if (data.matchId !== this.matchId) return;
+
+        // Fechar modal automaticamente após vinculação
+        setTimeout(() => {
+            alert(`✅ Partida vinculada automaticamente! Vencedor: Time ${data.winner === 'blue' ? 'Azul' : 'Vermelho'}`);
+            this.cancel();
+        }, 1000);
+    }
+
+    private updateVoteCountsInOptions() {
+        this.matchOptions.forEach(option => {
+            const voteCount = this.voteCounts.get(option.match.gameId) || 0;
+            option.voteCount = voteCount;
+        });
+    }
+
+    async selectMatch(index: number) {
+        const previousIndex = this.selectedMatchIndex;
+        this.selectedMatchIndex = index;
+
+        if (!this.matchId) {
+            console.warn('⚠️ [WinnerModal] Match ID não fornecido, votação desabilitada');
+            return;
+        }
+
+        const selectedOption = this.matchOptions[index];
+        const lcuGameId = selectedOption.match.gameId;
+
+        try {
+            // Enviar voto ao backend
+            await this.apiService.voteForMatch(this.matchId, lcuGameId).toPromise();
+            this.myVotedGameId = lcuGameId;
+            console.log('✅ [WinnerModal] Voto registrado para LCU game:', lcuGameId);
+        } catch (error) {
+            console.error('❌ [WinnerModal] Erro ao votar:', error);
+            this.selectedMatchIndex = previousIndex; // Reverter seleção
+            alert('Erro ao registrar voto. Tente novamente.');
+        }
     }
 
     private processMatches() {
@@ -124,10 +229,6 @@ export class WinnerConfirmationModalComponent implements OnInit {
         return `${minutes}:${secs.toString().padStart(2, '0')}`;
     }
 
-    selectMatch(index: number) {
-        this.selectedMatchIndex = index;
-    }
-
     confirmSelection() {
         if (this.selectedMatchIndex === null) {
             alert('Por favor, selecione uma partida primeiro.');
@@ -151,8 +252,13 @@ export class WinnerConfirmationModalComponent implements OnInit {
     }
 
     getChampionName(championId: number): string {
-        // Placeholder - será preenchido com dados reais
-        return `Champion ${championId}`;
+        const key = getChampionKeyById(championId);
+
+        // Convert key back to readable name (e.g., "MissFortune" -> "Miss Fortune")
+        return key
+            .replace(/([A-Z])/g, ' $1') // Add space before capitals
+            .trim() // Remove leading space
+            .replace(/\s+/g, ' '); // Normalize spaces
     }
 
     getPlayersByTeam(match: CustomMatch, teamId: number) {
@@ -170,5 +276,46 @@ export class WinnerConfirmationModalComponent implements OnInit {
         return ourPlayersInTeam.some(p =>
             (p.summonerName || p.riotIdGameName || '').toLowerCase() === participantName
         );
+    }
+
+    getChampionIconUrl(championId: number): string {
+        const key = getChampionKeyById(championId);
+        return `https://ddragon.leagueoflegends.com/cdn/14.1.1/img/champion/${key}.png`;
+    }
+
+    getChampionKeyById(championId: number): string {
+        return getChampionKeyById(championId);
+    }
+
+    getItemIconUrl(itemId: number): string {
+        return `https://ddragon.leagueoflegends.com/cdn/14.1.1/img/item/${itemId}.png`;
+    }
+
+    getPlayerItems(player: any): number[] {
+        return [
+            player.item0 || 0,
+            player.item1 || 0,
+            player.item2 || 0,
+            player.item3 || 0,
+            player.item4 || 0,
+            player.item5 || 0,
+            player.item6 || 0 // Trinket
+        ];
+    }
+
+    getKDAFormattedRatio(player: any): string {
+        if (!player.deaths || player.deaths === 0) {
+            return 'Perfect';
+        }
+        const kda = (player.kills + player.assists) / player.deaths;
+        return kda.toFixed(2);
+    }
+
+    formatNumber(num: number): string {
+        if (!num) return '0';
+        if (num >= 1000) {
+            return (num / 1000).toFixed(1) + 'k';
+        }
+        return num.toString();
     }
 }

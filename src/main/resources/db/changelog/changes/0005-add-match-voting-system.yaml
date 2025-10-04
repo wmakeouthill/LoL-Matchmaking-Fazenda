@@ -1,0 +1,103 @@
+databaseChangeLog:
+  - changeSet:
+      id: 0005-1-create-match-votes-table
+      author: github-copilot
+      changes:
+        - createTable:
+            tableName: match_votes
+            columns:
+              - column:
+                  name: id
+                  type: BIGINT
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: match_id
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+                    foreignKeyName: fk_match_votes_match
+                    references: matches(id)
+              - column:
+                  name: player_id
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+                    foreignKeyName: fk_match_votes_player
+                    references: players(id)
+              - column:
+                  name: lcu_game_id
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: voted_at
+                  type: TIMESTAMP
+                  defaultValueComputed: CURRENT_TIMESTAMP
+                  constraints:
+                    nullable: false
+        - addUniqueConstraint:
+            tableName: match_votes
+            columnNames: match_id, player_id
+            constraintName: uk_match_votes_match_player
+
+  - changeSet:
+      id: 0005-2-add-linked-lcu-game-id-to-matches
+      author: github-copilot
+      changes:
+        - addColumn:
+            tableName: matches
+            columns:
+              - column:
+                  name: linked_lcu_game_id
+                  type: BIGINT
+                  constraints:
+                    nullable: true
+
+  - changeSet:
+      id: 0005-3-add-lcu-match-data-to-matches
+      author: github-copilot
+      changes:
+        - addColumn:
+            tableName: matches
+            columns:
+              - column:
+                  name: lcu_match_data
+                  type: TEXT
+                  constraints:
+                    nullable: true
+
+  - changeSet:
+      id: 0005-4-create-index-match-votes-match-id
+      author: github-copilot
+      changes:
+        - createIndex:
+            tableName: match_votes
+            indexName: idx_match_votes_match_id
+            columns:
+              - column:
+                  name: match_id
+
+  - changeSet:
+      id: 0005-5-create-index-match-votes-lcu-game-id
+      author: github-copilot
+      changes:
+        - createIndex:
+            tableName: match_votes
+            indexName: idx_match_votes_lcu_game_id
+            columns:
+              - column:
+                  name: lcu_game_id
+
+  - changeSet:
+      id: 0005-6-create-index-matches-linked-lcu-game-id
+      author: github-copilot
+      changes:
+        - createIndex:
+            tableName: matches
+            indexName: idx_matches_linked_lcu_game_id
+            columns:
+              - column:
+                  name: linked_lcu_game_id

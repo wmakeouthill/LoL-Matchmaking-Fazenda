@@ -167,67 +167,19 @@
       </div>
     </div>
   </div>
-  <!-- Winner Declaration Section -->
-  <div class="winner-section" *ngIf="gameStatus === 'ended' || !lcuDetectionEnabled">
-    <div class="winner-declaration">
-      <h3>Declarar Vencedor</h3>
-      <div class="auto-detection-info" *ngIf="lcuDetectionEnabled">
-        <p class="info-message">
-          ℹ️ <strong>Detecção Automática Ativada:</strong>
-          Use o botão "Tentar Detectar Vencedor" para que o sistema identifique automaticamente o resultado da partida.
-        </p>
-      </div>
-      <p>Ou selecione manualmente o time vencedor da partida:</p>
 
-      <div class="winner-buttons">
-        <button class="team-button team-blue-btn" [class.selected]="selectedWinner === 'blue'"
-          (click)="declareWinner('blue')">
-          <span class="team-icon">🛡️</span>
-          <span class="team-name">Time Azul</span>
-          <span class="winner-icon" *ngIf="selectedWinner === 'blue'">✓</span>
-        </button>
-
-        <button class="team-button team-red-btn" [class.selected]="selectedWinner === 'red'"
-          (click)="declareWinner('red')">
-          <span class="team-icon">⚔️</span>
-          <span class="team-name">Time Vermelho</span>
-          <span class="winner-icon" *ngIf="selectedWinner === 'red'">✓</span>
-        </button>
-      </div>
-
-      <div class="your-team-info" *ngIf="getMyTeam()">
-        <p>Seu time: <strong [style.color]="getTeamColor(getMyTeam()!)">{{ getTeamName(getMyTeam()!) }}</strong></p>
-        <p class="result-preview" *ngIf="selectedWinner">
-          Resultado:
-          <span [class.victory]="isMyTeamWinner()" [class.defeat]="!isMyTeamWinner()">
-            {{ isMyTeamWinner() ? '🏆 VITÓRIA' : '💀 DERROTA' }}
-          </span>
-        </p>
-      </div>
-    </div>
-  </div>
 
   <!-- Settings Section -->
   <div class="settings-section">
     <div class="settings-card">
-      <h4>Configurações</h4>
-      <div class="setting-item">
-        <label class="setting-label" (click)="toggleLCUDetection()" (keydown.enter)="toggleLCUDetection()" (keydown.space)="toggleLCUDetection()">>
-          <input type="checkbox" [attr.checked]="lcuDetectionEnabled ? '' : null" readonly>
-          <span class="checkmark"></span>
-          Detecção automática via LCU
-        </label>
-        <p class="setting-description">
-          Detectar automaticamente o fim da partida através do cliente do League of Legends
-        </p>
-      </div>
+      <h4>Vincular Partida do League of Legends</h4>
       <div class="setting-item">
         <div class="detection-buttons">
           <button class="btn btn-outline retry-detection-btn" (click)="retryAutoDetection()"
             [disabled]="isAutoDetecting">
-            <span class="btn-icon" *ngIf="!isAutoDetecting">�️</span>
+            <span class="btn-icon" *ngIf="!isAutoDetecting">🔍</span>
             <span class="btn-icon spinning" *ngIf="isAutoDetecting">⏳</span>
-            <span *ngIf="!isAutoDetecting">Tentar Identificar Vencedor</span>
+            <span *ngIf="!isAutoDetecting">Vincular Partida do Discord à Partida do League of Legends</span>
             <span *ngIf="isAutoDetecting">Carregando partidas...</span>
           </button>
         </div>
@@ -240,12 +192,6 @@
 
   <!-- Action Buttons -->
   <div class="action-buttons">
-    <button class="btn btn-primary" [disabled]="!selectedWinner" (click)="confirmWinner()"
-      *ngIf="gameStatus === 'ended' || !lcuDetectionEnabled">
-      <span class="btn-icon">✅</span>
-      Confirmar Resultado
-    </button>
-
     <button class="btn btn-secondary" (click)="cancelGame()">
       <span class="btn-icon">❌</span>
       Cancelar Partida
