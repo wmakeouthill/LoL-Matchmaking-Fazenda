@@ -493,7 +493,10 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
         playerChampion: playerData?.championId,
         playerChampionName: playerData?.championName,
         playerLaneBadge: playerData?.laneBadge,
+        playerLane: playerData?.lane,
         playerAssignedLane: playerData?.assignedLane,
+        playerPrimaryLane: playerData?.primaryLane,
+        playerSecondaryLane: playerData?.secondaryLane,
         playerTeam,
         playerWon
       });
@@ -617,7 +620,8 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
           spell1Id: playerData.spell1Id || 0,
           spell2Id: playerData.spell2Id || 0,
           laneBadge: playerData.laneBadge || null,
-          lane: playerData.lane || playerData.assignedLane || null
+          lane: playerData.lane || playerData.assignedLane || null,
+          assignedLane: playerData.assignedLane || null
         } : {
           champion: 'Unknown',
           championName: 'Unknown',
@@ -630,11 +634,21 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
         }
       };
 
-      console.log('📊 [mapApiMatchesToModel] playerStats criado:', {
+      console.log('📊 [mapApiMatchesToModel] playerStats criado:', JSON.stringify({
         championName: mappedMatch.playerStats.championName,
         laneBadge: mappedMatch.playerStats.laneBadge,
-        lane: mappedMatch.playerStats.lane
-      });
+        lane: mappedMatch.playerStats.lane,
+        assignedLane: mappedMatch.playerStats.assignedLane,
+        laneType: typeof mappedMatch.playerStats.lane,
+        laneValue: mappedMatch.playerStats.lane,
+        laneEmpty: !mappedMatch.playerStats.lane,
+        assignedLaneValue: mappedMatch.playerStats.assignedLane
+      }, null, 2));
+
+      console.log('🔍 [DEBUG] getLaneName test:', JSON.stringify({
+        input: mappedMatch.playerStats.lane || mappedMatch.playerStats.assignedLane || '',
+        output: this.getLaneName(mappedMatch.playerStats.lane || mappedMatch.playerStats.assignedLane || '')
+      }, null, 2));
 
       return mappedMatch;
     });
@@ -1712,11 +1726,15 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
   }
 
   getLaneName(lane: string): string {
-    switch (lane) {
+    const upperLane = lane?.toUpperCase() || '';
+    switch (upperLane) {
       case 'TOP': return 'Top';
       case 'JUNGLE': return 'Jungle';
       case 'MIDDLE': return 'Mid';
+      case 'MID': return 'Mid';
       case 'ADC': return 'ADC';
+      case 'BOTTOM': return 'ADC';
+      case 'BOT': return 'ADC';
       case 'SUPPORT': return 'Support';
       default: return 'Unknown';
     }

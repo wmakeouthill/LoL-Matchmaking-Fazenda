@@ -176,8 +176,8 @@
               {{ match.playerStats?.championName || match.playerStats?.champion
               }}
             </div>
-            <div class="lane-name" *ngIf="match.playerStats?.lane">
-              {{ getLaneName(match.playerStats?.lane || '') }}
+            <div class="lane-name" *ngIf="match.playerStats?.lane || match.playerStats?.assignedLane">
+              {{ getLaneName(match.playerStats?.lane || match.playerStats?.assignedLane || '') }}
             </div>
             <div class="champion-level">
               Nível {{ match.playerStats?.championLevel || 'N/A' }}

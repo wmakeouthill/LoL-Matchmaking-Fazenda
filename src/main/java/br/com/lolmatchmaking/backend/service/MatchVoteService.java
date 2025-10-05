@@ -358,6 +358,8 @@ public class MatchVoteService {
             // Preservar championName e championId do pick/ban se já existirem
             Object existingChampionId = participantData.get("championId");
             Object existingChampionName = participantData.get("championName");
+            String existingAssignedLane = (String) participantData.get("assignedLane");
+            String existingLaneBadge = (String) participantData.get("laneBadge");
 
             participantData.putAll(lcuStats);
 
@@ -367,6 +369,20 @@ public class MatchVoteService {
             }
             if (existingChampionName != null && !existingChampionName.toString().isEmpty()) {
                 participantData.put("championName", existingChampionName);
+            }
+
+            // Garantir que lane existe - usar assignedLane se lane não foi definido
+            if (!participantData.containsKey("lane") || participantData.get("lane") == null
+                    || participantData.get("lane").toString().isEmpty()) {
+                if (existingAssignedLane != null && !existingAssignedLane.isEmpty()) {
+                    participantData.put("lane", existingAssignedLane);
+                    log.info("📍 [MERGE] lane não encontrado no LCU, usando assignedLane: {}", existingAssignedLane);
+                }
+            }
+
+            // Restaurar laneBadge se foi sobrescrito
+            if (existingLaneBadge != null && !existingLaneBadge.isEmpty()) {
+                participantData.put("laneBadge", existingLaneBadge);
             }
         } else {
             log.warn("⚠️ Stats do LCU não encontrados para {}, usando valores padrão", summonerName);
