@@ -192,6 +192,17 @@
             <span class="kda-ratio"
               >{{ getKDARatio(match).toFixed(2) }} KDA</span
             >
+            <span
+              class="lane-badge-history"
+              [ngClass]="{
+                'badge-primary': match.playerStats?.laneBadge === 'primary',
+                'badge-secondary': match.playerStats?.laneBadge === 'secondary',
+                'badge-autofill': match.playerStats?.laneBadge === 'autofill'
+              }"
+              *ngIf="match.playerStats?.laneBadge"
+            >
+              {{ getLaneBadgeText(match.playerStats?.laneBadge) }}
+            </span>
           </div>
           <div class="kda-badges">
             <span
@@ -371,6 +382,17 @@
                             {{ getParticipantKDARatio(participant).toFixed(2)
                             }}:1 KDA
                           </div>
+                          <div
+                            class="lane-badge-detailed"
+                            [ngClass]="{
+                              'badge-primary': participant.laneBadge === 'primary',
+                              'badge-secondary': participant.laneBadge === 'secondary',
+                              'badge-autofill': participant.laneBadge === 'autofill'
+                            }"
+                            *ngIf="participant.laneBadge"
+                          >
+                            {{ getLaneBadgeText(participant.laneBadge) }}
+                          </div>
 
                           <!-- First Blood Badge -->
                           <div
@@ -531,6 +553,17 @@
                           <div class="kda-ratio">
                             {{ getParticipantKDARatio(participant).toFixed(2)
                             }}:1 KDA
+                          </div>
+                          <div
+                            class="lane-badge-detailed"
+                            [ngClass]="{
+                              'badge-primary': participant.laneBadge === 'primary',
+                              'badge-secondary': participant.laneBadge === 'secondary',
+                              'badge-autofill': participant.laneBadge === 'autofill'
+                            }"
+                            *ngIf="participant.laneBadge"
+                          >
+                            {{ getLaneBadgeText(participant.laneBadge) }}
                           </div>
 
                           <!-- First Blood Badge -->
