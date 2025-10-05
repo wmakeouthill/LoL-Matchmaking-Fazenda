@@ -68,10 +68,6 @@
 
                 <div class="team-players-by-lane">
                   <div *ngFor="let lane of ['TOP', 'JUNGLE', 'MIDDLE', 'ADC', 'SUPPORT']" class="lane-row">
-                    <div class="lane-indicator">
-                      <span class="lane-icon">{{ getLaneIcon(lane) }}</span>
-                      <span class="lane-name">{{ getLaneName(lane) }}</span>
-                    </div>
                     <div
                       class="participant-detailed-card"
                       *ngIf="organizeTeamByLanes(getPlayersByTeam(option.match, 100))[lane] as participant"
@@ -92,13 +88,16 @@
                           <span class="champion-level">{{ participant.champLevel }}</span>
                         </div>
                         <div class="champion-info">
+                          <!-- ✅ Lane Badge dentro do card -->
+                          <div class="lane-badge">
+                            <span class="lane-icon">{{ getLaneIcon(lane) }}</span>
+                            <span class="lane-name">{{ getLaneName(lane) }}</span>
+                          </div>
                           <div class="summoner-name" [class.current-player-name]="isPlayerInOurMatch(participant)">
                             {{ participant.summonerName || participant.riotIdGameName }}
-                          </div>
-                          <div class="champion-name">{{ participant.championName }}</div>
-                          <div class="lane-container">
                             <span *ngIf="isPlayerInOurMatch(participant)" class="you-badge">VOCÊ</span>
                           </div>
+                          <div class="champion-name">{{ participant.championName }}</div>
                         </div>
                       </div>
 
@@ -130,21 +129,21 @@
                           </div>
                         </div>
 
-                        <!-- Stats Section -->
-                        <div class="stats-section">
-                          <div class="stat-item">
+                        <!-- ✅ Stats em uma ÚNICA linha horizontal -->
+                        <div class="stats-row-horizontal">
+                          <div class="stat-compact">
                             <span class="stat-label">Farm</span>
                             <span class="stat-value">{{ (participant.totalMinionsKilled || 0) + (participant.neutralMinionsKilled || 0) }}</span>
                           </div>
-                          <div class="stat-item">
+                          <div class="stat-compact">
                             <span class="stat-label">Ouro</span>
                             <span class="stat-value">{{ (participant.goldEarned / 1000).toFixed(1) }}k</span>
                           </div>
-                          <div class="stat-item">
+                          <div class="stat-compact">
                             <span class="stat-label">Dano</span>
                             <span class="stat-value">{{ (participant.totalDamageDealtToChampions / 1000).toFixed(1) }}k</span>
                           </div>
-                          <div class="stat-item">
+                          <div class="stat-compact">
                             <span class="stat-label">Visão</span>
                             <span class="stat-value">{{ participant.visionScore }}</span>
                           </div>
@@ -168,10 +167,6 @@
 
                 <div class="team-players-by-lane">
                   <div *ngFor="let lane of ['TOP', 'JUNGLE', 'MIDDLE', 'ADC', 'SUPPORT']" class="lane-row">
-                    <div class="lane-indicator">
-                      <span class="lane-icon">{{ getLaneIcon(lane) }}</span>
-                      <span class="lane-name">{{ getLaneName(lane) }}</span>
-                    </div>
                     <div
                       class="participant-detailed-card"
                       *ngIf="organizeTeamByLanes(getPlayersByTeam(option.match, 200))[lane] as participant"
@@ -192,13 +187,16 @@
                           <span class="champion-level">{{ participant.champLevel }}</span>
                         </div>
                         <div class="champion-info">
+                          <!-- ✅ Lane Badge dentro do card -->
+                          <div class="lane-badge">
+                            <span class="lane-icon">{{ getLaneIcon(lane) }}</span>
+                            <span class="lane-name">{{ getLaneName(lane) }}</span>
+                          </div>
                           <div class="summoner-name" [class.current-player-name]="isPlayerInOurMatch(participant)">
                             {{ participant.summonerName || participant.riotIdGameName }}
-                          </div>
-                          <div class="champion-name">{{ participant.championName }}</div>
-                          <div class="lane-container">
                             <span *ngIf="isPlayerInOurMatch(participant)" class="you-badge">VOCÊ</span>
                           </div>
+                          <div class="champion-name">{{ participant.championName }}</div>
                         </div>
                       </div>
 
@@ -230,21 +228,21 @@
                           </div>
                         </div>
 
-                        <!-- Stats Section -->
-                        <div class="stats-section">
-                          <div class="stat-item">
+                        <!-- ✅ Stats em uma ÚNICA linha horizontal -->
+                        <div class="stats-row-horizontal">
+                          <div class="stat-compact">
                             <span class="stat-label">Farm</span>
                             <span class="stat-value">{{ (participant.totalMinionsKilled || 0) + (participant.neutralMinionsKilled || 0) }}</span>
                           </div>
-                          <div class="stat-item">
+                          <div class="stat-compact">
                             <span class="stat-label">Ouro</span>
                             <span class="stat-value">{{ (participant.goldEarned / 1000).toFixed(1) }}k</span>
                           </div>
-                          <div class="stat-item">
+                          <div class="stat-compact">
                             <span class="stat-label">Dano</span>
                             <span class="stat-value">{{ (participant.totalDamageDealtToChampions / 1000).toFixed(1) }}k</span>
                           </div>
-                          <div class="stat-item">
+                          <div class="stat-compact">
                             <span class="stat-label">Visão</span>
                             <span class="stat-value">{{ participant.visionScore }}</span>
                           </div>

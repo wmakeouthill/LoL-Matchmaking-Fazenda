@@ -15,9 +15,9 @@
 .modal-container {
   background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
   border-radius: 16px;
-  max-width: 900px;
-  width: 90%;
-  max-height: 85vh;
+  max-width: 1600px; // ✅ Aumentado de 900px para 1600px
+  width: 95%; // ✅ Aumentado de 90% para 95%
+  max-height: 90vh; // ✅ Aumentado de 85vh para 90vh
   display: flex;
   flex-direction: column;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
@@ -940,19 +940,19 @@
   .teams-container-side-by-side {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 12px;
+    gap: 24px; // ✅ Aumentado de 12px para 24px
     width: 100%;
 
-    @media (max-width: 1300px) {
+    @media (max-width: 1400px) { // ✅ Ajustado de 1300px para 1400px
       grid-template-columns: 1fr;
-      gap: 8px;
+      gap: 16px; // ✅ Aumentado de 8px para 16px
     }
   }
 }
 
 .team-section {
-  padding: 8px;
-  border-radius: 8px;
+  padding: 8px; // ✅ COMPACTO: reduzido de 12px para 8px
+  border-radius: 8px; // ✅ COMPACTO: reduzido de 10px para 8px
   border: 2px solid;
   background: rgba(16, 29, 53, 0.6);
   transition: all 0.3s ease;
@@ -980,16 +980,17 @@
   }
 
   .team-header {
-    margin-bottom: 8px;
+    margin-bottom: 4px; // ✅ COMPACTO: reduzido de 8px para 4px
 
     .team-title {
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 12px;
-      font-size: 16px;
+      gap: 8px; // ✅ COMPACTO: reduzido de 12px para 8px
+      font-size: 14px; // ✅ COMPACTO: reduzido de 16px para 14px
       font-weight: 700;
       color: #f0e6d2;
+      line-height: 1.2; // ✅ COMPACTO
 
       .team-color-indicator {
         width: 12px;
@@ -1042,41 +1043,68 @@
 .lane-row {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 2px; // ✅ COMPACTO: reduzido de 4px para 2px
+  margin-bottom: 3px; // ✅ COMPACTO: reduzido de 6px para 3px
 }
 
-.lane-indicator {
-  display: flex;
+// ✅ Lane Badge - DENTRO do card (nova estrutura compacta)
+.lane-badge {
+  display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
-  background: rgba(200, 155, 60, 0.1);
-  border-radius: 4px;
+  gap: 3px;
+  padding: 1px 5px;
+  background: rgba(200, 155, 60, 0.15);
+  border-radius: 3px;
   margin-bottom: 2px;
+  width: fit-content;
 
   .lane-icon {
-    font-size: 12px;
+    font-size: 10px;
   }
 
   .lane-name {
-    font-size: 10px;
+    font-size: 8px;
     color: #c89b3c;
     font-weight: 600;
     text-transform: uppercase;
+    line-height: 1;
+  }
+}
+
+// ⚠️ Lane Indicator - ACIMA do card (estrutura antiga, manter para compatibilidade temporária)
+.lane-indicator {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 5px;
+  background: rgba(200, 155, 60, 0.1);
+  border-radius: 3px;
+  margin-bottom: 1px;
+
+  .lane-icon {
+    font-size: 11px;
+  }
+
+  .lane-name {
+    font-size: 9px;
+    color: #c89b3c;
+    font-weight: 600;
+    text-transform: uppercase;
+    line-height: 1;
   }
 }
 
 .participant-detailed-card {
   display: grid;
-  grid-template-columns: 200px 80px 1fr;
-  gap: 12px;
-  padding: 8px 12px;
+  grid-template-columns: 220px 90px 1fr; // ✅ Compacto: KDA reduzido de 100px para 90px
+  gap: 12px; // ✅ Reduzido de 16px para 12px
+  padding: 6px 12px; // ✅ COMPACTO: reduzido de 10px 16px para 6px 12px
   background: rgba(16, 29, 53, 0.4);
-  border-radius: 8px;
+  border-radius: 6px; // ✅ Reduzido de 8px para 6px
   border: 1px solid rgba(200, 155, 60, 0.2);
   align-items: center;
   transition: all 0.3s ease;
-  min-height: 48px;
+  min-height: 42px; // ✅ COMPACTO: reduzido de 56px para 42px
 
   &:hover {
     background: rgba(30, 35, 47, 0.6);
@@ -1097,14 +1125,14 @@
 
     .champion-avatar {
       position: relative;
-      width: 48px;
-      height: 48px;
+      width: 40px; // ✅ COMPACTO: reduzido de 52px para 40px
+      height: 40px; // ✅ COMPACTO: reduzido de 52px para 40px
       flex-shrink: 0;
 
       .champion-img {
         width: 100%;
         height: 100%;
-        border-radius: 6px;
+        border-radius: 6px; // ✅ COMPACTO: reduzido de 8px para 6px
         border: 2px solid rgba(200, 155, 60, 0.4);
         object-fit: cover;
       }
@@ -1125,15 +1153,15 @@
 
       .champion-level {
         position: absolute;
-        bottom: -4px;
-        right: -4px;
+        bottom: -3px; // ✅ COMPACTO: ajustado
+        right: -3px; // ✅ COMPACTO: ajustado
         background: linear-gradient(135deg, #c89b3c, #f0e6d2);
         color: #1e2328;
-        font-size: 10px;
+        font-size: 9px; // ✅ COMPACTO: reduzido de 10px para 9px
         font-weight: 700;
-        padding: 2px 4px;
-        border-radius: 4px;
-        min-width: 16px;
+        padding: 1px 3px; // ✅ COMPACTO: reduzido de 2px 4px para 1px 3px
+        border-radius: 3px; // ✅ COMPACTO: reduzido de 4px para 3px
+        min-width: 14px; // ✅ COMPACTO: reduzido de 16px para 14px
         text-align: center;
         border: 1px solid rgba(16, 29, 53, 0.6);
         box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
@@ -1143,26 +1171,42 @@
     .champion-info {
       display: flex;
       flex-direction: column;
-      gap: 2px;
+      gap: 1px; // ✅ COMPACTO: reduzido de 2px para 1px
       flex: 1;
 
       .summoner-name {
-        font-size: 14px;
+        font-size: 13px; // ✅ COMPACTO: reduzido de 15px para 13px
         font-weight: 600;
         color: #f0e6d2;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        line-height: 1.2; // ✅ COMPACTO: adicionar line-height compacto
 
         &.current-player-name {
           color: #c89b3c;
         }
+
+        // ✅ Badge "VOCÊ" inline com o nome (nova estrutura)
+        .you-badge {
+          display: inline-block;
+          margin-left: 4px;
+          font-size: 7px;
+          padding: 1px 3px;
+          background: linear-gradient(135deg, #c89b3c, #f0e6d2);
+          color: #1e2328;
+          border-radius: 2px;
+          font-weight: 700;
+          text-transform: uppercase;
+          vertical-align: middle;
+        }
       }
 
       .champion-name {
-        font-size: 12px;
+        font-size: 11px; // ✅ COMPACTO: reduzido de 13px para 11px
         color: #a09b8c;
         font-weight: 500;
+        line-height: 1.2; // ✅ COMPACTO: adicionar line-height compacto
       }
 
       .lane-container {
@@ -1193,45 +1237,50 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 3px;
-      margin-bottom: 4px;
+      gap: 2px; // ✅ COMPACTO: reduzido de 3px para 2px
+      margin-bottom: 2px; // ✅ COMPACTO: reduzido de 4px para 2px
 
       .kills {
         color: #27ae60;
         font-weight: 700;
-        font-size: 15px;
+        font-size: 14px; // ✅ COMPACTO: reduzido de 16px para 14px
+        line-height: 1; // ✅ COMPACTO
       }
 
       .deaths {
         color: #e74c3c;
         font-weight: 700;
-        font-size: 15px;
+        font-size: 14px; // ✅ COMPACTO: reduzido de 16px para 14px
+        line-height: 1; // ✅ COMPACTO
       }
 
       .assists {
         color: #f39c12;
         font-weight: 700;
-        font-size: 15px;
+        font-size: 14px; // ✅ COMPACTO: reduzido de 16px para 14px
+        line-height: 1; // ✅ COMPACTO
       }
 
       .separator {
         color: #a09b8c;
         font-weight: 400;
-        font-size: 13px;
+        font-size: 12px; // ✅ COMPACTO: reduzido de 14px para 12px
+        line-height: 1; // ✅ COMPACTO
       }
     }
 
     .kda-ratio {
-      font-size: 11px;
+      font-size: 10px; // ✅ COMPACTO: reduzido de 12px para 10px
       color: #c9aa71;
       font-weight: 600;
+      line-height: 1; // ✅ COMPACTO
     }
   }
 
   .items-section-detailed {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 8px;
+    gap: 4px; // ✅ COMPACTO: reduzido de 8px para 4px
     width: 100%;
     justify-items: end;
     align-items: center;
@@ -1239,18 +1288,18 @@
     .items-row {
       display: grid;
       grid-template-columns: repeat(6, 1fr);
-      gap: 1px;
+      gap: 2px; // ✅ COMPACTO: reduzido de 3px para 2px
       width: 100%;
-      max-width: 150px;
+      max-width: 168px; // ✅ COMPACTO: reduzido de 200px para 168px (6*26px + 5*2px)
       grid-column: 1 / -1;
       justify-self: end;
 
       .item-slot-detailed {
-        width: 24px;
-        height: 24px;
+        width: 26px; // ✅ COMPACTO: reduzido de 30px para 26px
+        height: 26px; // ✅ COMPACTO: reduzido de 30px para 26px
         background: linear-gradient(135deg, rgba(15, 20, 25, 0.9), rgba(30, 35, 40, 0.7));
         border: 1px solid rgba(200, 155, 60, 0.3);
-        border-radius: 3px;
+        border-radius: 3px; // ✅ COMPACTO: reduzido de 4px para 3px
         overflow: hidden;
         transition: all 0.2s ease;
 
@@ -1275,18 +1324,58 @@
       }
     }
 
+    // ✅ Stats em LINHA ÚNICA (nova estrutura horizontal compacta)
+    .stats-row-horizontal {
+      display: flex;
+      gap: 2px;
+      grid-column: 1 / -1;
+      width: 100%;
+      max-width: 168px;
+      justify-self: end;
+
+      .stat-compact {
+        flex: 1;
+        text-align: center;
+        padding: 2px 3px; // ✅ ULTRA COMPACTO
+        background: rgba(15, 25, 35, 0.6);
+        border-radius: 3px;
+        border: 1px solid rgba(200, 155, 60, 0.15);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+
+        .stat-label {
+          font-size: 7px; // ✅ ULTRA COMPACTO
+          color: #a09b8c;
+          text-transform: uppercase;
+          font-weight: 600;
+          line-height: 1;
+          margin-bottom: 1px;
+        }
+
+        .stat-value {
+          font-size: 9px; // ✅ ULTRA COMPACTO
+          font-weight: 700;
+          color: #f0e6d2;
+          line-height: 1;
+        }
+      }
+    }
+
+    // ⚠️ Stats Section antiga (grid 2x2, manter para compatibilidade temporária)
     .stats-section {
       display: grid;
       grid-template-columns: 1fr 1fr;
       grid-column: 1 / -1;
       gap: 2px;
       width: 100%;
-      max-width: 150px;
+      max-width: 168px;
       justify-self: end;
 
       .stat-item {
         text-align: center;
-        padding: 4px 3px;
+        padding: 3px 4px;
         background: rgba(15, 25, 35, 0.6);
         border-radius: 3px;
         border: 1px solid rgba(200, 155, 60, 0.15);
@@ -1298,6 +1387,7 @@
           margin-bottom: 1px;
           text-transform: uppercase;
           font-weight: 600;
+          line-height: 1;
         }
 
         .stat-value {
@@ -1305,6 +1395,7 @@
           font-size: 10px;
           font-weight: 700;
           color: #f0e6d2;
+          line-height: 1.1;
         }
       }
     }
