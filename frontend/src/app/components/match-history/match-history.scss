@@ -392,6 +392,35 @@
               border-radius: 4px;
               border: 1px solid rgba(200, 155, 60, 0.3);
             }
+
+            .lane-badge-history {
+              font-size: 10px;
+              padding: 2px 6px;
+              border-radius: 4px;
+              font-weight: 600;
+              margin-top: 4px;
+              white-space: nowrap;
+              display: inline-block;
+              text-align: center;
+
+              &.badge-primary {
+                background: rgba(76, 175, 80, 0.15);
+                color: #4caf50;
+                border: 1px solid rgba(76, 175, 80, 0.3);
+              }
+
+              &.badge-secondary {
+                background: rgba(33, 150, 243, 0.15);
+                color: #2196f3;
+                border: 1px solid rgba(33, 150, 243, 0.3);
+              }
+
+              &.badge-autofill {
+                background: rgba(255, 152, 0, 0.15);
+                color: #ff9800;
+                border: 1px solid rgba(255, 152, 0, 0.3);
+              }
+            }
           }
 
           // KDA Badges (multikills)
@@ -1601,13 +1630,38 @@
       font-weight: 600;
       line-height: 1.1;
     }
-  }// Items section detailed - EXPANDED with stats in 2 columns aligned right
+
+    .lane-badge-detailed {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+      margin-top: 4px;
+      white-space: nowrap;
+      line-height: 1.1;
+
+      &.badge-primary {
+        background: rgba(76, 175, 80, 0.15);
+        color: #4caf50;
+        border: 1px solid rgba(76, 175, 80, 0.3);
+      }
+
+      &.badge-secondary {
+        background: rgba(33, 150, 243, 0.15);
+        color: #2196f3;
+        border: 1px solid rgba(33, 150, 243, 0.3);
+      }
+
+      &.badge-autofill {
+        background: rgba(255, 152, 0, 0.15);
+        color: #ff9800;
+        border: 1px solid rgba(255, 152, 0, 0.3);
+      }
+    }
+  }
+
+  // Items section detailed - EXPANDED with stats in 2 columns aligned right
   .items-section-detailed {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-    width: 100%;
-    justify-items: end;
     align-items: center;
 
     .items-row {

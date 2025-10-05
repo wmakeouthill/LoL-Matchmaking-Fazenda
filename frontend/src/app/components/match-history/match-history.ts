@@ -491,6 +491,9 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
         fullPlayerName,
         foundPlayer: !!playerData,
         playerChampion: playerData?.championId,
+        playerChampionName: playerData?.championName,
+        playerLaneBadge: playerData?.laneBadge,
+        playerAssignedLane: playerData?.assignedLane,
         playerTeam,
         playerWon
       });
@@ -530,7 +533,8 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
             item4: p.item4 || 0,
             item5: p.item5 || 0,
             spell1Id: p.spell1Id || 0,
-            spell2Id: p.spell2Id || 0
+            spell2Id: p.spell2Id || 0,
+            laneBadge: p.laneBadge || null
           };
         }),
 
@@ -562,7 +566,8 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
             item4: p.item4 || 0,
             item5: p.item5 || 0,
             spell1Id: p.spell1Id || 0,
-            spell2Id: p.spell2Id || 0
+            spell2Id: p.spell2Id || 0,
+            laneBadge: p.laneBadge || null
           };
         }),
 
@@ -578,8 +583,8 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
         // Stats do jogador atual para exibição na linha principal
         playerStats: playerData ? {
           championId: playerData.championId,
-          champion: this.championService.getChampionName(playerData.championId),
-          championName: this.championService.getChampionName(playerData.championId),
+          champion: playerData.championName || this.championService.getChampionName(playerData.championId),
+          championName: playerData.championName || this.championService.getChampionName(playerData.championId),
           kills: playerData.kills || 0,
           deaths: playerData.deaths || 0,
           assists: playerData.assists || 0,
@@ -610,7 +615,9 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
           wardsKilled: 0,
           visionScore: playerData.visionScore || 0,
           spell1Id: playerData.spell1Id || 0,
-          spell2Id: playerData.spell2Id || 0
+          spell2Id: playerData.spell2Id || 0,
+          laneBadge: playerData.laneBadge || null,
+          lane: playerData.lane || playerData.assignedLane || null
         } : {
           champion: 'Unknown',
           championName: 'Unknown',
@@ -622,6 +629,12 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
           lpChange: 0
         }
       };
+
+      console.log('📊 [mapApiMatchesToModel] playerStats criado:', {
+        championName: mappedMatch.playerStats.championName,
+        laneBadge: mappedMatch.playerStats.laneBadge,
+        lane: mappedMatch.playerStats.lane
+      });
 
       return mappedMatch;
     });
@@ -1706,6 +1719,15 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
       case 'ADC': return 'ADC';
       case 'SUPPORT': return 'Support';
       default: return 'Unknown';
+    }
+  }
+
+  getLaneBadgeText(badge: string): string {
+    switch (badge) {
+      case 'primary': return 'Principal';
+      case 'secondary': return 'Secundária';
+      case 'autofill': return 'Autofill';
+      default: return '';
     }
   }
 

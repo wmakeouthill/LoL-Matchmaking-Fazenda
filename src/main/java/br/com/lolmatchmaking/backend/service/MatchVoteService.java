@@ -228,22 +228,43 @@ public class MatchVoteService {
             }
 
             // 3. Mesclar: usar pick_ban_data como base e complementar com LCU stats
-            if (pickBanData != null && pickBanData.has("team1") && pickBanData.has("team2")) {
+            if (pickBanData != null) {
                 log.info("🔄 Mesclando pick/ban data com LCU stats");
 
-                // Processar Team 1 (Blue)
-                JsonNode team1 = pickBanData.get("team1");
-                if (team1.isArray()) {
-                    for (JsonNode player : team1) {
+                // Estrutura: { "blue": { "players": [...] }, "red": { "players": [...] } }
+                // OU estrutura antiga: { "team1": [...], "team2": [...] }
+
+                JsonNode blueTeam = null;
+                JsonNode redTeam = null;
+
+                // Tentar nova estrutura primeiro
+                if (pickBanData.has("blue") && pickBanData.get("blue").has("players")) {
+                    blueTeam = pickBanData.get("blue").get("players");
+                    log.info("✅ Usando estrutura nova: blue.players");
+                } else if (pickBanData.has("team1")) {
+                    blueTeam = pickBanData.get("team1");
+                    log.info("✅ Usando estrutura antiga: team1");
+                }
+
+                if (pickBanData.has("red") && pickBanData.get("red").has("players")) {
+                    redTeam = pickBanData.get("red").get("players");
+                    log.info("✅ Usando estrutura nova: red.players");
+                } else if (pickBanData.has("team2")) {
+                    redTeam = pickBanData.get("team2");
+                    log.info("✅ Usando estrutura antiga: team2");
+                }
+
+                // Processar Team Blue (100)
+                if (blueTeam != null && blueTeam.isArray()) {
+                    for (JsonNode player : blueTeam) {
                         Map<String, Object> participantData = mergePlayerData(player, lcuStatsMap, 100);
                         participantsList.add(participantData);
                     }
                 }
 
-                // Processar Team 2 (Red)
-                JsonNode team2 = pickBanData.get("team2");
-                if (team2.isArray()) {
-                    for (JsonNode player : team2) {
+                // Processar Team Red (200)
+                if (redTeam != null && redTeam.isArray()) {
+                    for (JsonNode player : redTeam) {
                         Map<String, Object> participantData = mergePlayerData(player, lcuStatsMap, 200);
                         participantsList.add(participantData);
                     }
@@ -308,8 +329,12 @@ public class MatchVoteService {
         participantData.put("riotIdTagline", tagLine);
         participantData.put("assignedLane", player.path("assignedLane").asText(""));
         participantData.put("primaryLane", player.path("primaryLane").asText(""));
+        participantData.put("secondaryLane", player.path("secondaryLane").asText(""));
+        participantData.put("laneBadge", player.path("laneBadge").asText(null));
         participantData.put("mmr", player.path("mmr").asInt(1500));
         participantData.put("teamId", teamId);
+
+        log.info("🏷️ [MERGE] laneBadge para {}: {}", summonerName, player.path("laneBadge").asText("N/A"));
 
         // Champion do pick/ban
         int pickBanChampionId = 0;
@@ -329,7 +354,20 @@ public class MatchVoteService {
 
         if (!lcuStats.isEmpty()) {
             log.info("✅ Stats do LCU encontrados para {}", summonerName);
+
+            // Preservar championName e championId do pick/ban se já existirem
+            Object existingChampionId = participantData.get("championId");
+            Object existingChampionName = participantData.get("championName");
+
             participantData.putAll(lcuStats);
+
+            // Restaurar championName e championId do pick/ban se foram sobrescritos
+            if (existingChampionId != null) {
+                participantData.put("championId", existingChampionId);
+            }
+            if (existingChampionName != null && !existingChampionName.toString().isEmpty()) {
+                participantData.put("championName", existingChampionName);
+            }
         } else {
             log.warn("⚠️ Stats do LCU não encontrados para {}, usando valores padrão", summonerName);
             // Valores padrão quando LCU data não está disponível
