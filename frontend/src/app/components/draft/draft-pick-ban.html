@@ -82,9 +82,20 @@
               <div class="pick-info">
                 <span class="champion-name">{{ champ.name }}</span>
                 <span class="player-name">{{ player.summonerName }}</span>
-                <span class="player-lane"
-                  >{{ getLaneDisplayWithAutofill(player) }}</span
-                >
+                <div class="lane-info">
+                  <span class="player-lane">{{ getLaneDisplayWithAutofill(player) }}</span>
+                  <span
+                    class="lane-badge"
+                    [ngClass]="{
+                      'badge-primary': player.laneBadge === 'primary',
+                      'badge-secondary': player.laneBadge === 'secondary',
+                      'badge-autofill': player.laneBadge === 'autofill'
+                    }"
+                    *ngIf="player.laneBadge"
+                  >
+                    {{ getLaneBadgeText(player.laneBadge) }}
+                  </span>
+                </div>
               </div>
             </ng-container>
             <ng-template #pickPlaceholder>
@@ -92,9 +103,20 @@
               <div class="pick-info">
                 <span class="champion-name">Aguardando Pick</span>
                 <span class="player-name">{{ player.summonerName }}</span>
-                <span class="player-lane"
-                  >{{ getLaneDisplayWithAutofill(player) }}</span
-                >
+                <div class="lane-info">
+                  <span class="player-lane">{{ getLaneDisplayWithAutofill(player) }}</span>
+                  <span
+                    class="lane-badge"
+                    [ngClass]="{
+                      'badge-primary': player.laneBadge === 'primary',
+                      'badge-secondary': player.laneBadge === 'secondary',
+                      'badge-autofill': player.laneBadge === 'autofill'
+                    }"
+                    *ngIf="player.laneBadge"
+                  >
+                    {{ getLaneBadgeText(player.laneBadge) }}
+                  </span>
+                </div>
               </div>
             </ng-template>
           </div>
@@ -151,9 +173,20 @@
               <div class="pick-info">
                 <span class="champion-name">{{ champ.name }}</span>
                 <span class="player-name">{{ player.summonerName }}</span>
-                <span class="player-lane"
-                  >{{ getLaneDisplayWithAutofill(player) }}</span
-                >
+                <div class="lane-info">
+                  <span class="player-lane">{{ getLaneDisplayWithAutofill(player) }}</span>
+                  <span
+                    class="lane-badge"
+                    [ngClass]="{
+                      'badge-primary': player.laneBadge === 'primary',
+                      'badge-secondary': player.laneBadge === 'secondary',
+                      'badge-autofill': player.laneBadge === 'autofill'
+                    }"
+                    *ngIf="player.laneBadge"
+                  >
+                    {{ getLaneBadgeText(player.laneBadge) }}
+                  </span>
+                </div>
               </div>
             </ng-container>
             <ng-template #pickPlaceholderRed>
@@ -161,9 +194,20 @@
               <div class="pick-info">
                 <span class="champion-name">Aguardando Pick</span>
                 <span class="player-name">{{ player.summonerName }}</span>
-                <span class="player-lane"
-                  >{{ getLaneDisplayWithAutofill(player) }}</span
-                >
+                <div class="lane-info">
+                  <span class="player-lane">{{ getLaneDisplayWithAutofill(player) }}</span>
+                  <span
+                    class="lane-badge"
+                    [ngClass]="{
+                      'badge-primary': player.laneBadge === 'primary',
+                      'badge-secondary': player.laneBadge === 'secondary',
+                      'badge-autofill': player.laneBadge === 'autofill'
+                    }"
+                    *ngIf="player.laneBadge"
+                  >
+                    {{ getLaneBadgeText(player.laneBadge) }}
+                  </span>
+                </div>
               </div>
             </ng-template>
           </div>
