@@ -346,6 +346,7 @@
     [matchId]="gameData?.matchId || null"
     [customMatches]="customMatchesForConfirmation"
     [currentPlayers]="getAllPlayers()"
+    [currentPlayer]="currentPlayer"
     (onConfirm)="onWinnerConfirmed($event)"
     (onCancel)="onWinnerConfirmationCancelled()">
   </app-winner-confirmation-modal>
