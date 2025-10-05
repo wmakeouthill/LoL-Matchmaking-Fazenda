@@ -52,6 +52,17 @@
           <div class="player-lane">
             <span class="lane-icon">{{ getLaneIcon(player.assignedLane || player.lane || player.role) }}</span>
             <span class="lane-name">{{ getLaneName(player.assignedLane || player.lane || player.role) }}</span>
+            <span
+              class="lane-badge"
+              [ngClass]="{
+                'badge-primary': player.laneBadge === 'primary',
+                'badge-secondary': player.laneBadge === 'secondary',
+                'badge-autofill': player.laneBadge === 'autofill'
+              }"
+              *ngIf="player.laneBadge"
+            >
+              {{ getLaneBadgeText(player.laneBadge) }}
+            </span>
           </div>
           <div class="player-info">
             <ng-container *ngIf="!isPlayerBot(player); else botIcon">
@@ -112,6 +123,17 @@
           <div class="player-lane">
             <span class="lane-icon">{{ getLaneIcon(player.assignedLane || player.lane || player.role) }}</span>
             <span class="lane-name">{{ getLaneName(player.assignedLane || player.lane || player.role) }}</span>
+            <span
+              class="lane-badge"
+              [ngClass]="{
+                'badge-primary': player.laneBadge === 'primary',
+                'badge-secondary': player.laneBadge === 'secondary',
+                'badge-autofill': player.laneBadge === 'autofill'
+              }"
+              *ngIf="player.laneBadge"
+            >
+              {{ getLaneBadgeText(player.laneBadge) }}
+            </span>
           </div>
           <div class="player-info">
             <ng-container *ngIf="!isPlayerBot(player); else botIconRed">

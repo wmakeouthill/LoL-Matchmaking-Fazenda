@@ -64,9 +64,12 @@ public class MatchFoundService {
             allPlayers.addAll(team1);
             allPlayers.addAll(team2);
 
+            // ✅ CORREÇÃO: Atualizar apenas o status, sem fazer save (jogadores já estão na
+            // sessão JPA)
             for (QueuePlayer player : allPlayers) {
                 player.setAcceptanceStatus(-1); // -1 = aguardando aceitação (para não ser selecionado novamente)
-                queuePlayerRepository.save(player);
+                // NÃO fazer save aqui - os jogadores já estão gerenciados pelo contexto JPA
+                // O flush acontecerá automaticamente no final da transação
             }
 
             // Criar tracking local
@@ -422,7 +425,7 @@ public class MatchFoundService {
                         .collect(Collectors.toList());
 
                 Integer currentIndex = draftState.getCurrentIndex();
-                
+
                 // ✅ CRÍTICO: Calcular o jogador da vez inicial (ação 0)
                 String currentPlayer = null;
                 if (currentIndex < draftState.getActions().size()) {
@@ -496,6 +499,10 @@ public class MatchFoundService {
                 playerObj.put("primaryLane", p.getPrimaryLane() != null ? p.getPrimaryLane() : "fill");
                 playerObj.put("secondaryLane", p.getSecondaryLane() != null ? p.getSecondaryLane() : "fill");
                 playerObj.put("isAutofill", p.getIsAutofill() != null ? p.getIsAutofill() : false);
+                playerObj.put("laneBadge", calculateLaneBadge(
+                        p.getAssignedLane(),
+                        p.getPrimaryLane(),
+                        p.getSecondaryLane()));
 
                 // ✅ Adicionar playerId se disponível (para jogadores reais, não bots)
                 if (p.getPlayerId() != null) {
@@ -516,6 +523,10 @@ public class MatchFoundService {
                 playerObj.put("primaryLane", p.getPrimaryLane() != null ? p.getPrimaryLane() : "fill");
                 playerObj.put("secondaryLane", p.getSecondaryLane() != null ? p.getSecondaryLane() : "fill");
                 playerObj.put("isAutofill", p.getIsAutofill() != null ? p.getIsAutofill() : false);
+                playerObj.put("laneBadge", calculateLaneBadge(
+                        p.getAssignedLane(),
+                        p.getPrimaryLane(),
+                        p.getSecondaryLane()));
 
                 // ✅ Adicionar playerId se disponível (para jogadores reais, não bots)
                 if (p.getPlayerId() != null) {
@@ -786,5 +797,44 @@ public class MatchFoundService {
         public void setTeam2(List<String> team2) {
             this.team2 = team2;
         }
+    }
+
+    /**
+     * ✅ NOVO: Calcula o tipo de badge de lane para um jogador
+     * 
+     * @param assignedLane  Lane atribuída ao jogador
+     * @param primaryLane   Lane primária preferida
+     * @param secondaryLane Lane secundária preferida
+     * @return "primary", "secondary" ou "autofill"
+     */
+    private static String calculateLaneBadge(String assignedLane, String primaryLane, String secondaryLane) {
+        if (assignedLane == null || assignedLane.isEmpty()) {
+            return "autofill";
+        }
+
+        String normalizedAssigned = normalizeLaneForBadge(assignedLane);
+        String normalizedPrimary = normalizeLaneForBadge(primaryLane != null ? primaryLane : "");
+        String normalizedSecondary = normalizeLaneForBadge(secondaryLane != null ? secondaryLane : "");
+
+        if (normalizedAssigned.equals(normalizedPrimary)) {
+            return "primary";
+        } else if (normalizedAssigned.equals(normalizedSecondary)) {
+            return "secondary";
+        } else {
+            return "autofill";
+        }
+    }
+
+    /**
+     * ✅ NOVO: Normaliza nome de lane para comparação de badge
+     * 
+     * @param lane Nome da lane
+     * @return Lane normalizada (lowercase, adc -> bot)
+     */
+    private static String normalizeLaneForBadge(String lane) {
+        if (lane == null)
+            return "";
+        String normalized = lane.toLowerCase().trim();
+        return normalized.equals("adc") ? "bot" : normalized;
     }
 }

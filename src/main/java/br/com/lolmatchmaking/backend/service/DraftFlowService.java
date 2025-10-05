@@ -1039,7 +1039,17 @@ public class DraftFlowService {
             cleanPlayer.put("playerId", player.get("playerId"));
             cleanPlayer.put("mmr", player.get("mmr"));
             cleanPlayer.put("assignedLane", player.get("assignedLane"));
+            cleanPlayer.put("primaryLane", player.get("primaryLane"));
+            cleanPlayer.put("secondaryLane", player.get("secondaryLane"));
+            cleanPlayer.put("isAutofill", player.get("isAutofill"));
             cleanPlayer.put("teamIndex", player.get("teamIndex"));
+
+            // ✅ NOVO: Calcular e adicionar laneBadge
+            String laneBadge = calculateLaneBadge(
+                    (String) player.get("assignedLane"),
+                    (String) player.get("primaryLane"),
+                    (String) player.get("secondaryLane"));
+            cleanPlayer.put("laneBadge", laneBadge);
 
             // ✅ ADICIONAR gameName e tagLine se existirem no formato summonerName
             if (playerName.contains("#")) {
@@ -1787,5 +1797,44 @@ public class DraftFlowService {
         } catch (Exception e) {
             log.error("❌ [DraftFlow] Erro ao broadcast match_cancelled", e);
         }
+    }
+
+    /**
+     * ✅ NOVO: Calcula o tipo de badge de lane para um jogador
+     * 
+     * @param assignedLane  Lane atribuída ao jogador
+     * @param primaryLane   Lane primária preferida
+     * @param secondaryLane Lane secundária preferida
+     * @return "primary", "secondary" ou "autofill"
+     */
+    private static String calculateLaneBadge(String assignedLane, String primaryLane, String secondaryLane) {
+        if (assignedLane == null || assignedLane.isEmpty()) {
+            return "autofill";
+        }
+
+        String normalizedAssigned = normalizeLaneForBadge(assignedLane);
+        String normalizedPrimary = normalizeLaneForBadge(primaryLane != null ? primaryLane : "");
+        String normalizedSecondary = normalizeLaneForBadge(secondaryLane != null ? secondaryLane : "");
+
+        if (normalizedAssigned.equals(normalizedPrimary)) {
+            return "primary";
+        } else if (normalizedAssigned.equals(normalizedSecondary)) {
+            return "secondary";
+        } else {
+            return "autofill";
+        }
+    }
+
+    /**
+     * ✅ NOVO: Normaliza nome de lane para comparação de badge
+     * 
+     * @param lane Nome da lane
+     * @return Lane normalizada (lowercase, adc -> bot)
+     */
+    private static String normalizeLaneForBadge(String lane) {
+        if (lane == null)
+            return "";
+        String normalized = lane.toLowerCase().trim();
+        return normalized.equals("adc") ? "bot" : normalized;
     }
 }

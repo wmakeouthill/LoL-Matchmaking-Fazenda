@@ -268,6 +268,45 @@
             color: #f0e6d2;
             font-size: 14px;
           }
+
+          // ✅ NOVO: Container para lane badge ficar inline
+          .lane-info {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+          }
+
+          // ✅ NOVO: Estilos para lane badge
+          .lane-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 9px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+            white-space: nowrap;
+            flex-shrink: 0;
+
+            &.badge-primary {
+              background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+              color: white;
+              border: 1px solid rgba(76, 175, 80, 0.3);
+            }
+
+            &.badge-secondary {
+              background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
+              color: white;
+              border: 1px solid rgba(33, 150, 243, 0.3);
+            }
+
+            &.badge-autofill {
+              background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);
+              color: white;
+              border: 1px solid rgba(255, 152, 0, 0.3);
+            }
+          }
         }
 
         .player-champion {

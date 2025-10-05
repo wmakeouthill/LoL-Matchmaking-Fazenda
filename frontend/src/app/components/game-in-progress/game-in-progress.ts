@@ -2057,4 +2057,16 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     };
   }
   */
+
+  /**
+   * ✅ NOVO: Retorna o texto do badge de lane
+   */
+  getLaneBadgeText(laneBadge: string): string {
+    switch (laneBadge) {
+      case 'primary': return '1ª Lane';
+      case 'secondary': return '2ª Lane';
+      case 'autofill': return 'Auto-fill';
+      default: return '';
+    }
+  }
 }

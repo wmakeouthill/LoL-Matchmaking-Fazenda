@@ -2781,4 +2781,16 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     logDraft('🔄 [DraftPickBan] Sincronização de dados processada com sucesso');
     saveLogToRoot(`✅ [handleDraftDataSync] Sincronização concluída`);
   }
+
+  /**
+   * ✅ NOVO: Retorna o texto do badge de lane
+   */
+  getLaneBadgeText(laneBadge: string): string {
+    switch (laneBadge) {
+      case 'primary': return '1ª Lane';
+      case 'secondary': return '2ª Lane';
+      case 'autofill': return 'Auto-fill';
+      default: return '';
+    }
+  }
 }
