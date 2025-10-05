@@ -54,12 +54,28 @@ public class CompatibilityController {
             @RequestParam(defaultValue = "20") int limit) {
         try {
             Page<MatchDTO> p = matchHistoryService.getMatchesByPlayer(identifier, offset, limit);
-            return ResponseEntity.ok(Map.of("success", true, "data", p.getContent(), "total", p.getTotalElements()));
+            Map<String, Object> pagination = Map.of(
+                    "page", p.getNumber(),
+                    "size", p.getSize(),
+                    "total", p.getTotalElements(),
+                    "totalPages", p.getTotalPages());
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "matches", p.getContent(),
+                    "pagination", pagination));
         } catch (IllegalArgumentException iae) {
             log.warn("Cache not configured or unavailable, using no-cache fallback for matches by player: {}",
                     identifier);
             Page<MatchDTO> p = matchHistoryService.getMatchesByPlayerNoCache(identifier, offset, limit);
-            return ResponseEntity.ok(Map.of("success", true, "data", p.getContent(), "total", p.getTotalElements()));
+            Map<String, Object> pagination = Map.of(
+                    "page", p.getNumber(),
+                    "size", p.getSize(),
+                    "total", p.getTotalElements(),
+                    "totalPages", p.getTotalPages());
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "matches", p.getContent(),
+                    "pagination", pagination));
         }
     }
 
