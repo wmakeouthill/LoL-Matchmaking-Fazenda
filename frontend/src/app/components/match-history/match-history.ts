@@ -583,8 +583,8 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
         // Stats do jogador atual para exibição na linha principal
         playerStats: playerData ? {
           championId: playerData.championId,
-          champion: playerData.championName || this.championService.getChampionName(playerData.championId),
-          championName: playerData.championName || this.championService.getChampionName(playerData.championId),
+          champion: this.championService.getChampionName(playerData.championId) || playerData.championName,
+          championName: this.championService.getChampionName(playerData.championId) || playerData.championName,
           kills: playerData.kills || 0,
           deaths: playerData.deaths || 0,
           assists: playerData.assists || 0,
