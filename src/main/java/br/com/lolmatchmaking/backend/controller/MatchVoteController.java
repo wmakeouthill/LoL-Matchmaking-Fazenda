@@ -33,7 +33,7 @@ public class MatchVoteController {
     /**
      * DTO para requisição de voto
      */
-    record VoteRequest(Long playerId, Long lcuGameId) {
+    record VoteRequest(String summonerName, Long lcuGameId) {
     }
 
     /**
@@ -51,45 +51,67 @@ public class MatchVoteController {
             @PathVariable Long matchId,
             @RequestBody VoteRequest request) {
 
-        log.info("🗳️ [MatchVoteController] Voto recebido: matchId={}, playerId={}, lcuGameId={}",
-                matchId, request.playerId(), request.lcuGameId());
+        log.info("🗳️ [MatchVoteController] Voto recebido: matchId={}, summonerName={}, lcuGameId={}",
+                matchId, request.summonerName(), request.lcuGameId());
 
         try {
+            log.info("🔵 [MatchVoteController] DENTRO DO TRY - iniciando validações");
+
             // Validar parâmetros
-            if (request.playerId() == null || request.lcuGameId() == null) {
+            log.info("🔵 [MatchVoteController] Validando parâmetros: summonerName='{}', lcuGameId={}",
+                    request.summonerName(), request.lcuGameId());
+            if (request.summonerName() == null || request.summonerName().isEmpty() || request.lcuGameId() == null) {
+                log.warn("❌ [MatchVoteController] Validação falhou - parâmetros inválidos");
                 return ResponseEntity.badRequest()
-                        .body(Map.of(KEY_ERROR, "playerId e lcuGameId são obrigatórios"));
+                        .body(Map.of(KEY_ERROR, "summonerName e lcuGameId são obrigatórios"));
             }
+            log.info("✅ [MatchVoteController] Validação OK - buscando partida com ID: {}", matchId);
 
             // Verificar se a partida existe
             Match match = matchRepository.findById(matchId).orElse(null);
+            log.info("🔵 [MatchVoteController] Partida buscada: {}", match != null ? "encontrada" : "NÃO encontrada");
             if (match == null) {
+                log.error("❌ [MatchVoteController] Partida não encontrada: matchId={}", matchId);
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(Map.of(KEY_ERROR, "Partida não encontrada"));
             }
+            log.info("✅ [MatchVoteController] Partida encontrada: ID={}, Status={}", match.getId(), match.getStatus());
 
-            // Verificar se o jogador existe
-            Player player = playerRepository.findById(request.playerId()).orElse(null);
+            // Verificar se o jogador existe pelo summoner name
+            log.info("🔍 [MatchVoteController] Buscando jogador: '{}'", request.summonerName());
+            Player player = playerRepository.findBySummonerNameIgnoreCase(request.summonerName()).orElse(null);
             if (player == null) {
+                log.error("❌ [MatchVoteController] Jogador não encontrado no banco: '{}'", request.summonerName());
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                        .body(Map.of(KEY_ERROR, "Jogador não encontrado"));
+                        .body(Map.of(KEY_ERROR, "Jogador não encontrado: " + request.summonerName()));
             }
+            log.info("✅ [MatchVoteController] Jogador encontrado: ID={}, SummonerName='{}'", player.getId(),
+                    player.getSummonerName());
 
-            // Processar o voto
+            // Processar o voto usando o playerId obtido
             Map<String, Object> voteResult = matchVoteService.processVote(
                     matchId,
-                    request.playerId(),
+                    player.getId(),
                     request.lcuGameId());
 
             boolean shouldLink = (boolean) voteResult.getOrDefault("shouldLink", false);
             int voteCount = (int) voteResult.getOrDefault("voteCount", 0);
             Long votedGameId = (Long) voteResult.get("lcuGameId");
+            boolean isSpecialUserVote = (boolean) voteResult.getOrDefault("specialUserVote", false);
 
-            log.info("✅ Voto registrado: voteCount={}, shouldLink={}", voteCount, shouldLink);
+            if (isSpecialUserVote) {
+                log.info("🌟 Voto de SPECIAL USER detectado! Finalizando partida imediatamente...");
+            } else {
+                log.info("✅ Voto registrado: voteCount={}, shouldLink={}", voteCount, shouldLink);
+            }
 
-            // Se atingiu 5 votos, buscar dados do LCU e vincular
+            // Se atingiu 5 votos OU é special user, buscar dados do LCU e vincular
             if (shouldLink) {
-                log.info("🎯 Limite de 5 votos atingido! Vinculando partida automaticamente...");
+                if (isSpecialUserVote) {
+                    log.info("🌟 SPECIAL USER finalizou a votação! Vinculando partida automaticamente...");
+                } else {
+                    log.info("🎯 Limite de 5 votos atingido! Vinculando partida automaticamente...");
+                }
 
                 try {
                     // Buscar histórico de partidas do LCU

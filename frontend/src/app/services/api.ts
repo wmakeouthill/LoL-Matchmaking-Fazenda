@@ -1,6 +1,6 @@
 import { Injectable, Inject } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { Observable, throwError, Subject, firstValueFrom, of, forkJoin } from 'rxjs';
+import { Observable, throwError, Subject, firstValueFrom, of, forkJoin, from } from 'rxjs';
 import { catchError, retry, map, switchMap, tap } from 'rxjs/operators';
 import { Player, RefreshPlayerResponse } from '../interfaces';
 
@@ -1627,23 +1627,104 @@ export class ApiService {
    * Votar em uma partida LCU para vincular à partida customizada
    */
   voteForMatch(matchId: number, lcuGameId: number): Observable<any> {
-    return this.http.post(`${this.baseUrl}/api/matches/${matchId}/vote`, {
-      playerId: this.getCurrentPlayerId(),
+    // Se estiver no Electron, buscar summoner direto do LCU primeiro
+    if (this.isElectron() && (window as any).electronAPI?.lcu?.getCurrentSummoner) {
+      console.log('🔄 [API] Buscando summoner atual do LCU via Electron gateway...');
+
+      return from((window as any).electronAPI.lcu.getCurrentSummoner()).pipe(
+        switchMap((lcuData: any) => {
+          const summonerName = lcuData.gameName && lcuData.tagLine
+            ? `${lcuData.gameName}#${lcuData.tagLine}`
+            : lcuData.displayName;
+
+          console.log(`🗳️ [API] Summoner obtido do LCU: ${summonerName}`);
+          console.log(`🗳️ [API] Preparando voto - Match: ${matchId}, LCU Game: ${lcuGameId}`);
+
+          return this.http.post(`${this.baseUrl}/match/${matchId}/vote`, {
+            summonerName: summonerName,
+            lcuGameId: lcuGameId
+          });
+        }),
+        tap(() => console.log(`✅ [API] Voto registrado: Match ${matchId}, LCU Game ${lcuGameId}`)),
+        catchError(error => {
+          console.error(`❌ [API] Erro ao votar:`, error);
+          console.error(`❌ [API] Detalhes do erro:`, {
+            status: error?.status,
+            statusText: error?.statusText,
+            message: error?.message,
+            error: error?.error
+          });
+          return throwError(() => error);
+        })
+      );
+    }
+
+    // Fallback: modo web ou sem Electron - usar storage
+    const summonerName = this.getCurrentSummonerName();
+    console.log(`🗳️ [API] Preparando voto - Summoner: ${summonerName}, Match: ${matchId}, LCU Game: ${lcuGameId}`);
+
+    return this.http.post(`${this.baseUrl}/match/${matchId}/vote`, {
+      summonerName: summonerName,
       lcuGameId: lcuGameId
     }).pipe(
       tap(() => console.log(`✅ [API] Voto registrado: Match ${matchId}, LCU Game ${lcuGameId}`)),
       catchError(error => {
         console.error(`❌ [API] Erro ao votar:`, error);
+        console.error(`❌ [API] Detalhes do erro:`, {
+          status: error?.status,
+          statusText: error?.statusText,
+          message: error?.message,
+          error: error?.error
+        });
         return throwError(() => error);
       })
     );
+  }
+
+  private getCurrentSummonerName(): string {
+    // 1. Se estiver no Electron, tentar buscar direto do LCU via gateway
+    if (this.isElectron() && (window as any).electronAPI?.lcu?.getCurrentSummoner) {
+      console.log('⚠️ [API] getCurrentSummonerName síncrono - não pode chamar LCU diretamente');
+      console.log('⚠️ [API] Use voteForMatchAsync() para buscar summoner do LCU primeiro');
+    }
+
+    // 2. Tentar obter do currentPlayer (formato gameName#tagLine)
+    const currentPlayerStr = sessionStorage.getItem('currentPlayer') || localStorage.getItem('currentPlayer');
+    if (currentPlayerStr) {
+      try {
+        const currentPlayer = JSON.parse(currentPlayerStr);
+        if (currentPlayer?.summonerName) {
+          console.log('✅ [API] Summoner name obtido do currentPlayer:', currentPlayer.summonerName);
+          return currentPlayer.summonerName;
+        }
+        // Fallback: construir a partir de displayName ou gameName#tagLine
+        if (currentPlayer?.displayName) {
+          console.log('✅ [API] Summoner name obtido do displayName:', currentPlayer.displayName);
+          return currentPlayer.displayName;
+        }
+      } catch (e) {
+        console.error('❌ [API] Erro ao parsear currentPlayer:', e);
+      }
+    }
+
+    // 3. Fallback: tentar obter summonerName direto do storage
+    const summonerName = sessionStorage.getItem('summonerName') || localStorage.getItem('summonerName');
+    if (summonerName) {
+      console.log('✅ [API] Summoner name obtido do storage direto:', summonerName);
+      return summonerName;
+    }
+
+    console.error('❌ [API] Summoner name não encontrado em nenhum storage');
+    console.error('❌ [API] sessionStorage keys:', Object.keys(sessionStorage));
+    console.error('❌ [API] localStorage keys:', Object.keys(localStorage));
+    throw new Error('Summoner name não encontrado. Faça login primeiro.');
   }
 
   /**
    * Obter contadores de votos para uma partida
    */
   getMatchVotes(matchId: number): Observable<{ [lcuGameId: string]: number }> {
-    return this.http.get<{ [lcuGameId: string]: number }>(`${this.baseUrl}/api/matches/${matchId}/votes`).pipe(
+    return this.http.get<{ [lcuGameId: string]: number }>(`${this.baseUrl}/match/${matchId}/votes`).pipe(
       tap(votes => console.log(`📊 [API] Votos recebidos para match ${matchId}:`, votes)),
       catchError(error => {
         console.error(`❌ [API] Erro ao obter votos:`, error);
@@ -1656,7 +1737,7 @@ export class ApiService {
    * Remover voto de uma partida
    */
   removeVote(matchId: number): Observable<any> {
-    return this.http.delete(`${this.baseUrl}/api/matches/${matchId}/vote`, {
+    return this.http.delete(`${this.baseUrl}/match/${matchId}/vote`, {
       body: { playerId: this.getCurrentPlayerId() }
     }).pipe(
       tap(() => console.log(`🗑️ [API] Voto removido: Match ${matchId}`)),
@@ -1671,23 +1752,40 @@ export class ApiService {
    * Obter ID do jogador atual (helper)
    */
   private getCurrentPlayerId(): number {
-    // Assumindo que o player ID está armazenado no sessionStorage ou em um estado
-    const playerIdStr = sessionStorage.getItem('currentPlayerId') || localStorage.getItem('currentPlayerId');
-    if (playerIdStr) {
-      return parseInt(playerIdStr, 10);
-    }
-
-    // Fallback: tentar obter do currentPlayer no sessionStorage
-    const currentPlayerStr = sessionStorage.getItem('currentPlayer');
+    // 1. Tentar obter do currentPlayer no sessionStorage OU localStorage (principal)
+    const currentPlayerStr = sessionStorage.getItem('currentPlayer') || localStorage.getItem('currentPlayer');
     if (currentPlayerStr) {
       try {
         const currentPlayer = JSON.parse(currentPlayerStr);
-        return currentPlayer.id;
+        if (currentPlayer && currentPlayer.id) {
+          console.log('✅ [API] Player ID obtido do currentPlayer:', currentPlayer.id);
+          return currentPlayer.id;
+        }
       } catch (e) {
-        console.error('❌ Erro ao parsear currentPlayer:', e);
+        console.error('❌ [API] Erro ao parsear currentPlayer:', e);
       }
     }
 
+    // 2. Fallback: tentar obter de currentPlayerId direto
+    const playerIdStr = sessionStorage.getItem('currentPlayerId') || localStorage.getItem('currentPlayerId');
+    if (playerIdStr) {
+      const playerId = parseInt(playerIdStr, 10);
+      console.log('✅ [API] Player ID obtido do storage direto:', playerId);
+      return playerId;
+    }
+
+    // 3. Último fallback: verificar se há summoner name no sessionStorage/localStorage
+    const summonerName = sessionStorage.getItem('summonerName') || localStorage.getItem('summonerName');
+    if (summonerName) {
+      // Usar hash simples do summoner name como ID temporário
+      const tempId = summonerName.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+      console.warn('⚠️ [API] Usando ID temporário baseado no summoner name:', tempId);
+      return tempId;
+    }
+
+    console.error('❌ [API] Player ID não encontrado em nenhum storage');
+    console.error('❌ [API] sessionStorage keys:', Object.keys(sessionStorage));
+    console.error('❌ [API] localStorage keys:', Object.keys(localStorage));
     throw new Error('Player ID não encontrado. Faça login primeiro.');
   }
 }

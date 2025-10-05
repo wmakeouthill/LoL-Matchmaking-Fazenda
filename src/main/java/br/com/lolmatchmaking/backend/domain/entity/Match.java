@@ -5,7 +5,7 @@ import lombok.*;
 import java.time.Instant;
 
 @Entity
-@Table(name = "matches")
+@Table(name = "custom_matches")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -16,8 +16,11 @@ public class Match {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "match_id", unique = true, nullable = false)
-    private String matchIdentifier;
+    @Column(name = "title")
+    private String title;
+
+    @Column(name = "description", columnDefinition = "TEXT")
+    private String description;
 
     @Column(name = "team1_players", columnDefinition = "TEXT", nullable = false)
     private String team1PlayersJson;
@@ -28,16 +31,16 @@ public class Match {
     @Column(name = "winner_team")
     private Integer winnerTeam;
 
+    @Column(name = "created_by", nullable = false)
+    private String createdBy;
+
     @Column(name = "average_mmr_team1")
     private Integer averageMmrTeam1;
 
     @Column(name = "average_mmr_team2")
     private Integer averageMmrTeam2;
 
-    @Column(name = "mmr_changes", columnDefinition = "TEXT")
-    private String mmrChangesJson;
-
-    @Column(length = 50)
+    @Column(name = "status", length = 50)
     private String status;
 
     @Column(name = "created_at")
@@ -46,8 +49,38 @@ public class Match {
     @Column(name = "completed_at")
     private Instant completedAt;
 
+    @Column(name = "game_mode", length = 20)
+    private String gameMode;
+
+    @Column(name = "duration")
+    private Integer duration;
+
+    @Column(name = "lp_changes", columnDefinition = "TEXT")
+    private String lpChanges;
+
+    @Column(name = "participants_data", columnDefinition = "TEXT")
+    private String participantsData;
+
     @Column(name = "riot_game_id")
     private String riotGameId;
+
+    @Column(name = "detected_by_lcu")
+    private Boolean detectedByLcu;
+
+    @Column(name = "notes", columnDefinition = "TEXT")
+    private String notes;
+
+    @Column(name = "custom_lp")
+    private Integer customLp;
+
+    @Column(name = "updated_at")
+    private Instant updatedAt;
+
+    @Column(name = "pick_ban_data", columnDefinition = "TEXT")
+    private String pickBanData;
+
+    @Column(name = "linked_results", columnDefinition = "TEXT")
+    private String linkedResults;
 
     @Column(name = "actual_winner")
     private Integer actualWinner;
@@ -58,28 +91,18 @@ public class Match {
     @Column(name = "riot_id")
     private String riotId;
 
-    // Campos adicionais alinhados ao backend Node
-    @Column(name = "pick_ban_data", columnDefinition = "TEXT")
-    private String pickBanDataJson;
+    @Column(name = "mmr_changes", columnDefinition = "TEXT")
+    private String mmrChanges;
 
-    @Column(name = "detected_by_lcu")
-    private Boolean detectedByLcu; // Representa TINYINT (0/1)
+    @Column(name = "match_leader")
+    private String matchLeader;
 
-    @Column(name = "linked_results", columnDefinition = "TEXT")
-    private String linkedResultsJson;
+    @Column(name = "owner_backend_id", length = 100)
+    private String ownerBackendId;
 
-    // ✅ NOVO: Campos para sistema de votação de partidas do LCU
-    /**
-     * ID da partida do LCU que foi vinculada após votação dos jogadores
-     */
-    @Column(name = "linked_lcu_game_id")
-    private Long linkedLcuGameId;
+    @Column(name = "owner_heartbeat")
+    private Long ownerHeartbeat;
 
-    /**
-     * JSON completo com todos os dados da partida do LCU
-     * Inclui: participants, teams, game stats, KDA, items, runes, etc.
-     * Usado para exibir detalhes completos no histórico
-     */
     @Column(name = "lcu_match_data", columnDefinition = "TEXT")
     private String lcuMatchData;
 
