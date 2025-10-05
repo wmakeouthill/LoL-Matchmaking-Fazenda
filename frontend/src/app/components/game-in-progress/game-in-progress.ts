@@ -828,40 +828,80 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     this.isAutoDetecting = true;
 
     try {
-      // ✅ Buscar últimas 3 partidas PERSONALIZADAS do histórico do LCU
-      const historyResponse = await firstValueFrom(this.apiService.getLCUMatchHistoryAll(0, 50, false));
+      // ✅ Buscar últimas partidas COM DETALHES COMPLETOS (todos os 10 jogadores)
+      // IMPORTANTE: getLCUMatchHistoryAll() retorna apenas resumo (1 participant)
+      // Precisamos usar getLCUCustomGamesWithDetails() que faz forkJoin para buscar detalhes completos
+      // customOnly=false significa que busca TODAS as partidas, não apenas custom games
+      logGameInProgress('📥 Buscando histórico de partidas do LCU com detalhes completos...');
+      const historyResponse = await firstValueFrom(
+        this.apiService.getLCUCustomGamesWithDetails(0, 20, false)
+      );
 
       if (!historyResponse?.success || !historyResponse?.matches?.length) {
         logGameInProgress('⚠️ Nenhuma partida encontrada no histórico do LCU');
-        alert('Nenhuma partida encontrada no histórico do LCU. Certifique-se de que o League of Legends está aberto.');
+        alert('Nenhuma partida encontrada no histórico do LCU. Certifique-se de que o League of Legends está aberto e que você jogou partidas recentemente.');
         this.isAutoDetecting = false;
         return;
       }
 
-      // ✅ Filtrar apenas partidas personalizadas (queueId 0 ou gameType CUSTOM_GAME)
-      const customMatches = historyResponse.matches.filter((match: any) =>
-        match.queueId === 0 || match.gameType === 'CUSTOM_GAME'
-      );
+      // ✅ Pegar apenas as últimas 3 partidas (já vem com detalhes completos)
+      const last3Matches = historyResponse.matches.slice(0, 3);
 
-      if (customMatches.length === 0) {
-        logGameInProgress('⚠️ Nenhuma partida personalizada encontrada no histórico');
-        alert('Nenhuma partida personalizada encontrada no histórico do LCU.');
-        this.isAutoDetecting = false;
-        return;
-      }
-
-      // ✅ Pegar apenas as últimas 3
-      const last3CustomMatches = customMatches.slice(0, 3);
-
-      logGameInProgress('🔍 Últimas 3 partidas personalizadas encontradas:', last3CustomMatches.length);
-      logGameInProgress('🔍 Partidas:', last3CustomMatches.map((m: any) => ({
+      logGameInProgress('🔍 Últimas 3 partidas encontradas:', last3Matches.length);
+      logGameInProgress('🔍 Detalhes das partidas:', last3Matches.map((m: any) => ({
         gameId: m.gameId,
         gameCreation: m.gameCreation,
-        participants: m.participants?.length
+        queueId: m.queueId,
+        gameType: m.gameType,
+        participants: m.participants?.length || 0,
+        teams: m.teams?.length || 0
       })));
 
+      // 🐛 DEBUG: Ver estrutura completa da primeira partida
+      if (last3Matches.length > 0) {
+        logGameInProgress('🔍 ESTRUTURA COMPLETA DA PRIMEIRA PARTIDA:');
+        logGameInProgress('  - gameId:', last3Matches[0].gameId);
+        logGameInProgress('  - participants:', last3Matches[0].participants?.length || 0);
+        logGameInProgress('  - teams:', last3Matches[0].teams?.length || 0);
+        logGameInProgress('  - participantIdentities:', last3Matches[0].participantIdentities?.length || 0);
+
+        // Ver as chaves disponíveis
+        logGameInProgress('  - Chaves do objeto:', Object.keys(last3Matches[0]));
+
+        // Ver se tem participants
+        if (last3Matches[0].participants && last3Matches[0].participants.length > 0) {
+          logGameInProgress('  - Primeiro participant:', JSON.stringify(last3Matches[0].participants[0], null, 2));
+        }
+      }
+
+      // ✅ Validar que as partidas têm dados completos (relaxar validação - aceitar 8-10 jogadores)
+      const validMatches = last3Matches.filter((m: any) => {
+        const hasParticipants = m.participants && Array.isArray(m.participants);
+        const participantsCount = hasParticipants ? m.participants.length : 0;
+        const hasEnoughPlayers = participantsCount >= 8; // Aceitar 8, 9 ou 10 jogadores
+
+        logGameInProgress(`🔍 Validando partida ${m.gameId}:`, {
+          hasParticipants,
+          participantsCount,
+          hasEnoughPlayers
+        });
+
+        return hasEnoughPlayers;
+      });
+
+      if (validMatches.length === 0) {
+        logGameInProgress('⚠️ Partidas encontradas não possuem dados completos');
+        logGameInProgress('⚠️ Total de partidas recebidas:', last3Matches.length);
+        logGameInProgress('⚠️ Partidas válidas após filtro:', validMatches.length);
+        alert('As partidas encontradas não possuem dados completos. Tente novamente em alguns segundos.');
+        this.isAutoDetecting = false;
+        return;
+      }
+
+      logGameInProgress(`✅ ${validMatches.length} partidas válidas com todos os 10 jogadores`);
+
       // ✅ Abrir modal de confirmação
-      this.customMatchesForConfirmation = last3CustomMatches;
+      this.customMatchesForConfirmation = validMatches;
       this.showWinnerConfirmationModal = true;
       this.isAutoDetecting = false;
 

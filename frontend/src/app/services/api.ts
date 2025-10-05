@@ -1,6 +1,6 @@
 import { Injectable, Inject } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { Observable, throwError, Subject, firstValueFrom, of } from 'rxjs';
+import { Observable, throwError, Subject, firstValueFrom, of, forkJoin } from 'rxjs';
 import { catchError, retry, map, switchMap, tap } from 'rxjs/operators';
 import { Player, RefreshPlayerResponse } from '../interfaces';
 
@@ -808,6 +808,82 @@ export class ApiService {
         return { success: true, matches: matches || [] };
       }),
       catchError(this.handleError)
+    );
+  }
+
+  /**
+   * Get games from LCU with FULL match details (all 10 players)
+   * 1. Fetches match history summary
+   * 2. OPTIONALLY filters for queueId === 0 (Custom Games) if customOnly=true
+   * 3. For each game, fetches full details via /lol-match-history/v1/games/{gameId}
+   * 4. Returns array of complete match objects with all participants
+   * @param offset - Offset inicial (padrão 0)
+   * @param limit - Limite de partidas (padrão 50)
+   * @param customOnly - Se true, filtra apenas custom games (padrão false = todas as partidas)
+   */
+  getLCUCustomGamesWithDetails(offset: number = 0, limit: number = 50, customOnly: boolean = false): Observable<any> {
+    console.log(`🎮 [API] getLCUCustomGamesWithDetails: Fetching ${customOnly ? 'custom' : 'all'} games with full details`);
+
+    return this.getLCUMatchHistoryAll(offset, limit, false).pipe(
+      switchMap((resp: any) => {
+        if (!resp.success || !resp.matches || resp.matches.length === 0) {
+          console.warn('⚠️ [API] No matches found in history');
+          return of({ success: true, matches: [] });
+        }
+
+        console.log(`🔍 [API] Found ${resp.matches.length} matches in history${customOnly ? ', filtering for custom games...' : ''}`);
+
+        // Filter for custom games if requested
+        let gamesToFetch = resp.matches;
+        if (customOnly) {
+          gamesToFetch = resp.matches.filter((match: any) =>
+            match.queueId === 0 || match.gameType === 'CUSTOM_GAME' || match.gameMode === 'CLASSIC' && match.gameType === 'CUSTOM'
+          );
+          console.log(`✅ [API] Found ${gamesToFetch.length} custom games`);
+        }
+
+        if (gamesToFetch.length === 0) {
+          return of({ success: true, matches: [] });
+        }
+
+        // For each game, fetch full details with all 10 players
+        const detailRequests = gamesToFetch.map((game: any) => {
+          const gameId = game.gameId;
+          console.log(`📥 [API] Fetching full details for game ${gameId}...`);
+
+          return this.getLCUGameDetails(gameId).pipe(
+            map((fullMatch: any) => {
+              console.log(`✅ [API] Got full details for game ${gameId}:`, {
+                participants: fullMatch?.participants?.length || 0,
+                teams: fullMatch?.teams?.length || 0
+              });
+              return fullMatch;
+            }),
+            catchError((error) => {
+              console.error(`❌ [API] Error fetching details for game ${gameId}:`, error);
+              return of(null); // Return null for failed requests
+            })
+          );
+        });
+
+        // Wait for all detail requests to complete
+        if (detailRequests.length === 0) {
+          return of({ success: true, matches: [] });
+        }
+
+        return forkJoin(detailRequests).pipe(
+          map((fullMatches) => {
+            // Filter out null results (failed requests)
+            const validMatches = (fullMatches as any[]).filter(m => m !== null);
+            console.log(`✅ [API] Successfully fetched ${validMatches.length}/${gamesToFetch.length} games with full details`);
+            return { success: true, matches: validMatches };
+          })
+        );
+      }),
+      catchError((error) => {
+        console.error('❌ [API] Error in getLCUCustomGamesWithDetails:', error);
+        return of({ success: false, matches: [], error: error.message });
+      })
     );
   }
 
