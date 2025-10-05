@@ -118,6 +118,20 @@ public class MatchVoteService {
             match.setLcuMatchData(objectMapper.writeValueAsString(lcuMatchData));
             match.setRiotGameId(String.valueOf(lcuGameId));
 
+            // Extrair e salvar informações da partida do LCU
+            String gameMode = lcuMatchData.path("gameMode").asText("CLASSIC");
+            String gameType = lcuMatchData.path("gameType").asText("CUSTOM_GAME");
+            Integer gameDuration = lcuMatchData.path("gameDuration").asInt(0);
+
+            log.info("🎮 Informações da partida LCU: gameMode={}, gameType={}, duration={}s",
+                    gameMode, gameType, gameDuration);
+
+            // Atualizar campos da partida
+            match.setGameMode(gameMode);
+            if (gameDuration > 0) {
+                match.setDuration(gameDuration); // Já está em segundos
+            }
+
             // Mesclar pick_ban_data (estrutura dos times) com lcu_match_data (stats da
             // partida)
             List<Map<String, Object>> participantsList = new ArrayList<>();
