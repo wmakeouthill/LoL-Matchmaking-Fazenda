@@ -559,6 +559,72 @@ public class LCUService {
     }
 
     /**
+     * Busca detalhes completos de uma partida específica pelo gameId
+     * Tenta vários endpoints conhecidos do LCU que retornam dados completos de
+     * todos os jogadores
+     */
+    public CompletableFuture<JsonNode> getMatchDetails(Long gameId) {
+        return CompletableFuture.supplyAsync(() -> {
+            if (gameId == null) {
+                log.warn("gameId is null, cannot fetch match details");
+                return null;
+            }
+
+            List<String> endpoints = Arrays.asList(
+                    "/lol-match-history/v1/games/" + gameId,
+                    "/lol-match-history/v1/game-timelines/" + gameId,
+                    "/lol-match-history/v3/matchlist/games/" + gameId);
+
+            // PRIORIDADE 1: Gateway RPC
+            try {
+                if (websocketService != null) {
+                    for (String ep : endpoints) {
+                        try {
+                            log.debug("LCU gateway RPC match-details trying {} for gameId={}", ep, gameId);
+                            JsonNode r = websocketService.requestLcuFromAnyClient("GET", ep, null, 8000);
+                            if (r != null) {
+                                log.info("✅ LCU gateway RPC match-details succeeded for {}", ep);
+                                if (r.has("body"))
+                                    return r.get("body");
+                                return r;
+                            }
+                        } catch (Exception e) {
+                            log.debug("Gateway RPC attempt for {} failed: {}", ep, e.getMessage());
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("Gateway RPC match-details failed: {}", e.getMessage());
+            }
+
+            // PRIORIDADE 2: HTTP direto (fallback)
+            if (isConnected) {
+                for (String ep : endpoints) {
+                    try {
+                        String url = lcuBaseUrl + ep;
+                        HttpRequest.Builder builder = createLcuRequestBuilder(url, null);
+                        builder.timeout(Duration.ofSeconds(5));
+                        HttpRequest request = builder.GET().build();
+
+                        log.debug("LCU direct match-details trying {}", url);
+                        HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+                        if (response.statusCode() == 200) {
+                            log.info("✅ LCU direct match-details succeeded for {}", url);
+                            return objectMapper.readTree(response.body());
+                        }
+                    } catch (Exception e) {
+                        log.debug("LCU direct match-details attempt to {} failed: {}", ep, e.getMessage());
+                    }
+                }
+            }
+
+            log.warn("⚠️ Não foi possível buscar detalhes da partida {} via LCU", gameId);
+            return null;
+        });
+    }
+
+    /**
      * Obtém dados de ranked do jogador atual
      */
     public CompletableFuture<JsonNode> getCurrentSummonerRanked() {
