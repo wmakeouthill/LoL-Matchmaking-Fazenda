@@ -27,6 +27,7 @@ public class MatchVoteService {
     private final MatchmakingWebSocketService webSocketService;
     private final ObjectMapper objectMapper;
     private final SpecialUserService specialUserService;
+    private final LCUService lcuService;
 
     private static final int VOTES_REQUIRED_FOR_AUTO_LINK = 5;
     private final Map<Long, Map<Long, Long>> temporaryVotes = new ConcurrentHashMap<>();
@@ -117,83 +118,137 @@ public class MatchVoteService {
             match.setLcuMatchData(objectMapper.writeValueAsString(lcuMatchData));
             match.setRiotGameId(String.valueOf(lcuGameId));
 
-            // Processar e extrair dados dos participantes do LCU
+            // Mesclar pick_ban_data (estrutura dos times) com lcu_match_data (stats da
+            // partida)
             List<Map<String, Object>> participantsList = new ArrayList<>();
+
+            // 1. Carregar pick_ban_data que tem a estrutura completa dos 10 jogadores
+            JsonNode pickBanData = null;
+            if (match.getPickBanData() != null && !match.getPickBanData().isEmpty()) {
+                try {
+                    pickBanData = objectMapper.readTree(match.getPickBanData());
+                    log.info("📊 Pick/Ban data encontrado na partida");
+                } catch (Exception e) {
+                    log.warn("⚠️ Erro ao parsear pick_ban_data: {}", e.getMessage());
+                }
+            }
+
+            // 2. Tentar buscar dados completos da partida via LCU (com todos os 10
+            // jogadores)
+            JsonNode fullMatchData = null;
+            try {
+                log.info("🔍 Tentando buscar dados completos da partida via LCU: gameId={}", lcuGameId);
+                fullMatchData = lcuService.getMatchDetails(lcuGameId).join();
+                if (fullMatchData != null) {
+                    log.info("✅ Dados completos da partida encontrados via LCU!");
+                    // Usar dados completos em vez dos dados parciais
+                    lcuMatchData = fullMatchData;
+                }
+            } catch (Exception e) {
+                log.warn("⚠️ Não foi possível buscar dados completos via LCU: {}", e.getMessage());
+            }
+
+            // 3. Processar LCU data para ter stats disponíveis
+            Map<String, Map<String, Object>> lcuStatsMap = new HashMap<>();
+            JsonNode participantIdentities = lcuMatchData.path("participantIdentities");
 
             if (lcuMatchData.has("participants") && lcuMatchData.get("participants").isArray()) {
                 JsonNode participants = lcuMatchData.get("participants");
-                JsonNode participantIdentities = lcuMatchData.path("participantIdentities");
-
-                log.info("📊 Processando {} participantes da partida LCU", participants.size());
+                log.info("📊 Processando {} participantes do LCU", participants.size());
 
                 for (JsonNode participant : participants) {
-                    Map<String, Object> participantData = new HashMap<>();
-
                     int participantId = participant.path("participantId").asInt(0);
+                    int championId = participant.path("championId").asInt(0);
 
-                    // Buscar informações do jogador em participantIdentities
-                    String summonerName = "";
-                    String riotIdGameName = "";
-                    String riotIdTagline = "";
-
+                    // Buscar nome do jogador
+                    String playerKey = "";
                     if (participantIdentities.isArray()) {
                         for (JsonNode identity : participantIdentities) {
                             if (identity.path("participantId").asInt() == participantId) {
                                 JsonNode player = identity.path("player");
-                                summonerName = player.path("summonerName").asText("");
-                                riotIdGameName = player.path("gameName").asText("");
-                                riotIdTagline = player.path("tagLine").asText("");
+                                String gameName = player.path("gameName").asText("");
+                                String tagLine = player.path("tagLine").asText("");
+                                playerKey = gameName + "#" + tagLine;
                                 break;
                             }
                         }
                     }
 
-                    // Dados básicos do jogador
-                    participantData.put("participantId", participantId);
-                    participantData.put("summonerName", summonerName);
-                    participantData.put("riotIdGameName", riotIdGameName);
-                    participantData.put("riotIdTagline", riotIdTagline);
-                    participantData.put("championId", participant.path("championId").asInt(0));
-
-                    // Time
-                    participantData.put("teamId", participant.path("teamId").asInt(0));
-
-                    // Stats da partida
-                    JsonNode stats = participant.path("stats");
-                    if (stats != null && !stats.isMissingNode()) {
-                        participantData.put("win", stats.path("win").asBoolean(false));
-                        participantData.put("kills", stats.path("kills").asInt(0));
-                        participantData.put("deaths", stats.path("deaths").asInt(0));
-                        participantData.put("assists", stats.path("assists").asInt(0));
-                        participantData.put("champLevel", stats.path("champLevel").asInt(0));
-                        participantData.put("totalDamageDealtToChampions",
-                                stats.path("totalDamageDealtToChampions").asInt(0));
-                        participantData.put("totalMinionsKilled", stats.path("totalMinionsKilled").asInt(0));
-                        participantData.put("goldEarned", stats.path("goldEarned").asInt(0));
-                        participantData.put("visionScore", stats.path("visionScore").asInt(0));
-
-                        // Itens
-                        participantData.put("item0", stats.path("item0").asInt(0));
-                        participantData.put("item1", stats.path("item1").asInt(0));
-                        participantData.put("item2", stats.path("item2").asInt(0));
-                        participantData.put("item3", stats.path("item3").asInt(0));
-                        participantData.put("item4", stats.path("item4").asInt(0));
-                        participantData.put("item5", stats.path("item5").asInt(0));
-                        participantData.put("item6", stats.path("item6").asInt(0));
+                    Map<String, Object> stats = new HashMap<>();
+                    JsonNode statsNode = participant.path("stats");
+                    if (statsNode != null && !statsNode.isMissingNode()) {
+                        stats.put("win", statsNode.path("win").asBoolean(false));
+                        stats.put("kills", statsNode.path("kills").asInt(0));
+                        stats.put("deaths", statsNode.path("deaths").asInt(0));
+                        stats.put("assists", statsNode.path("assists").asInt(0));
+                        stats.put("champLevel", statsNode.path("champLevel").asInt(0));
+                        stats.put("totalDamageDealtToChampions",
+                                statsNode.path("totalDamageDealtToChampions").asInt(0));
+                        stats.put("totalMinionsKilled", statsNode.path("totalMinionsKilled").asInt(0));
+                        stats.put("goldEarned", statsNode.path("goldEarned").asInt(0));
+                        stats.put("visionScore", statsNode.path("visionScore").asInt(0));
+                        stats.put("item0", statsNode.path("item0").asInt(0));
+                        stats.put("item1", statsNode.path("item1").asInt(0));
+                        stats.put("item2", statsNode.path("item2").asInt(0));
+                        stats.put("item3", statsNode.path("item3").asInt(0));
+                        stats.put("item4", statsNode.path("item4").asInt(0));
+                        stats.put("item5", statsNode.path("item5").asInt(0));
+                        stats.put("item6", statsNode.path("item6").asInt(0));
+                        stats.put("spell1Id", participant.path("spell1Id").asInt(0));
+                        stats.put("spell2Id", participant.path("spell2Id").asInt(0));
+                        stats.put("championId", championId);
+                        stats.put("teamId", participant.path("teamId").asInt(0));
                     }
 
-                    // Spells
-                    participantData.put("spell1Id", participant.path("spell1Id").asInt(0));
-                    participantData.put("spell2Id", participant.path("spell2Id").asInt(0));
-
-                    participantsList.add(participantData);
+                    log.info("🔑 [LCU] Adicionando stats com chave: '{}', championId={}, kills={}",
+                            playerKey, championId, stats.get("kills"));
+                    lcuStatsMap.put(playerKey, stats);
                 }
 
-                // Salvar como JSON no campo participants_data
+                log.info("🗺️ [LCU Stats Map] Total de {} jogadores no mapa:", lcuStatsMap.size());
+                for (String key : lcuStatsMap.keySet()) {
+                    Map<String, Object> statsDebug = lcuStatsMap.get(key);
+                    log.info("  - Chave: '{}' | ChampionId: {} | Kills: {}",
+                            key, statsDebug.get("championId"), statsDebug.get("kills"));
+                }
+            }
+
+            // 3. Mesclar: usar pick_ban_data como base e complementar com LCU stats
+            if (pickBanData != null && pickBanData.has("team1") && pickBanData.has("team2")) {
+                log.info("🔄 Mesclando pick/ban data com LCU stats");
+
+                // Processar Team 1 (Blue)
+                JsonNode team1 = pickBanData.get("team1");
+                if (team1.isArray()) {
+                    for (JsonNode player : team1) {
+                        Map<String, Object> participantData = mergePlayerData(player, lcuStatsMap, 100);
+                        participantsList.add(participantData);
+                    }
+                }
+
+                // Processar Team 2 (Red)
+                JsonNode team2 = pickBanData.get("team2");
+                if (team2.isArray()) {
+                    for (JsonNode player : team2) {
+                        Map<String, Object> participantData = mergePlayerData(player, lcuStatsMap, 200);
+                        participantsList.add(participantData);
+                    }
+                }
+
+                log.info("✅ Mesclados {} participantes com sucesso", participantsList.size());
+            } else if (!lcuStatsMap.isEmpty()) {
+                // Fallback: usar só LCU data se não tiver pick_ban_data
+                log.warn("⚠️ Pick/ban data não disponível, usando apenas LCU data");
+                participantsList.addAll(lcuStatsMap.values().stream()
+                        .map(stats -> new HashMap<>(stats))
+                        .collect(Collectors.toList()));
+            }
+
+            if (!participantsList.isEmpty()) {
                 match.setParticipantsData(objectMapper.writeValueAsString(participantsList));
                 log.info("✅ Dados de {} participantes salvos com sucesso", participantsList.size());
             } else {
-                log.warn("⚠️ Partida LCU não contém dados de participantes!");
+                log.warn("⚠️ Nenhum dado de participante processado!");
             }
 
             // Determinar time vencedor baseado nos participantes
@@ -217,5 +272,153 @@ public class MatchVoteService {
             log.error("❌ Erro ao vincular partida: {}", e.getMessage(), e);
             throw new IllegalStateException("Erro ao vincular partida", e);
         }
+    }
+
+    /**
+     * Mescla dados do jogador do pick/ban com stats do LCU
+     */
+    private Map<String, Object> mergePlayerData(JsonNode player, Map<String, Map<String, Object>> lcuStatsMap,
+            int teamId) {
+        Map<String, Object> participantData = new HashMap<>();
+
+        // Dados do pick/ban (estrutura, lane, champion)
+        String gameName = player.path("gameName").asText("");
+        String tagLine = player.path("tagLine").asText("");
+        String summonerName = player.path("summonerName").asText("");
+
+        log.info("🔍 [MERGE] Tentando mesclar jogador: gameName='{}', tagLine='{}', summonerName='{}'",
+                gameName, tagLine, summonerName);
+
+        participantData.put("summonerName", summonerName);
+        participantData.put("riotIdGameName", gameName);
+        participantData.put("riotIdTagline", tagLine);
+        participantData.put("assignedLane", player.path("assignedLane").asText(""));
+        participantData.put("primaryLane", player.path("primaryLane").asText(""));
+        participantData.put("mmr", player.path("mmr").asInt(1500));
+        participantData.put("teamId", teamId);
+
+        // Champion do pick/ban
+        int pickBanChampionId = 0;
+        if (player.has("actions") && player.get("actions").isArray()) {
+            for (JsonNode action : player.get("actions")) {
+                if ("pick".equals(action.path("type").asText(""))) {
+                    pickBanChampionId = action.path("championId").asInt(0);
+                    participantData.put("championId", pickBanChampionId);
+                    participantData.put("championName", action.path("championName").asText(""));
+                    break;
+                }
+            }
+        }
+
+        // Estratégia de matching inteligente com LCU
+        Map<String, Object> lcuStats = findBestMatchInLcuStats(summonerName, pickBanChampionId, lcuStatsMap);
+
+        if (!lcuStats.isEmpty()) {
+            log.info("✅ Stats do LCU encontrados para {}", summonerName);
+            participantData.putAll(lcuStats);
+        } else {
+            log.warn("⚠️ Stats do LCU não encontrados para {}, usando valores padrão", summonerName);
+            // Valores padrão quando LCU data não está disponível
+            participantData.put("kills", 0);
+            participantData.put("deaths", 0);
+            participantData.put("assists", 0);
+            participantData.put("champLevel", 1);
+            participantData.put("totalDamageDealtToChampions", 0);
+            participantData.put("totalMinionsKilled", 0);
+            participantData.put("goldEarned", 0);
+            participantData.put("visionScore", 0);
+            participantData.put("item0", 0);
+            participantData.put("item1", 0);
+            participantData.put("item2", 0);
+            participantData.put("item3", 0);
+            participantData.put("item4", 0);
+            participantData.put("item5", 0);
+            participantData.put("item6", 0);
+            participantData.put("spell1Id", 0);
+            participantData.put("spell2Id", 0);
+            participantData.put("win", false);
+        }
+
+        return participantData;
+    }
+
+    /**
+     * Tenta encontrar o melhor match entre o jogador do pick/ban e os stats do LCU
+     * usando múltiplas estratégias: exact match, normalized match, champion match
+     */
+    private Map<String, Object> findBestMatchInLcuStats(String summonerName, int championId,
+            Map<String, Map<String, Object>> lcuStatsMap) {
+
+        // Estratégia 1: Match exato
+        if (lcuStatsMap.containsKey(summonerName)) {
+            log.debug("📍 Match exato encontrado: {}", summonerName);
+            return lcuStatsMap.get(summonerName);
+        }
+
+        // Estratégia 2: Match normalizado (remove espaços duplicados, case-insensitive)
+        String normalizedSummoner = normalizePlayerName(summonerName);
+        for (Map.Entry<String, Map<String, Object>> entry : lcuStatsMap.entrySet()) {
+            String normalizedKey = normalizePlayerName(entry.getKey());
+            if (normalizedKey.equals(normalizedSummoner)) {
+                log.debug("📍 Match normalizado encontrado: {} -> {}", summonerName, entry.getKey());
+                return entry.getValue();
+            }
+        }
+
+        // Estratégia 3: Match fuzzy (Levenshtein distance < 3)
+        for (Map.Entry<String, Map<String, Object>> entry : lcuStatsMap.entrySet()) {
+            int distance = levenshteinDistance(normalizedSummoner, normalizePlayerName(entry.getKey()));
+            if (distance <= 2) {
+                log.debug("📍 Match fuzzy encontrado (distância={}): {} -> {}", distance, summonerName, entry.getKey());
+                return entry.getValue();
+            }
+        }
+
+        // Estratégia 4: Match por championId (último recurso)
+        if (championId > 0) {
+            for (Map.Entry<String, Map<String, Object>> entry : lcuStatsMap.entrySet()) {
+                Integer lcuChampionId = (Integer) entry.getValue().get("championId");
+                if (lcuChampionId != null && lcuChampionId == championId) {
+                    log.debug("📍 Match por championId encontrado: {} (champ {})", entry.getKey(), championId);
+                    return entry.getValue();
+                }
+            }
+        }
+
+        return Collections.emptyMap();
+    }
+
+    /**
+     * Normaliza nome do jogador para comparação
+     */
+    private String normalizePlayerName(String name) {
+        return name.toLowerCase()
+                .replaceAll("\\s+", " ")
+                .replaceAll("[^a-z0-9#]", "")
+                .trim();
+    }
+
+    /**
+     * Calcula distância de Levenshtein entre duas strings
+     */
+    private int levenshteinDistance(String a, String b) {
+        int[][] dp = new int[a.length() + 1][b.length() + 1];
+
+        for (int i = 0; i <= a.length(); i++) {
+            for (int j = 0; j <= b.length(); j++) {
+                if (i == 0) {
+                    dp[i][j] = j;
+                } else if (j == 0) {
+                    dp[i][j] = i;
+                } else {
+                    dp[i][j] = Math.min(Math.min(
+                            dp[i - 1][j] + 1,
+                            dp[i][j - 1] + 1),
+                            dp[i - 1][j - 1] + (a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1));
+                }
+            }
+        }
+
+        return dp[a.length()][b.length()];
     }
 }

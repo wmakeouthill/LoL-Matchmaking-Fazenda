@@ -836,10 +836,21 @@ export class ApiService {
         // Filter for custom games if requested
         let gamesToFetch = resp.matches;
         if (customOnly) {
-          gamesToFetch = resp.matches.filter((match: any) =>
-            match.queueId === 0 || match.gameType === 'CUSTOM_GAME' || match.gameMode === 'CLASSIC' && match.gameType === 'CUSTOM'
-          );
-          console.log(`✅ [API] Found ${gamesToFetch.length} custom games`);
+          // Debug: Log queueIds of all matches
+          console.log('🔍 [API] QueueIds in matches:', resp.matches.map((m: any) => ({ gameId: m.gameId, queueId: m.queueId, gameType: m.gameType, gameMode: m.gameMode })));
+
+          gamesToFetch = resp.matches.filter((match: any) => {
+            // Custom games have queueId=0 OR gameType contains "CUSTOM"
+            const isCustomByQueue = match.queueId === 0;
+            const isCustomByType = match.gameType && (
+              match.gameType.toUpperCase().includes('CUSTOM') ||
+              match.gameType === 'CUSTOM_GAME'
+            );
+
+            return isCustomByQueue || isCustomByType;
+          });
+
+          console.log(`✅ [API] Found ${gamesToFetch.length} custom games out of ${resp.matches.length} total matches`);
         }
 
         if (gamesToFetch.length === 0) {

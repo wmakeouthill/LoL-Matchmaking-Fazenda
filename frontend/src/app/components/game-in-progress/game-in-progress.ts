@@ -828,13 +828,12 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     this.isAutoDetecting = true;
 
     try {
-      // ✅ Buscar últimas partidas COM DETALHES COMPLETOS (todos os 10 jogadores)
-      // IMPORTANTE: getLCUMatchHistoryAll() retorna apenas resumo (1 participant)
-      // Precisamos usar getLCUCustomGamesWithDetails() que faz forkJoin para buscar detalhes completos
-      // customOnly=false significa que busca TODAS as partidas, não apenas custom games
-      logGameInProgress('📥 Buscando histórico de partidas do LCU com detalhes completos...');
+      // ✅ Buscar últimas partidas PERSONALIZADAS COM DETALHES COMPLETOS (todos os 10 jogadores)
+      // IMPORTANTE: customOnly=true filtra apenas custom games (queueId=0 ou gameType=CUSTOM_GAME)
+      // Isso garante que apenas partidas personalizadas apareçam no modal de seleção
+      logGameInProgress('📥 Buscando histórico de partidas PERSONALIZADAS do LCU com detalhes completos...');
       const historyResponse = await firstValueFrom(
-        this.apiService.getLCUCustomGamesWithDetails(0, 20, false)
+        this.apiService.getLCUCustomGamesWithDetails(0, 20, true)
       );
 
       if (!historyResponse?.success || !historyResponse?.matches?.length) {
