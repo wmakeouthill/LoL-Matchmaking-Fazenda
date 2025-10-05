@@ -9,6 +9,7 @@ interface CustomMatch {
     gameCreation: number;
     gameDuration: number;
     participants: any[];
+    participantIdentities?: any[];
     teams: any[];
     gameMode: string;
     queueId: number;
@@ -149,19 +150,106 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
     }
 
     private processMatches() {
+        console.log(`🔍 [WinnerModal] processMatches: ${this.customMatches.length} partidas recebidas`);
+
         this.matchOptions = this.customMatches.map((match, index) => {
-            const winningTeam = this.getWinningTeam(match);
-            const ourPlayers = this.identifyOurPlayers(match);
+            console.log(`🔍 [WinnerModal] Processando partida ${index + 1}:`, {
+                gameId: match.gameId,
+                participants: match.participants?.length || 0,
+                teams: match.teams?.length || 0
+            });
+
+            // ✅ NORMALIZAR participants: extrair stats para o nível superior
+            const normalizedMatch = this.normalizeMatchData(match);
+
+            const winningTeam = this.getWinningTeam(normalizedMatch);
+            const ourPlayers = this.identifyOurPlayers(normalizedMatch);
 
             return {
-                match,
+                match: normalizedMatch,
                 matchIndex: index,
                 winningTeam,
-                formattedDate: this.formatDate(match.gameCreation),
-                formattedDuration: this.formatDuration(match.gameDuration),
+                formattedDate: this.formatDate(normalizedMatch.gameCreation),
+                formattedDuration: this.formatDuration(normalizedMatch.gameDuration),
                 ourPlayers
             };
         });
+
+        console.log(`✅ [WinnerModal] ${this.matchOptions.length} opções de partida criadas`);
+    }
+
+    /**
+     * Normaliza dados do LCU: extrai stats de participant.stats.* para participant.*
+     * Igual ao que match-history faz em mapLCUMatchToModel()
+     */
+    private normalizeMatchData(match: CustomMatch): CustomMatch {
+        if (!match.participants) return match;
+
+        console.log('🔄 [WinnerModal] normalizeMatchData: Normalizando', match.participants.length, 'participants');
+
+        const normalizedParticipants = match.participants.map(p => {
+            // Buscar identidade do jogador
+            const identity = match.participantIdentities?.find((id: any) =>
+                id.participantId === p.participantId
+            );
+
+            console.log(`🔍 [WinnerModal] Normalizando participant ${p.participantId}:`, {
+                hasStats: !!p.stats,
+                statsItem0: p.stats?.item0,
+                statsKills: p.stats?.kills,
+                lane: p.timeline?.lane || p.lane,
+                championId: p.championId
+            });
+
+            // Criar display name
+            let displayName = `Player ${p.participantId}`;
+            if (identity?.player) {
+                const player = identity.player;
+                if (player.gameName && player.tagLine) {
+                    displayName = `${player.gameName}#${player.tagLine}`;
+                } else if (player.summonerName) {
+                    displayName = player.summonerName;
+                }
+            }
+
+            // ✅ EXTRAIR stats do objeto .stats para o nível superior
+            return {
+                ...p,
+                summonerName: displayName,
+                puuid: identity?.player?.puuid || '',
+                // Stats principais
+                kills: p.stats?.kills || 0,
+                deaths: p.stats?.deaths || 0,
+                assists: p.stats?.assists || 0,
+                champLevel: p.stats?.champLevel || 1,
+                // Itens
+                item0: p.stats?.item0 || 0,
+                item1: p.stats?.item1 || 0,
+                item2: p.stats?.item2 || 0,
+                item3: p.stats?.item3 || 0,
+                item4: p.stats?.item4 || 0,
+                item5: p.stats?.item5 || 0,
+                item6: p.stats?.item6 || 0,
+                // Stats expandidas
+                goldEarned: p.stats?.goldEarned || 0,
+                totalDamageDealtToChampions: p.stats?.totalDamageDealtToChampions || 0,
+                totalMinionsKilled: p.stats?.totalMinionsKilled || 0,
+                neutralMinionsKilled: p.stats?.neutralMinionsKilled || 0,
+                visionScore: p.stats?.visionScore || 0,
+                // Lane detection (já vem no participant)
+                teamPosition: p.timeline?.lane || p.lane || 'UNKNOWN',
+                role: p.timeline?.role || p.role || 'UNKNOWN',
+                individualPosition: p.individualPosition || '',
+                // Summoner spells
+                summoner1Id: p.spell1Id || 0,
+                summoner2Id: p.spell2Id || 0
+            };
+        });
+
+        return {
+            ...match,
+            participants: normalizedParticipants
+        };
     }
 
     private getWinningTeam(match: CustomMatch): 'blue' | 'red' | null {
@@ -182,22 +270,17 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
 
         if (!match.participants) return { blue, red };
 
-        const currentPlayerNames = this.currentPlayers.map(p =>
-            (p.summonerName || p.name || '').toLowerCase()
-        );
-
+        // ✅ CORREÇÃO: Para o modal de votação, queremos TODOS os 10 jogadores da partida LCU
+        // Não filtrar por currentPlayers - mostrar composição completa do time azul vs vermelho
         match.participants.forEach(participant => {
-            const participantName = (participant.summonerName || participant.riotIdGameName || '').toLowerCase();
-            const isOurPlayer = currentPlayerNames.includes(participantName);
-
-            if (isOurPlayer) {
-                if (participant.teamId === 100) {
-                    blue.push(participant);
-                } else if (participant.teamId === 200) {
-                    red.push(participant);
-                }
+            if (participant.teamId === 100) {
+                blue.push(participant);
+            } else if (participant.teamId === 200) {
+                red.push(participant);
             }
         });
+
+        console.log(`🔍 [WinnerModal] Time Azul: ${blue.length} jogadores, Time Vermelho: ${red.length} jogadores`);
 
         return { blue, red };
     }
@@ -263,7 +346,9 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
 
     getPlayersByTeam(match: CustomMatch, teamId: number) {
         if (!match.participants) return [];
-        return match.participants.filter(p => p.teamId === teamId);
+        const players = match.participants.filter(p => p.teamId === teamId);
+        console.log(`🔍 [WinnerModal] getPlayersByTeam(${teamId}): ${players.length} jogadores`, players.map(p => p.summonerName || p.championId));
+        return players;
     }
 
     getChampionIconUrl(championId: number): string {
@@ -435,7 +520,8 @@ Items: ${items || 'Nenhum'}`;
 
     getParticipantItems(participant: any): number[] {
         if (!participant) return [0, 0, 0, 0, 0, 0];
-        return [
+
+        const items = [
             participant.item0 || 0,
             participant.item1 || 0,
             participant.item2 || 0,
@@ -443,6 +529,17 @@ Items: ${items || 'Nenhum'}`;
             participant.item4 || 0,
             participant.item5 || 0
         ];
+
+        // Debug apenas se items estiver vazio
+        if (items.every(i => i === 0)) {
+            console.log('🔍 [WinnerModal] getParticipantItems: SEM ITENS!', {
+                participant,
+                hasStats: !!participant.stats,
+                statsItem0: participant.stats?.item0
+            });
+        }
+
+        return items;
     }
 
     getChampionImageUrl(championId: number): string {
