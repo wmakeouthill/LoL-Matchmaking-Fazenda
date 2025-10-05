@@ -37,6 +37,7 @@ public class MatchDTO {
     private String lobbyPassword;
     private Boolean isCustomGame;
     private String riotMatchId;
+    private String participantsData; // ✅ Dados dos participantes processados do LCU
 
     @Data
     @Builder

@@ -13,6 +13,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -127,17 +129,57 @@ public class MatchVoteController {
                                 KEY_ERROR, "LCU history not available"));
                     }
 
-                    // O retorno pode ser um objeto com campo "games" ou diretamente um array
-                    JsonNode gamesArray = matchHistoryResponse.has("games")
-                            ? matchHistoryResponse.get("games")
-                            : matchHistoryResponse;
+                    // DEBUG: Mostrar estrutura do JSON retornado
+                    log.info("🔍 [DEBUG] Estrutura do matchHistoryResponse: {}",
+                            matchHistoryResponse.getClass().getSimpleName());
+
+                    // Listar todos os campos disponíveis
+                    List<String> fieldNames = new ArrayList<>();
+                    matchHistoryResponse.fieldNames().forEachRemaining(fieldNames::add);
+                    log.info("🔍 [DEBUG] Campos disponíveis: {}", fieldNames);
+
+                    if (matchHistoryResponse.has("games")) {
+                        JsonNode gamesNode = matchHistoryResponse.get("games");
+                        log.info("🔍 [DEBUG] Tem campo 'games', é array? {}", gamesNode.isArray());
+
+                        // Se games não é array, listar seus subcampos
+                        if (!gamesNode.isArray()) {
+                            List<String> gamesFields = new ArrayList<>();
+                            gamesNode.fieldNames().forEachRemaining(gamesFields::add);
+                            log.info("🔍 [DEBUG] Subcampos de 'games': {}", gamesFields);
+                        }
+                    }
+
+                    // Tentar encontrar o array de partidas
+                    JsonNode gamesArray = null;
+                    if (matchHistoryResponse.has("games")) {
+                        JsonNode gamesNode = matchHistoryResponse.get("games");
+                        if (gamesNode.isArray()) {
+                            gamesArray = gamesNode;
+                        } else if (gamesNode.has("games") && gamesNode.get("games").isArray()) {
+                            // Estrutura: { "games": { "games": [...] } }
+                            gamesArray = gamesNode.get("games");
+                            log.info("🔍 [DEBUG] Array encontrado em games.games");
+                        }
+                    } else if (matchHistoryResponse.isArray()) {
+                        gamesArray = matchHistoryResponse;
+                    }
+
+                    log.info("🔍 [DEBUG] gamesArray encontrado? {}, isArray={}, size={}",
+                            gamesArray != null,
+                            gamesArray != null && gamesArray.isArray(),
+                            gamesArray != null ? gamesArray.size() : 0);
 
                     // Buscar pela lcuGameId votada
                     JsonNode lcuMatchData = null;
                     if (gamesArray.isArray()) {
+                        log.info("🔍 [DEBUG] Procurando gameId={} em {} partidas", votedGameId, gamesArray.size());
                         for (JsonNode game : gamesArray) {
-                            if (game.has("gameId") && game.get("gameId").asLong() == votedGameId) {
+                            long gameId = game.has("gameId") ? game.get("gameId").asLong() : -1;
+                            log.info("🔍 [DEBUG] Partida encontrada com gameId={}", gameId);
+                            if (gameId == votedGameId) {
                                 lcuMatchData = game;
+                                log.info("✅ [DEBUG] Match! gameId={} == votedGameId={}", gameId, votedGameId);
                                 break;
                             }
                         }

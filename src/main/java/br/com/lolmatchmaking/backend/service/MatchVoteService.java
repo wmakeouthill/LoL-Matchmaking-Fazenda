@@ -113,14 +113,108 @@ public class MatchVoteService {
             Match match = matchRepository.findById(matchId)
                     .orElseThrow(() -> new IllegalArgumentException("Partida nao encontrada"));
 
+            // Salvar JSON completo do LCU
             match.setLcuMatchData(objectMapper.writeValueAsString(lcuMatchData));
             match.setRiotGameId(String.valueOf(lcuGameId));
+
+            // Processar e extrair dados dos participantes do LCU
+            List<Map<String, Object>> participantsList = new ArrayList<>();
+
+            if (lcuMatchData.has("participants") && lcuMatchData.get("participants").isArray()) {
+                JsonNode participants = lcuMatchData.get("participants");
+                JsonNode participantIdentities = lcuMatchData.path("participantIdentities");
+
+                log.info("📊 Processando {} participantes da partida LCU", participants.size());
+
+                for (JsonNode participant : participants) {
+                    Map<String, Object> participantData = new HashMap<>();
+
+                    int participantId = participant.path("participantId").asInt(0);
+
+                    // Buscar informações do jogador em participantIdentities
+                    String summonerName = "";
+                    String riotIdGameName = "";
+                    String riotIdTagline = "";
+
+                    if (participantIdentities.isArray()) {
+                        for (JsonNode identity : participantIdentities) {
+                            if (identity.path("participantId").asInt() == participantId) {
+                                JsonNode player = identity.path("player");
+                                summonerName = player.path("summonerName").asText("");
+                                riotIdGameName = player.path("gameName").asText("");
+                                riotIdTagline = player.path("tagLine").asText("");
+                                break;
+                            }
+                        }
+                    }
+
+                    // Dados básicos do jogador
+                    participantData.put("participantId", participantId);
+                    participantData.put("summonerName", summonerName);
+                    participantData.put("riotIdGameName", riotIdGameName);
+                    participantData.put("riotIdTagline", riotIdTagline);
+                    participantData.put("championId", participant.path("championId").asInt(0));
+
+                    // Time
+                    participantData.put("teamId", participant.path("teamId").asInt(0));
+
+                    // Stats da partida
+                    JsonNode stats = participant.path("stats");
+                    if (stats != null && !stats.isMissingNode()) {
+                        participantData.put("win", stats.path("win").asBoolean(false));
+                        participantData.put("kills", stats.path("kills").asInt(0));
+                        participantData.put("deaths", stats.path("deaths").asInt(0));
+                        participantData.put("assists", stats.path("assists").asInt(0));
+                        participantData.put("champLevel", stats.path("champLevel").asInt(0));
+                        participantData.put("totalDamageDealtToChampions",
+                                stats.path("totalDamageDealtToChampions").asInt(0));
+                        participantData.put("totalMinionsKilled", stats.path("totalMinionsKilled").asInt(0));
+                        participantData.put("goldEarned", stats.path("goldEarned").asInt(0));
+                        participantData.put("visionScore", stats.path("visionScore").asInt(0));
+
+                        // Itens
+                        participantData.put("item0", stats.path("item0").asInt(0));
+                        participantData.put("item1", stats.path("item1").asInt(0));
+                        participantData.put("item2", stats.path("item2").asInt(0));
+                        participantData.put("item3", stats.path("item3").asInt(0));
+                        participantData.put("item4", stats.path("item4").asInt(0));
+                        participantData.put("item5", stats.path("item5").asInt(0));
+                        participantData.put("item6", stats.path("item6").asInt(0));
+                    }
+
+                    // Spells
+                    participantData.put("spell1Id", participant.path("spell1Id").asInt(0));
+                    participantData.put("spell2Id", participant.path("spell2Id").asInt(0));
+
+                    participantsList.add(participantData);
+                }
+
+                // Salvar como JSON no campo participants_data
+                match.setParticipantsData(objectMapper.writeValueAsString(participantsList));
+                log.info("✅ Dados de {} participantes salvos com sucesso", participantsList.size());
+            } else {
+                log.warn("⚠️ Partida LCU não contém dados de participantes!");
+            }
+
+            // Determinar time vencedor baseado nos participantes
+            if (!participantsList.isEmpty()) {
+                for (Map<String, Object> p : participantsList) {
+                    if ((Boolean) p.get("win")) {
+                        match.setWinnerTeam((Integer) p.get("teamId"));
+                        break;
+                    }
+                }
+            }
+
             match.setStatus("completed");
             match.setCompletedAt(Instant.now());
 
             matchRepository.save(match);
             temporaryVotes.remove(matchId);
+
+            log.info("🎉 Partida {} vinculada com sucesso! LCU Game ID: {}", matchId, lcuGameId);
         } catch (Exception e) {
+            log.error("❌ Erro ao vincular partida: {}", e.getMessage(), e);
             throw new IllegalStateException("Erro ao vincular partida", e);
         }
     }
