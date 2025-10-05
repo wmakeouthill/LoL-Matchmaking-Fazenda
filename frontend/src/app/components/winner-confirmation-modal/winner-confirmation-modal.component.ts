@@ -1,6 +1,6 @@
 import { Component, EventEmitter, Input, OnInit, OnDestroy, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { Subscription } from 'rxjs';
+import { Subscription, firstValueFrom } from 'rxjs';
 import { ApiService } from '../../services/api';
 import { getChampionKeyById } from '../../utils/champion-data';
 
@@ -84,7 +84,7 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
 
         try {
             // Carregar votos atuais do backend
-            const votes = await this.apiService.getMatchVotes(this.matchId).toPromise();
+            const votes = await firstValueFrom(this.apiService.getMatchVotes(this.matchId));
             if (votes) {
                 this.voteCounts = new Map(Object.entries(votes).map(([k, v]) => [Number(k), Number(v)]));
                 this.updateVoteCountsInOptions();
@@ -125,28 +125,10 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
         });
     }
 
-    async selectMatch(index: number) {
-        const previousIndex = this.selectedMatchIndex;
+    selectMatch(index: number) {
+        // ✅ CORREÇÃO: Apenas marcar a seleção, não votar ainda
         this.selectedMatchIndex = index;
-
-        if (!this.matchId) {
-            console.warn('⚠️ [WinnerModal] Match ID não fornecido, votação desabilitada');
-            return;
-        }
-
-        const selectedOption = this.matchOptions[index];
-        const lcuGameId = selectedOption.match.gameId;
-
-        try {
-            // Enviar voto ao backend
-            await this.apiService.voteForMatch(this.matchId, lcuGameId).toPromise();
-            this.myVotedGameId = lcuGameId;
-            console.log('✅ [WinnerModal] Voto registrado para LCU game:', lcuGameId);
-        } catch (error) {
-            console.error('❌ [WinnerModal] Erro ao votar:', error);
-            this.selectedMatchIndex = previousIndex; // Reverter seleção
-            alert('Erro ao registrar voto. Tente novamente.');
-        }
+        console.log('🎯 [WinnerModal] Partida selecionada:', index, this.matchOptions[index].match.gameId);
     }
 
     private processMatches() {
@@ -312,22 +294,101 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
         return `${minutes}:${secs.toString().padStart(2, '0')}`;
     }
 
-    confirmSelection() {
+    async confirmSelection() {
+        console.log('🔍 [DEBUG 1/10] ===== confirmSelection INICIADO =====');
+        console.log('🔍 [DEBUG 2/10] selectedMatchIndex:', this.selectedMatchIndex);
+        console.log('🔍 [DEBUG 3/10] matchOptions.length:', this.matchOptions?.length);
+        console.log('🔍 [DEBUG 4/10] matchId:', this.matchId);
+
         if (this.selectedMatchIndex === null) {
+            console.log('❌ [DEBUG] FALHOU: selectedMatchIndex é null');
             alert('Por favor, selecione uma partida primeiro.');
             return;
         }
 
+        console.log('✅ [DEBUG 5/10] selectedMatchIndex válido:', this.selectedMatchIndex);
         const selectedOption = this.matchOptions[this.selectedMatchIndex];
+        console.log('🔍 [DEBUG 6/10] selectedOption:', selectedOption);
+
         if (!selectedOption.winningTeam) {
+            console.log('❌ [DEBUG] FALHOU: sem winningTeam');
             alert('A partida selecionada não possui um vencedor identificado.');
             return;
         }
 
-        this.onConfirm.emit({
-            match: selectedOption.match,
-            winner: selectedOption.winningTeam
-        });
+        console.log('✅ [DEBUG 7/10] winningTeam válido:', selectedOption.winningTeam);
+
+        // ✅ VOTAÇÃO: Enviar voto ao backend
+        if (!this.matchId) {
+            console.warn('⚠️ [DEBUG 8/10] FALHOU: Match ID não fornecido, pulando votação');
+            // Apenas emitir confirmação sem votar
+            this.onConfirm.emit({
+                match: selectedOption.match,
+                winner: selectedOption.winningTeam
+            });
+            return;
+        }
+
+        console.log('✅ [DEBUG 9/10] matchId válido:', this.matchId);
+        const lcuGameId = selectedOption.match.gameId;
+        console.log('🔍 [DEBUG 10/10] lcuGameId:', lcuGameId);
+
+        try {
+            console.log('🗳️ [WinnerModal] >>> CHAMANDO voteForMatch() <<<');
+            console.log('🗳️ [WinnerModal] Parametros:', {
+                matchId: this.matchId,
+                lcuGameId: lcuGameId
+            });
+
+            // Enviar voto ao backend
+            const voteResponse = await firstValueFrom(this.apiService.voteForMatch(this.matchId, lcuGameId));
+            console.log('✅ [WinnerModal] <<< voteForMatch() RETORNOU <<<');
+            this.myVotedGameId = lcuGameId;
+
+            console.log('✅ [WinnerModal] Voto registrado para LCU game:', lcuGameId);
+            console.log('📊 [WinnerModal] Resposta do voto:', voteResponse);
+
+            // ✅ Verificar se é voto de special user
+            if (voteResponse?.specialUserVote === true) {
+                console.log('🌟 [WinnerModal] SPECIAL USER detectado! Partida finalizada automaticamente!');
+
+                // Fechar modal automaticamente
+                setTimeout(() => {
+                    alert(`🌟 ${voteResponse.voterName || 'Você'} é um SPECIAL USER!\nA partida foi finalizada automaticamente.`);
+                    this.onConfirm.emit({
+                        match: selectedOption.match,
+                        winner: (selectedOption.winningTeam || 'blue') as 'blue' | 'red'
+                    });
+                }, 500);
+            } else if (voteResponse?.shouldLink === true) {
+                console.log('🎯 [WinnerModal] 5 votos atingidos! Finalizando automaticamente...');
+
+                // Fechar modal automaticamente
+                setTimeout(() => {
+                    alert('🎯 5 votos atingidos! A partida foi finalizada automaticamente.');
+                    this.onConfirm.emit({
+                        match: selectedOption.match,
+                        winner: (selectedOption.winningTeam || 'blue') as 'blue' | 'red'
+                    });
+                }, 500);
+            } else {
+                // Voto registrado, mas aguardando mais votos
+                console.log('⏳ [WinnerModal] Voto registrado, aguardando mais votos...');
+                alert(`✅ Seu voto foi registrado!\nAguardando mais ${5 - (voteResponse.voteCount || 1)} votos para finalizar automaticamente.`);
+
+                // Não fechar o modal, deixar aberto para outros votarem
+            }
+        } catch (error: any) {
+            console.error('❌ [WinnerModal] Erro ao votar:', error);
+            console.error('❌ [WinnerModal] Erro detalhado:', {
+                message: error?.message,
+                status: error?.status,
+                statusText: error?.statusText,
+                error: error?.error,
+                stack: error?.stack
+            });
+            alert('Erro ao registrar voto: ' + (error?.message || error?.statusText || 'Erro desconhecido'));
+        }
     }
 
     cancel() {

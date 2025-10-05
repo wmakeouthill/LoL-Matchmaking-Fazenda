@@ -15,8 +15,6 @@ public interface MatchRepository extends JpaRepository<Match, Long> {
 
     List<Match> findTop20ByOrderByCreatedAtDesc();
 
-    Optional<Match> findByMatchIdentifier(String matchIdentifier);
-
     Page<Match> findByStatus(String status, Pageable pageable);
 
     List<Match> findByStatusIn(List<String> statuses);

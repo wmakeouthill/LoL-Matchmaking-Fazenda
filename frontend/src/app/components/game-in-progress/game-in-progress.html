@@ -343,6 +343,7 @@
   <!-- ✅ NOVO: Modal de Confirmação de Vencedor Manual -->
   <app-winner-confirmation-modal
     *ngIf="showWinnerConfirmationModal"
+    [matchId]="gameData?.matchId || null"
     [customMatches]="customMatchesForConfirmation"
     [currentPlayers]="getAllPlayers()"
     (onConfirm)="onWinnerConfirmed($event)"

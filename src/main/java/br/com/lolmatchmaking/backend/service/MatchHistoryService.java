@@ -68,8 +68,8 @@ public class MatchHistoryService {
                 .toList();
     }
 
-    public Optional<MatchDTO> getMatchById(String matchId) {
-        return matchRepository.findByMatchIdentifier(matchId)
+    public Optional<MatchDTO> getMatchById(Long matchId) {
+        return matchRepository.findById(matchId)
                 .map(matchMapper::toDTO);
     }
 
@@ -124,14 +124,14 @@ public class MatchHistoryService {
         match.setStatus("CREATED");
 
         Match savedMatch = matchRepository.save(match);
-        log.info("Nova partida criada: {}", savedMatch.getMatchIdentifier());
+        log.info("Nova partida criada: ID={}", savedMatch.getId());
 
         return matchMapper.toDTO(savedMatch);
     }
 
     @Transactional
-    public Optional<MatchDTO> updateMatchStatus(String matchId, String newStatus) {
-        Optional<Match> matchOpt = matchRepository.findByMatchIdentifier(matchId);
+    public Optional<MatchDTO> updateMatchStatus(Long matchId, String newStatus) {
+        Optional<Match> matchOpt = matchRepository.findById(matchId);
         if (matchOpt.isEmpty()) {
             log.warn("Tentativa de atualizar status de partida inexistente: {}", matchId);
             return Optional.empty();
@@ -152,8 +152,8 @@ public class MatchHistoryService {
     }
 
     @Transactional
-    public Optional<MatchDTO> setMatchWinner(String matchId, Integer winnerTeam) {
-        Optional<Match> matchOpt = matchRepository.findByMatchIdentifier(matchId);
+    public Optional<MatchDTO> setMatchWinner(Long matchId, Integer winnerTeam) {
+        Optional<Match> matchOpt = matchRepository.findById(matchId);
         if (matchOpt.isEmpty()) {
             return Optional.empty();
         }
@@ -176,7 +176,7 @@ public class MatchHistoryService {
         try {
             // Implementar lógica de atualização de MMR baseada no resultado
             // Por enquanto apenas loggar
-            log.info("Atualizando MMR dos jogadores da partida: {}", match.getMatchIdentifier());
+            log.info("Atualizando MMR dos jogadores da partida: ID={}", match.getId());
         } catch (Exception e) {
             log.error("Erro ao atualizar MMR dos jogadores", e);
         }
