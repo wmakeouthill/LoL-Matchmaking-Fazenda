@@ -734,27 +734,13 @@ public class QueueManagementService {
         try {
             log.debug("🔍 Buscando partida ativa para summonerName: {}", summonerName);
 
-            // 1. Buscar player pelo summonerName
-            Player player = playerRepository.findBySummonerNameIgnoreCase(summonerName).orElse(null);
-
-            if (player == null) {
-                log.warn("⚠️ Player não encontrado: {}", summonerName);
-                return Collections.emptyMap();
-            }
-
-            if (player.getPuuid() == null || player.getPuuid().isEmpty()) {
-                log.warn("⚠️ Player {} não tem PUUID definido", player.getSummonerName());
-                return Collections.emptyMap();
-            }
-
-            log.debug("🔍 Buscando partida ativa para PUUID: {}", player.getPuuid());
-
-            // 2. Buscar partida ativa pelo PUUID
+            // ✅ CORRIGIDO: Buscar diretamente pelo summonerName
+            // Os campos team1_players/team2_players contêm summonerNames, não PUUIDs
             Optional<CustomMatch> activeMatchOpt = customMatchRepository
-                    .findActiveMatchByPlayerPuuid(player.getPuuid());
+                    .findActiveMatchByPlayerPuuid(summonerName);
 
             if (activeMatchOpt.isEmpty()) {
-                log.debug("✅ Nenhuma partida ativa encontrada para: {}", player.getSummonerName());
+                log.debug("✅ Nenhuma partida ativa encontrada para: {}", summonerName);
                 return Collections.emptyMap();
             }
 
@@ -774,39 +760,145 @@ public class QueueManagementService {
             // 4. Adicionar dados específicos por status
             if ("draft".equals(match.getStatus())) {
                 response.put("type", "draft");
-                response.put("draftState", parseJsonSafely(match.getPickBanDataJson()));
-                response.put("team1", parseJsonSafely(match.getTeam1PlayersJson()));
-                response.put("team2", parseJsonSafely(match.getTeam2PlayersJson()));
+
+                Object pickBanData = parseJsonSafely(match.getPickBanDataJson());
+                response.put("draftState", pickBanData);
+
+                // Extrair team1/team2 do pick_ban_data para consistência
+                List<Map<String, Object>> team1Players = new ArrayList<>();
+                List<Map<String, Object>> team2Players = new ArrayList<>();
+
+                if (pickBanData instanceof Map<?, ?>) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> pickBanMap = (Map<String, Object>) pickBanData;
+
+                    // Tentar extrair de teams.blue/red primeiro
+                    if (pickBanMap.containsKey("teams") && pickBanMap.get("teams") instanceof Map<?, ?>) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> teams = (Map<String, Object>) pickBanMap.get("teams");
+
+                        if (teams.containsKey("blue") && teams.get("blue") instanceof Map<?, ?>) {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> blueTeam = (Map<String, Object>) teams.get("blue");
+                            if (blueTeam.containsKey("players") && blueTeam.get("players") instanceof List<?>) {
+                                @SuppressWarnings("unchecked")
+                                List<Map<String, Object>> bluePlayers = (List<Map<String, Object>>) blueTeam
+                                        .get("players");
+                                team1Players = bluePlayers;
+                            }
+                        }
+
+                        if (teams.containsKey("red") && teams.get("red") instanceof Map<?, ?>) {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> redTeam = (Map<String, Object>) teams.get("red");
+                            if (redTeam.containsKey("players") && redTeam.get("players") instanceof List<?>) {
+                                @SuppressWarnings("unchecked")
+                                List<Map<String, Object>> redPlayers = (List<Map<String, Object>>) redTeam
+                                        .get("players");
+                                team2Players = redPlayers;
+                            }
+                        }
+                    }
+
+                    // Fallback: usar team1/team2 direto
+                    if (team1Players.isEmpty() && pickBanMap.containsKey("team1")) {
+                        Object t1 = pickBanMap.get("team1");
+                        if (t1 instanceof List<?>) {
+                            @SuppressWarnings("unchecked")
+                            List<Map<String, Object>> list1 = (List<Map<String, Object>>) t1;
+                            team1Players = list1;
+                        }
+                    }
+                    if (team2Players.isEmpty() && pickBanMap.containsKey("team2")) {
+                        Object t2 = pickBanMap.get("team2");
+                        if (t2 instanceof List<?>) {
+                            @SuppressWarnings("unchecked")
+                            List<Map<String, Object>> list2 = (List<Map<String, Object>>) t2;
+                            team2Players = list2;
+                        }
+                    }
+                }
+
+                response.put("team1", team1Players);
+                response.put("team2", team2Players);
+
+                log.debug("✅ Retornando draft - Team1: {} jogadores, Team2: {} jogadores",
+                        team1Players.size(), team2Players.size());
 
             } else if ("in_progress".equals(match.getStatus())) {
                 response.put("type", "game");
 
-                // ✅ CORREÇÃO: Hidratar jogadores com dados do pick_ban_data
+                // ✅ CORREÇÃO APRIMORADA: Extrair jogadores do pick_ban_data.teams
                 Object pickBanData = parseJsonSafely(match.getPickBanDataJson());
-                Object team1 = parseJsonSafely(match.getTeam1PlayersJson());
-                Object team2 = parseJsonSafely(match.getTeam2PlayersJson());
+                List<Map<String, Object>> team1Players = new ArrayList<>();
+                List<Map<String, Object>> team2Players = new ArrayList<>();
 
-                // Se pick_ban_data tem estrutura completa com team1/team2, usar diretamente
+                // Extrair jogadores da estrutura pick_ban_data
                 if (pickBanData instanceof Map<?, ?>) {
                     @SuppressWarnings("unchecked")
                     Map<String, Object> pickBanMap = (Map<String, Object>) pickBanData;
-                    if (pickBanMap.containsKey("team1") && pickBanMap.get("team1") != null) {
-                        team1 = pickBanMap.get("team1");
+
+                    // Verificar se tem a estrutura teams.blue e teams.red
+                    if (pickBanMap.containsKey("teams") && pickBanMap.get("teams") instanceof Map<?, ?>) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> teams = (Map<String, Object>) pickBanMap.get("teams");
+
+                        // Extrair Blue Team (team1)
+                        if (teams.containsKey("blue") && teams.get("blue") instanceof Map<?, ?>) {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> blueTeam = (Map<String, Object>) teams.get("blue");
+                            if (blueTeam.containsKey("players") && blueTeam.get("players") instanceof List<?>) {
+                                @SuppressWarnings("unchecked")
+                                List<Map<String, Object>> bluePlayers = (List<Map<String, Object>>) blueTeam
+                                        .get("players");
+                                team1Players = bluePlayers;
+                                log.debug("✅ Extraídos {} jogadores do Blue Team (teams.blue.players)",
+                                        team1Players.size());
+                            }
+                        }
+
+                        // Extrair Red Team (team2)
+                        if (teams.containsKey("red") && teams.get("red") instanceof Map<?, ?>) {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> redTeam = (Map<String, Object>) teams.get("red");
+                            if (redTeam.containsKey("players") && redTeam.get("players") instanceof List<?>) {
+                                @SuppressWarnings("unchecked")
+                                List<Map<String, Object>> redPlayers = (List<Map<String, Object>>) redTeam
+                                        .get("players");
+                                team2Players = redPlayers;
+                                log.debug("✅ Extraídos {} jogadores do Red Team (teams.red.players)",
+                                        team2Players.size());
+                            }
+                        }
                     }
-                    if (pickBanMap.containsKey("team2") && pickBanMap.get("team2") != null) {
-                        team2 = pickBanMap.get("team2");
+
+                    // Fallback: tentar usar team1/team2 direto do pickBanData (compatibilidade)
+                    if (team1Players.isEmpty() && pickBanMap.containsKey("team1")
+                            && pickBanMap.get("team1") instanceof List<?>) {
+                        @SuppressWarnings("unchecked")
+                        List<Map<String, Object>> t1 = (List<Map<String, Object>>) pickBanMap.get("team1");
+                        team1Players = t1;
+                        log.debug("✅ Usando team1 direto do pickBanData (fallback)");
+                    }
+                    if (team2Players.isEmpty() && pickBanMap.containsKey("team2")
+                            && pickBanMap.get("team2") instanceof List<?>) {
+                        @SuppressWarnings("unchecked")
+                        List<Map<String, Object>> t2 = (List<Map<String, Object>>) pickBanMap.get("team2");
+                        team2Players = t2;
+                        log.debug("✅ Usando team2 direto do pickBanData (fallback)");
                     }
                 }
 
-                response.put("team1", team1);
-                response.put("team2", team2);
+                response.put("team1", team1Players);
+                response.put("team2", team2Players);
                 response.put("pickBanData", pickBanData);
                 response.put("startTime", match.getCreatedAt());
                 response.put("sessionId", "restored-" + match.getId());
                 response.put("gameId", String.valueOf(match.getId()));
                 response.put("isCustomGame", true);
 
-                log.debug("✅ Retornando game in progress com team1/team2 hidratados");
+                log.info("✅ Retornando game in progress - Team1: {} jogadores, Team2: {} jogadores",
+                        team1Players.size(), team2Players.size());
             }
 
             return response;
