@@ -469,16 +469,31 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
       const currentPlayerTagLine = this.player?.tagLine || '';
       const fullPlayerName = currentPlayerTagLine ? `${currentPlayerName}#${currentPlayerTagLine}` : currentPlayerName;
 
-      const playerData = participantsData.find((p: any) => {
+      // Função auxiliar para verificar se é o jogador atual
+      const isCurrentPlayer = (p: any): boolean => {
         const pName = p.summonerName?.toLowerCase().trim() || '';
         const pRiotId = p.riotIdGameName && p.riotIdTagline ?
           `${p.riotIdGameName}#${p.riotIdTagline}`.toLowerCase() : '';
-        return pName === currentPlayerName || pRiotId === fullPlayerName.toLowerCase();
-      });
+        return pName === currentPlayerName ||
+          pName.includes(currentPlayerName) ||
+          pRiotId === fullPlayerName.toLowerCase() ||
+          pRiotId.includes(fullPlayerName.toLowerCase());
+      };
+
+      const playerData = participantsData.find(isCurrentPlayer);
 
       const playerTeam = playerData?.teamId || 100;
       const playerWon = (playerTeam === 100 && match.winnerTeam === 'team1') ||
         (playerTeam === 200 && match.winnerTeam === 'team2');
+
+      console.log('🔍 [mapApiMatchesToModel] Jogador detectado:', {
+        playerName: currentPlayerName,
+        fullPlayerName,
+        foundPlayer: !!playerData,
+        playerChampion: playerData?.championId,
+        playerTeam,
+        playerWon
+      });
 
       // Mapear participantes para estrutura do frontend
       const mappedMatch = {
@@ -488,56 +503,68 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
         gameMode: match.gameMode || 'CUSTOM',
 
         // Mapear team1 (teamId 100)
-        team1: team1Participants.map((p: any) => ({
-          name: p.summonerName,
-          champion: this.championService.getChampionName(p.championId),
-          championName: this.championService.getChampionName(p.championId),
-          summonerName: p.summonerName,
-          puuid: `participant_${p.teamId}_${p.championId}`,
-          teamId: 100,
-          kills: p.kills || 0,
-          deaths: p.deaths || 0,
-          assists: p.assists || 0,
-          champLevel: p.champLevel || 18,
-          goldEarned: p.goldEarned || 0,
-          totalMinionsKilled: p.totalMinionsKilled || 0,
-          neutralMinionsKilled: p.neutralMinionsKilled || 0,
-          totalDamageDealtToChampions: p.totalDamageDealtToChampions || 0,
-          visionScore: p.visionScore || 0,
-          firstBloodKill: p.firstBloodKill || false,
-          item0: p.item0 || 0,
-          item1: p.item1 || 0,
-          item2: p.item2 || 0,
-          item3: p.item3 || 0,
-          item4: p.item4 || 0,
-          item5: p.item5 || 0
-        })),
+        team1: team1Participants.map((p: any) => {
+          const isMe = isCurrentPlayer(p);
+          return {
+            name: p.summonerName,
+            champion: this.championService.getChampionName(p.championId),
+            championName: this.championService.getChampionName(p.championId),
+            summonerName: p.summonerName,
+            puuid: isMe ? (this.player?.puuid || `participant_${p.teamId}_${p.championId}`) : `participant_${p.teamId}_${p.championId}`,
+            championId: p.championId,
+            teamId: 100,
+            kills: p.kills || 0,
+            deaths: p.deaths || 0,
+            assists: p.assists || 0,
+            champLevel: p.champLevel || 18,
+            goldEarned: p.goldEarned || 0,
+            totalMinionsKilled: p.totalMinionsKilled || 0,
+            neutralMinionsKilled: p.neutralMinionsKilled || 0,
+            totalDamageDealtToChampions: p.totalDamageDealtToChampions || 0,
+            visionScore: p.visionScore || 0,
+            firstBloodKill: p.firstBloodKill || false,
+            item0: p.item0 || 0,
+            item1: p.item1 || 0,
+            item2: p.item2 || 0,
+            item3: p.item3 || 0,
+            item4: p.item4 || 0,
+            item5: p.item5 || 0,
+            spell1Id: p.spell1Id || 0,
+            spell2Id: p.spell2Id || 0
+          };
+        }),
 
         // Mapear team2 (teamId 200)
-        team2: team2Participants.map((p: any) => ({
-          name: p.summonerName,
-          champion: this.championService.getChampionName(p.championId),
-          championName: this.championService.getChampionName(p.championId),
-          summonerName: p.summonerName,
-          puuid: `participant_${p.teamId}_${p.championId}`,
-          teamId: 200,
-          kills: p.kills || 0,
-          deaths: p.deaths || 0,
-          assists: p.assists || 0,
-          champLevel: p.champLevel || 18,
-          goldEarned: p.goldEarned || 0,
-          totalMinionsKilled: p.totalMinionsKilled || 0,
-          neutralMinionsKilled: p.neutralMinionsKilled || 0,
-          totalDamageDealtToChampions: p.totalDamageDealtToChampions || 0,
-          visionScore: p.visionScore || 0,
-          firstBloodKill: p.firstBloodKill || false,
-          item0: p.item0 || 0,
-          item1: p.item1 || 0,
-          item2: p.item2 || 0,
-          item3: p.item3 || 0,
-          item4: p.item4 || 0,
-          item5: p.item5 || 0
-        })),
+        team2: team2Participants.map((p: any) => {
+          const isMe = isCurrentPlayer(p);
+          return {
+            name: p.summonerName,
+            champion: this.championService.getChampionName(p.championId),
+            championName: this.championService.getChampionName(p.championId),
+            summonerName: p.summonerName,
+            puuid: isMe ? (this.player?.puuid || `participant_${p.teamId}_${p.championId}`) : `participant_${p.teamId}_${p.championId}`,
+            championId: p.championId,
+            teamId: 200,
+            kills: p.kills || 0,
+            deaths: p.deaths || 0,
+            assists: p.assists || 0,
+            champLevel: p.champLevel || 18,
+            goldEarned: p.goldEarned || 0,
+            totalMinionsKilled: p.totalMinionsKilled || 0,
+            neutralMinionsKilled: p.neutralMinionsKilled || 0,
+            totalDamageDealtToChampions: p.totalDamageDealtToChampions || 0,
+            visionScore: p.visionScore || 0,
+            firstBloodKill: p.firstBloodKill || false,
+            item0: p.item0 || 0,
+            item1: p.item1 || 0,
+            item2: p.item2 || 0,
+            item3: p.item3 || 0,
+            item4: p.item4 || 0,
+            item5: p.item5 || 0,
+            spell1Id: p.spell1Id || 0,
+            spell2Id: p.spell2Id || 0
+          };
+        }),
 
         winner: match.winnerTeam === 'team1' ? 1 : 2,
         averageMMR1: 1200,
@@ -548,14 +575,17 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
           { teamId: 200, win: match.winnerTeam === 'team2' }
         ],
 
-        // Stats do jogador atual
+        // Stats do jogador atual para exibição na linha principal
         playerStats: playerData ? {
+          championId: playerData.championId,
           champion: this.championService.getChampionName(playerData.championId),
+          championName: this.championService.getChampionName(playerData.championId),
           kills: playerData.kills || 0,
           deaths: playerData.deaths || 0,
           assists: playerData.assists || 0,
           isWin: playerWon,
           mmrChange: 0,
+          lpChange: 0,
           championLevel: playerData.champLevel || 18,
           firstBloodKill: playerData.firstBloodKill || false,
           doubleKills: 0,
@@ -575,18 +605,21 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
           totalDamageDealtToChampions: playerData.totalDamageDealtToChampions || 0,
           totalDamageTaken: 0,
           totalMinionsKilled: playerData.totalMinionsKilled || 0,
-          neutralMinionsKilled: 0,
+          neutralMinionsKilled: playerData.neutralMinionsKilled || 0,
           wardsPlaced: 0,
           wardsKilled: 0,
           visionScore: playerData.visionScore || 0,
-          lpChange: 0
+          spell1Id: playerData.spell1Id || 0,
+          spell2Id: playerData.spell2Id || 0
         } : {
           champion: 'Unknown',
+          championName: 'Unknown',
           kills: 0,
           deaths: 0,
           assists: 0,
           isWin: false,
-          mmrChange: 0
+          mmrChange: 0,
+          lpChange: 0
         }
       };
 
