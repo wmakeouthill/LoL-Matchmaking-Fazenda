@@ -261,14 +261,24 @@ public class DebugController {
     }
 
     /**
-     * ✅ NOVO: Simula última partida do LCU como partida customizada EM ANDAMENTO
-     * Endpoint de teste para desenvolvimento - Vai direto para game-in-progress
+     * ✅ Simula última partida personalizada do LCU como partida customizada
+     * COMPLETA
+     * Endpoint de teste para desenvolvimento - Cria partida no mesmo formato que
+     * uma partida real
+     * 
+     * Formato idêntico ao de uma partida real:
+     * - title: "Partida Customizada"
+     * - description: "Partida gerada automaticamente pelo sistema de matchmaking"
+     * - team1_players/team2_players: Comma-separated strings (não JSON)
+     * - game_mode: "5v5"
+     * - status: "completed"
+     * - pick_ban_data: Estrutura completa com times, jogadores e ações
      */
     @PostMapping("/simulate-last-match")
     public ResponseEntity<Map<String, Object>> simulateLastMatch(@RequestBody Map<String, Object> lcuMatchData) {
         try {
             log.info("╔════════════════════════════════════════════════════════════════╗");
-            log.info("║  🎮 [DEBUG] SIMULANDO ÚLTIMA PARTIDA (IN PROGRESS)            ║");
+            log.info("║  🎮 [DEBUG] SIMULANDO ÚLTIMA PARTIDA CUSTOMIZADA              ║");
             log.info("╚════════════════════════════════════════════════════════════════╝");
 
             // Validar dados de entrada
@@ -355,10 +365,11 @@ public class DebugController {
 
             // 5. Criar CustomMatch
             CustomMatch simulatedMatch = new CustomMatch();
-            simulatedMatch.setTitle("Partida Simulada - " + java.time.LocalDateTime.now().format(
-                    java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")));
+            simulatedMatch.setTitle("Partida Customizada");
+            simulatedMatch.setDescription("Partida gerada automaticamente pelo sistema de matchmaking");
             simulatedMatch.setStatus("in_progress");
             simulatedMatch.setCreatedBy("system");
+            simulatedMatch.setGameMode("5v5");
 
             // 6. Salvar gameId do Riot
             Object gameIdObj = lcuMatchData.get("gameId");
@@ -368,10 +379,11 @@ public class DebugController {
             // 7. Salvar JSON completo do LCU
             simulatedMatch.setLcuMatchData(mapper.writeValueAsString(lcuMatchData));
 
-            // 8. Salvar times no formato JSON detalhado (team1_players e team2_players são
-            // mapeados para team1PlayersJson/team2PlayersJson)
-            simulatedMatch.setTeam1PlayersJson(mapper.writeValueAsString(blueTeam));
-            simulatedMatch.setTeam2PlayersJson(mapper.writeValueAsString(redTeam));
+            // 8. ✅ CORRIGIDO: Salvar times como comma-separated strings (igual partida
+            // real)
+            // Formato: "Player1,Player2,Player3,Player4,Player5"
+            simulatedMatch.setTeam1PlayersJson(String.join(",", team1PlayerNames));
+            simulatedMatch.setTeam2PlayersJson(String.join(",", team2PlayerNames));
 
             // 9. Salvar pick_ban_data
             simulatedMatch.setPickBanDataJson(mapper.writeValueAsString(pickBanData));
@@ -412,15 +424,6 @@ public class DebugController {
             log.info("👥 Blue Team: {}", String.join(", ", team1PlayerNames));
             log.info("👥 Red Team: {}", String.join(", ", team2PlayerNames));
 
-            // 16. ✅ Iniciar jogo e fazer broadcast para game-in-progress
-            try {
-                gameInProgressService.startGame(saved.getId());
-                log.info("✅ [DEBUG] Game started - Usuário será direcionado para game-in-progress");
-            } catch (Exception e) {
-                log.warn("⚠️ [DEBUG] Erro ao iniciar jogo, mas partida foi criada: {}", e.getMessage());
-                log.error("⚠️ [DEBUG] Stack trace:", e);
-            }
-
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "matchId", saved.getId(),
@@ -429,7 +432,8 @@ public class DebugController {
                     "duration", duration,
                     "blueTeam", team1PlayerNames,
                     "redTeam", team2PlayerNames,
-                    "message", "Partida simulada com sucesso! Redirecionando para game-in-progress..."));
+                    "message",
+                    "Partida customizada simulada com sucesso! Criada no mesmo formato de uma partida real."));
 
         } catch (Exception e) {
             log.error("❌ [DEBUG] Erro ao simular partida", e);
