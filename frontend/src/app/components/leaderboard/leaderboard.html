@@ -104,7 +104,7 @@
             <div class="kda-stats">
               <div class="kda-values">{{ formatKDANew(player.avg_kills, player.avg_deaths, player.avg_assists) }}</div>
               <div class="kda-ratio" [ngStyle]="{'color': getKDAColor(player.kda_ratio)}">
-                {{ player.kda_ratio }} KDA
+                {{ formatKDARatio(player.kda_ratio) }} KDA
               </div>
             </div>
           </div> <!-- Gold Médio -->

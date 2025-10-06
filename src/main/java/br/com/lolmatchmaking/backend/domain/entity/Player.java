@@ -68,6 +68,25 @@ public class Player {
     @Column(name = "custom_lp")
     private Integer customLp;
 
+    // Estatísticas detalhadas de custom matches
+    @Column(name = "avg_kills")
+    private Double avgKills;
+
+    @Column(name = "avg_deaths")
+    private Double avgDeaths;
+
+    @Column(name = "avg_assists")
+    private Double avgAssists;
+
+    @Column(name = "kda_ratio")
+    private Double kdaRatio;
+
+    @Column(name = "favorite_champion")
+    private String favoriteChampion;
+
+    @Column(name = "favorite_champion_games")
+    private Integer favoriteChampionGames;
+
     @Column(name = "created_at")
     private Instant createdAt;
 
@@ -79,11 +98,16 @@ public class Player {
         Instant now = Instant.now();
         createdAt = (createdAt == null) ? now : createdAt;
         updatedAt = now;
-        if (currentMmr == null) currentMmr = 1000;
-        if (peakMmr == null) peakMmr = currentMmr;
-        if (customMmr == null) customMmr = 1000;
-        if (customPeakMmr == null) customPeakMmr = customMmr;
-        if (customLp == null) customLp = 0;
+        if (currentMmr == null)
+            currentMmr = 1000;
+        if (peakMmr == null)
+            peakMmr = currentMmr;
+        if (customMmr == null)
+            customMmr = 1000;
+        if (customPeakMmr == null)
+            customPeakMmr = customMmr;
+        if (customLp == null)
+            customLp = 0;
     }
 
     @PreUpdate

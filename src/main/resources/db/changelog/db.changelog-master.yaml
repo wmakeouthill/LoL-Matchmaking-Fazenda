@@ -9,3 +9,5 @@ databaseChangeLog:
       file: db/changelog/changes/0004-add-lcu-match-data-and-fix-settings.yaml
   - include:
       file: db/changelog/changes/0005-add-match-voting-system.yaml
+  - include:
+      file: db/changelog/changes/0006-add-kda-and-favorite-champion.yaml

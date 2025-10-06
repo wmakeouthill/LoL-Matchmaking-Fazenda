@@ -77,6 +77,39 @@ export class ChampionService {
   }
 
   /**
+   * Get champion ID by name (case-insensitive)
+   */
+  getChampionIdByName(championName: string): string | null {
+    if (!championName) return null;
+
+    // Normalizar o nome: remover espaços e caracteres especiais
+    const normalizedSearchName = championName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+
+    // Procurar no cache
+    for (const champion of this.championsCache.values()) {
+      const normalizedChampionId = champion.id.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+      const normalizedChampionName = champion.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+
+      if (normalizedChampionId === normalizedSearchName || normalizedChampionName === normalizedSearchName) {
+        return champion.id;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Get champion image URL by name
+   */
+  getChampionImageUrlByName(championName: string): string {
+    const championId = this.getChampionIdByName(championName);
+    if (championId) {
+      return `${this.DD_BASE_URL}/img/champion/${championId}.png`;
+    }
+    return `${this.DD_BASE_URL}/img/champion/champion_placeholder.png`;
+  }
+
+  /**
    * ✅ NOVO: Obter todos os campeões do cache
    */
   getAllChampions(): ChampionData[] {
