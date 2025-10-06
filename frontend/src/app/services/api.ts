@@ -65,6 +65,10 @@ export class ApiService {
   private readonly errorSuppressionCache = new Map<string, number>();
   private readonly ERROR_SUPPRESSION_DURATION = 30000; // 30 seconds
 
+  // Cache para isElectron() - computado uma única vez
+  private _isElectronCache: boolean | null = null;
+  private _isWindowsCache: boolean | null = null;
+
   // ✅ NOVO: Subject para mensagens WebSocket
   private readonly webSocketMessageSubject = new Subject<any>();
   private webSocket: WebSocket | null = null;
@@ -289,6 +293,11 @@ export class ApiService {
   }
 
   public isElectron(): boolean {
+    // Usar cache se já foi computado
+    if (this._isElectronCache !== null) {
+      return this._isElectronCache;
+    }
+
     // Verificar se está no Electron através de múltiplas formas
     const hasElectronAPI = !!(window as any).electronAPI;
     const hasRequire = !!(window as any).require;
@@ -299,8 +308,8 @@ export class ApiService {
 
     const isElectron = hasElectronAPI || hasRequire || hasProcess || userAgentElectron || isFileProtocol || hasElectronProcess;
 
-    // Log para debug
-    console.log('🔍 Electron detection:', {
+    // Log apenas na primeira vez
+    console.log('🔍 Electron detection (cached):', {
       hasElectronAPI,
       hasRequire,
       hasProcess,
@@ -309,14 +318,20 @@ export class ApiService {
       hasElectronProcess,
       isElectron,
       protocol: window.location.protocol,
-      hostname: window.location.hostname,
-      userAgent: navigator.userAgent
+      hostname: window.location.hostname
     });
 
+    // Armazenar em cache
+    this._isElectronCache = isElectron;
     return isElectron;
   }
 
   private isWindows(): boolean {
+    // Usar cache se já foi computado
+    if (this._isWindowsCache !== null) {
+      return this._isWindowsCache;
+    }
+
     const platform = (window as any).process?.platform || navigator.platform;
     const userAgent = navigator.userAgent;
 
@@ -324,7 +339,10 @@ export class ApiService {
       platform.toLowerCase().includes('win') ||
       userAgent.includes('Windows');
 
-    console.log('🖥️ Platform detection:', { platform, userAgent, isWindows: isWin });
+    console.log('🖥️ Platform detection (cached):', { platform, userAgent, isWindows: isWin });
+
+    // Armazenar em cache
+    this._isWindowsCache = isWin;
     return isWin;
   } private tryWithFallback<T>(endpoint: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET', body?: any): Observable<T> {
     const tryUrl = (url: string): Observable<T> => {

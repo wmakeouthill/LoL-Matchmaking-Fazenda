@@ -44,7 +44,7 @@
             </div>
           </div> <!-- Jogador -->
           <div class="player-col">
-            <div class="player-info"> <img [src]="getPlayerProfileIconUrl(player) | async" alt="Profile Icon"
+            <div class="player-info"> <img [src]="player.profileIconUrl$ | async" alt="Profile Icon"
                 class="profile-icon" (error)="onProfileIconError($event, player.profileIconId)">
               <div class="player-details">
                 <span class="summoner-name">{{ player.summoner_name }}</span>
@@ -54,10 +54,10 @@
           </div><!-- Campeão Favorito -->
           <div class="champion-col">
             <div class="champion-info" *ngIf="player.favorite_champion; else noChampion">
-              <img [src]="getChampionIconUrl(player.favorite_champion.name)" [alt]="player.favorite_champion.name"
+              <img [src]="player.favorite_champion.iconUrl" [alt]="player.favorite_champion.displayName"
                 class="champion-icon" (error)="onImageError($event, 'assets/images/champion-placeholder.svg')">
               <div class="champion-details">
-                <span class="champion-name">{{ getChampionDisplayName(player.favorite_champion.name) }}</span>
+                <span class="champion-name">{{ player.favorite_champion.displayName }}</span>
                 <span class="champion-games">{{ player.favorite_champion.games }} partidas</span>
               </div>
             </div>

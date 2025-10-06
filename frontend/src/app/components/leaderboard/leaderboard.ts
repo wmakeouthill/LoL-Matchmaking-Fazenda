@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, ChangeDetectorRef } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectorRef, ChangeDetectionStrategy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { interval, Subscription, debounceTime, distinctUntilChanged, Observable, firstValueFrom } from 'rxjs';
@@ -30,6 +30,8 @@ interface LeaderboardPlayer {
   lp: number;
   favorite_champion: {
     name: string;
+    displayName: string;  // Nome processado para exibição
+    iconUrl: string;      // URL do ícone já processada
     id: number;
     games: number;
   } | null;
@@ -47,7 +49,8 @@ interface CacheData {
   standalone: true,
   imports: [CommonModule],
   templateUrl: './leaderboard.html',
-  styleUrl: './leaderboard.scss'
+  styleUrl: './leaderboard.scss',
+  changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class LeaderboardComponent implements OnInit, OnDestroy {
   leaderboardData: LeaderboardPlayer[] = [];
@@ -74,7 +77,8 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
     private http: HttpClient,
     private championService: ChampionService,
     private profileIconService: ProfileIconService,
-    private apiService: ApiService
+    private apiService: ApiService,
+    private cdr: ChangeDetectorRef
   ) {
     this.baseUrl = this.apiService.getBaseUrl();
   }
@@ -179,6 +183,12 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
           avg_assists: player.avgAssists ?? 0,
           kda_ratio: player.kdaRatio ?? 0,
           favorite_champion: player.favoriteChampion ? this.processFavoriteChampion(player.favoriteChampion, player.favoriteChampionGames) : null,
+          // Pré-processar profileIconUrl$ para evitar chamadas repetidas
+          profileIconUrl$: this.getPlayerProfileIconUrl({
+            summoner_name: player.summonerName,
+            riot_id_game_name: player.gameName,
+            riot_id_tagline: player.tagLine
+          } as LeaderboardPlayer),
           // Manter outros campos do player original se existirem
           avg_gold: player.avg_gold ?? 0,
           avg_damage: player.avg_damage ?? 0,
@@ -190,14 +200,18 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
 
         this.lastUpdated = new Date();
         this.saveCacheToStorage();
+        this.cdr.markForCheck(); // Notificar mudança de estado
       } else {
         this.error = 'Erro ao carregar leaderboard';
+        this.cdr.markForCheck();
       }
     } catch (error) {
       console.error('❌ Erro ao carregar leaderboard:', error);
       this.error = 'Erro ao conectar com o servidor';
+      this.cdr.markForCheck();
     } finally {
       this.isLoading = false;
+      this.cdr.markForCheck();
     }
   }
 
@@ -340,106 +354,41 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
 
   /**
    * Processa o campeão favorito, convertendo championId em nome real se necessário
+   * Também processa displayName e iconUrl para evitar re-renderizações
    */
-  processFavoriteChampion(championData: string, games: number): { name: string; id: number; games: number } | null {
+  processFavoriteChampion(championData: string, games: number): { name: string; displayName: string; iconUrl: string; id: number; games: number } | null {
     if (!championData) return null;
 
-    console.log('🔍 [processFavoriteChampion] Recebido:', championData, 'Games:', games);
-    console.log('🔍 [processFavoriteChampion] Champions carregados?', this.championService.isLoaded());
+    let championId = 0;
+    let championName = championData;
 
     // Verificar se é "Champion X" e extrair o ID
     const championRegex = /^Champion\s+(\d+)$/i;
     const championMatch = championRegex.exec(championData);
     if (championMatch) {
-      const championId = parseInt(championMatch[1], 10);
-      const championName = this.championService.getChampionName(championId);
-      console.log('🔍 [processFavoriteChampion] "Champion X" detectado - ID:', championId, '→ Nome:', championName);
-      return {
-        name: championName,
-        id: championId,
-        games: games ?? 0
-      };
+      championId = parseInt(championMatch[1], 10);
+      championName = this.championService.getChampionName(championId);
+    } else {
+      // Verificar se é um número (championId)
+      const parsedId = parseInt(championData, 10);
+      if (!isNaN(parsedId)) {
+        championId = parsedId;
+        championName = this.championService.getChampionName(championId);
+      }
     }
 
-    // Verificar se é um número (championId)
-    const championId = parseInt(championData, 10);
-    if (!isNaN(championId)) {
-      // É um championId, converter para nome
-      const championName = this.championService.getChampionName(championId);
-      console.log('🔍 [processFavoriteChampion] ID numérico:', championId, '→ Nome:', championName);
-      return {
-        name: championName,
-        id: championId,
-        games: games ?? 0
-      };
-    }
+    // Processar URL do ícone uma única vez
+    const iconUrl = championId > 0
+      ? this.championService.getChampionImageUrl(championId)
+      : this.championService.getChampionImageUrlByName(championName);
 
-    // Já é um nome de campeão
-    console.log('🔍 [processFavoriteChampion] Nome direto:', championData);
     return {
-      name: championData,
-      id: 0, // ID desconhecido quando vem como nome
+      name: championData, // Nome original do backend
+      displayName: championName, // Nome processado para exibição
+      iconUrl: iconUrl, // URL já processada
+      id: championId,
       games: games ?? 0
     };
-  }
-
-  getChampionIconUrl(championName: string): string {
-    if (!championName) return 'assets/images/champion-placeholder.svg';
-
-    console.log('🖼️ [getChampionIconUrl] Input:', championName);
-
-    // Verificar se é "Champion X" e extrair o ID
-    const championRegex = /^Champion\s+(\d+)$/i;
-    const championMatch = championRegex.exec(championName);
-    if (championMatch) {
-      const championId = parseInt(championMatch[1], 10);
-      const url = this.championService.getChampionImageUrl(championId);
-      console.log('🖼️ [getChampionIconUrl] "Champion X" detectado - ID:', championId, '→ URL:', url);
-      return url;
-    }
-
-    // Verificar se é um número puro (championId)
-    const championId = parseInt(championName, 10);
-    if (!isNaN(championId)) {
-      // É um championId, usar o método do serviço que aceita ID
-      const url = this.championService.getChampionImageUrl(championId);
-      console.log('🖼️ [getChampionIconUrl] ID numérico:', championId, '→ URL:', url);
-      return url;
-    }
-
-    // É um nome, usar o método que aceita nome
-    const url = this.championService.getChampionImageUrlByName(championName);
-    console.log('🖼️ [getChampionIconUrl] Nome:', championName, '→ URL:', url);
-    return url;
-  }
-
-  getChampionDisplayName(championName: string): string {
-    if (!championName) return 'Nenhum';
-
-    console.log('📝 [getChampionDisplayName] Input:', championName);
-
-    // Verificar se é "Champion X" e extrair o ID
-    const championRegex = /^Champion\s+(\d+)$/i;
-    const championMatch = championRegex.exec(championName);
-    if (championMatch) {
-      const championId = parseInt(championMatch[1], 10);
-      const name = this.championService.getChampionName(championId);
-      console.log('📝 [getChampionDisplayName] "Champion X" detectado - ID:', championId, '→ Nome:', name);
-      return name;
-    }
-
-    // Verificar se é um número puro (championId)
-    const championId = parseInt(championName, 10);
-    if (!isNaN(championId)) {
-      // É um championId, converter para nome
-      const name = this.championService.getChampionName(championId);
-      console.log('📝 [getChampionDisplayName] ID numérico:', championId, '→ Nome:', name);
-      return name;
-    }
-
-    // Já é um nome, retornar como está
-    console.log('📝 [getChampionDisplayName] Nome direto:', championName);
-    return championName;
   }
 
   formatKDA(kda: any): string {
