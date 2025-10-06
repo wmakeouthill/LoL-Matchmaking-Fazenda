@@ -117,4 +117,43 @@ public class CompatibilityController {
                     .body(Map.of("success", false, "error", e.getMessage()));
         }
     }
+
+    // POST /api/stats/update-champion-stats?forceUpdate=true
+    @PostMapping("/stats/update-champion-stats")
+    public ResponseEntity<Map<String, Object>> updateChampionStats(
+            @RequestParam(defaultValue = "false") boolean forceUpdate) {
+        try {
+            log.info("🔄 Atualizando estatísticas detalhadas de campeões... (forçar: {})", forceUpdate);
+
+            // Atualizar estatísticas básicas primeiro
+            int basicUpdated = playerService.updateAllPlayersCustomStats();
+            log.info("✅ Estatísticas básicas: {} jogadores", basicUpdated);
+
+            // Atualizar estatísticas detalhadas de campeões (custom + Riot API)
+            List<PlayerDTO> players = playerService.getAllPlayers();
+            int championStatsUpdated = 0;
+
+            for (PlayerDTO player : players) {
+                try {
+                    playerService.updatePlayerChampionStats(player.getSummonerName(), forceUpdate);
+                    championStatsUpdated++;
+                } catch (Exception e) {
+                    log.warn("⚠️ Erro ao atualizar stats de campeões para {}: {}",
+                            player.getSummonerName(), e.getMessage());
+                }
+            }
+
+            log.info("✅ {} jogadores com estatísticas de campeões atualizadas", championStatsUpdated);
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Estatísticas de campeões atualizadas com sucesso",
+                    "basicStatsUpdated", basicUpdated,
+                    "championStatsUpdated", championStatsUpdated,
+                    "forceUpdate", forceUpdate));
+        } catch (Exception e) {
+            log.error("❌ Erro ao atualizar estatísticas de campeões", e);
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
 }

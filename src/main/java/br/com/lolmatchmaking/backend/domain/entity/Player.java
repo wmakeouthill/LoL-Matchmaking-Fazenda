@@ -87,6 +87,20 @@ public class Player {
     @Column(name = "favorite_champion_games")
     private Integer favoriteChampionGames;
 
+    // Estatísticas detalhadas de campeões (armazenadas como TEXT/LONGTEXT para
+    // compatibilidade MySQL 5.6)
+    @Column(name = "player_stats_draft", columnDefinition = "LONGTEXT")
+    private String playerStatsDraft; // JSON com top 5 campeões das custom matches
+
+    @Column(name = "mastery_champions", columnDefinition = "LONGTEXT")
+    private String masteryChampions; // JSON com top 3 campeões de maestria (Riot API)
+
+    @Column(name = "ranked_champions", columnDefinition = "LONGTEXT")
+    private String rankedChampions; // JSON com top 5 campeões ranked (Riot API)
+
+    @Column(name = "stats_last_updated")
+    private Instant statsLastUpdated; // Última atualização das estatísticas
+
     @Column(name = "created_at")
     private Instant createdAt;
 
