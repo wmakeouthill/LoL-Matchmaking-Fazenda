@@ -1,0 +1,24 @@
+databaseChangeLog:
+  - changeSet:
+      id: 0007-add-player-stats-draft
+      author: system
+      changes:
+        - addColumn:
+            tableName: players
+            columns:
+              - column:
+                  name: player_stats_draft
+                  type: LONGTEXT
+                  remarks: "Top 5 campeões mais pickados nas custom matches"
+              - column:
+                  name: mastery_champions
+                  type: LONGTEXT
+                  remarks: "Top 3 campeões de maestria da Riot API"
+              - column:
+                  name: ranked_champions
+                  type: LONGTEXT
+                  remarks: "Top 5 campeões ranked (mais jogados + maior winrate)"
+              - column:
+                  name: stats_last_updated
+                  type: TIMESTAMP
+                  remarks: "Última atualização das estatísticas"

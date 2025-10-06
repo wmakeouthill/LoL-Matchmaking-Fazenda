@@ -2,6 +2,7 @@ package br.com.lolmatchmaking.backend.service;
 
 import br.com.lolmatchmaking.backend.domain.entity.Player;
 import br.com.lolmatchmaking.backend.domain.repository.PlayerRepository;
+import br.com.lolmatchmaking.backend.domain.dto.PlayerChampionStatsDTO;
 import br.com.lolmatchmaking.backend.dto.PlayerDTO;
 import br.com.lolmatchmaking.backend.mapper.PlayerMapper;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +25,7 @@ public class PlayerService {
     private final PlayerRepository playerRepository;
     private final PlayerMapper playerMapper;
     private final RiotAPIService riotAPIService;
+    private final RiotChampionStatsService riotChampionStatsService;
 
     @Cacheable("players")
     public List<PlayerDTO> getAllPlayers() {
@@ -897,6 +899,273 @@ public class PlayerService {
         } catch (Exception e) {
             log.debug("Erro ao enriquecer DTO do jogador {} da Riot API: {}",
                     dto.getSummonerName(), e.getMessage());
+        }
+    }
+
+    /**
+     * Atualiza as estatísticas completas do jogador:
+     * - Top 5 campeões das custom matches
+     * - Top 3 campeões de maestria (Riot API)
+     * - Top 5 campeões ranked (Riot API)
+     * 
+     * @param summonerName Nome do jogador
+     * @param forceUpdate  Se true, ignora o cache de 2 dias e força atualização da
+     *                     Riot API
+     */
+    @Transactional
+    public void updatePlayerChampionStats(String summonerName, boolean forceUpdate) {
+        log.info("🔄 Atualizando estatísticas de campeões para: {} (forçar: {})", summonerName, forceUpdate);
+
+        Optional<Player> playerOpt = playerRepository.findBySummonerNameIgnoreCase(summonerName);
+        if (playerOpt.isEmpty()) {
+            log.warn("⚠️ Jogador não encontrado: {}", summonerName);
+            return;
+        }
+
+        Player player = playerOpt.get();
+
+        try {
+            // 1. Top 5 campeões das custom matches (sempre atualiza - dados locais)
+            List<Map<String, Object>> draftChampions = extractTop5CustomChampions(summonerName);
+            player.setPlayerStatsDraft(convertToJson(draftChampions));
+            log.info("✅ Top 5 custom champions para {}: {}", summonerName, draftChampions.size());
+
+            // 2. Verificar se precisa atualizar dados da Riot API (cache de 2 dias)
+            boolean needsRiotApiUpdate = forceUpdate; // Se forçado, sempre atualiza
+
+            if (!forceUpdate && player.getStatsLastUpdated() != null) {
+                java.time.Instant lastUpdate = player.getStatsLastUpdated();
+                java.time.Instant twoDaysAgo = java.time.Instant.now().minus(2, java.time.temporal.ChronoUnit.DAYS);
+
+                if (lastUpdate.isAfter(twoDaysAgo)) {
+                    needsRiotApiUpdate = false;
+                    log.info(
+                            "⏭️ Dados da Riot API ainda válidos para {} (última atualização: {}). Pulando atualização.",
+                            summonerName, lastUpdate);
+                }
+            }
+
+            // Se não precisa atualizar Riot API, apenas salva os dados das custom matches e
+            // retorna
+            if (!needsRiotApiUpdate) {
+                playerRepository.save(player);
+                log.info("✅ Estatísticas de custom matches atualizadas para: {} (Riot API em cache)", summonerName);
+                return;
+            }
+
+            if (forceUpdate) {
+                log.info("🔄 Atualização forçada - ignorando cache.");
+            } else {
+                log.info("🔄 Dados da Riot API expirados. Atualizando...");
+            }
+
+            log.info("🔄 Dados da Riot API expirados ou inexistentes. Atualizando...");
+
+            // 3. Verificar/Buscar PUUID correto da Riot API
+            String puuid = player.getPuuid();
+
+            // Se PUUID está vazio, inválido (formato UUID) ou não funciona, buscar o
+            // correto
+            if (puuid == null || puuid.isEmpty() || puuid.contains("-")) {
+                log.info("🔄 PUUID inválido ou vazio, buscando da Riot API...");
+                String riotPuuid = riotChampionStatsService.getRiotPuuid(summonerName);
+
+                if (riotPuuid != null) {
+                    player.setPuuid(riotPuuid);
+                    puuid = riotPuuid;
+                    playerRepository.save(player);
+                    log.info("✅ PUUID atualizado para {}: {}...", summonerName,
+                            puuid.substring(0, Math.min(20, puuid.length())));
+                } else {
+                    log.warn("⚠️ Não foi possível buscar PUUID da Riot API para {}", summonerName);
+                }
+            } else {
+                log.info("🔍 PUUID encontrado para {}: {}...", summonerName,
+                        puuid.substring(0, Math.min(20, puuid.length())));
+            }
+
+            // 4. Top 3 campeões de maestria (Riot API) - se tiver PUUID válido
+            if (puuid != null && !puuid.isEmpty()) {
+                try {
+                    List<PlayerChampionStatsDTO.ChampionMasteryStats> masteryChampions = riotChampionStatsService
+                            .getTopMasteryChampions(puuid);
+                    player.setMasteryChampions(convertToJson(masteryChampions));
+                    log.info("✅ Top 3 maestria para {}: {}", summonerName, masteryChampions.size());
+                } catch (Exception e) {
+                    log.error("⚠️ Erro ao buscar maestria para {}: {}", summonerName, e.getMessage(), e);
+                }
+            } else {
+                log.warn("⚠️ Jogador {} não tem PUUID válido - pulando maestria", summonerName);
+            }
+
+            // 5. Top 5 campeões ranked (Riot API) - se tiver PUUID válido
+            if (puuid != null && !puuid.isEmpty()) {
+                try {
+                    List<PlayerChampionStatsDTO.ChampionRankedStats> rankedChampions = riotChampionStatsService
+                            .getTopRankedChampions(puuid);
+                    player.setRankedChampions(convertToJson(rankedChampions));
+                    log.info("✅ Top 5 ranked para {}: {}", summonerName, rankedChampions.size());
+                } catch (Exception e) {
+                    log.error("⚠️ Erro ao buscar stats ranked para {}: {}", summonerName, e.getMessage(), e);
+                }
+            } else {
+                log.warn("⚠️ Jogador {} não tem PUUID válido - pulando ranked", summonerName);
+            }
+
+            player.setStatsLastUpdated(java.time.Instant.now());
+            playerRepository.save(player);
+            log.info("✅ Estatísticas atualizadas para: {}", summonerName);
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao atualizar estatísticas de campeões para {}: {}", summonerName, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Atualiza estatísticas de campeões (versão sem forceUpdate para
+     * compatibilidade)
+     */
+    @Transactional
+    public void updatePlayerChampionStats(String summonerName) {
+        updatePlayerChampionStats(summonerName, false);
+    }
+
+    /**
+     * Extrai os top 5 campeões mais pickados nas custom matches do jogador
+     */
+    private List<Map<String, Object>> extractTop5CustomChampions(String summonerName) {
+        // Buscar todas as custom matches do jogador
+        List<Object[]> matches = playerRepository.findCustomMatchesForPlayer(summonerName);
+
+        // Acumular estatísticas por campeão
+        Map<String, ChampionCustomStats> championStats = new HashMap<>();
+
+        for (Object[] match : matches) {
+            String participantsDataJson = (String) match[5]; // participants_data
+            Long matchId = (Long) match[0];
+
+            if (participantsDataJson == null || participantsDataJson.isEmpty()) {
+                continue;
+            }
+
+            try {
+                // Procurar pelo jogador no JSON
+                String playerKey = "\"summonerName\":\"" + summonerName + "\"";
+                int playerIndex = participantsDataJson.indexOf(playerKey);
+                if (playerIndex == -1) {
+                    continue;
+                }
+
+                int objectStart = participantsDataJson.lastIndexOf("{", playerIndex);
+                int objectEnd = participantsDataJson.indexOf("}", playerIndex);
+                if (objectStart == -1 || objectEnd == -1) {
+                    continue;
+                }
+
+                String playerData = participantsDataJson.substring(objectStart, objectEnd + 1);
+
+                // Extrair dados do campeão
+                String championName = extractJsonString(playerData, "championName");
+                int championId = extractJsonInt(playerData, "championId");
+                boolean win = extractJsonBoolean(playerData, "win");
+
+                String championKey = championName != null && !championName.isEmpty()
+                        ? championName
+                        : "Champion " + championId;
+
+                ChampionCustomStats stats = championStats.computeIfAbsent(
+                        championKey,
+                        k -> new ChampionCustomStats(championKey, championId));
+                stats.addGame(win);
+
+            } catch (Exception e) {
+                log.warn("Erro ao processar match {} para {}: {}", matchId, summonerName, e.getMessage());
+            }
+        }
+
+        // Converter para lista e ordenar por games played
+        return championStats.values().stream()
+                .sorted((a, b) -> Integer.compare(b.gamesPlayed, a.gamesPlayed))
+                .limit(5)
+                .map(stats -> {
+                    Map<String, Object> map = new HashMap<>();
+                    map.put("championId", stats.championId);
+                    map.put("championName", stats.championName);
+                    map.put("gamesPlayed", stats.gamesPlayed);
+                    map.put("wins", stats.wins);
+                    map.put("losses", stats.losses);
+                    map.put("winRate", stats.getWinRate());
+                    return map;
+                })
+                .toList();
+    }
+
+    /**
+     * Extrai um valor boolean de uma chave no JSON
+     */
+    private boolean extractJsonBoolean(String json, String key) {
+        try {
+            String keyPattern = "\"" + key + "\":";
+            int keyIndex = json.indexOf(keyPattern);
+            if (keyIndex == -1) {
+                return false;
+            }
+
+            int valueStart = keyIndex + keyPattern.length();
+            int commaIndex = json.indexOf(",", valueStart);
+            int braceIndex = json.indexOf("}", valueStart);
+            int endIndex = (commaIndex != -1 && commaIndex < braceIndex) ? commaIndex : braceIndex;
+
+            if (endIndex == -1) {
+                return false;
+            }
+
+            String value = json.substring(valueStart, endIndex).trim();
+            return Boolean.parseBoolean(value);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Converte objeto para JSON string
+     */
+    private String convertToJson(Object data) {
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            return mapper.writeValueAsString(data);
+        } catch (Exception e) {
+            log.error("Erro ao converter para JSON: {}", e.getMessage());
+            return "[]";
+        }
+    }
+
+    /**
+     * Classe auxiliar para acumular estatísticas de campeões custom
+     */
+    private static class ChampionCustomStats {
+        private final String championName;
+        private final int championId;
+        private int gamesPlayed = 0;
+        private int wins = 0;
+        private int losses = 0;
+
+        public ChampionCustomStats(String championName, int championId) {
+            this.championName = championName;
+            this.championId = championId;
+        }
+
+        public void addGame(boolean win) {
+            gamesPlayed++;
+            if (win) {
+                wins++;
+            } else {
+                losses++;
+            }
+        }
+
+        public double getWinRate() {
+            return gamesPlayed > 0 ? (wins * 100.0 / gamesPlayed) : 0.0;
         }
     }
 }

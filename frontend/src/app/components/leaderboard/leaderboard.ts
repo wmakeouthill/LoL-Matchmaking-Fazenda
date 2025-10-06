@@ -478,28 +478,37 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
   }
 
   async updateLeaderboardStats() {
-    console.log('🔄 Atualizando estatísticas dos jogadores...');
+    console.log('🔄 Atualizando estatísticas completas dos jogadores (forçando atualização)...');
     this.isLoading = true;
     this.error = null;
+    this.cdr.markForCheck();
 
     try {
-      // Chamar endpoint para atualizar as estatísticas
+      // Chamar novo endpoint para atualizar estatísticas completas (custom + Riot API)
+      // forceUpdate=true para ignorar cache de 2 dias e sempre buscar dados frescos
       const response = await firstValueFrom(
-        this.http.post<any>(`${this.baseUrl}/stats/update-leaderboard`, {})
+        this.http.post<any>(`${this.baseUrl}/stats/update-champion-stats?forceUpdate=true`, {})
       );
 
       if (response.success) {
-        console.log(`✅ ${response.updatedPlayers} jogadores atualizados`);
+        console.log(`✅ Estatísticas básicas: ${response.basicStatsUpdated} jogadores`);
+        console.log(`✅ Estatísticas de campeões: ${response.championStatsUpdated} jogadores`);
+        console.log(`✅ Forçar atualização: ${response.forceUpdate}`);
+        console.log(`✅ Total atualizado com sucesso!`);
+
         // Recarregar o leaderboard após atualizar
         await this.loadLeaderboard(false);
       } else {
         this.error = 'Erro ao atualizar estatísticas';
+        this.cdr.markForCheck();
       }
     } catch (error) {
       console.error('❌ Erro ao atualizar estatísticas:', error);
       this.error = 'Erro ao conectar com o servidor';
+      this.cdr.markForCheck();
     } finally {
       this.isLoading = false;
+      this.cdr.markForCheck();
     }
   }
 
