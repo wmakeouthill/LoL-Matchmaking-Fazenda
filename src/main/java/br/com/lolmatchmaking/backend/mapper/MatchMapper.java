@@ -30,6 +30,7 @@ public interface MatchMapper {
     @Mapping(target = "isCustomGame", ignore = true) // Assumir true
     @Mapping(target = "riotMatchId", source = "riotGameId")
     @Mapping(target = "participantsData", source = "participantsData") // ✅ Incluir dados dos participantes
+    @Mapping(target = "lpChanges", source = "lpChanges") // ✅ Incluir LP changes
     MatchDTO toDTO(Match match);
 
     @Mapping(target = "id", ignore = true)

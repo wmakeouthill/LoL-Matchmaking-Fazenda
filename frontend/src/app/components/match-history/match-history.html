@@ -343,6 +343,15 @@
                             <span class="champion-level"
                               >{{ participant.champLevel }}</span
                             >
+                            <!-- LP ao lado direito da imagem (somente para custom matches) -->
+                            <span
+                              *ngIf="isCustomTab() && getParticipantLpChange(match, participant.summonerName)"
+                              class="participant-lp-change"
+                              [class.positive]="getParticipantLpChange(match, participant.summonerName) > 0"
+                              [class.negative]="getParticipantLpChange(match, participant.summonerName) < 0"
+                            >
+                              {{ getParticipantLpChange(match, participant.summonerName) > 0 ? '+' : '' }}{{ getParticipantLpChange(match, participant.summonerName) }}
+                            </span>
                           </div>
                           <div class="champion-info">
                             <div
@@ -515,6 +524,15 @@
                             <span class="champion-level"
                               >{{ participant.champLevel }}</span
                             >
+                            <!-- LP ao lado direito da imagem (somente para custom matches) -->
+                            <span
+                              *ngIf="isCustomTab() && getParticipantLpChange(match, participant.summonerName)"
+                              class="participant-lp-change"
+                              [class.positive]="getParticipantLpChange(match, participant.summonerName) > 0"
+                              [class.negative]="getParticipantLpChange(match, participant.summonerName) < 0"
+                            >
+                              {{ getParticipantLpChange(match, participant.summonerName) > 0 ? '+' : '' }}{{ getParticipantLpChange(match, participant.summonerName) }}
+                            </span>
                           </div>
                           <div class="champion-info">
                             <div

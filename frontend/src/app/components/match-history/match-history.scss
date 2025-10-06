@@ -358,9 +358,42 @@
             }
 
             .champion-level {
+              position: absolute;
+              bottom: 2px;
+              right: 2px;
+              background: rgba(0, 0, 0, 0.8);
+              color: #f0e6d2;
               font-size: 11px;
-              color: #a09b8c;
-              font-weight: 500;
+              font-weight: 700;
+              padding: 2px 5px;
+              border-radius: 3px;
+              border: 1px solid rgba(200, 155, 60, 0.6);
+              line-height: 1;
+            }
+
+            .participant-lp-change {
+              position: absolute;
+              top: 50%;
+              left: calc(100% + 8px);
+              transform: translateY(-50%);
+              font-size: 11px;
+              font-weight: 700;
+              padding: 3px 7px;
+              border-radius: 4px;
+              white-space: nowrap;
+              line-height: 1;
+
+              &.positive {
+                color: #0ac8b9 !important;
+                background: rgba(10, 200, 185, 0.2) !important;
+                border: 1px solid rgba(10, 200, 185, 0.4);
+              }
+
+              &.negative {
+                color: #d13639 !important;
+                background: rgba(209, 54, 57, 0.2) !important;
+                border: 1px solid rgba(209, 54, 57, 0.4);
+              }
             }
           }
         }        // KDA section
@@ -1509,21 +1542,44 @@
 
       .champion-level {
         position: absolute;
-        top: 50%;
-        left: calc(100% + 6px); /* totalmente fora e alinhado à direita do avatar */
-        transform: translateY(-50%);
-        background: linear-gradient(135deg, #c89b3c, #f0e6d2);
-        color: #1e2328;
-        font-size: 10px;
+        bottom: 2px;
+        right: 2px;
+        background: rgba(0, 0, 0, 0.5);  // 50% transparência
+        color: #c89b3c;                   // Dourado igual "você"
+        font-size: 9px;                   // Fonte menor
         font-weight: 700;
         padding: 2px 4px;
-        border-radius: 4px;
-        min-width: 16px;
-        text-align: center;
-        border: 1px solid rgba(16, 29, 53, 0.6);
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+        border-radius: 3px;
+        border: 1px solid rgba(200, 155, 60, 0.6);
+        line-height: 1;
         z-index: 2;
         pointer-events: none;
+      }
+
+      .participant-lp-change {
+        position: absolute;
+        top: 50%;
+        left: calc(100% + 8px);
+        transform: translateY(-50%);
+        font-size: 11px;
+        font-weight: 700;
+        padding: 3px 7px;
+        border-radius: 4px;
+        white-space: nowrap;
+        line-height: 1;
+        z-index: 2;
+
+        &.positive {
+          color: #0ac8b9 !important;
+          background: rgba(10, 200, 185, 0.2) !important;
+          border: 1px solid rgba(10, 200, 185, 0.4);
+        }
+
+        &.negative {
+          color: #d13639 !important;
+          background: rgba(209, 54, 57, 0.2) !important;
+          border: 1px solid rgba(209, 54, 57, 0.4);
+        }
       }
     }    .champion-info {
       display: flex;
