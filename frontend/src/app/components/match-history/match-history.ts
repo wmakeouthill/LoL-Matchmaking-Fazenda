@@ -162,6 +162,10 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
 
       this.apiService.getCustomMatches(playerIdentifier, this.currentPage * this.matchesPerPage, this.matchesPerPage).subscribe({
         next: (response) => {
+          console.log('🔍 [loadCustomMatches] Response from backend:', response);
+          console.log('🔍 [loadCustomMatches] First match raw data:', response?.matches?.[0]);
+          console.log('🔍 [loadCustomMatches] First match lpChanges field:', response?.matches?.[0]?.lpChanges);
+
           if (response && response.success && response.matches && response.matches.length > 0) {
 
             this.customMatches = this.mapApiMatchesToModel(response.matches);
@@ -486,6 +490,39 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
       const playerWon = (playerTeam === 100 && match.winnerTeam === 'team1') ||
         (playerTeam === 200 && match.winnerTeam === 'team2');
 
+      // Parse lpChanges para obter LP do jogador
+      let lpChanges: any = {};
+      let playerLpChange = 0;
+
+      console.log('🔍 [LP DEBUG] Raw match data:', {
+        matchId: match.id,
+        lpChanges_raw: match.lpChanges,
+        lpChanges_type: typeof match.lpChanges,
+        playerSummonerName: playerData?.summonerName
+      });
+
+      try {
+        if (match.lpChanges) {
+          lpChanges = typeof match.lpChanges === 'string' ? JSON.parse(match.lpChanges) : match.lpChanges;
+
+          console.log('🔍 [LP DEBUG] Parsed lpChanges:', lpChanges);
+          console.log('🔍 [LP DEBUG] Looking for player:', playerData?.summonerName);
+          console.log('🔍 [LP DEBUG] Available keys:', Object.keys(lpChanges));
+
+          // Encontrar LP do jogador atual no JSON
+          if (playerData?.summonerName && lpChanges[playerData.summonerName]) {
+            playerLpChange = lpChanges[playerData.summonerName];
+            console.log('✅ [LP DEBUG] Found player LP:', playerLpChange);
+          } else {
+            console.warn('⚠️ [LP DEBUG] Player not found in lpChanges');
+          }
+        } else {
+          console.warn('⚠️ [LP DEBUG] No lpChanges in match data');
+        }
+      } catch (e) {
+        console.error('❌ Erro ao parsear lpChanges:', e);
+      }
+
       console.log('🔍 [mapApiMatchesToModel] Jogador detectado:', {
         playerName: currentPlayerName,
         fullPlayerName,
@@ -498,7 +535,8 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
         playerPrimaryLane: playerData?.primaryLane,
         playerSecondaryLane: playerData?.secondaryLane,
         playerTeam,
-        playerWon
+        playerWon,
+        playerLpChange
       });
 
       // Mapear participantes para estrutura do frontend
@@ -583,6 +621,9 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
           { teamId: 200, win: match.winnerTeam === 'team2' }
         ],
 
+        // LP changes de todos os jogadores
+        lpChanges: lpChanges,
+
         // Stats do jogador atual para exibição na linha principal
         playerStats: playerData ? {
           championId: playerData.championId,
@@ -593,7 +634,7 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
           assists: playerData.assists || 0,
           isWin: playerWon,
           mmrChange: 0,
-          lpChange: 0,
+          lpChange: playerLpChange, // ✅ LP do jogador extraído de lp_changes
           championLevel: playerData.champLevel || 18,
           firstBloodKill: playerData.firstBloodKill || false,
           doubleKills: 0,
@@ -1254,6 +1295,54 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
       participant.item5 || 0
     ];
   }
+
+  /**
+   * Retorna o LP change de um participante específico
+   */
+  getParticipantLpChange(match: any, summonerName: string): number {
+    console.log('🔍 [getParticipantLpChange] Called with:', {
+      matchId: match?.id,
+      summonerName,
+      hasLpChanges: !!match?.lpChanges,
+      lpChanges: match?.lpChanges
+    });
+
+    if (!match || !match.lpChanges || !summonerName) {
+      console.warn('⚠️ [getParticipantLpChange] Missing data:', {
+        hasMatch: !!match,
+        hasLpChanges: !!match?.lpChanges,
+        hasSummonerName: !!summonerName
+      });
+      return 0;
+    }
+
+    // lpChanges já foi parseado no mapApiMatchesToModel
+    const lpChanges = match.lpChanges;
+
+    // Procurar pelo nome exato
+    if (lpChanges[summonerName]) {
+      console.log('✅ [getParticipantLpChange] Found exact match:', lpChanges[summonerName]);
+      return lpChanges[summonerName];
+    }
+
+    // Tentar variações do nome (com/sem tagline)
+    const summonerNameLower = summonerName.toLowerCase();
+    for (const [playerName, lpValue] of Object.entries(lpChanges)) {
+      if (playerName.toLowerCase() === summonerNameLower ||
+        playerName.toLowerCase().includes(summonerNameLower)) {
+        console.log('✅ [getParticipantLpChange] Found fuzzy match:', {
+          searchedName: summonerName,
+          foundName: playerName,
+          lpValue
+        });
+        return lpValue as number;
+      }
+    }
+
+    console.warn('⚠️ [getParticipantLpChange] No match found for:', summonerName);
+    return 0;
+  }
+
   // ========== LANE DETECTION AND ORGANIZATION ==========
   private getParticipantLane(participant: any): string {
     // Para ARAM, não há lanes específicas - organizar por papel/champion

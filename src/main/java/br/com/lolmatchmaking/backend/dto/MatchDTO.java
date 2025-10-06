@@ -38,6 +38,7 @@ public class MatchDTO {
     private Boolean isCustomGame;
     private String riotMatchId;
     private String participantsData; // ✅ Dados dos participantes processados do LCU
+    private String lpChanges; // ✅ JSON com LP changes de cada jogador
 
     @Data
     @Builder
