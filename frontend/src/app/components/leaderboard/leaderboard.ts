@@ -26,6 +26,7 @@ interface LeaderboardPlayer {
   max_kills: number;
   max_damage: number;
   calculated_mmr: number;
+  custom_mmr: number;
   lp: number;
   favorite_champion: {
     name: string;
@@ -148,13 +149,28 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
         this.leaderboardData = response.data.map((player: any, index: number) => ({
           ...player,
           rank: index + 1,
-          wins: player.wins ?? player.custom_wins ?? 0,
-          games_played: player.games_played ?? player.custom_games_played ?? 0,
-          riot_id_game_name: player.riot_id_game_name ?? undefined,
-          riot_id_tagline: player.riot_id_tagline ?? undefined,
+          summoner_name: player.summonerName,
+          wins: player.customWins ?? 0,
+          games_played: player.customGamesPlayed ?? 0,
+          riot_id_game_name: player.gameName ?? undefined,
+          riot_id_tagline: player.tagLine ?? undefined,
           profileIconId: undefined,
-          calculated_mmr: player.calculated_mmr ?? player.lp ?? 0,
-          lp: player.lp ?? player.custom_lp ?? 0
+          calculated_mmr: player.customLp ?? 0,
+          custom_mmr: player.customMmr ?? 0,
+          lp: player.customLp ?? 0,
+          win_rate: player.customGamesPlayed > 0 ? ((player.customWins / player.customGamesPlayed) * 100).toFixed(1) : 0,
+          // Manter outros campos do player original se existirem
+          avg_kills: player.avg_kills ?? 0,
+          avg_deaths: player.avg_deaths ?? 0,
+          avg_assists: player.avg_assists ?? 0,
+          kda_ratio: player.kda_ratio ?? 0,
+          avg_gold: player.avg_gold ?? 0,
+          avg_damage: player.avg_damage ?? 0,
+          avg_cs: player.avg_cs ?? 0,
+          avg_vision: player.avg_vision ?? 0,
+          max_kills: player.max_kills ?? 0,
+          max_damage: player.max_damage ?? 0,
+          favorite_champion: player.favorite_champion ?? null
         }));
 
         this.lastUpdated = new Date();
@@ -399,7 +415,33 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
 
   refresh() {
     console.log('🔄 Iniciando atualização do leaderboard...');
-    this.loadLeaderboard(true); // Forçar mostrar loading
+    this.updateLeaderboardStats();
+  }
+
+  async updateLeaderboardStats() {
+    console.log('🔄 Atualizando estatísticas dos jogadores...');
+    this.isLoading = true;
+    this.error = null;
+
+    try {
+      // Chamar endpoint para atualizar as estatísticas
+      const response = await firstValueFrom(
+        this.http.post<any>(`${this.baseUrl}/stats/update-leaderboard`, {})
+      );
+
+      if (response.success) {
+        console.log(`✅ ${response.updatedPlayers} jogadores atualizados`);
+        // Recarregar o leaderboard após atualizar
+        await this.loadLeaderboard(false);
+      } else {
+        this.error = 'Erro ao atualizar estatísticas';
+      }
+    } catch (error) {
+      console.error('❌ Erro ao atualizar estatísticas:', error);
+      this.error = 'Erro ao conectar com o servidor';
+    } finally {
+      this.isLoading = false;
+    }
   }
 
   trackByPlayerId(index: number, player: LeaderboardPlayer): string {
@@ -450,24 +492,5 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
 
   isAnyLoading(): boolean {
     return this.isLoading || this.isLoadingProfileIcons || this.isLoadingMMR;
-  }
-
-  async refreshAndRebuildPlayers() {
-    console.log('🔄 Reconstruindo e atualizando todos os jogadores...');
-    this.isLoading = true;
-    try {
-      const response = await firstValueFrom(this.http.post<any>(`${this.baseUrl}/stats/refresh-rebuild-players`, {}));
-      if (response.success) {
-        console.log('✅ Reconstrução concluída, recarregando leaderboard...');
-        await this.loadLeaderboard(false);
-      } else {
-        this.error = 'Falha ao reconstruir jogadores';
-      }
-    } catch (error) {
-      console.error('❌ Erro ao reconstruir jogadores:', error);
-      this.error = 'Erro no servidor durante reconstrução';
-    } finally {
-      this.isLoading = false;
-    }
   }
 }

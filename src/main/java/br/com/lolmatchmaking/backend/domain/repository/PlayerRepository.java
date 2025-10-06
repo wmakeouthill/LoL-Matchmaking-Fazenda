@@ -21,9 +21,19 @@ public interface PlayerRepository extends JpaRepository<Player, Long> {
 
     List<Player> findByOrderByCurrentMmrDesc();
 
+    List<Player> findByOrderByCustomLpDesc();
+
     List<Player> findTop10ByOrderByCurrentMmrDesc();
 
     List<Player> findTop10ByOrderByCreatedAtDesc();
 
     List<Player> findBySummonerNameContaining(String summonerName);
+
+    @Query(value = "SELECT cm.id, cm.team1_players, cm.team2_players, cm.winner_team, cm.lp_changes " +
+            "FROM custom_matches cm " +
+            "WHERE (cm.team1_players LIKE CONCAT('%', :summonerName, '%') " +
+            "   OR cm.team2_players LIKE CONCAT('%', :summonerName, '%')) " +
+            "  AND cm.winner_team IS NOT NULL " +
+            "ORDER BY cm.created_at DESC", nativeQuery = true)
+    List<Object[]> findCustomMatchesForPlayer(@Param("summonerName") String summonerName);
 }

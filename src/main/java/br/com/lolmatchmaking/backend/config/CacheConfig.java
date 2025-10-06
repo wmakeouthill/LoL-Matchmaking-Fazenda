@@ -27,6 +27,7 @@ public class CacheConfig {
 
         // Caches específicos
         cacheManager.setCacheNames(java.util.List.of(
+                "players",
                 "player-by-summoner-name",
                 "player-by-puuid",
                 "riot-summoner-info",

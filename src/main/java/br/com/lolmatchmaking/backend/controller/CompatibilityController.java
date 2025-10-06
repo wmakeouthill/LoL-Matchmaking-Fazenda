@@ -99,4 +99,22 @@ public class CompatibilityController {
         List<PlayerDTO> leaderboard = playerService.getLeaderboard(0, limit);
         return ResponseEntity.ok(Map.of("success", true, "data", leaderboard));
     }
+
+    // POST /api/stats/update-leaderboard
+    @PostMapping("/stats/update-leaderboard")
+    public ResponseEntity<Map<String, Object>> updateLeaderboardStats() {
+        try {
+            log.info("🔄 Atualizando estatísticas do leaderboard...");
+            int updatedCount = playerService.updateAllPlayersCustomStats();
+            log.info("✅ {} jogadores atualizados com sucesso", updatedCount);
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Estatísticas atualizadas com sucesso",
+                    "updatedPlayers", updatedCount));
+        } catch (Exception e) {
+            log.error("❌ Erro ao atualizar estatísticas do leaderboard", e);
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
 }

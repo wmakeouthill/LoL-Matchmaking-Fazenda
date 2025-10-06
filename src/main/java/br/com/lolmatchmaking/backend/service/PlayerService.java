@@ -112,23 +112,24 @@ public class PlayerService {
     }
 
     /**
-     * Cria ou atualiza um player quando ele loga, atualizando com dados completos do LoL
+     * Cria ou atualiza um player quando ele loga, atualizando com dados completos
+     * do LoL
      */
     @Transactional
-    public Player createOrUpdatePlayerOnLogin(String summonerName, String region, Integer currentMmrFromLoL, 
-                                              String summonerId, String puuid) {
+    public Player createOrUpdatePlayerOnLogin(String summonerName, String region, Integer currentMmrFromLoL,
+            String summonerId, String puuid) {
         log.info("🎯🎯🎯 [PlayerService.createOrUpdatePlayerOnLogin] MÉTODO CHAMADO!");
-        log.info("🔄 Criando/atualizando player no login: {} (MMR: {}, ID: {}, PUUID: {})", 
-            summonerName, currentMmrFromLoL, summonerId, puuid);
-        
+        log.info("🔄 Criando/atualizando player no login: {} (MMR: {}, ID: {}, PUUID: {})",
+                summonerName, currentMmrFromLoL, summonerId, puuid);
+
         Optional<Player> existingPlayer = playerRepository.findBySummonerNameIgnoreCase(summonerName);
-        
+
         Player player;
         if (existingPlayer.isPresent()) {
             player = existingPlayer.get();
             player.setCurrentMmr(currentMmrFromLoL);
             player.setRegion(region);
-            
+
             // ✅ Atualizar summonerId e puuid se fornecidos
             if (summonerId != null && !summonerId.isEmpty()) {
                 player.setSummonerId(summonerId);
@@ -136,16 +137,16 @@ public class PlayerService {
             if (puuid != null && !puuid.isEmpty()) {
                 player.setPuuid(puuid);
             }
-            
+
             // ✅ Atualizar custom_mmr (current_mmr + custom_lp)
             int customLp = player.getCustomLp() != null ? player.getCustomLp() : 0;
             player.setCustomMmr(currentMmrFromLoL + customLp);
-            
-            log.info("✅ Player existente atualizado: {} (current_mmr: {}, custom_lp: {}, custom_mmr: {})", 
-                summonerName, 
-                player.getCurrentMmr(), 
-                customLp,
-                player.getCustomMmr());
+
+            log.info("✅ Player existente atualizado: {} (current_mmr: {}, custom_lp: {}, custom_mmr: {})",
+                    summonerName,
+                    player.getCurrentMmr(),
+                    customLp,
+                    player.getCustomMmr());
         } else {
             player = Player.builder()
                     .summonerName(summonerName)
@@ -162,10 +163,10 @@ public class PlayerService {
                     .wins(0)
                     .losses(0)
                     .build();
-            log.info("✅ Novo player criado: {} (current_mmr: {}, custom_mmr: {})", 
-                summonerName, currentMmrFromLoL, currentMmrFromLoL);
+            log.info("✅ Novo player criado: {} (current_mmr: {}, custom_mmr: {})",
+                    summonerName, currentMmrFromLoL, currentMmrFromLoL);
         }
-        
+
         return playerRepository.save(player);
     }
 
@@ -278,9 +279,10 @@ public class PlayerService {
 
     public List<PlayerDTO> getLeaderboard(int page, int limit) {
         try {
-            return playerRepository.findByOrderByCurrentMmrDesc()
+            // Ordenar por custom_lp para mostrar o ranking de partidas customizadas
+            return playerRepository.findByOrderByCustomLpDesc()
                     .stream()
-                    .skip(page * limit)
+                    .skip((long) page * limit)
                     .limit(limit)
                     .map(playerMapper::toDTO)
                     .toList();
@@ -288,6 +290,171 @@ public class PlayerService {
             log.error("Erro ao buscar leaderboard", e);
             return List.of();
         }
+    }
+
+    /**
+     * Atualiza as estatísticas de custom matches de todos os jogadores
+     * baseando-se nos dados da tabela custom_matches
+     */
+    @Transactional
+    @CacheEvict(value = { "players", "player-by-summoner-name", "player-by-puuid" }, allEntries = true)
+    public int updateAllPlayersCustomStats() {
+        log.info("🔄 Iniciando atualização de estatísticas de custom matches...");
+
+        List<Player> allPlayers = playerRepository.findAll();
+        int updatedCount = 0;
+
+        for (Player player : allPlayers) {
+            try {
+                updateSinglePlayerStats(player);
+                updatedCount++;
+            } catch (Exception e) {
+                log.error("Erro ao atualizar stats do jogador {}: {}", player.getSummonerName(), e.getMessage());
+            }
+        }
+
+        log.info("✅ Atualização concluída: {} jogadores atualizados", updatedCount);
+        return updatedCount;
+    }
+
+    /**
+     * Atualiza as estatísticas de custom matches de um jogador específico
+     */
+    private void updateSinglePlayerStats(Player player) {
+        String summonerName = player.getSummonerName();
+        List<Object[]> matches = playerRepository.findCustomMatchesForPlayer(summonerName);
+
+        if (matches.isEmpty()) {
+            log.debug("Nenhuma partida customizada encontrada para {}", summonerName);
+            return;
+        }
+
+        CustomStatsAccumulator stats = calculateCustomStats(summonerName, matches);
+        applyStatsToPlayer(player, stats);
+
+        playerRepository.save(player);
+
+        log.info("✅ Stats atualizadas para {}: LP={}, Games={}, W/L={}/{}, Streak={}",
+                summonerName, stats.totalLp, stats.gamesPlayed, stats.wins, stats.losses, stats.maxStreak);
+    }
+
+    /**
+     * Calcula as estatísticas a partir das partidas
+     */
+    private CustomStatsAccumulator calculateCustomStats(String summonerName, List<Object[]> matches) {
+        CustomStatsAccumulator stats = new CustomStatsAccumulator();
+
+        for (Object[] match : matches) {
+            processMatch(summonerName, match, stats);
+        }
+
+        return stats;
+    }
+
+    /**
+     * Processa uma partida individual
+     */
+    private void processMatch(String summonerName, Object[] match, CustomStatsAccumulator stats) {
+        Long matchId = (Long) match[0];
+        String team1Json = (String) match[1];
+        String team2Json = (String) match[2];
+        Integer winnerTeam = (Integer) match[3];
+        String lpChangesJson = (String) match[4];
+
+        int playerTeam = determinePlayerTeam(summonerName, team1Json, team2Json);
+
+        if (playerTeam == 0 || winnerTeam == null) {
+            return;
+        }
+
+        stats.gamesPlayed++;
+        boolean won = (playerTeam == winnerTeam);
+
+        if (won) {
+            stats.wins++;
+            stats.currentStreak++;
+            stats.maxStreak = Math.max(stats.maxStreak, stats.currentStreak);
+        } else {
+            stats.losses++;
+            stats.currentStreak = 0;
+        }
+
+        int lpChange = extractLpChange(summonerName, lpChangesJson, matchId);
+        stats.totalLp += lpChange;
+    }
+
+    /**
+     * Determina em qual time o jogador estava
+     */
+    private int determinePlayerTeam(String summonerName, String team1Json, String team2Json) {
+        if (team1Json != null && team1Json.contains(summonerName)) {
+            return 1;
+        } else if (team2Json != null && team2Json.contains(summonerName)) {
+            return 2;
+        }
+        return 0;
+    }
+
+    /**
+     * Extrai a mudança de LP do JSON
+     */
+    private int extractLpChange(String summonerName, String lpChangesJson, Long matchId) {
+        if (lpChangesJson == null || lpChangesJson.isEmpty()) {
+            return 0;
+        }
+
+        try {
+            String playerKey = "\"" + summonerName + "\"";
+            int keyIndex = lpChangesJson.indexOf(playerKey);
+            if (keyIndex == -1) {
+                return 0;
+            }
+
+            int colonIndex = lpChangesJson.indexOf(":", keyIndex);
+            if (colonIndex == -1) {
+                return 0;
+            }
+
+            int commaIndex = lpChangesJson.indexOf(",", colonIndex);
+            int braceIndex = lpChangesJson.indexOf("}", colonIndex);
+            int endIndex = (commaIndex != -1 && commaIndex < braceIndex) ? commaIndex : braceIndex;
+
+            if (endIndex == -1) {
+                return 0;
+            }
+
+            String lpValue = lpChangesJson.substring(colonIndex + 1, endIndex).trim();
+            return Integer.parseInt(lpValue);
+        } catch (Exception e) {
+            log.warn("Erro ao parsear LP para jogador {} na partida {}: {}", summonerName, matchId, e.getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * Aplica as estatísticas calculadas ao jogador
+     */
+    private void applyStatsToPlayer(Player player, CustomStatsAccumulator stats) {
+        player.setCustomLp(stats.totalLp);
+        player.setCustomGamesPlayed(stats.gamesPlayed);
+        player.setCustomWins(stats.wins);
+        player.setCustomLosses(stats.losses);
+        player.setCustomWinStreak(stats.maxStreak);
+
+        int currentMmr = player.getCurrentMmr() != null ? player.getCurrentMmr() : 1000;
+        player.setCustomMmr(currentMmr + stats.totalLp);
+    }
+
+    /**
+     * Classe auxiliar para acumular estatísticas
+     */
+    private static class CustomStatsAccumulator {
+        int totalLp = 0;
+        int gamesPlayed = 0;
+        int wins = 0;
+        int losses = 0;
+        int currentStreak = 0;
+        int maxStreak = 0;
     }
 
     @Transactional
