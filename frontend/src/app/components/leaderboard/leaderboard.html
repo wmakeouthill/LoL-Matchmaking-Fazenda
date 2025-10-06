@@ -17,11 +17,6 @@
         Atualizar
         <i class="icon-refresh" [class.spinning]="isAnyLoading()"></i>
       </button>
-      <button class="refresh-btn" (click)="refreshAndRebuildPlayers()" [disabled]="isAnyLoading()">
-        Refresh
-        <i class="icon-refresh"></i>
-
-      </button>
     </div>
   </div>
 
@@ -31,7 +26,8 @@
         <div class="rank-col">Rank</div>
         <div class="player-col">Jogador</div>
         <div class="champion-col">Campeão Favorito</div>
-        <div class="mmr-col">MMR</div>
+        <div class="lp-col">Custom LP</div>
+        <div class="mmr-col">Custom MMR</div>
         <div class="games-col">Partidas</div>
         <div class="winrate-col">Taxa de Vitória</div>
         <div class="kda-col">KDA Médio</div>
@@ -73,10 +69,17 @@
             </ng-template>
           </div>
 
-          <!-- MMR -->
+          <!-- Custom LP -->
+          <div class="lp-col"
+            [ngStyle]="{'color': player.lp > 0 ? '#3fc380' : (player.lp < 0 ? '#e74c3c' : '#cdbe91'), 'font-weight': 'bold'}">
+            {{ player.lp > 0 ? '+' : '' }}{{ player.lp }} LP
+          </div>
+
+          <!-- Custom MMR -->
           <div class="mmr-col"
-            [ngStyle]="{'color': player.calculated_mmr > 0 ? '#3fc380' : (player.calculated_mmr < 0 ? '#e74c3c' : '#cdbe91'), 'font-weight': 'bold'}">
-            {{ player.calculated_mmr }} MMR</div>
+            [ngStyle]="{'color': player.custom_mmr >= 1200 ? '#3fc380' : (player.custom_mmr <= 800 ? '#e74c3c' : '#cdbe91'), 'font-weight': 'bold'}">
+            {{ player.custom_mmr }} MMR
+          </div>
 
           <!-- Partidas -->
           <div class="games-col">

@@ -46,10 +46,36 @@ public class PlayerDTO {
     private Boolean isOnline;
     private String status;
 
+    // Custom match statistics
+    @PositiveOrZero(message = "Custom LP deve ser positivo ou zero")
+    private Integer customLp;
+
+    @PositiveOrZero(message = "Custom MMR deve ser positivo")
+    private Integer customMmr;
+
+    @PositiveOrZero(message = "Jogos customizados devem ser positivos")
+    private Integer customGamesPlayed;
+
+    @PositiveOrZero(message = "Vitórias customizadas devem ser positivas")
+    private Integer customWins;
+
+    @PositiveOrZero(message = "Derrotas customizadas devem ser positivas")
+    private Integer customLosses;
+
+    @PositiveOrZero(message = "Sequência de vitórias customizada deve ser positiva")
+    private Integer customWinStreak;
+
     public Double getWinRate() {
         if (wins == null || losses == null || (wins + losses) == 0) {
             return null;
         }
         return (double) wins / (wins + losses) * 100;
+    }
+
+    public Double getCustomWinRate() {
+        if (customWins == null || customLosses == null || (customWins + customLosses) == 0) {
+            return null;
+        }
+        return (double) customWins / (customWins + customLosses) * 100;
     }
 }

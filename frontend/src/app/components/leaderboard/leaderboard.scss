@@ -124,7 +124,7 @@
 
 .table-header {
   display: grid;
-  grid-template-columns: 80px 200px 180px 100px 120px 100px 140px 100px 120px;
+  grid-template-columns: 80px 200px 180px 100px 100px 120px 100px 140px 100px 120px;
   gap: 15px;
   padding: 15px 20px;
   background: rgba(200, 155, 60, 0.2);
@@ -150,7 +150,7 @@
 .table-body {
   .player-row {
     display: grid;
-    grid-template-columns: 80px 200px 180px 100px 120px 100px 140px 100px 120px;
+    grid-template-columns: 80px 200px 180px 100px 100px 120px 100px 140px 100px 120px;
     gap: 15px;
     padding: 15px 20px;
     border-bottom: 1px solid rgba(200, 155, 60, 0.1);
@@ -268,6 +268,15 @@
       opacity: 0.5;
     }
   }
+}
+
+.lp-col {
+  flex-direction: column;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
 }
 
 .mmr-col {
@@ -499,14 +508,14 @@
 // Responsividade
 @media (max-width: 1200px) {
   .table-header, .player-row {
-    grid-template-columns: 60px 180px 160px 90px 110px 90px 120px 90px 100px;
+    grid-template-columns: 60px 180px 160px 90px 90px 110px 90px 120px 90px 100px;
     gap: 10px;
   }
 }
 
 @media (max-width: 900px) {
   .table-header, .player-row {
-    grid-template-columns: 50px 150px 140px 80px 100px 80px 100px;
+    grid-template-columns: 50px 150px 140px 80px 80px 100px 80px 100px;
     gap: 8px;
   }
 
@@ -531,12 +540,12 @@
   }
 
   .table-header, .player-row {
-    grid-template-columns: 40px 120px 80px 80px 90px;
+    grid-template-columns: 40px 120px 80px 70px 80px;
     gap: 5px;
     font-size: 12px;
   }
 
-  .champion-col, .kda-col, .games-col {
+  .champion-col, .kda-col, .games-col, .lp-col {
     display: none;
   }
 }
