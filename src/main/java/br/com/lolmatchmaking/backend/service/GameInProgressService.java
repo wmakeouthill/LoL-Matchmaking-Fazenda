@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -29,10 +30,10 @@ public class GameInProgressService {
     private final MatchmakingWebSocketService webSocketService;
     @SuppressWarnings("unused")
     private final DiscordService discordService;
-    @SuppressWarnings("unused")
     private final ObjectMapper objectMapper;
     private final ApplicationContext applicationContext;
     private final br.com.lolmatchmaking.backend.websocket.SessionRegistry sessionRegistry;
+    private final LPCalculationService lpCalculationService;
 
     // scheduler for monitoring
     private ScheduledExecutorService scheduler;
@@ -219,6 +220,37 @@ public class GameInProgressService {
                 match.setActualDuration(duration);
                 match.setCompletedAt(Instant.now());
                 match.setUpdatedAt(Instant.now());
+
+                // ✅ NOVO: Calcular LP changes para todos os jogadores
+                if (winnerTeam != null && winnerTeam > 0) {
+                    try {
+                        log.info("🔄 Calculando LP changes para a partida {}", matchId);
+
+                        // Extrair listas de jogadores dos times
+                        List<String> team1Players = parsePlayerList(match.getTeam1PlayersJson());
+                        List<String> team2Players = parsePlayerList(match.getTeam2PlayersJson());
+
+                        // Calcular mudanças de LP
+                        Map<String, Integer> lpChanges = lpCalculationService.calculateMatchLPChanges(
+                                team1Players,
+                                team2Players,
+                                winnerTeam);
+
+                        // Salvar LP changes na partida
+                        if (!lpChanges.isEmpty()) {
+                            match.setLpChangesJson(objectMapper.writeValueAsString(lpChanges));
+
+                            log.info("✅ LP changes calculados: {} jogadores afetados",
+                                    lpChanges.size());
+                        }
+                    } catch (Exception lpError) {
+                        log.error("❌ Erro ao calcular LP changes: {}", lpError.getMessage(), lpError);
+                        // Não falhar a finalização por erro no cálculo de LP
+                    }
+                } else {
+                    log.warn("⚠️ Time vencedor não definido, LP não será calculado");
+                }
+
                 customMatchRepository.save(match);
             }
 
@@ -520,5 +552,47 @@ public class GameInProgressService {
         map.put("teamIndex", player.getTeamIndex());
         map.put("isConnected", player.isConnected());
         return map;
+    }
+
+    /**
+     * Parseia a string JSON de jogadores e retorna uma lista de nomes
+     * 
+     * @param playersJson String contendo nomes separados por vírgula ou JSON array
+     * @return Lista de nomes dos jogadores
+     */
+    private List<String> parsePlayerList(String playersJson) {
+        try {
+            if (playersJson == null || playersJson.trim().isEmpty()) {
+                return Collections.emptyList();
+            }
+
+            String trimmed = playersJson.trim();
+
+            // Tentar parsear como JSON array primeiro
+            if (trimmed.startsWith("[")) {
+                com.fasterxml.jackson.databind.JsonNode playersNode = objectMapper.readTree(trimmed);
+                List<String> playerNames = new ArrayList<>();
+
+                if (playersNode.isArray()) {
+                    for (com.fasterxml.jackson.databind.JsonNode playerNode : playersNode) {
+                        if (playerNode.isTextual()) {
+                            playerNames.add(playerNode.asText());
+                        }
+                    }
+                }
+
+                return playerNames;
+            }
+
+            // Se não for JSON, tratar como comma-separated string
+            return Arrays.stream(trimmed.split(","))
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .collect(Collectors.toList());
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao parsear lista de jogadores: {}", e.getMessage(), e);
+            return Collections.emptyList();
+        }
     }
 }

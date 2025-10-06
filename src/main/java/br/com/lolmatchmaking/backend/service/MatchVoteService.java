@@ -28,6 +28,7 @@ public class MatchVoteService {
     private final ObjectMapper objectMapper;
     private final SpecialUserService specialUserService;
     private final LCUService lcuService;
+    private final LPCalculationService lpCalculationService;
 
     private static final int VOTES_REQUIRED_FOR_AUTO_LINK = 5;
     private final Map<Long, Map<Long, Long>> temporaryVotes = new ConcurrentHashMap<>();
@@ -296,6 +297,42 @@ public class MatchVoteService {
                 }
             }
 
+            // ✅ NOVO: Calcular LP changes para todos os jogadores
+            if (match.getWinnerTeam() != null && match.getWinnerTeam() > 0) {
+                try {
+                    log.info("🔄 Calculando LP changes para a partida {}", matchId);
+
+                    // Extrair listas de jogadores dos times
+                    List<String> team1Players = parsePlayerList(match.getTeam1PlayersJson());
+                    List<String> team2Players = parsePlayerList(match.getTeam2PlayersJson());
+
+                    // Normalizar winnerTeam: LCU usa 100/200, sistema espera 1/2
+                    int normalizedWinnerTeam = match.getWinnerTeam() == 100 ? 1
+                            : match.getWinnerTeam() == 200 ? 2 : match.getWinnerTeam();
+
+                    log.info("🏆 Winner Team: {} → Normalizado: {}", match.getWinnerTeam(), normalizedWinnerTeam);
+
+                    // Calcular mudanças de LP
+                    Map<String, Integer> lpChanges = lpCalculationService.calculateMatchLPChanges(
+                            team1Players,
+                            team2Players,
+                            normalizedWinnerTeam);
+
+                    // Salvar LP changes na partida
+                    if (!lpChanges.isEmpty()) {
+                        match.setLpChanges(objectMapper.writeValueAsString(lpChanges));
+
+                        log.info("✅ LP changes calculados: {} jogadores afetados",
+                                lpChanges.size());
+                    }
+                } catch (Exception lpError) {
+                    log.error("❌ Erro ao calcular LP changes: {}", lpError.getMessage(), lpError);
+                    // Não falhar a vinculação por erro no cálculo de LP
+                }
+            } else {
+                log.warn("⚠️ Time vencedor não determinado, LP não será calculado");
+            }
+
             match.setStatus("completed");
             match.setCompletedAt(Instant.now());
 
@@ -488,5 +525,47 @@ public class MatchVoteService {
         }
 
         return dp[a.length()][b.length()];
+    }
+
+    /**
+     * Parseia a string JSON de jogadores e retorna uma lista de nomes
+     * 
+     * @param playersJson String contendo nomes separados por vírgula ou JSON array
+     * @return Lista de nomes dos jogadores
+     */
+    private List<String> parsePlayerList(String playersJson) {
+        try {
+            if (playersJson == null || playersJson.trim().isEmpty()) {
+                return Collections.emptyList();
+            }
+
+            String trimmed = playersJson.trim();
+
+            // Tentar parsear como JSON array primeiro
+            if (trimmed.startsWith("[")) {
+                JsonNode playersNode = objectMapper.readTree(trimmed);
+                List<String> playerNames = new ArrayList<>();
+
+                if (playersNode.isArray()) {
+                    for (JsonNode playerNode : playersNode) {
+                        if (playerNode.isTextual()) {
+                            playerNames.add(playerNode.asText());
+                        }
+                    }
+                }
+
+                return playerNames;
+            }
+
+            // Se não for JSON, tratar como comma-separated string
+            return Arrays.stream(trimmed.split(","))
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .collect(Collectors.toList());
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao parsear lista de jogadores: {}", e.getMessage(), e);
+            return Collections.emptyList();
+        }
     }
 }
