@@ -80,6 +80,17 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit() {
+    // Pré-carregar dados dos campeões antes de carregar o leaderboard
+    this.championService.preloadChampions().subscribe(loaded => {
+      console.log('🎮 [Leaderboard] Champions preloaded:', loaded);
+      console.log('🎮 [Leaderboard] Champions count:', this.championService.getAllChampions().length);
+
+      // Após carregar os campeões, carregar o leaderboard
+      this.loadLeaderboardData();
+    });
+  }
+
+  private loadLeaderboardData() {
     // Primeiro tentar carregar do cache
     const cacheLoaded = this.loadCacheFromStorage();
 
@@ -146,6 +157,9 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
     try {
       const response = await firstValueFrom(this.http.get<any>(`${this.baseUrl}/stats/participants-leaderboard?limit=500`));
       if (response.success) {
+        console.log('📊 [loadLeaderboard] Response sample:', response.data[0]);
+        console.log('📊 [loadLeaderboard] Favorite champion raw:', response.data[0]?.favoriteChampion);
+
         this.leaderboardData = response.data.map((player: any, index: number) => ({
           ...player,
           rank: index + 1,
@@ -159,18 +173,19 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
           custom_mmr: player.customMmr ?? 0,
           lp: player.customLp ?? 0,
           win_rate: player.customGamesPlayed > 0 ? ((player.customWins / player.customGamesPlayed) * 100).toFixed(1) : 0,
+          // KDA e estatísticas de campeão
+          avg_kills: player.avgKills ?? 0,
+          avg_deaths: player.avgDeaths ?? 0,
+          avg_assists: player.avgAssists ?? 0,
+          kda_ratio: player.kdaRatio ?? 0,
+          favorite_champion: player.favoriteChampion ? this.processFavoriteChampion(player.favoriteChampion, player.favoriteChampionGames) : null,
           // Manter outros campos do player original se existirem
-          avg_kills: player.avg_kills ?? 0,
-          avg_deaths: player.avg_deaths ?? 0,
-          avg_assists: player.avg_assists ?? 0,
-          kda_ratio: player.kda_ratio ?? 0,
           avg_gold: player.avg_gold ?? 0,
           avg_damage: player.avg_damage ?? 0,
           avg_cs: player.avg_cs ?? 0,
           avg_vision: player.avg_vision ?? 0,
           max_kills: player.max_kills ?? 0,
-          max_damage: player.max_damage ?? 0,
-          favorite_champion: player.favorite_champion ?? null
+          max_damage: player.max_damage ?? 0
         }));
 
         this.lastUpdated = new Date();
@@ -323,17 +338,107 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
     return this.profileIconService.getProfileIconUrl(identifier);
   }
 
+  /**
+   * Processa o campeão favorito, convertendo championId em nome real se necessário
+   */
+  processFavoriteChampion(championData: string, games: number): { name: string; id: number; games: number } | null {
+    if (!championData) return null;
+
+    console.log('🔍 [processFavoriteChampion] Recebido:', championData, 'Games:', games);
+    console.log('🔍 [processFavoriteChampion] Champions carregados?', this.championService.isLoaded());
+
+    // Verificar se é "Champion X" e extrair o ID
+    const championRegex = /^Champion\s+(\d+)$/i;
+    const championMatch = championRegex.exec(championData);
+    if (championMatch) {
+      const championId = parseInt(championMatch[1], 10);
+      const championName = this.championService.getChampionName(championId);
+      console.log('🔍 [processFavoriteChampion] "Champion X" detectado - ID:', championId, '→ Nome:', championName);
+      return {
+        name: championName,
+        id: championId,
+        games: games ?? 0
+      };
+    }
+
+    // Verificar se é um número (championId)
+    const championId = parseInt(championData, 10);
+    if (!isNaN(championId)) {
+      // É um championId, converter para nome
+      const championName = this.championService.getChampionName(championId);
+      console.log('🔍 [processFavoriteChampion] ID numérico:', championId, '→ Nome:', championName);
+      return {
+        name: championName,
+        id: championId,
+        games: games ?? 0
+      };
+    }
+
+    // Já é um nome de campeão
+    console.log('🔍 [processFavoriteChampion] Nome direto:', championData);
+    return {
+      name: championData,
+      id: 0, // ID desconhecido quando vem como nome
+      games: games ?? 0
+    };
+  }
+
   getChampionIconUrl(championName: string): string {
     if (!championName) return 'assets/images/champion-placeholder.svg';
 
-    // O nome do campeão já vem no formato correto do Data Dragon
-    return `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/${championName}.png`;
+    console.log('🖼️ [getChampionIconUrl] Input:', championName);
+
+    // Verificar se é "Champion X" e extrair o ID
+    const championRegex = /^Champion\s+(\d+)$/i;
+    const championMatch = championRegex.exec(championName);
+    if (championMatch) {
+      const championId = parseInt(championMatch[1], 10);
+      const url = this.championService.getChampionImageUrl(championId);
+      console.log('🖼️ [getChampionIconUrl] "Champion X" detectado - ID:', championId, '→ URL:', url);
+      return url;
+    }
+
+    // Verificar se é um número puro (championId)
+    const championId = parseInt(championName, 10);
+    if (!isNaN(championId)) {
+      // É um championId, usar o método do serviço que aceita ID
+      const url = this.championService.getChampionImageUrl(championId);
+      console.log('🖼️ [getChampionIconUrl] ID numérico:', championId, '→ URL:', url);
+      return url;
+    }
+
+    // É um nome, usar o método que aceita nome
+    const url = this.championService.getChampionImageUrlByName(championName);
+    console.log('🖼️ [getChampionIconUrl] Nome:', championName, '→ URL:', url);
+    return url;
   }
 
   getChampionDisplayName(championName: string): string {
     if (!championName) return 'Nenhum';
 
-    // O nome do campeão já vem no formato correto do backend
+    console.log('📝 [getChampionDisplayName] Input:', championName);
+
+    // Verificar se é "Champion X" e extrair o ID
+    const championRegex = /^Champion\s+(\d+)$/i;
+    const championMatch = championRegex.exec(championName);
+    if (championMatch) {
+      const championId = parseInt(championMatch[1], 10);
+      const name = this.championService.getChampionName(championId);
+      console.log('📝 [getChampionDisplayName] "Champion X" detectado - ID:', championId, '→ Nome:', name);
+      return name;
+    }
+
+    // Verificar se é um número puro (championId)
+    const championId = parseInt(championName, 10);
+    if (!isNaN(championId)) {
+      // É um championId, converter para nome
+      const name = this.championService.getChampionName(championId);
+      console.log('📝 [getChampionDisplayName] ID numérico:', championId, '→ Nome:', name);
+      return name;
+    }
+
+    // Já é um nome, retornar como está
+    console.log('📝 [getChampionDisplayName] Nome direto:', championName);
     return championName;
   }
 
@@ -345,7 +450,12 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
     const safeKills = kills ?? 0;
     const safeDeaths = deaths ?? 0;
     const safeAssists = assists ?? 0;
-    return `${safeKills.toFixed(1)}/${safeDeaths.toFixed(1)}/${safeAssists.toFixed(1)}`;
+    return `${Math.round(safeKills)}/${Math.round(safeDeaths)}/${Math.round(safeAssists)}`;
+  }
+
+  formatKDARatio(ratio: number): string {
+    const safeRatio = ratio ?? 0;
+    return safeRatio.toFixed(2);
   }
 
   getKDAColor(ratio: number): string {

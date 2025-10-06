@@ -65,6 +65,14 @@ public class PlayerDTO {
     @PositiveOrZero(message = "Sequência de vitórias customizada deve ser positiva")
     private Integer customWinStreak;
 
+    // Estatísticas detalhadas de partidas customizadas
+    private Double avgKills;
+    private Double avgDeaths;
+    private Double avgAssists;
+    private Double kdaRatio;
+    private String favoriteChampion;
+    private Integer favoriteChampionGames;
+
     public Double getWinRate() {
         if (wins == null || losses == null || (wins + losses) == 0) {
             return null;

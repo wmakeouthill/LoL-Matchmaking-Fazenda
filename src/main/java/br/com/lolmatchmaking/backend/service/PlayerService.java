@@ -11,7 +11,9 @@ import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Slf4j
@@ -360,6 +362,7 @@ public class PlayerService {
         String team2Json = (String) match[2];
         Integer winnerTeam = (Integer) match[3];
         String lpChangesJson = (String) match[4];
+        String participantsDataJson = (String) match[5]; // participants_data field
 
         int playerTeam = determinePlayerTeam(summonerName, team1Json, team2Json);
 
@@ -381,6 +384,9 @@ public class PlayerService {
 
         int lpChange = extractLpChange(summonerName, lpChangesJson, matchId);
         stats.totalLp += lpChange;
+
+        // Extrair KDA e campeão do participants_data JSON
+        extractPlayerStats(summonerName, participantsDataJson, stats, matchId);
     }
 
     /**
@@ -432,6 +438,121 @@ public class PlayerService {
     }
 
     /**
+     * Extrai estatísticas do jogador (KDA e campeão) do JSON participants_data
+     */
+    private void extractPlayerStats(String summonerName, String participantsDataJson, CustomStatsAccumulator stats,
+            Long matchId) {
+        if (participantsDataJson == null || participantsDataJson.isEmpty()) {
+            return;
+        }
+
+        try {
+            // Procurar pelo jogador no JSON
+            String playerKey = "\"summonerName\":\"" + summonerName + "\"";
+            int playerIndex = participantsDataJson.indexOf(playerKey);
+            if (playerIndex == -1) {
+                return;
+            }
+
+            // Encontrar o início do objeto do jogador (buscar o '{' anterior)
+            int objectStart = participantsDataJson.lastIndexOf("{", playerIndex);
+            if (objectStart == -1) {
+                return;
+            }
+
+            // Encontrar o fim do objeto (próximo '}' no mesmo nível)
+            int objectEnd = participantsDataJson.indexOf("}", playerIndex);
+            if (objectEnd == -1) {
+                return;
+            }
+
+            String playerData = participantsDataJson.substring(objectStart, objectEnd + 1);
+
+            // Extrair kills
+            int kills = extractJsonInt(playerData, "kills");
+            stats.totalKills += kills;
+
+            // Extrair deaths
+            int deaths = extractJsonInt(playerData, "deaths");
+            stats.totalDeaths += deaths;
+
+            // Extrair assists
+            int assists = extractJsonInt(playerData, "assists");
+            stats.totalAssists += assists;
+
+            // Extrair championName
+            String championName = extractJsonString(playerData, "championName");
+            if (championName != null && !championName.isEmpty()) {
+                log.debug("Campeão extraído para {}: {}", summonerName, championName);
+                stats.championPlayCount.merge(championName, 1, Integer::sum);
+            } else {
+                // Tentar extrair championId se championName não estiver disponível
+                int championId = extractJsonInt(playerData, "championId");
+                if (championId > 0) {
+                    log.debug("ChampionId extraído para {}: {} (será convertido no frontend)", summonerName,
+                            championId);
+                    stats.championPlayCount.merge(String.valueOf(championId), 1, Integer::sum);
+                }
+            }
+
+        } catch (Exception e) {
+            log.warn("Erro ao extrair estatísticas do jogador {} na partida {}: {}", summonerName, matchId,
+                    e.getMessage());
+        }
+    }
+
+    /**
+     * Extrai um valor inteiro de uma chave no JSON
+     */
+    private int extractJsonInt(String json, String key) {
+        try {
+            String keyPattern = "\"" + key + "\":";
+            int keyIndex = json.indexOf(keyPattern);
+            if (keyIndex == -1) {
+                return 0;
+            }
+
+            int valueStart = keyIndex + keyPattern.length();
+            int commaIndex = json.indexOf(",", valueStart);
+            int braceIndex = json.indexOf("}", valueStart);
+            int endIndex = (commaIndex != -1 && commaIndex < braceIndex) ? commaIndex : braceIndex;
+
+            if (endIndex == -1) {
+                return 0;
+            }
+
+            String value = json.substring(valueStart, endIndex).trim();
+            return Integer.parseInt(value);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /**
+     * Extrai um valor string de uma chave no JSON
+     */
+    private String extractJsonString(String json, String key) {
+        try {
+            String keyPattern = "\"" + key + "\":\"";
+            int keyIndex = json.indexOf(keyPattern);
+            if (keyIndex == -1) {
+                return null;
+            }
+
+            int valueStart = keyIndex + keyPattern.length();
+            int quoteIndex = json.indexOf("\"", valueStart);
+
+            if (quoteIndex == -1) {
+                return null;
+            }
+
+            return json.substring(valueStart, quoteIndex);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
      * Aplica as estatísticas calculadas ao jogador
      */
     private void applyStatsToPlayer(Player player, CustomStatsAccumulator stats) {
@@ -443,6 +564,43 @@ public class PlayerService {
 
         int currentMmr = player.getCurrentMmr() != null ? player.getCurrentMmr() : 1000;
         player.setCustomMmr(currentMmr + stats.totalLp);
+
+        // Calcular médias de KDA
+        if (stats.gamesPlayed > 0) {
+            player.setAvgKills((double) stats.totalKills / stats.gamesPlayed);
+            player.setAvgDeaths((double) stats.totalDeaths / stats.gamesPlayed);
+            player.setAvgAssists((double) stats.totalAssists / stats.gamesPlayed);
+
+            // Calcular KDA ratio: (K + A) / D (se deaths = 0, usar 1)
+            double avgDeaths = player.getAvgDeaths() != null ? player.getAvgDeaths() : 0.0;
+            double divisor = avgDeaths > 0 ? avgDeaths : 1.0;
+            double kdaRatio = (player.getAvgKills() + player.getAvgAssists()) / divisor;
+            player.setKdaRatio(kdaRatio);
+        } else {
+            player.setAvgKills(0.0);
+            player.setAvgDeaths(0.0);
+            player.setAvgAssists(0.0);
+            player.setKdaRatio(0.0);
+        }
+
+        // Encontrar campeão favorito (mais jogado)
+        if (!stats.championPlayCount.isEmpty()) {
+            String favoriteChamp = null;
+            int maxGames = 0;
+
+            for (Map.Entry<String, Integer> entry : stats.championPlayCount.entrySet()) {
+                if (entry.getValue() > maxGames) {
+                    maxGames = entry.getValue();
+                    favoriteChamp = entry.getKey();
+                }
+            }
+
+            player.setFavoriteChampion(favoriteChamp);
+            player.setFavoriteChampionGames(maxGames);
+        } else {
+            player.setFavoriteChampion(null);
+            player.setFavoriteChampionGames(0);
+        }
     }
 
     /**
@@ -455,6 +613,10 @@ public class PlayerService {
         int losses = 0;
         int currentStreak = 0;
         int maxStreak = 0;
+        int totalKills = 0;
+        int totalDeaths = 0;
+        int totalAssists = 0;
+        Map<String, Integer> championPlayCount = new HashMap<>();
     }
 
     @Transactional

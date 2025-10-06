@@ -29,7 +29,8 @@ public interface PlayerRepository extends JpaRepository<Player, Long> {
 
     List<Player> findBySummonerNameContaining(String summonerName);
 
-    @Query(value = "SELECT cm.id, cm.team1_players, cm.team2_players, cm.winner_team, cm.lp_changes " +
+    @Query(value = "SELECT cm.id, cm.team1_players, cm.team2_players, cm.winner_team, cm.lp_changes, cm.participants_data "
+            +
             "FROM custom_matches cm " +
             "WHERE (cm.team1_players LIKE CONCAT('%', :summonerName, '%') " +
             "   OR cm.team2_players LIKE CONCAT('%', :summonerName, '%')) " +

@@ -1,0 +1,71 @@
+databaseChangeLog:
+  - changeSet:
+      id: 0006-1-add-kda-stats-to-players
+      author: github-copilot
+      changes:
+        - addColumn:
+            tableName: players
+            columns:
+              - column:
+                  name: avg_kills
+                  type: DOUBLE
+                  defaultValueNumeric: 0.0
+                  constraints:
+                    nullable: true
+              - column:
+                  name: avg_deaths
+                  type: DOUBLE
+                  defaultValueNumeric: 0.0
+                  constraints:
+                    nullable: true
+              - column:
+                  name: avg_assists
+                  type: DOUBLE
+                  defaultValueNumeric: 0.0
+                  constraints:
+                    nullable: true
+              - column:
+                  name: kda_ratio
+                  type: DOUBLE
+                  defaultValueNumeric: 0.0
+                  constraints:
+                    nullable: true
+        - rollback:
+            - dropColumn:
+                tableName: players
+                columns:
+                  - column:
+                      name: avg_kills
+                  - column:
+                      name: avg_deaths
+                  - column:
+                      name: avg_assists
+                  - column:
+                      name: kda_ratio
+
+  - changeSet:
+      id: 0006-2-add-favorite-champion-to-players
+      author: github-copilot
+      changes:
+        - addColumn:
+            tableName: players
+            columns:
+              - column:
+                  name: favorite_champion
+                  type: VARCHAR(50)
+                  constraints:
+                    nullable: true
+              - column:
+                  name: favorite_champion_games
+                  type: INT
+                  defaultValueNumeric: 0
+                  constraints:
+                    nullable: true
+        - rollback:
+            - dropColumn:
+                tableName: players
+                columns:
+                  - column:
+                      name: favorite_champion
+                  - column:
+                      name: favorite_champion_games
