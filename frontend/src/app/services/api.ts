@@ -520,14 +520,18 @@ export class ApiService {
   }
 
   getPlayer(playerId: number): Observable<Player> {
-    return this.http.get<Player>(`${this.baseUrl}/player/${playerId}`)
+    return this.http.get<Player>(`${this.baseUrl}/player/${playerId}`, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         catchError(this.handleError)
       );
   }
 
   getPlayerBySummoner(summonerName: string): Observable<Player> {
-    return this.http.get<Player>(`${this.baseUrl}/player/summoner/${summonerName}`)
+    return this.http.get<Player>(`${this.baseUrl}/player/summoner/${summonerName}`, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         catchError(this.handleError)
       );
@@ -640,7 +644,9 @@ export class ApiService {
   // Método para buscar dados básicos do jogador (para modo Browser ou fallback)
   // Endpoint alternativo para obter dados do LCU
   getCurrentPlayerDebug(): Observable<any> {
-    return this.http.get(`${this.baseUrl}/lcu/current-summoner`)
+    return this.http.get(`${this.baseUrl}/lcu/current-summoner`, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         retry(1), // Tentar novamente uma vez se falhar
         catchError(this.handleError)
@@ -734,14 +740,14 @@ export class ApiService {
 
   // Match endpoints (accept/decline)
   acceptMatch(matchId: number, playerId: number | null, playerName: string): Observable<any> {
-    const payload = { matchId, playerName };
+    const payload = { matchId, summonerName: playerName }; // ✅ CORRIGIDO: Backend espera 'summonerName', não 'playerName'
     return this.http.post(`${this.baseUrl}/match/accept`, payload, {
       headers: this.getAuthenticatedHeaders()
     }).pipe(catchError(this.handleError));
   }
 
   declineMatch(matchId: number, playerId: number | null, playerName: string): Observable<any> {
-    const payload = { matchId, playerName };
+    const payload = { matchId, summonerName: playerName }; // ✅ CORRIGIDO: Backend espera 'summonerName', não 'playerName'
     return this.http.post(`${this.baseUrl}/match/decline`, payload, {
       headers: this.getAuthenticatedHeaders()
     }).pipe(catchError(this.handleError));
@@ -865,7 +871,9 @@ export class ApiService {
 
     console.log('🔍 [API] Using HTTP fallback');
     // Fallback: Backend exposes /api/lcu/match-history which returns a CompletableFuture<ResponseEntity<Map>>
-    return this.http.get(`${this.baseUrl}/lcu/match-history`).pipe(catchError(this.handleError));
+    return this.http.get(`${this.baseUrl}/lcu/match-history`, {
+      headers: this.getAuthenticatedHeaders()
+    }).pipe(catchError(this.handleError));
   }
 
   // NEW: Get LCU game details by gameId (via Electron gateway when available)
@@ -1143,7 +1151,9 @@ export class ApiService {
     }
 
     // Modo web: usar backend
-    return this.http.get(`${this.baseUrl}/lcu/current-summoner`)
+    return this.http.get(`${this.baseUrl}/lcu/current-summoner`, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         map((resp: any) => {
           if (resp && typeof resp === 'object') {
@@ -1332,6 +1342,8 @@ export class ApiService {
     return this.http.post<RefreshPlayerResponse>(`${this.baseUrl}/player/refresh-by-display-name`, {
       displayName,
       region
+    }, {
+      headers: this.getAuthenticatedHeaders()
     }).pipe(
       map(response => {
         // Adaptar a resposta do backend para o formato esperado pelo frontend
@@ -1368,7 +1380,14 @@ export class ApiService {
     // só cair para o conector local se o backend falhar. Isso mantém uma única
     // fonte de verdade e garante que o formato retornado seja o mesmo do modo web.
     if (this.isElectron()) {
-      return this.http.get<any>(`${this.baseUrl}/player/current-details`).pipe(
+      // ✅ CRÍTICO: Incluir header X-Summoner-Name para evitar dados de outros jogadores
+      const headers: any = this._currentSummonerName
+        ? { 'X-Summoner-Name': this._currentSummonerName }
+        : undefined;
+
+      const options = headers ? { headers } : {};
+
+      return this.http.get<any>(`${this.baseUrl}/player/current-details`, options).pipe(
         map(response => {
           if (response && response.success && response.player) {
             const playerData = response.player;
@@ -1378,9 +1397,14 @@ export class ApiService {
             const rankedData = this.processRankedData(playerData, lcuRankedStats);
             console.log('🔍 [FRONTEND] Processed ranked data:', rankedData);
 
+            // ✅ CORREÇÃO: summonerName deve SEMPRE incluir tagLine se disponível
+            const summonerName = playerData.gameName && playerData.tagLine
+              ? `${playerData.gameName}#${playerData.tagLine}`
+              : (playerData.summonerName || playerData.gameName || 'Unknown');
+
             const player: Player = {
               id: playerData.id || 0,
-              summonerName: playerData.summonerName || playerData.gameName || 'Unknown',
+              summonerName: summonerName,
               gameName: playerData.gameName || playerData.summonerName || 'Unknown',
               tagLine: playerData.tagLine || '',
               region: playerData.region || 'br1',
@@ -1389,7 +1413,7 @@ export class ApiService {
               summonerLevel: playerData.summonerLevel || 1,
               profileIconId: playerData.profileIconId || 0,
               currentMMR: this.calculateMMRFromData(playerData, lcuRankedStats),
-              displayName: playerData.gameName && playerData.tagLine ? `${playerData.gameName}#${playerData.tagLine}` : playerData.summonerName || 'Unknown',
+              displayName: summonerName,
               registeredAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
               // ✅ ADICIONADO: Mapear dados de ranked processados do LCU
@@ -1446,7 +1470,9 @@ export class ApiService {
     }
 
     // Modo web: usar backend
-    return this.http.get<any>(`${this.baseUrl}/player/current-details`).pipe(
+    return this.http.get<any>(`${this.baseUrl}/player/current-details`, {
+      headers: this.getAuthenticatedHeaders()
+    }).pipe(
       map(response => {
         if (response.success && response.player) {
           const playerData = response.player;

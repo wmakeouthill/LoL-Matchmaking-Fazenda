@@ -141,6 +141,49 @@ electronAPI.getLCULockfileInfo = () => {
   return { host: overrideHost, port: info.port, protocol: info.protocol, password: info.password };
 };
 
+// ✅ NOVO: Sistema de cache por usuário usando arquivos
+electronAPI.storage = {
+  // Salvar dados do jogador em arquivo específico do usuário
+  savePlayerData: async (summonerName, data) => {
+    try {
+      return await ipcRenderer.invoke('storage:savePlayerData', summonerName, data);
+    } catch (e) {
+      console.error('[preload] Erro ao salvar dados do jogador:', e);
+      return { success: false, error: String(e) };
+    }
+  },
+  
+  // Carregar dados do jogador de arquivo específico do usuário
+  loadPlayerData: async (summonerName) => {
+    try {
+      return await ipcRenderer.invoke('storage:loadPlayerData', summonerName);
+    } catch (e) {
+      console.error('[preload] Erro ao carregar dados do jogador:', e);
+      return null;
+    }
+  },
+  
+  // Limpar dados de um jogador específico
+  clearPlayerData: async (summonerName) => {
+    try {
+      return await ipcRenderer.invoke('storage:clearPlayerData', summonerName);
+    } catch (e) {
+      console.error('[preload] Erro ao limpar dados do jogador:', e);
+      return { success: false, error: String(e) };
+    }
+  },
+  
+  // Listar todos os jogadores com cache
+  listPlayers: async () => {
+    try {
+      return await ipcRenderer.invoke('storage:listPlayers');
+    } catch (e) {
+      console.error('[preload] Erro ao listar jogadores:', e);
+      return [];
+    }
+  }
+};
+
 electronAPI.lcu.getCurrentSummoner = async () => electronAPI.lcu.request('/lol-summoner/v1/current-summoner', 'GET');
 electronAPI.lcu.getGameflowPhase = async () => electronAPI.lcu.request('/lol-gameflow/v1/gameflow-phase', 'GET');
 electronAPI.lcu.getSession = async () => electronAPI.lcu.request('/lol-gameflow/v1/session', 'GET');

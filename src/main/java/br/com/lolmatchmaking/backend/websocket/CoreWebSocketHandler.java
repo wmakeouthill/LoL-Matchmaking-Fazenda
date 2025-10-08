@@ -1,6 +1,8 @@
 package br.com.lolmatchmaking.backend.websocket;
 
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -128,9 +130,24 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         log.info("✅ [WS] Conexão LCU registrada: '{}' (session: {}, {}:{})",
                 summonerName, session.getId(), host, port);
 
-        // Confirmar registro
-        session.sendMessage(new TextMessage(
-                "{\"type\":\"lcu_connection_registered\",\"success\":true,\"summonerName\":\"" + summonerName + "\"}"));
+        // ✅ CORREÇÃO: Enviar confirmação de registro para TODAS as sessões do jogador
+        // (não apenas para a sessão gateway, mas também para a sessão do frontend)
+        String confirmationMessage = "{\"type\":\"lcu_connection_registered\",\"success\":true,\"summonerName\":\""
+                + summonerName + "\"}";
+
+        // Enviar para a sessão atual (gateway do Electron)
+        session.sendMessage(new TextMessage(confirmationMessage));
+
+        // Enviar para todas as outras sessões do mesmo jogador (frontend)
+        try {
+            Map<String, Object> data = new HashMap<>();
+            data.put(FIELD_SUMMONER_NAME, summonerName);
+            webSocketService.sendToPlayers("lcu_connection_registered", data, List.of(summonerName));
+            log.info("📡 [WS] Notificação lcu_connection_registered enviada para todas as sessões de: {}",
+                    summonerName);
+        } catch (Exception e) {
+            log.warn("⚠️ [WS] Erro ao enviar broadcast de lcu_connection_registered: {}", e.getMessage());
+        }
     }
 
     private void handleLcuStatus(WebSocketSession session, JsonNode root) throws IOException {

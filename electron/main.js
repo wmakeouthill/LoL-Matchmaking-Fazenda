@@ -614,6 +614,96 @@ ipcMain.handle('lcu:identify', async (_evt, payload) => {
   }
 });
 
+// ✅ NOVO: Handlers para sistema de storage por usuário
+ipcMain.handle('storage:savePlayerData', async (_evt, summonerName, data) => {
+  try {
+    const userDataPath = app.getPath('userData');
+    const storageDir = path.join(userDataPath, 'player-cache');
+    
+    // Criar diretório se não existir
+    if (!fs.existsSync(storageDir)) {
+      fs.mkdirSync(storageDir, { recursive: true });
+    }
+    
+    // Sanitizar nome do arquivo (remover caracteres inválidos)
+    const safeName = summonerName.replace(/[^a-zA-Z0-9#-]/g, '_');
+    const filePath = path.join(storageDir, `${safeName}.json`);
+    
+    // Salvar dados
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+    safeLog(`💾 [Storage] Dados salvos para: ${summonerName} em ${filePath}`);
+    
+    return { success: true, path: filePath };
+  } catch (err) {
+    safeLog('❌ [Storage] Erro ao salvar dados:', String(err));
+    return { success: false, error: String(err) };
+  }
+});
+
+ipcMain.handle('storage:loadPlayerData', async (_evt, summonerName) => {
+  try {
+    const userDataPath = app.getPath('userData');
+    const storageDir = path.join(userDataPath, 'player-cache');
+    const safeName = summonerName.replace(/[^a-zA-Z0-9#-]/g, '_');
+    const filePath = path.join(storageDir, `${safeName}.json`);
+    
+    if (!fs.existsSync(filePath)) {
+      safeLog(`📂 [Storage] Arquivo não encontrado para: ${summonerName}`);
+      return null;
+    }
+    
+    const content = fs.readFileSync(filePath, 'utf8');
+    const data = JSON.parse(content);
+    safeLog(`✅ [Storage] Dados carregados para: ${summonerName}`);
+    
+    return data;
+  } catch (err) {
+    safeLog('❌ [Storage] Erro ao carregar dados:', String(err));
+    return null;
+  }
+});
+
+ipcMain.handle('storage:clearPlayerData', async (_evt, summonerName) => {
+  try {
+    const userDataPath = app.getPath('userData');
+    const storageDir = path.join(userDataPath, 'player-cache');
+    const safeName = summonerName.replace(/[^a-zA-Z0-9#-]/g, '_');
+    const filePath = path.join(storageDir, `${safeName}.json`);
+    
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      safeLog(`🗑️ [Storage] Dados removidos para: ${summonerName}`);
+    }
+    
+    return { success: true };
+  } catch (err) {
+    safeLog('❌ [Storage] Erro ao remover dados:', String(err));
+    return { success: false, error: String(err) };
+  }
+});
+
+ipcMain.handle('storage:listPlayers', async (_evt) => {
+  try {
+    const userDataPath = app.getPath('userData');
+    const storageDir = path.join(userDataPath, 'player-cache');
+    
+    if (!fs.existsSync(storageDir)) {
+      return [];
+    }
+    
+    const files = fs.readdirSync(storageDir);
+    const players = files
+      .filter(f => f.endsWith('.json'))
+      .map(f => f.replace('.json', '').replace(/_/g, ' ')); // Reverter sanitização
+    
+    safeLog(`📋 [Storage] ${players.length} jogadores encontrados no cache`);
+    return players;
+  } catch (err) {
+    safeLog('❌ [Storage] Erro ao listar jogadores:', String(err));
+    return [];
+  }
+});
+
 function readLockfileInfo() {
   const candidates = [
     'C:/Riot Games/League of Legends/lockfile',
