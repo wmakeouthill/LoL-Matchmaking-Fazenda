@@ -2,34 +2,56 @@
 server:
   port: ${PORT:8080}
 
+spring:
+  datasource:
+    # O Cloud Run vai receber as variáveis de ambiente
+    url: jdbc:mysql://${MYSQL_HOST:lolmatchmaking.mysql.uhserver.com}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:lolmatchmaking}?useSSL=true&requireSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&useUnicode=true&characterEncoding=utf8&autoReconnect=true&connectTimeout=30000&socketTimeout=30000
+    username: ${MYSQL_USER:wmakeouthill}
+    password: ${MYSQL_PASSWORD}
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 2
+      connection-timeout: 20000
+      idle-timeout: 300000
+      max-lifetime: 1200000
+
 # URLs e endpoints para ambiente Google Cloud
 app:
   frontend:
-    url: "${FRONTEND_URL:https://your-frontend-service-url.run.app}"
+    url: "${FRONTEND_URL:https://fazenda-inhouse-368951732227.southamerica-east1.run.app}"
   backend:
-    url: "${BACKEND_URL:https://your-backend-service-url.run.app}"
-    base-url: "${BACKEND_URL:https://your-backend-service-url.run.app}"
+    url: "${BACKEND_URL:https://fazenda-inhouse-368951732227.southamerica-east1.run.app}"
+    base-url: "${BACKEND_URL:https://fazenda-inhouse-368951732227.southamerica-east1.run.app}"
+    sync:
+      enabled: false
   websocket:
-    endpoint: "${WS_ENDPOINT:wss://your-backend-service-url.run.app/ws}"
+    endpoint: "${WS_ENDPOINT:wss://fazenda-inhouse-368951732227.southamerica-east1.run.app/ws}"
   cors:
     allowed-origins:
-      - "${FRONTEND_URL:https://your-frontend-service-url.run.app}"
-      - "${BACKEND_URL:https://your-backend-service-url.run.app}"
+      - "${FRONTEND_URL:https://fazenda-inhouse-368951732227.southamerica-east1.run.app}"
+      - "${BACKEND_URL:https://fazenda-inhouse-368951732227.southamerica-east1.run.app}"
       - "https://*.run.app"
+      - "https://fazenda-inhouse-368951732227.southamerica-east1.run.app"
+  # Desabilitar funcionalidades que requerem LCU local (não funciona na nuvem)
+  lcu:
+    enabled: false
 
 # Configurações específicas para Cloud Run
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
-  health:
-    probes:
-      enabled: true
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
 
 logging:
   level:
     br.com.lolmatchmaking: INFO
     root: WARN
+    org.springframework.web: INFO
   pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

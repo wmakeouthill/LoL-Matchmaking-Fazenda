@@ -13,9 +13,11 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 import br.com.lolmatchmaking.backend.service.LCUService;
 import org.springframework.context.ApplicationContext;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Component
@@ -24,6 +26,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
 
     private final ObjectMapper objectMapper;
     private final ApplicationContext applicationContext;
+    private final SessionRegistry sessionRegistry; // ✅ NOVO: Para registrar summonerName → sessionId
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
     private final Map<String, ClientInfo> clientInfo = new ConcurrentHashMap<>();
     private final Map<String, Instant> lastHeartbeat = new ConcurrentHashMap<>();
@@ -44,6 +47,13 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
      */
     private LCUService getLcuService() {
         return applicationContext.getBean(LCUService.class);
+    }
+
+    /**
+     * Obtém o MatchFoundService quando necessário para evitar dependência circular
+     */
+    private br.com.lolmatchmaking.backend.service.MatchFoundService getMatchFoundService() {
+        return applicationContext.getBean(br.com.lolmatchmaking.backend.service.MatchFoundService.class);
     }
 
     /**
@@ -213,7 +223,11 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         }
     }
 
-    private void handleLcuResponse(JsonNode jsonMessage) {
+    /**
+     * Handle incoming lcu_response from Electron main process gateway.
+     * Called by CoreWebSocketHandler when it receives lcu_response messages.
+     */
+    public void handleLcuResponse(JsonNode jsonMessage) {
         // Expected shape: { type: 'lcu_response', id: 'uuid', status: 200, body: {...}
         // }
         try {
@@ -419,11 +433,33 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                         // Debug: log parsed lockfile info
                         log.debug("handleIdentify: parsed lockfile for session={} host={} port={} protocol={}",
                                 sessionId, info.getLcuHost(), info.getLcuPort(), info.getLcuProtocol());
+
+                        // ✅ NOVO: Configurar LCU no banco de dados para este jogador
+                        if (summonerName != null && info.getLcuPort() != 0) {
+                            try {
+                                getLcuService().configureLCUForPlayer(
+                                        summonerName,
+                                        info.getLcuPort(),
+                                        info.getLcuProtocol() != null ? info.getLcuProtocol() : "https",
+                                        info.getLcuPassword());
+                                log.info("✅ [WebSocket] LCU configurado para {} na tabela players", summonerName);
+                            } catch (Exception ex) {
+                                log.error("❌ [WebSocket] Erro ao configurar LCU no banco para {}: {}",
+                                        summonerName, ex.getMessage());
+                            }
+                        }
                     }
                 } catch (Exception ignored) {
                 }
 
                 log.info("🆔 Cliente identificado: {} ({})", info.getSummonerName(), info.getPlayerId());
+
+                // ✅ NOVO: Registrar jogador no SessionRegistry para envio específico
+                if (summonerName != null) {
+                    sessionRegistry.registerPlayer(summonerName, sessionId);
+                    log.info("✅ [WebSocket] Jogador {} registrado na sessão {}", summonerName, sessionId);
+                }
+
                 sendMessage(sessionId, "identified", Map.of("success", true));
             }
         } catch (Exception e) {
@@ -461,19 +497,97 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     /**
      * Processa accept match
      */
+    /**
+     * Processa accept match
+     */
     private void handleAcceptMatch(String sessionId, JsonNode data) {
-        // Implementar lógica de accept match
-        log.info("✅ Cliente {} aceitou partida", sessionId);
-        sendMessage(sessionId, "match_accepted", Map.of("success", true));
+        try {
+            ClientInfo info = clientInfo.get(sessionId);
+            if (info == null || info.getSummonerName() == null) {
+                log.warn("⚠️ [Accept Match] Sessão {} não identificada", sessionId);
+                sendError(sessionId, "NOT_IDENTIFIED", "Cliente não identificado");
+                return;
+            }
+
+            String summonerName = info.getSummonerName();
+
+            // Extrair matchId do payload
+            Long matchId = null;
+            if (data.has("matchId") && !data.get("matchId").isNull()) {
+                matchId = data.get("matchId").asLong();
+            } else if (data.has("data") && data.get("data").has("matchId")) {
+                matchId = data.get("data").get("matchId").asLong();
+            }
+
+            if (matchId == null) {
+                log.warn("⚠️ [Accept Match] matchId não fornecido por {}", summonerName);
+                sendError(sessionId, "MISSING_MATCH_ID", "matchId é obrigatório");
+                return;
+            }
+
+            log.info("✅ [Accept Match] Jogador {} (sessão {}) aceitou partida {}",
+                    summonerName, sessionId, matchId);
+
+            // Chamar o serviço correto
+            getMatchFoundService().acceptMatch(matchId, summonerName);
+
+            // Confirmar apenas para este jogador
+            sendMessage(sessionId, "match_accepted", Map.of(
+                    "success", true,
+                    "matchId", matchId,
+                    "summonerName", summonerName));
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao processar aceitação de partida", e);
+            sendError(sessionId, "ACCEPT_FAILED", "Erro ao aceitar partida");
+        }
     }
 
     /**
      * Processa decline match
      */
     private void handleDeclineMatch(String sessionId, JsonNode data) {
-        // Implementar lógica de decline match
-        log.info("❌ Cliente {} recusou partida", sessionId);
-        sendMessage(sessionId, "match_declined", Map.of("success", true));
+        try {
+            ClientInfo info = clientInfo.get(sessionId);
+            if (info == null || info.getSummonerName() == null) {
+                log.warn("⚠️ [Decline Match] Sessão {} não identificada", sessionId);
+                sendError(sessionId, "NOT_IDENTIFIED", "Cliente não identificado");
+                return;
+            }
+
+            String summonerName = info.getSummonerName();
+
+            // Extrair matchId do payload
+            Long matchId = null;
+            if (data.has("matchId") && !data.get("matchId").isNull()) {
+                matchId = data.get("matchId").asLong();
+            } else if (data.has("data") && data.get("data").has("matchId")) {
+                matchId = data.get("data").get("matchId").asLong();
+            }
+
+            if (matchId == null) {
+                log.warn("⚠️ [Decline Match] matchId não fornecido por {}", summonerName);
+                sendError(sessionId, "MISSING_MATCH_ID", "matchId é obrigatório");
+                return;
+            }
+
+            log.warn("❌ [Decline Match] Jogador {} (sessão {}) recusou partida {}",
+                    summonerName, sessionId, matchId);
+
+            // Chamar o serviço correto
+            getMatchFoundService().declineMatch(matchId, summonerName);
+
+            // Confirmar apenas para este jogador
+            sendMessage(sessionId, "match_declined", Map.of(
+                    "success", true,
+                    "matchId", matchId,
+                    "summonerName", summonerName,
+                    "reason", "player_declined"));
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao processar recusa de partida", e);
+            sendError(sessionId, "DECLINE_FAILED", "Erro ao recusar partida");
+        }
     }
 
     /**
@@ -632,7 +746,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     }
 
     /**
-     * Broadcast de atualização da fila
+     * Broadcast de atualização da fila - ENVIA APENAS PARA JOGADORES NA FILA
      */
     public void broadcastQueueUpdate(List<QueuePlayerInfoDTO> queueStatus) {
         try {
@@ -642,7 +756,31 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                     "timestamp", System.currentTimeMillis());
 
             String jsonMessage = objectMapper.writeValueAsString(message);
-            broadcastToAll(jsonMessage);
+
+            // ✅ CORREÇÃO: Enviar apenas para jogadores que ESTÃO NA FILA
+            if (queueStatus != null && !queueStatus.isEmpty()) {
+                Set<String> playersInQueue = queueStatus.stream()
+                        .map(QueuePlayerInfoDTO::getSummonerName)
+                        .filter(name -> name != null && !name.isEmpty())
+                        .collect(Collectors.toSet());
+
+                log.info("🔍 [Queue Update] Jogadores na fila: {}", playersInQueue);
+
+                Collection<WebSocketSession> queueSessions = sessionRegistry.getByPlayers(playersInQueue);
+
+                log.info("📤 [Queue Update] Enviando para {} sessões (de {} jogadores na fila)",
+                        queueSessions.size(), playersInQueue.size());
+
+                if (queueSessions.size() != playersInQueue.size()) {
+                    log.warn("⚠️ [Queue Update] ATENÇÃO: {} jogadores na fila mas apenas {} sessões encontradas!",
+                            playersInQueue.size(), queueSessions.size());
+                }
+
+                sendToMultipleSessions(queueSessions, jsonMessage);
+            } else {
+                // Se a fila está vazia, não precisa enviar para ninguém
+                log.debug("📭 [Queue Update] Fila vazia, nenhuma mensagem enviada");
+            }
 
         } catch (Exception e) {
             log.error("❌ Erro ao fazer broadcast da fila", e);
@@ -668,6 +806,29 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     }
 
     /**
+     * Envia mensagem para jogadores específicos (usado para eventos de partida)
+     */
+    public void sendToPlayers(String messageType, Map<String, Object> data, List<String> summonerNames) {
+        try {
+            Map<String, Object> message = new HashMap<>(data);
+            message.put("type", messageType);
+            message.put("timestamp", System.currentTimeMillis());
+
+            String jsonMessage = objectMapper.writeValueAsString(message);
+
+            Collection<WebSocketSession> playerSessions = sessionRegistry.getByPlayers(summonerNames);
+
+            log.debug("📤 [SendToPlayers] Enviando '{}' para {} jogadores (sessões encontradas: {})",
+                    messageType, summonerNames.size(), playerSessions.size());
+
+            sendToMultipleSessions(playerSessions, jsonMessage);
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao enviar mensagem para jogadores específicos", e);
+        }
+    }
+
+    /**
      * Broadcast para todos os clientes conectados
      */
     private void broadcastToAll(String message) {
@@ -682,6 +843,25 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             }
             return true; // Remove sessões com erro
         });
+    }
+
+    /**
+     * Envia mensagem para múltiplas sessões específicas
+     */
+    private void sendToMultipleSessions(Collection<WebSocketSession> targetSessions, String message) {
+        if (targetSessions == null || targetSessions.isEmpty()) {
+            return;
+        }
+
+        for (WebSocketSession session : targetSessions) {
+            try {
+                if (session != null && session.isOpen()) {
+                    session.sendMessage(new TextMessage(message));
+                }
+            } catch (IOException e) {
+                log.error("❌ Erro ao enviar mensagem para sessão {}", session.getId(), e);
+            }
+        }
     }
 
     /**
@@ -714,6 +894,24 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     }
 
     /**
+     * Atualiza informações LCU de uma sessão (para integração com
+     * CoreWebSocketHandler)
+     */
+    public void updateLcuInfo(String sessionId, String host, int port, String summonerName) {
+        ClientInfo info = clientInfo.get(sessionId);
+        if (info == null) {
+            info = new ClientInfo(sessionId, Instant.now());
+            clientInfo.put(sessionId, info);
+        }
+        info.setLcuHost(host);
+        info.setLcuPort(port);
+        info.setSummonerName(summonerName);
+        info.setIdentified(true);
+        log.info("🔧 [MatchmakingWebSocketService] LCU info atualizada: session={}, host={}, port={}, summoner={}",
+                sessionId, host, port, summonerName);
+    }
+
+    /**
      * Obtém contagem de sessões ativas
      */
     public int getActiveSessionsCount() {
@@ -725,6 +923,41 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
      * Returns the sessionId or null if none available.
      */
     public String pickGatewaySessionId() {
+        return pickGatewaySessionId(null);
+    }
+
+    /**
+     * Pick a connected client session that has LCU lockfile info attached,
+     * optionally filtering by summonerName.
+     * 
+     * @param summonerName Optional - if provided, will prefer the session for this
+     *                     summoner
+     * @return sessionId or null if none available
+     */
+    public String pickGatewaySessionId(String summonerName) {
+        // Se summonerName fornecido, tentar encontrar sessão específica primeiro
+        if (summonerName != null && !summonerName.isEmpty()) {
+            String normalizedName = summonerName.toLowerCase();
+            for (Map.Entry<String, WebSocketSession> e : sessions.entrySet()) {
+                try {
+                    WebSocketSession s = e.getValue();
+                    if (s != null && s.isOpen()) {
+                        ClientInfo info = clientInfo.get(e.getKey());
+                        if (info != null && info.getSummonerName() != null
+                                && info.getSummonerName().toLowerCase().equals(normalizedName)
+                                && info.getLcuHost() != null && info.getLcuPort() > 0) {
+                            log.info(
+                                    "pickGatewaySessionId: selecting session {} for specific summoner '{}' (host={} port={})",
+                                    e.getKey(), summonerName, info.getLcuHost(), info.getLcuPort());
+                            return e.getKey();
+                        }
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+            log.warn("⚠️ pickGatewaySessionId: summoner '{}' não encontrado, usando fallback", summonerName);
+        }
+
         // Debug: list available sessions and their clientInfo so we can diagnose why
         // no gateway client is selected.
         try {

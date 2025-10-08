@@ -1,5 +1,9 @@
 server:
   port: 8080
+  # ✅ ACEITAR CONEXÕES DE QUALQUER IP DA REDE (não apenas localhost)
+  # Para localhost apenas: 127.0.0.1
+  # Para rede local: 0.0.0.0 (aceita conexões de qualquer IP)
+  address: 0.0.0.0
 
 spring:
   config:

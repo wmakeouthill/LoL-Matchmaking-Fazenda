@@ -82,19 +82,27 @@ export class QueueStateService {
   }
 
   /**
-   * ✅ NOVO: Método para iniciar polling manualmente
+   * ✅ REMOVIDO: Polling automático (usar apenas WebSocket)
+   * Auto-refresh desnecessário - WebSocket já notifica em tempo real
+   *
+   * O backend já faz broadcast via WebSocket quando:
+   * - Alguém entra na fila (queue_update)
+   * - Alguém sai da fila (queue_update)
+   * - Partida é encontrada (match_found)
+   *
+   * Polling forçaria requisições HTTP a cada 5s desnecessariamente.
+   * Mantendo método apenas para compatibilidade, mas sem efeito.
    */
   startPolling(): void {
-    if (this.pollingInterval) {
-      clearInterval(this.pollingInterval);
-    }
-
-    // Configurar polling
-    this.pollingInterval = setInterval(() => {
-      this.syncQueueFromDatabase();
-    }, this.POLLING_INTERVAL_MS);
-
-    console.log(`🔄 [QueueState] Polling MySQL iniciado a cada ${this.POLLING_INTERVAL_MS}ms`);
+    console.log('⚠️ [QueueState] startPolling() desabilitado - usando apenas WebSocket para atualizações em tempo real');
+    // ❌ NÃO iniciar polling - WebSocket é suficiente
+    // ❌ Comentado: Evita requisições desnecessárias a cada 5s
+    // if (this.pollingInterval) {
+    //   clearInterval(this.pollingInterval);
+    // }
+    // this.pollingInterval = setInterval(() => {
+    //   this.syncQueueFromDatabase();
+    // }, this.POLLING_INTERVAL_MS);
   }
 
   stopMySQLSync(): void {

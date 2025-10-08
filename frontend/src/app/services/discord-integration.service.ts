@@ -55,11 +55,15 @@ export class DiscordIntegrationService {
       next: (message: any) => {
         const t = (message && typeof message.type === 'string') ? message.type : '';
         console.log(`🔍 [DiscordService #${this.instanceId}] Mensagem WebSocket recebida:`, t, message);
-        if (t && (t.startsWith('discord_') || t.includes('user'))) {
-          console.log(`✅ [DiscordService #${this.instanceId}] Mensagem passou pelo filtro, processando...`);
+
+        // ✅ CORREÇÃO: Só processar mensagens de Discord, MAS não bloquear outras mensagens
+        if (t && (t.startsWith('discord_') || t === 'discord_users' || t === 'discord_status')) {
+          console.log(`✅ [DiscordService #${this.instanceId}] Mensagem Discord detectada, processando...`);
           this.handleBotMessage(message);
         } else {
-          console.log(`⚠️ [DiscordService #${this.instanceId}] Mensagem filtrada:`, t);
+          // ✅ Mensagens não-Discord são ignoradas aqui, mas NÃO bloqueadas
+          // O ApiService já as envia para todos os outros subscribers
+          console.log(`⏭️ [DiscordService #${this.instanceId}] Mensagem não-Discord ignorada (será processada por outros serviços):`, t);
         }
       },
       error: (error: any) => {
@@ -98,7 +102,7 @@ export class DiscordIntegrationService {
     switch (data.type) {
       case 'discord_users':
         console.log(`👥 [DiscordService #${this.instanceId}] Usuários Discord recebidos:`, data.users?.length || 0, 'usuários');
-        
+
         // ✅ CORREÇÃO: Mesclar dados em vez de substituir completamente
         if (data.users && data.users.length > 0) {
           this.discordUsersOnline = data.users;
@@ -108,9 +112,9 @@ export class DiscordIntegrationService {
           // Só limpar se explicitamente indicado (ex: canal vazio)
           console.log(`⚠️ [DiscordService #${this.instanceId}] Lista vazia recebida, mantendo dados existentes`);
         }
-        
+
         this.lastAutoUpdate = Date.now();
-        
+
         // ✅ NOVO: Marcar dados como atualizados e não stale
         this.lastDataUpdate = Date.now();
         this.isDataStale = false;

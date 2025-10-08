@@ -261,20 +261,22 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   // =============================================================================
-  // AUTO-REFRESH METHODS (simplificados - backend gerencia a sincronização)
+  // AUTO-REFRESH METHODS (usando APENAS WebSocket)
   // =============================================================================
   onAutoRefreshChange(): void {
     this.autoRefreshEnabled = !this.autoRefreshEnabled;
-    console.log(`🔄 [Queue] Auto-refresh ${this.autoRefreshEnabled ? 'habilitado' : 'desabilitado'}`);
+    console.log(`🔄 [Queue] Auto-refresh ${this.autoRefreshEnabled ? 'habilitado' : 'desabilitado'} (apenas WebSocket)`);
 
     this.autoRefreshToggle.emit(this.autoRefreshEnabled);
 
     if (this.autoRefreshEnabled) {
       if (this.currentPlayer?.displayName) {
         this.queueStateService.updateCurrentPlayer(this.currentPlayer);
-        this.queueStateService.startPolling();
+        // ⚠️ NÃO chamar startPolling() - usar apenas WebSocket
+        console.log('✅ [Queue] Usando apenas WebSocket para atualizações em tempo real');
       }
-      this.startAutoRefresh();
+      // ✅ Forçar uma sincronização manual inicial
+      this.refreshQueueData();
     } else {
       this.queueStateService.stopMySQLSync();
       this.stopAutoRefresh();

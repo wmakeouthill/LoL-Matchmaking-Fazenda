@@ -1,9 +1,36 @@
 {
   "appId": "com.lolmatchmaking.app",
   "productName": "LOL Matchmaking",
-  "directories": { "output": "dist-electron" },
-  "files": [ "**/*" ],
-  "win": { "target": "nsis", "icon": "electron/assets/icon.ico" },
-  "linux": { "target": "AppImage", "icon": "electron/assets/icon.png" },
-  "mac": { "target": "dmg", "icon": "electron/assets/icon.icns" }
+  "directories": { 
+    "output": "dist-electron"
+  },
+  "files": [
+    "electron/**/*",
+    "package.json",
+    "!electron/assets/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "frontend/dist",
+      "to": "frontend-dist",
+      "filter": ["**/*"]
+    }
+  ],
+  "win": { 
+    "target": [
+      {
+        "target": "portable",
+        "arch": ["x64"]
+      }
+    ]
+  },
+  "linux": { 
+    "target": "AppImage"
+  },
+  "mac": { 
+    "target": "dmg"
+  },
+  "portable": {
+    "artifactName": "LOL-Matchmaking-Portable.exe"
+  }
 }

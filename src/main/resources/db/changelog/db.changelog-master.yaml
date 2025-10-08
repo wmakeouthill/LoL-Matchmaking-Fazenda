@@ -13,3 +13,5 @@ databaseChangeLog:
       file: db/changelog/changes/0006-add-kda-and-favorite-champion.yaml
   - include:
       file: db/changelog/changes/0007-add-player-stats-draft.yaml
+  - include:
+      file: db/changelog/changes/0008-add-lcu-config-to-players.yaml

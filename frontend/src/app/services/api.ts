@@ -69,8 +69,13 @@ export class ApiService {
   private _isElectronCache: boolean | null = null;
   private _isWindowsCache: boolean | null = null;
 
+  // ✅ NOVO: Armazenar summonerName do jogador autenticado para requisições HTTP
+  private _currentSummonerName: string | null = null;
+
   // ✅ NOVO: Subject para mensagens WebSocket
   private readonly webSocketMessageSubject = new Subject<any>();
+  // ✅ NOVO: Subject para evento de registro do LCU (emite summonerName quando backend confirma registro)
+  private readonly lcuRegisteredSubject = new Subject<string>();
   private webSocket: WebSocket | null = null;
   // Reconnection and heartbeat state
   private wsReconnectAttempts = 0;
@@ -88,15 +93,14 @@ export class ApiService {
     // ✅ CORREÇÃO: Inicializar baseUrl aqui, quando o contexto está pronto
     this.baseUrl = this.getBaseUrl();
 
-    // Tentar auto-configurar LCU no Electron (antes de conectar WebSocket)
-    if (this.isElectron()) {
-      this.configureLCUFromElectron().catch(err => {
-        console.warn('⚠️ [ApiService] Falha ao auto-configurar LCU via Electron:', err);
-      });
-
-      // Retry LCU configuration a few times in case lockfile appears late
-      this.retryLCUAutoConfig();
-    }
+    // ❌ REMOVIDO: Configuração LCU global no startup
+    // LCU será configurado por jogador via WebSocket /client-ws no Electron
+    // if (this.isElectron()) {
+    //   this.configureLCUFromElectron().catch(err => {
+    //     console.warn('⚠️ [ApiService] Falha ao auto-configurar LCU via Electron:', err);
+    //   });
+    //   this.retryLCUAutoConfig();
+    // }
 
     // Log de diagnóstico inicial
     console.log('🔧 ApiService inicializado:', {
@@ -211,6 +215,40 @@ export class ApiService {
     setTimeout(tick, 500);
   }
 
+  /**
+   * ✅ NOVO: Define o summonerName do jogador autenticado
+   * Deve ser chamado após identificação bem-sucedida via LCU
+   */
+  setCurrentSummonerName(summonerName: string): void {
+    this._currentSummonerName = summonerName;
+    console.log('🆔 [ApiService] SummonerName definido para requisições HTTP:', summonerName);
+  }
+
+  /**
+   * ✅ NOVO: Obtém o summonerName armazenado em memória
+   * Retorna null se não foi definido via setCurrentSummonerName()
+   */
+  getStoredSummonerName(): string | null {
+    return this._currentSummonerName;
+  }
+
+  /**
+   * ✅ NOVO: Cria headers HTTP com identificação do jogador
+   * Todas as requisições HTTP devem usar este método
+   */
+  private getAuthenticatedHeaders(): { [header: string]: string } {
+    const headers: { [header: string]: string } = {
+      'Content-Type': 'application/json'
+    };
+
+    // Adicionar X-Summoner-Name se disponível
+    if (this._currentSummonerName) {
+      headers['X-Summoner-Name'] = this._currentSummonerName;
+    }
+
+    return headers;
+  }
+
   public getBaseUrl(): string {
     // Tenta detectar a URL base correta para o ambiente atual
     try {
@@ -274,8 +312,23 @@ export class ApiService {
 
   private getBrowserBaseUrl(): string {
     const host = window.location.hostname;
-    const port = '8080';
     const protocol = window.location.protocol === 'https:' ? 'https' : 'http';
+
+    // ✅ Detectar se está rodando no Cloud Run ou em produção
+    // Cloud Run usa domínios *.run.app
+    const isCloudRun = host.includes('.run.app');
+    const isProduction = protocol === 'https' || isCloudRun;
+
+    if (isProduction) {
+      // Em produção (Cloud Run ou HTTPS), não usar porta
+      // O backend está no mesmo domínio
+      console.log('☁️ [Browser] Ambiente de produção detectado (Cloud Run)');
+      return `${protocol}://${host}/api`;
+    }
+
+    // Desenvolvimento local
+    const port = window.location.port || '8080';
+    console.log('🌐 [Browser] Ambiente de desenvolvimento local');
     return `${protocol}://${host}:${port}/api`;
   }
 
@@ -283,10 +336,10 @@ export class ApiService {
     const baseUrl = this.getBaseUrl();
 
     // Construir URL WebSocket corretamente
+    // baseUrl já inclui /api, então usar /api/ws diretamente
     const wsUrl = baseUrl
       .replace(/^http/, 'ws')
-      .replace(/^https/, 'wss')
-      .replace('/api$', '') + '/ws';
+      .replace(/^https/, 'wss') + '/ws';
 
     console.log('🔄 WebSocket URL:', wsUrl);
     return wsUrl;
@@ -520,7 +573,9 @@ export class ApiService {
   }
 
   getPlayerStats(playerId: number): Observable<any> {
-    return this.http.get(`${this.baseUrl}/player/${playerId}/stats`)
+    return this.http.get(`${this.baseUrl}/player/${playerId}/stats`, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         catchError(this.handleError)
       );
@@ -602,7 +657,9 @@ export class ApiService {
       url += `?${params.toString()}`;
     }
 
-    return this.http.get<any>(url)
+    return this.http.get<any>(url, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         map(response => {
           // Converter resposta do novo backend para formato esperado
@@ -629,7 +686,9 @@ export class ApiService {
       secondaryLane: preferences?.secondaryLane || null
     };
 
-    return this.http.post(`${this.baseUrl}/queue/join`, payload)
+    return this.http.post(`${this.baseUrl}/queue/join`, payload, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(catchError(this.handleError));
   }
 
@@ -640,17 +699,23 @@ export class ApiService {
       summonerName: summonerName || null
     };
 
-    return this.http.post(`${this.baseUrl}/queue/leave`, payload)
+    return this.http.post(`${this.baseUrl}/queue/leave`, payload, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(catchError(this.handleError));
   }
 
   refreshQueueCache(): Observable<any> {
-    return this.http.post(`${this.baseUrl}/queue/refresh`, {})
+    return this.http.post(`${this.baseUrl}/queue/refresh`, {}, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(catchError(this.handleError));
   }
 
   forceMySQLSync(): Observable<any> {
-    return this.http.post(`${this.baseUrl}/queue/force-sync`, {})
+    return this.http.post(`${this.baseUrl}/queue/force-sync`, {}, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(catchError(this.handleError));
   }
 
@@ -660,23 +725,32 @@ export class ApiService {
    */
   getMyActiveMatch(summonerName: string): Observable<any> {
     const params = { summonerName };
-    return this.http.get<any>(`${this.baseUrl}/queue/my-active-match`, { params })
+    return this.http.get<any>(`${this.baseUrl}/queue/my-active-match`, {
+      params,
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(catchError(this.handleError));
   }
 
   // Match endpoints (accept/decline)
   acceptMatch(matchId: number, playerId: number | null, playerName: string): Observable<any> {
     const payload = { matchId, playerName };
-    return this.http.post(`${this.baseUrl}/match/accept`, payload).pipe(catchError(this.handleError));
+    return this.http.post(`${this.baseUrl}/match/accept`, payload, {
+      headers: this.getAuthenticatedHeaders()
+    }).pipe(catchError(this.handleError));
   }
 
   declineMatch(matchId: number, playerId: number | null, playerName: string): Observable<any> {
     const payload = { matchId, playerName };
-    return this.http.post(`${this.baseUrl}/match/decline`, payload).pipe(catchError(this.handleError));
+    return this.http.post(`${this.baseUrl}/match/decline`, payload, {
+      headers: this.getAuthenticatedHeaders()
+    }).pipe(catchError(this.handleError));
   }
 
   getRecentMatches(): Observable<MatchHistory[]> {
-    return this.http.get<MatchHistory[]>(`${this.baseUrl}/matches/recent`)
+    return this.http.get<MatchHistory[]>(`${this.baseUrl}/matches/recent`, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         catchError(this.handleError)
       );
@@ -684,7 +758,9 @@ export class ApiService {
 
   // ✅ NOVO: Cancelar partida e apagar do banco
   cancelMatch(matchId: number): Observable<any> {
-    return this.http.delete(`${this.baseUrl}/matches/${matchId}`)
+    return this.http.delete(`${this.baseUrl}/matches/${matchId}`, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         catchError(this.handleError)
       );
@@ -692,7 +768,9 @@ export class ApiService {
 
   // ✅ NOVO: Cancelar partida em progresso (draft/in_progress)
   cancelMatchInProgress(matchId: number): Observable<any> {
-    return this.http.delete(`${this.baseUrl}/match/${matchId}/cancel`)
+    return this.http.delete(`${this.baseUrl}/match/${matchId}/cancel`, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         catchError(this.handleError)
       );
@@ -700,14 +778,18 @@ export class ApiService {
 
   // ✅ NOVO: Simular última partida do LCU como partida customizada (para testes)
   simulateLastLcuMatch(lcuMatchData: any): Observable<any> {
-    return this.http.post(`${this.baseUrl}/debug/simulate-last-match`, lcuMatchData)
+    return this.http.post(`${this.baseUrl}/debug/simulate-last-match`, lcuMatchData, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         catchError(this.handleError)
       );
   }
 
   getMatchHistory(playerId: string, offset: number = 0, limit: number = 10): Observable<any> {
-    return this.http.get(`${this.baseUrl}/match-history/${playerId}?offset=${offset}&limit=${limit}`)
+    return this.http.get(`${this.baseUrl}/match-history/${playerId}?offset=${offset}&limit=${limit}`, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         catchError(this.handleError)
       );
@@ -718,30 +800,40 @@ export class ApiService {
     // If there's no dedicated endpoint, use /match/finish for simulation if payload fits.
     // But backend doesn't expose a generic simulate endpoint; try /matches/simulate if exists, else /match/finish.
     const simulateUrl = `${this.baseUrl}/matches/simulate`;
-    return this.http.post(simulateUrl, simulatedMatch).pipe(
+    return this.http.post(simulateUrl, simulatedMatch, {
+      headers: this.getAuthenticatedHeaders()
+    }).pipe(
       catchError((err) => {
         // Fallback to finish endpoint
-        return this.http.post(`${this.baseUrl}/match/finish`, simulatedMatch).pipe(catchError(this.handleError));
+        return this.http.post(`${this.baseUrl}/match/finish`, simulatedMatch, {
+          headers: this.getAuthenticatedHeaders()
+        }).pipe(catchError(this.handleError));
       })
     );
   }
 
   // Riot API endpoints
   getSummonerData(region: string, summonerName: string): Observable<any> {
-    return this.http.get(`${this.baseUrl}/riot/summoner/${region}/${summonerName}`)
+    return this.http.get(`${this.baseUrl}/riot/summoner/${region}/${summonerName}`, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         catchError(this.handleError)
       );
   }
   getRankedData(region: string, summonerId: string): Observable<any> {
-    return this.http.get(`${this.baseUrl}/riot/ranked/${region}/${summonerId}`)
+    return this.http.get(`${this.baseUrl}/riot/ranked/${region}/${summonerId}`, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         catchError(this.handleError)
       );
   }
   // LCU endpoints
   getLCUStatus(): Observable<LCUStatus> {
-    return this.http.get<LCUStatus>(`${this.baseUrl}/lcu/status`)
+    return this.http.get<LCUStatus>(`${this.baseUrl}/lcu/status`, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         catchError(this.handleError)
       );
@@ -919,11 +1011,17 @@ export class ApiService {
   // Special User Tools - Admin/Debug endpoints
   addBotToQueue(): Observable<any> {
     const url = `${this.baseUrl}/queue/add-bot`;
-    return this.http.post(url, {}).pipe(
+    return this.http.post(url, {}, {
+      headers: this.getAuthenticatedHeaders()
+    }).pipe(
       catchError((err) => {
         console.warn('⚠️ [API] Falha no endpoint /queue/add-bot:', err);
-        return this.http.post(`${this.baseUrl}/admin/add-bot`, {}).pipe(
-          catchError(() => this.http.post(`${this.baseUrl}/debug/add-bot`, {}).pipe(catchError(this.handleError)))
+        return this.http.post(`${this.baseUrl}/admin/add-bot`, {}, {
+          headers: this.getAuthenticatedHeaders()
+        }).pipe(
+          catchError(() => this.http.post(`${this.baseUrl}/debug/add-bot`, {}, {
+            headers: this.getAuthenticatedHeaders()
+          }).pipe(catchError(this.handleError)))
         );
       })
     );
@@ -931,11 +1029,17 @@ export class ApiService {
 
   resetBotCounter(): Observable<any> {
     const url = `${this.baseUrl}/queue/reset-bot-counter`;
-    return this.http.post(url, {}).pipe(
+    return this.http.post(url, {}, {
+      headers: this.getAuthenticatedHeaders()
+    }).pipe(
       catchError((err) => {
         console.warn('⚠️ [API] Falha no endpoint /queue/reset-bot-counter:', err);
-        return this.http.post(`${this.baseUrl}/admin/reset-bot-counter`, {}).pipe(
-          catchError(() => this.http.post(`${this.baseUrl}/debug/reset-bot-counter`, {}).pipe(catchError(this.handleError)))
+        return this.http.post(`${this.baseUrl}/admin/reset-bot-counter`, {}, {
+          headers: this.getAuthenticatedHeaders()
+        }).pipe(
+          catchError(() => this.http.post(`${this.baseUrl}/debug/reset-bot-counter`, {}, {
+            headers: this.getAuthenticatedHeaders()
+          }).pipe(catchError(this.handleError)))
         );
       })
     );
@@ -943,11 +1047,17 @@ export class ApiService {
 
   simulateLastMatch(): Observable<any> {
     const url = `${this.baseUrl}/matches/simulate-last`;
-    return this.http.post(url, {}).pipe(
+    return this.http.post(url, {}, {
+      headers: this.getAuthenticatedHeaders()
+    }).pipe(
       catchError((err) => {
         console.warn('⚠️ [API] Falha no endpoint /matches/simulate-last:', err);
-        return this.http.post(`${this.baseUrl}/admin/simulate-last-match`, {}).pipe(
-          catchError(() => this.http.post(`${this.baseUrl}/debug/simulate-last-match`, {}).pipe(catchError(this.handleError)))
+        return this.http.post(`${this.baseUrl}/admin/simulate-last-match`, {}, {
+          headers: this.getAuthenticatedHeaders()
+        }).pipe(
+          catchError(() => this.http.post(`${this.baseUrl}/debug/simulate-last-match`, {}, {
+            headers: this.getAuthenticatedHeaders()
+          }).pipe(catchError(this.handleError)))
         );
       })
     );
@@ -956,21 +1066,29 @@ export class ApiService {
   // Cleanup test matches (admin/debug) - try multiple endpoints
   cleanupTestMatches(): Observable<any> {
     const url = `${this.baseUrl}/matches/cleanup`;
-    return this.http.post(url, {}).pipe(catchError((err) => {
+    return this.http.post(url, {}, {
+      headers: this.getAuthenticatedHeaders()
+    }).pipe(catchError((err) => {
       // fallback to /matches/clear or /matches/reset
-      return this.http.post(`${this.baseUrl}/matches/clear`, {}).pipe(catchError(this.handleError));
+      return this.http.post(`${this.baseUrl}/matches/clear`, {}, {
+        headers: this.getAuthenticatedHeaders()
+      }).pipe(catchError(this.handleError));
     }));
   }
 
   // Check sync status for a given player identifier
   checkSyncStatus(identifier: string): Observable<any> {
     const url = `${this.baseUrl}/sync/check?identifier=${encodeURIComponent(identifier)}`;
-    return this.http.get(url).pipe(catchError(this.handleError));
+    return this.http.get(url, {
+      headers: this.getAuthenticatedHeaders()
+    }).pipe(catchError(this.handleError));
   }
 
   // Get current game data via LCU
   getCurrentGame(): Observable<any> {
-    return this.http.get(`${this.baseUrl}/lcu/game-data`).pipe(
+    return this.http.get(`${this.baseUrl}/lcu/game-data`, {
+      headers: this.getAuthenticatedHeaders()
+    }).pipe(
       map((resp: any) => {
         if (!resp) return { success: false };
         // Normalize shapes
@@ -985,17 +1103,23 @@ export class ApiService {
   // Custom matches listing (used in dashboard/match-history)
   getCustomMatches(identifier: string, offset: number = 0, limit: number = 20): Observable<any> {
     const url = `${this.baseUrl}/matches/custom/${encodeURIComponent(identifier)}?offset=${offset}&limit=${limit}`;
-    return this.http.get<any>(url).pipe(catchError(this.handleError));
+    return this.http.get<any>(url, {
+      headers: this.getAuthenticatedHeaders()
+    }).pipe(catchError(this.handleError));
   }
 
   getCustomMatchesCount(identifier: string): Observable<any> {
     const url = `${this.baseUrl}/matches/custom/${encodeURIComponent(identifier)}/count`;
-    return this.http.get<any>(url).pipe(catchError(this.handleError));
+    return this.http.get<any>(url, {
+      headers: this.getAuthenticatedHeaders()
+    }).pipe(catchError(this.handleError));
   }
 
   // Riot match history retrieval wrapper
   getPlayerMatchHistoryFromRiot(puuid: string, region: string = 'br1', limit: number = 20): Observable<any> {
-    return this.http.get(`${this.baseUrl}/riot/matches/${encodeURIComponent(puuid)}?region=${encodeURIComponent(region)}&count=${limit}`)
+    return this.http.get(`${this.baseUrl}/riot/matches/${encodeURIComponent(puuid)}?region=${encodeURIComponent(region)}&count=${limit}`, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(catchError(this.handleError));
   }
 
@@ -1004,7 +1128,15 @@ export class ApiService {
     if (this.isElectron() && (window as any).electronAPI?.lcu?.getCurrentSummoner) {
       return new Observable(observer => {
         (window as any).electronAPI.lcu.getCurrentSummoner()
-          .then((data: any) => observer.next(data))
+          .then((data: any) => {
+            // ✅ NOVO: Armazenar summonerName para headers HTTP
+            if (data?.displayName) {
+              this.setCurrentSummonerName(data.displayName);
+            } else if (data?.gameName && data?.tagLine) {
+              this.setCurrentSummonerName(`${data.gameName}#${data.tagLine}`);
+            }
+            observer.next(data);
+          })
           .catch((err: any) => observer.error(err))
           .finally(() => observer.complete());
       }).pipe(catchError(this.handleError));
@@ -1015,8 +1147,18 @@ export class ApiService {
       .pipe(
         map((resp: any) => {
           if (resp && typeof resp === 'object') {
-            if (resp.summoner) return resp.summoner;
-            if (resp.data?.summoner) return resp.data.summoner;
+            let summonerData = resp;
+            if (resp.summoner) summonerData = resp.summoner;
+            if (resp.data?.summoner) summonerData = resp.data.summoner;
+
+            // ✅ NOVO: Armazenar summonerName para headers HTTP
+            if (summonerData?.displayName) {
+              this.setCurrentSummonerName(summonerData.displayName);
+            } else if (summonerData?.gameName && summonerData?.tagLine) {
+              this.setCurrentSummonerName(`${summonerData.gameName}#${summonerData.tagLine}`);
+            }
+
+            return summonerData;
           }
           return resp;
         }),
@@ -1027,6 +1169,8 @@ export class ApiService {
   createLobby(gameMode: string = 'CLASSIC'): Observable<any> {
     return this.http.post(`${this.baseUrl}/lcu/create-lobby`, {
       gameMode
+    }, {
+      headers: this.getAuthenticatedHeaders()
     }).pipe(
       catchError(this.handleError)
     );
@@ -1035,6 +1179,8 @@ export class ApiService {
   invitePlayers(summonerNames: string[]): Observable<any> {
     return this.http.post(`${this.baseUrl}/lcu/invite-players`, {
       summonerNames
+    }, {
+      headers: this.getAuthenticatedHeaders()
     }).pipe(
       catchError(this.handleError)
     );
@@ -1042,13 +1188,17 @@ export class ApiService {
 
   // Settings endpoints
   saveSettings(settings: any): Observable<any> {
-    return this.http.post(`${this.baseUrl}/settings`, settings)
+    return this.http.post(`${this.baseUrl}/settings`, settings, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         catchError(this.handleError)
       );
   }  // Novo método para configurar a Riot API Key
   setRiotApiKey(apiKey: string): Observable<any> {
-    return this.http.post(`${this.baseUrl}/config/riot-api-key`, { apiKey })
+    return this.http.post(`${this.baseUrl}/config/riot-api-key`, { apiKey }, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         catchError(this.handleError)
       );
@@ -1056,14 +1206,18 @@ export class ApiService {
 
   // Método para configurar o Discord Bot Token
   setDiscordBotToken(token: string): Observable<any> {
-    return this.http.post(`${this.baseUrl}/config/discord-token`, { token })
+    return this.http.post(`${this.baseUrl}/config/discord-token`, { token }, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         catchError(this.handleError)
       );
   }
 
   setDiscordChannel(channelId: string): Observable<any> {
-    return this.http.post(`${this.baseUrl}/config/discord-channel`, { channelId })
+    return this.http.post(`${this.baseUrl}/config/discord-channel`, { channelId }, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         catchError(this.handleError)
       );
@@ -1071,7 +1225,9 @@ export class ApiService {
 
   // Método para verificar status do Discord Bot
   getDiscordStatus(): Observable<any> {
-    return this.http.get(`${this.baseUrl}/discord/status`)
+    return this.http.get(`${this.baseUrl}/discord/status`, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         catchError(this.handleError)
       );
@@ -1079,7 +1235,9 @@ export class ApiService {
 
   // Método para obter usuários do Discord
   getDiscordUsers(): Observable<any> {
-    return this.http.get(`${this.baseUrl}/discord/users`)
+    return this.http.get(`${this.baseUrl}/discord/users`, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         catchError(this.handleError)
       );
@@ -1087,7 +1245,9 @@ export class ApiService {
 
   // Método para registrar comandos slash do Discord
   registerDiscordCommands(): Observable<any> {
-    return this.http.post(`${this.baseUrl}/discord/register-commands`, {})
+    return this.http.post(`${this.baseUrl}/discord/register-commands`, {}, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         catchError(this.handleError)
       );
@@ -1153,14 +1313,18 @@ export class ApiService {
 
   // Método para buscar configurações do banco de dados
   getConfigSettings(): Observable<any> {
-    return this.http.get(`${this.baseUrl}/config/settings`)
+    return this.http.get(`${this.baseUrl}/config/settings`, {
+      headers: this.getAuthenticatedHeaders()
+    })
       .pipe(
         catchError(this.handleError)
       );
   }
 
   getLeaderboard(limit: number): Observable<any> {
-    return this.http.get<any>(`${this.baseUrl}/stats/participants-leaderboard?limit=${limit}`);
+    return this.http.get<any>(`${this.baseUrl}/stats/participants-leaderboard?limit=${limit}`, {
+      headers: this.getAuthenticatedHeaders()
+    });
   }
 
   // Método para atualizar dados do jogador usando Riot ID (gameName#tagLine)
@@ -1331,6 +1495,11 @@ export class ApiService {
     return this.webSocketMessageSubject.asObservable();
   }
 
+  // ✅ NOVO: Observable para evento de registro do LCU (emite summonerName quando backend confirma registro)
+  onLcuRegistered(): Observable<string> {
+    return this.lcuRegisteredSubject.asObservable();
+  }
+
   isWebSocketConnected(): boolean {
     const connected = this.webSocket !== null && this.webSocket.readyState === WebSocket.OPEN;
     if (connected) {
@@ -1417,10 +1586,19 @@ export class ApiService {
           this.wsLastMessageAt = Date.now();
           let parsed: any = null;
           try { parsed = JSON.parse(ev.data); } catch { parsed = ev.data; }
+
           // Respond to pings if backend expects it (optional)
           if (parsed && parsed.type === 'ping') {
             try { if (this.webSocket && this.webSocket.readyState === WebSocket.OPEN) this.webSocket.send(JSON.stringify({ type: 'pong', ts: new Date().toISOString() })); } catch { }
           }
+
+          // ✅ NOVO: Capturar evento de registro do LCU e armazenar summonerName
+          if (parsed && parsed.type === 'lcu_connection_registered' && parsed.summonerName) {
+            console.log('✅ [WebSocket] LCU registrado para:', parsed.summonerName);
+            this._currentSummonerName = parsed.summonerName;
+            this.lcuRegisteredSubject.next(parsed.summonerName);
+          }
+
           this.webSocketMessageSubject.next(parsed);
         } catch (err) { /* ignore */ }
       };
@@ -1672,6 +1850,8 @@ export class ApiService {
           return this.http.post(`${this.baseUrl}/match/${matchId}/vote`, {
             summonerName: summonerName,
             lcuGameId: lcuGameId
+          }, {
+            headers: this.getAuthenticatedHeaders()
           });
         }),
         tap(() => console.log(`✅ [API] Voto registrado: Match ${matchId}, LCU Game ${lcuGameId}`)),
@@ -1695,6 +1875,8 @@ export class ApiService {
     return this.http.post(`${this.baseUrl}/match/${matchId}/vote`, {
       summonerName: summonerName,
       lcuGameId: lcuGameId
+    }, {
+      headers: this.getAuthenticatedHeaders()
     }).pipe(
       tap(() => console.log(`✅ [API] Voto registrado: Match ${matchId}, LCU Game ${lcuGameId}`)),
       catchError(error => {
@@ -1753,7 +1935,9 @@ export class ApiService {
    * Obter contadores de votos para uma partida
    */
   getMatchVotes(matchId: number): Observable<{ [lcuGameId: string]: number }> {
-    return this.http.get<{ [lcuGameId: string]: number }>(`${this.baseUrl}/match/${matchId}/votes`).pipe(
+    return this.http.get<{ [lcuGameId: string]: number }>(`${this.baseUrl}/match/${matchId}/votes`, {
+      headers: this.getAuthenticatedHeaders()
+    }).pipe(
       tap(votes => console.log(`📊 [API] Votos recebidos para match ${matchId}:`, votes)),
       catchError(error => {
         console.error(`❌ [API] Erro ao obter votos:`, error);
@@ -1767,7 +1951,8 @@ export class ApiService {
    */
   removeVote(matchId: number): Observable<any> {
     return this.http.delete(`${this.baseUrl}/match/${matchId}/vote`, {
-      body: { playerId: this.getCurrentPlayerId() }
+      body: { playerId: this.getCurrentPlayerId() },
+      headers: this.getAuthenticatedHeaders()
     }).pipe(
       tap(() => console.log(`🗑️ [API] Voto removido: Match ${matchId}`)),
       catchError(error => {

@@ -653,14 +653,19 @@ public class MatchFoundService {
 
     private void notifyAcceptanceProgress(Long matchId, MatchAcceptanceStatus status) {
         try {
-            // ✅ CORREÇÃO: NÃO incluir "type", o broadcastToAll já adiciona
+            // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida
             Map<String, Object> data = new HashMap<>();
             data.put("matchId", matchId);
             data.put("acceptedCount", status.getAcceptedPlayers().size());
             data.put("totalPlayers", status.getPlayers().size());
             data.put("acceptedPlayers", new ArrayList<>(status.getAcceptedPlayers()));
 
-            webSocketService.broadcastToAll("acceptance_progress", data);
+            // Enviar apenas para os jogadores desta partida
+            webSocketService.sendToPlayers("acceptance_progress", data, status.getPlayers());
+
+            log.debug("📊 [MatchFound] Progresso enviado para {} jogadores da partida {}: {}/{}",
+                    status.getPlayers().size(), matchId,
+                    status.getAcceptedPlayers().size(), status.getPlayers().size());
 
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao notificar progresso", e);
@@ -669,11 +674,19 @@ public class MatchFoundService {
 
     private void notifyAllPlayersAccepted(Long matchId) {
         try {
-            // ✅ CORREÇÃO: NÃO incluir "type", o broadcastToAll já adiciona
+            MatchAcceptanceStatus status = pendingMatches.get(matchId);
+            if (status == null)
+                return;
+
+            // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida
             Map<String, Object> data = new HashMap<>();
             data.put("matchId", matchId);
 
-            webSocketService.broadcastToAll("all_players_accepted", data);
+            // Enviar apenas para os jogadores desta partida
+            webSocketService.sendToPlayers("all_players_accepted", data, status.getPlayers());
+
+            log.info("🎉 [MatchFound] Notificação de aceitação completa enviada para {} jogadores da partida {}",
+                    status.getPlayers().size(), matchId);
 
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao notificar aceitação completa", e);
@@ -682,13 +695,21 @@ public class MatchFoundService {
 
     private void notifyMatchCancelled(Long matchId, String declinedPlayer) {
         try {
-            // ✅ CORREÇÃO: NÃO incluir "type", o broadcastToAll já adiciona
+            MatchAcceptanceStatus status = pendingMatches.get(matchId);
+            if (status == null)
+                return;
+
+            // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida
             Map<String, Object> data = new HashMap<>();
             data.put("matchId", matchId);
             data.put("reason", "declined");
             data.put("declinedPlayer", declinedPlayer);
 
-            webSocketService.broadcastToAll("match_cancelled", data);
+            // Enviar apenas para os jogadores desta partida
+            webSocketService.sendToPlayers("match_cancelled", data, status.getPlayers());
+
+            log.warn("⚠️ [MatchFound] Cancelamento enviado para {} jogadores da partida {} (recusado por: {})",
+                    status.getPlayers().size(), matchId, declinedPlayer);
 
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao notificar cancelamento", e);

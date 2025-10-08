@@ -44,6 +44,13 @@ public class LCUService {
     @Lazy
     private final br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService websocketService;
 
+    // Repository para salvar configuração LCU por jogador
+    @Lazy
+    private final br.com.lolmatchmaking.backend.domain.repository.PlayerRepository playerRepository;
+
+    // 🔗 LCU Connection Registry - maps summonerName to LCU connection
+    private final LCUConnectionRegistry lcuConnectionRegistry;
+
     // Propriedades do LCU obtidas via AppProperties
     private int lcuPort;
     private String lcuPassword;
@@ -79,13 +86,91 @@ public class LCUService {
 
     /**
      * Inicializa o serviço LCU
+     * NOTA: NÃO descobrir lockfile aqui - será configurado por jogador via
+     * WebSocket
      */
     public void initialize() {
         log.info("🎮 Inicializando LCUService...");
         setupLCUClient();
-        discoverLCUFromLockfile(); // Tentar descobrir via lockfile primeiro
-        startLCUMonitoring();
-        log.info("✅ LCUService inicializado");
+        // ❌ REMOVIDO: discoverLCUFromLockfile() - agora configurado por jogador
+        log.info("✅ LCUService pronto para receber configurações por jogador via WebSocket");
+    }
+
+    /**
+     * Configura o LCU para um jogador específico baseado no summoner_name da tabela
+     * players.
+     * Este método é chamado quando o Electron envia o lockfile via WebSocket.
+     * 
+     * @param summonerName     Nome do invocador no formato "GameName#TagLine" (ex:
+     *                         "FZD SherlokGaz#FZD")
+     * @param lockfilePort     Porta do lockfile do LCU
+     * @param lockfileProtocol Protocolo do lockfile (https/http)
+     * @param lockfilePassword Senha do lockfile
+     */
+    public void configureLCUForPlayer(String summonerName, Integer lockfilePort, String lockfileProtocol,
+            String lockfilePassword) {
+        log.info("🔧 [LCU] Configurando LCU para jogador: {}", summonerName);
+
+        try {
+            // Buscar player pelo summoner_name
+            Optional<br.com.lolmatchmaking.backend.domain.entity.Player> playerOpt = playerRepository
+                    .findBySummonerName(summonerName);
+
+            if (playerOpt.isEmpty()) {
+                log.warn("⚠️ [LCU] Jogador {} não encontrado no banco, criando registro...", summonerName);
+
+                // Criar novo player se não existir
+                br.com.lolmatchmaking.backend.domain.entity.Player newPlayer = new br.com.lolmatchmaking.backend.domain.entity.Player();
+                newPlayer.setSummonerName(summonerName);
+                newPlayer.setRegion("BR1"); // Região padrão, pode ser alterada depois
+                newPlayer.setLcuPort(lockfilePort);
+                newPlayer.setLcuProtocol(lockfileProtocol);
+                newPlayer.setLcuPassword(lockfilePassword);
+                newPlayer.setLcuLastUpdated(Instant.now());
+
+                playerRepository.save(newPlayer);
+                log.info("✅ [LCU] Novo jogador criado e LCU configurado: {}", summonerName);
+            } else {
+                // Atualizar LCU config do player existente
+                br.com.lolmatchmaking.backend.domain.entity.Player player = playerOpt.get();
+                player.setLcuPort(lockfilePort);
+                player.setLcuProtocol(lockfileProtocol);
+                player.setLcuPassword(lockfilePassword);
+                player.setLcuLastUpdated(Instant.now());
+
+                playerRepository.save(player);
+                log.info("✅ [LCU] Configuração atualizada para jogador {}: {}://127.0.0.1:{}",
+                        summonerName, lockfileProtocol, lockfilePort);
+            }
+
+        } catch (Exception e) {
+            log.error("❌ [LCU] Erro ao configurar LCU para jogador {}: {}", summonerName, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Recupera a configuração LCU de um jogador específico.
+     * 
+     * @param summonerName Nome do invocador no formato "GameName#TagLine"
+     * @return Optional contendo a configuração LCU se existir e estiver válida
+     */
+    public Optional<Map<String, Object>> getLCUConfigForPlayer(String summonerName) {
+        try {
+            return playerRepository.findBySummonerName(summonerName)
+                    .filter(p -> p.getLcuPort() != null && p.getLcuPort() > 0)
+                    .map(p -> {
+                        Map<String, Object> config = new HashMap<>();
+                        config.put("port", p.getLcuPort());
+                        config.put("protocol", p.getLcuProtocol());
+                        config.put("password", p.getLcuPassword());
+                        config.put("lastUpdated", p.getLcuLastUpdated());
+                        config.put("summonerName", p.getSummonerName());
+                        return config;
+                    });
+        } catch (Exception e) {
+            log.error("❌ [LCU] Erro ao recuperar configuração LCU para {}: {}", summonerName, e.getMessage());
+            return Optional.empty();
+        }
     }
 
     /**
@@ -431,6 +516,101 @@ public class LCUService {
     }
 
     /**
+     * 🔗 Obtém dados do invocador atual - VERSÃO COM SUMMONERNAME (Multi-player)
+     * Rota a requisição para o LCU correto através do LCUConnectionRegistry.
+     * 
+     * @param summonerName Nome do invocador (player) para roteamento
+     * @return JsonNode com dados do summoner ou null se falhar
+     */
+    public CompletableFuture<JsonNode> getCurrentSummoner(String summonerName) {
+        return CompletableFuture.supplyAsync(() -> {
+            log.debug("🔗 [getCurrentSummoner] Routing for summonerName: {}", summonerName);
+
+            // PRIORIDADE 1: Registry-based routing (multi-player)
+            if (summonerName != null && !summonerName.isBlank()) {
+                Optional<LCUConnectionRegistry.LCUConnectionInfo> connOpt = lcuConnectionRegistry
+                        .getConnection(summonerName);
+
+                if (connOpt.isPresent()) {
+                    LCUConnectionRegistry.LCUConnectionInfo conn = connOpt.get();
+                    log.debug("🔗 Found registry connection for {}: sessionId={}", summonerName, conn.getSessionId());
+
+                    try {
+                        JsonNode result = websocketService.requestLcu(
+                                conn.getSessionId(),
+                                "GET",
+                                "/lol-summoner/v1/current-summoner",
+                                null,
+                                5000);
+
+                        if (result != null) {
+                            log.info("🔗 Registry-routed RPC succeeded for {} current-summoner", summonerName);
+                            if (result.has("body")) {
+                                return result.get("body");
+                            }
+                            return result;
+                        }
+                        log.debug("🔗 Registry-routed RPC returned null for {}", summonerName);
+                    } catch (Exception e) {
+                        log.warn("🔗 Registry-routed RPC failed for {}: {}", summonerName, e.getMessage());
+                    }
+                } else {
+                    log.debug("🔗 No registry connection found for {}, falling back to direct", summonerName);
+                }
+            }
+
+            // PRIORIDADE 2: Fallback to gateway RPC (any client, or specific if
+            // summonerName provided)
+            try {
+                log.debug("Attempting fallback gateway RPC for /lol-summoner/v1/current-summoner");
+                if (websocketService != null) {
+                    // ✅ NOVO: Usar pickGatewaySessionId(summonerName) para escolher sessão
+                    // específica
+                    String sessionId = websocketService.pickGatewaySessionId(summonerName);
+                    if (sessionId != null) {
+                        JsonNode r = websocketService.requestLcu(sessionId, "GET",
+                                "/lol-summoner/v1/current-summoner",
+                                null, 5000);
+                        if (r != null) {
+                            log.info("Fallback gateway RPC succeeded for current-summoner (summoner: {})",
+                                    summonerName);
+                            if (r.has("body"))
+                                return r.get("body");
+                            return r;
+                        }
+                    } else {
+                        log.warn("No gateway session found for summoner: {}", summonerName);
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("Fallback gateway RPC failed for current-summoner: {}", e.getMessage());
+            }
+
+            // PRIORIDADE 3: HTTP direto (último fallback)
+            if (isConnected) {
+                try {
+                    String url = lcuBaseUrl + "/lol-summoner/v1/current-summoner";
+                    HttpRequest.Builder builder = createLcuRequestBuilder(url, null);
+                    builder.timeout(Duration.ofSeconds(5));
+                    HttpRequest request = builder.GET().build();
+
+                    HttpResponse<String> response = lcuClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+                    if (response.statusCode() == 200) {
+                        log.info("LCU direct HTTP succeeded for current-summoner");
+                        return objectMapper.readTree(response.body());
+                    }
+                } catch (Exception e) {
+                    log.warn("LCU direct current-summoner failed: {}", e.getMessage());
+                }
+            }
+
+            log.warn("🔗 All routing attempts failed for {}", summonerName);
+            return null;
+        });
+    }
+
+    /**
      * Obtém dados do invocador atual
      * PRIORIDADE: Gateway RPC primeiro (para ambiente containerizado), HTTP direto
      * como fallback
@@ -490,6 +670,75 @@ public class LCUService {
      * Obtém histórico de partidas
      * PRIORIDADE: Gateway RPC primeiro (para ambiente containerizado), HTTP direto
      * como fallback
+     */
+    /**
+     * 🔍 Versão com summonerName - Roteamento via LCUConnectionRegistry
+     * Busca histórico de partidas para um jogador específico
+     */
+    public CompletableFuture<JsonNode> getMatchHistory(String summonerName) {
+        return CompletableFuture.supplyAsync(() -> {
+            log.info("🔍 [LCUService] Buscando histórico de partidas para: {}", summonerName);
+
+            // Verifica se existe uma conexão LCU registrada para este jogador
+            Optional<LCUConnectionRegistry.LCUConnectionInfo> connectionInfo = lcuConnectionRegistry
+                    .getConnection(summonerName);
+
+            if (connectionInfo.isPresent()) {
+                log.debug("✅ [LCUService] Conexão LCU encontrada para {}, roteando via WebSocket", summonerName);
+
+                // Lista de endpoints conhecidos para histórico de partidas
+                List<String> endpoints = Arrays.asList(
+                        "/lol-match-history/v1/products/lol/current-summoner/matches?begIndex=0&endIndex=10",
+                        "/lol-match-history/v1/products/lol/current-summoner/matches",
+                        "/lol-match-history/v1/matches/current-summoner");
+
+                // Tenta cada endpoint até obter sucesso
+                for (String endpoint : endpoints) {
+                    try {
+                        log.debug("🔍 [LCUService] Tentando endpoint: {} para {}", endpoint, summonerName);
+
+                        JsonNode response = websocketService.requestLcu(
+                                connectionInfo.get().getSessionId(),
+                                "GET",
+                                endpoint,
+                                null,
+                                8000);
+
+                        if (response != null) {
+                            log.info("✅ [LCUService] Histórico obtido com sucesso via {} para {}", endpoint,
+                                    summonerName);
+
+                            // Extrai o body se necessário
+                            if (response.has("body")) {
+                                return response.get("body");
+                            }
+                            return response;
+                        }
+                    } catch (Exception e) {
+                        log.debug("⚠️ [LCUService] Falha no endpoint {} para {}: {}", endpoint, summonerName,
+                                e.getMessage());
+                    }
+                }
+
+                log.warn("⚠️ [LCUService] Todos os endpoints falharam para {}, usando fallback", summonerName);
+            } else {
+                log.warn("⚠️ [LCUService] Conexão LCU não encontrada para {}, usando fallback", summonerName);
+            }
+
+            // Fallback: usa o método original (conexão LCU direta/compartilhada)
+            try {
+                return getMatchHistory().get();
+            } catch (Exception e) {
+                log.error("❌ [LCUService] Falha no fallback de getMatchHistory para {}: {}", summonerName,
+                        e.getMessage());
+                return null;
+            }
+        });
+    }
+
+    /**
+     * Método original - Mantido para compatibilidade reversa
+     * Usa conexão LCU direta (compartilhada)
      */
     public CompletableFuture<JsonNode> getMatchHistory() {
         return CompletableFuture.supplyAsync(() -> {
@@ -696,6 +945,62 @@ public class LCUService {
     /**
      * Obtém status do jogo atual
      */
+    /**
+     * 🔍 Versão com summonerName - Roteamento via LCUConnectionRegistry
+     * Busca o status do fluxo de jogo (gameflow-phase) para um jogador específico
+     */
+    public CompletableFuture<JsonNode> getCurrentGameStatus(String summonerName) {
+        return CompletableFuture.supplyAsync(() -> {
+            log.info("🔍 [LCUService] Buscando status do jogo para: {}", summonerName);
+
+            // Verifica se existe uma conexão LCU registrada para este jogador
+            Optional<LCUConnectionRegistry.LCUConnectionInfo> connectionInfo = lcuConnectionRegistry
+                    .getConnection(summonerName);
+
+            if (connectionInfo.isPresent()) {
+                log.debug("✅ [LCUService] Conexão LCU encontrada para {}, roteando via WebSocket", summonerName);
+
+                try {
+                    JsonNode response = websocketService.requestLcu(
+                            connectionInfo.get().getSessionId(),
+                            "GET",
+                            "/lol-gameflow/v1/gameflow-phase",
+                            null,
+                            5000);
+
+                    if (response != null) {
+                        log.info("✅ [LCUService] Status do jogo obtido com sucesso para {}", summonerName);
+
+                        // Extrai o body se necessário
+                        if (response.has("body")) {
+                            return response.get("body");
+                        }
+                        return response;
+                    }
+                } catch (Exception e) {
+                    log.warn("⚠️ [LCUService] Falha ao obter status do jogo para {}: {}", summonerName, e.getMessage());
+                }
+
+                log.warn("⚠️ [LCUService] Falha no roteamento, usando fallback para {}", summonerName);
+            } else {
+                log.warn("⚠️ [LCUService] Conexão LCU não encontrada para {}, usando fallback", summonerName);
+            }
+
+            // Fallback: usa o método original (conexão LCU direta/compartilhada)
+            try {
+                return getCurrentGameStatus().get();
+            } catch (Exception e) {
+                log.error("❌ [LCUService] Falha no fallback de getCurrentGameStatus para {}: {}", summonerName,
+                        e.getMessage());
+                return null;
+            }
+        });
+    }
+
+    /**
+     * Método original - Mantido para compatibilidade reversa
+     * Usa conexão LCU direta (compartilhada)
+     */
     public CompletableFuture<JsonNode> getCurrentGameStatus() {
         if (!isConnected) {
             return CompletableFuture.completedFuture(null);
@@ -724,6 +1029,61 @@ public class LCUService {
     }
 
     /**
+     * 🔍 Versão com summonerName - Roteamento via LCUConnectionRegistry
+     * Busca dados da sessão de jogo atual para um jogador específico
+     */
+    public CompletableFuture<JsonNode> getCurrentGameData(String summonerName) {
+        return CompletableFuture.supplyAsync(() -> {
+            log.info("🔍 [LCUService] Buscando dados da partida para: {}", summonerName);
+
+            // Verifica se existe uma conexão LCU registrada para este jogador
+            Optional<LCUConnectionRegistry.LCUConnectionInfo> connectionInfo = lcuConnectionRegistry
+                    .getConnection(summonerName);
+
+            if (connectionInfo.isPresent()) {
+                log.debug("✅ [LCUService] Conexão LCU encontrada para {}, roteando via WebSocket", summonerName);
+
+                try {
+                    JsonNode response = websocketService.requestLcu(
+                            connectionInfo.get().getSessionId(),
+                            "GET",
+                            "/lol-gameflow/v1/session",
+                            null,
+                            5000);
+
+                    if (response != null) {
+                        log.info("✅ [LCUService] Dados da partida obtidos com sucesso para {}", summonerName);
+
+                        // Extrai o body se necessário
+                        if (response.has("body")) {
+                            return response.get("body");
+                        }
+                        return response;
+                    }
+                } catch (Exception e) {
+                    log.warn("⚠️ [LCUService] Falha ao obter dados da partida para {}: {}", summonerName,
+                            e.getMessage());
+                }
+
+                log.warn("⚠️ [LCUService] Falha no roteamento, usando fallback para {}", summonerName);
+            } else {
+                log.warn("⚠️ [LCUService] Conexão LCU não encontrada para {}, usando fallback", summonerName);
+            }
+
+            // Fallback: usa o método original (conexão LCU direta/compartilhada)
+            try {
+                return getCurrentGameData().get();
+            } catch (Exception e) {
+                log.error("❌ [LCUService] Falha no fallback de getCurrentGameData para {}: {}", summonerName,
+                        e.getMessage());
+                return null;
+            }
+        });
+    }
+
+    /**
+     * Método original - Mantido para compatibilidade reversa
+     * Usa conexão LCU direta (compartilhada)
      * Obtém dados da partida atual
      */
     public CompletableFuture<JsonNode> getCurrentGameData() {
@@ -875,6 +1235,47 @@ public class LCUService {
      */
     public boolean isConnected() {
         return isConnected;
+    }
+
+    /**
+     * ✅ OVERLOAD: Envia comando LCU para jogador específico via registry
+     * Usa WebSocket gateway se conexão registrada, senão fallback para método
+     * direto
+     */
+    public CompletableFuture<Boolean> sendLCUCommand(String summonerName, String endpoint, String method, Object data) {
+        Optional<LCUConnectionRegistry.LCUConnectionInfo> connectionOpt = lcuConnectionRegistry
+                .getConnection(summonerName);
+
+        if (connectionOpt.isPresent()) {
+            LCUConnectionRegistry.LCUConnectionInfo conn = connectionOpt.get();
+            log.info("🎯 [{}] Enviando comando LCU via WebSocket: {} {}", summonerName, method, endpoint);
+
+            return CompletableFuture.supplyAsync(() -> {
+                try {
+                    // Converte data para JsonNode
+                    JsonNode bodyData = null;
+                    if (data != null) {
+                        bodyData = objectMapper.valueToTree(data);
+                    }
+
+                    JsonNode response = websocketService.requestLcu(conn.getSessionId(), method, endpoint, bodyData,
+                            10000);
+
+                    // Se response não é null, considera sucesso
+                    boolean success = response != null;
+                    log.info("✅ [{}] Comando LCU via WebSocket: {} {} - success={}",
+                            summonerName, method, endpoint, success);
+                    return success;
+
+                } catch (Exception e) {
+                    log.error("❌ [{}] Erro ao enviar comando LCU via WebSocket", summonerName, e);
+                    return false;
+                }
+            });
+        }
+
+        log.info("⚠️ [{}] Conexão não registrada, usando método direto", summonerName);
+        return sendLCUCommand(endpoint, method, data);
     }
 
     /**

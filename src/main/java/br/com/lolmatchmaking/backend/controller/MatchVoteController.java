@@ -6,7 +6,9 @@ import br.com.lolmatchmaking.backend.domain.repository.MatchRepository;
 import br.com.lolmatchmaking.backend.domain.repository.PlayerRepository;
 import br.com.lolmatchmaking.backend.service.LCUService;
 import br.com.lolmatchmaking.backend.service.MatchVoteService;
+import br.com.lolmatchmaking.backend.util.SummonerAuthUtil;
 import com.fasterxml.jackson.databind.JsonNode;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -51,23 +53,35 @@ public class MatchVoteController {
     @PostMapping("/{matchId}/vote")
     public ResponseEntity<Map<String, Object>> voteForMatch(
             @PathVariable Long matchId,
-            @RequestBody VoteRequest request) {
+            @RequestBody VoteRequest request,
+            HttpServletRequest httpRequest) {
 
         log.info("🗳️ [MatchVoteController] Voto recebido: matchId={}, summonerName={}, lcuGameId={}",
                 matchId, request.summonerName(), request.lcuGameId());
 
         try {
-            log.info("🔵 [MatchVoteController] DENTRO DO TRY - iniciando validações");
+            // 🔒 Autenticação via header
+            String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
+
+            // 🔍 Validação de ownership
+            if (!authenticatedSummoner.equalsIgnoreCase(request.summonerName())) {
+                log.warn("⚠️ [{}] Tentativa de votar com nome de outro jogador: {}",
+                        authenticatedSummoner, request.summonerName());
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body(Map.of(KEY_ERROR, "Nome do invocador não corresponde ao jogador autenticado"));
+            }
+
+            log.info("🔵 [{}] DENTRO DO TRY - iniciando validações", authenticatedSummoner);
 
             // Validar parâmetros
-            log.info("🔵 [MatchVoteController] Validando parâmetros: summonerName='{}', lcuGameId={}",
-                    request.summonerName(), request.lcuGameId());
+            log.info("🔵 [{}] Validando parâmetros: summonerName='{}', lcuGameId={}",
+                    authenticatedSummoner, request.summonerName(), request.lcuGameId());
             if (request.summonerName() == null || request.summonerName().isEmpty() || request.lcuGameId() == null) {
-                log.warn("❌ [MatchVoteController] Validação falhou - parâmetros inválidos");
+                log.warn("❌ [{}] Validação falhou - parâmetros inválidos", authenticatedSummoner);
                 return ResponseEntity.badRequest()
                         .body(Map.of(KEY_ERROR, "summonerName e lcuGameId são obrigatórios"));
             }
-            log.info("✅ [MatchVoteController] Validação OK - buscando partida com ID: {}", matchId);
+            log.info("✅ [{}] Validação OK - buscando partida com ID: {}", authenticatedSummoner, matchId);
 
             // Verificar se a partida existe
             Match match = matchRepository.findById(matchId).orElse(null);
@@ -237,12 +251,17 @@ public class MatchVoteController {
     /**
      * GET /api/match/{matchId}/votes
      * Retorna contagem de votos agrupados por lcuGameId
+     * ✅ MODIFICADO: Valida header X-Summoner-Name
      */
     @GetMapping("/{matchId}/votes")
-    public ResponseEntity<Map<String, Object>> getMatchVotes(@PathVariable Long matchId) {
-        log.info("📊 [MatchVoteController] Buscando votos da partida: matchId={}", matchId);
-
+    public ResponseEntity<Map<String, Object>> getMatchVotes(
+            @PathVariable Long matchId,
+            HttpServletRequest request) {
         try {
+            // ✅ Validar header X-Summoner-Name
+            String summonerName = SummonerAuthUtil.getSummonerNameFromRequest(request);
+            log.info("📊 [{}] Buscando votos da partida: matchId={}", summonerName, matchId);
+
             // Verificar se a partida existe
             Match match = matchRepository.findById(matchId).orElse(null);
             if (match == null) {
@@ -259,12 +278,16 @@ public class MatchVoteController {
                             entry -> String.valueOf(entry.getKey()),
                             Map.Entry::getValue));
 
-            log.info("✅ Votos encontrados: {}", voteCountsFormatted);
+            log.info("✅ [{}] Votos encontrados: {}", summonerName, voteCountsFormatted);
 
             return ResponseEntity.ok(Map.of(
                     KEY_SUCCESS, true,
                     "votes", voteCountsFormatted));
 
+        } catch (IllegalArgumentException e) {
+            log.warn("⚠️ Header X-Summoner-Name ausente em requisição de get votes");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of(KEY_ERROR, "Header X-Summoner-Name obrigatório"));
         } catch (Exception e) {
             log.error("❌ Erro ao buscar votos: {}", e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -279,20 +302,42 @@ public class MatchVoteController {
     @DeleteMapping("/{matchId}/vote")
     public ResponseEntity<Map<String, Object>> removeVote(
             @PathVariable Long matchId,
-            @RequestParam Long playerId) {
+            @RequestParam Long playerId,
+            HttpServletRequest httpRequest) {
 
         log.info("🗑️ [MatchVoteController] Removendo voto: matchId={}, playerId={}", matchId, playerId);
 
         try {
+            // 🔒 Autenticação via header
+            String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
+
             // Validar parâmetros
             if (playerId == null) {
+                log.warn("❌ [{}] playerId não fornecido", authenticatedSummoner);
                 return ResponseEntity.badRequest()
                         .body(Map.of(KEY_ERROR, "playerId é obrigatório"));
+            }
+
+            // 🔍 Validação de ownership - verificar se playerId pertence ao summonerName
+            // autenticado
+            Player player = playerRepository.findById(playerId).orElse(null);
+            if (player == null) {
+                log.warn("❌ [{}] Jogador não encontrado: playerId={}", authenticatedSummoner, playerId);
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(Map.of(KEY_ERROR, "Jogador não encontrado"));
+            }
+
+            if (!player.getSummonerName().equalsIgnoreCase(authenticatedSummoner)) {
+                log.warn("⚠️ [{}] Tentativa de remover voto de outro jogador: playerId={}, summonerName={}",
+                        authenticatedSummoner, playerId, player.getSummonerName());
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body(Map.of(KEY_ERROR, "Você não pode remover o voto de outro jogador"));
             }
 
             // Verificar se a partida existe
             Match match = matchRepository.findById(matchId).orElse(null);
             if (match == null) {
+                log.warn("❌ [{}] Partida não encontrada: matchId={}", authenticatedSummoner, matchId);
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(Map.of(KEY_ERROR, "Partida não encontrada"));
             }
@@ -300,7 +345,7 @@ public class MatchVoteController {
             // Remover voto
             matchVoteService.removeVote(matchId, playerId);
 
-            log.info("✅ Voto removido com sucesso");
+            log.info("✅ [{}] Voto removido com sucesso para playerId={}", authenticatedSummoner, playerId);
 
             return ResponseEntity.ok(Map.of(
                     KEY_SUCCESS, true,
@@ -317,16 +362,20 @@ public class MatchVoteController {
      * POST /api/match/{matchId}/link
      * Link manual de partida (fallback administrativo)
      * Útil se o sistema de votação falhar ou para testes
+     * ✅ MODIFICADO: Valida header X-Summoner-Name (Admin endpoint)
      */
     @PostMapping("/{matchId}/link")
     public ResponseEntity<Map<String, Object>> linkMatchManually(
             @PathVariable Long matchId,
-            @RequestBody LinkMatchRequest request) {
-
-        log.info("🔗 [MatchVoteController] Link manual solicitado: matchId={}, lcuGameId={}",
-                matchId, request.lcuGameId());
+            @RequestBody LinkMatchRequest request,
+            HttpServletRequest httpRequest) {
 
         try {
+            // ✅ Validar header X-Summoner-Name
+            String summonerName = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
+            log.info("🔗 [{}] [ADMIN] Link manual solicitado: matchId={}, lcuGameId={}",
+                    summonerName, matchId, request.lcuGameId());
+
             // Validar parâmetros
             if (request.lcuGameId() == null) {
                 return ResponseEntity.badRequest()
@@ -391,13 +440,17 @@ public class MatchVoteController {
             // Vincular a partida
             matchVoteService.linkMatch(matchId, request.lcuGameId(), lcuMatchDataNode);
 
-            log.info("✅ Partida vinculada manualmente com sucesso");
+            log.info("✅ [{}] Partida vinculada manualmente com sucesso", summonerName);
 
             return ResponseEntity.ok(Map.of(
                     KEY_SUCCESS, true,
                     "message", "Partida vinculada com sucesso",
                     "lcuGameId", request.lcuGameId()));
 
+        } catch (IllegalArgumentException e) {
+            log.warn("⚠️ Header X-Summoner-Name ausente em requisição de link match");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of(KEY_ERROR, "Header X-Summoner-Name obrigatório"));
         } catch (Exception e) {
             log.error("❌ Erro ao vincular partida: {}", e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -409,12 +462,17 @@ public class MatchVoteController {
      * GET /api/match/{matchId}/lcu-candidates
      * Retorna últimas 3 partidas personalizadas do histórico LCU
      * Para exibir no modal de votação
+     * ✅ MODIFICADO: Valida header X-Summoner-Name
      */
     @GetMapping("/{matchId}/lcu-candidates")
-    public ResponseEntity<Map<String, Object>> getLcuCandidates(@PathVariable Long matchId) {
-        log.info("🔍 [MatchVoteController] Buscando candidatos LCU: matchId={}", matchId);
-
+    public ResponseEntity<Map<String, Object>> getLcuCandidates(
+            @PathVariable Long matchId,
+            HttpServletRequest request) {
         try {
+            // ✅ Validar header X-Summoner-Name
+            String summonerName = SummonerAuthUtil.getSummonerNameFromRequest(request);
+            log.info("🔍 [{}] Buscando candidatos LCU: matchId={}", summonerName, matchId);
+
             // Verificar se a partida existe
             Match match = matchRepository.findById(matchId).orElse(null);
             if (match == null) {
@@ -448,12 +506,16 @@ public class MatchVoteController {
                 }
             }
 
-            log.info("✅ Encontradas {} partidas personalizadas", customGames.size());
+            log.info("✅ [{}] Encontradas {} partidas personalizadas", summonerName, customGames.size());
 
             return ResponseEntity.ok(Map.of(
                     KEY_SUCCESS, true,
                     "candidates", customGames));
 
+        } catch (IllegalArgumentException e) {
+            log.warn("⚠️ Header X-Summoner-Name ausente em requisição de lcu-candidates");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of(KEY_ERROR, "Header X-Summoner-Name obrigatório"));
         } catch (Exception e) {
             log.error("❌ Erro ao buscar candidatos LCU: {}", e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)

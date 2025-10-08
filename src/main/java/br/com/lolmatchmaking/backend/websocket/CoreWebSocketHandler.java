@@ -18,6 +18,7 @@ import br.com.lolmatchmaking.backend.service.QueueService;
 import br.com.lolmatchmaking.backend.service.AcceptanceService;
 import br.com.lolmatchmaking.backend.service.MatchmakingOrchestrator;
 import br.com.lolmatchmaking.backend.service.DraftFlowService;
+import br.com.lolmatchmaking.backend.service.LCUConnectionRegistry;
 import org.springframework.lang.NonNull;
 import lombok.RequiredArgsConstructor;
 
@@ -39,6 +40,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
     private final MatchmakingOrchestrator matchmakingOrchestrator;
     private final DraftFlowService draftFlowService;
     private final MatchmakingWebSocketService webSocketService;
+    private final LCUConnectionRegistry lcuConnectionRegistry;
 
     // sessionId -> player info (JSON raw)
     private final Map<String, JsonNode> identifiedPlayers = new ConcurrentHashMap<>();
@@ -69,14 +71,73 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             case "draft_confirm" -> handleDraftConfirm(session, root);
             case "draft_snapshot" -> handleDraftSnapshot(session, root);
             case "lcu_status" -> handleLcuStatus(session, root);
+            case "register_lcu_connection" -> handleRegisterLcuConnection(session, root);
+            case "lcu_response" -> handleLcuResponse(session, root);
             default -> session.sendMessage(new TextMessage("{\"error\":\"unknown_type\"}"));
         }
+    }
+
+    /**
+     * Handler para registrar conexão LCU de um jogador
+     * 
+     * Payload esperado:
+     * {
+     * "type": "register_lcu_connection",
+     * "summonerName": "PlayerOne",
+     * "host": "127.0.0.1",
+     * "port": 2999,
+     * "authToken": "base64token"
+     * }
+     */
+    private void handleRegisterLcuConnection(WebSocketSession session, JsonNode root) throws IOException {
+        String summonerName = root.path(FIELD_SUMMONER_NAME).asText(null);
+        String host = root.path("host").asText("127.0.0.1");
+        int port = root.path("port").asInt(0);
+        String authToken = root.path("authToken").asText(null);
+
+        if (summonerName == null || summonerName.trim().isEmpty()) {
+            log.warn("⚠️ [WS] register_lcu_connection sem summonerName");
+            session.sendMessage(new TextMessage(
+                    "{\"type\":\"lcu_connection_registered\",\"success\":false,\"error\":\"summonerName obrigatório\"}"));
+            return;
+        }
+
+        if (port == 0 || authToken == null) {
+            log.warn("⚠️ [WS] register_lcu_connection com dados incompletos: port={}, authToken={}",
+                    port, authToken != null ? "present" : "missing");
+            session.sendMessage(new TextMessage(
+                    "{\"type\":\"lcu_connection_registered\",\"success\":false,\"error\":\"port e authToken obrigatórios\"}"));
+            return;
+        }
+
+        // Registrar no registry
+        lcuConnectionRegistry.registerConnection(
+                summonerName,
+                session.getId(),
+                host,
+                port,
+                authToken);
+
+        // IMPORTANTE: Também atualizar o MatchmakingWebSocketService para que
+        // pickGatewaySessionId funcione
+        webSocketService.updateLcuInfo(session.getId(), host, port, summonerName);
+
+        // ✅ CRÍTICO: Registrar jogador no SessionRegistry para que receba broadcasts
+        sessionRegistry.registerPlayer(summonerName, session.getId());
+
+        log.info("✅ [WS] Conexão LCU registrada: '{}' (session: {}, {}:{})",
+                summonerName, session.getId(), host, port);
+
+        // Confirmar registro
+        session.sendMessage(new TextMessage(
+                "{\"type\":\"lcu_connection_registered\",\"success\":true,\"summonerName\":\"" + summonerName + "\"}"));
     }
 
     private void handleLcuStatus(WebSocketSession session, JsonNode root) throws IOException {
         JsonNode data = root.path("data");
         if (data.isMissingNode()) {
-            session.sendMessage(new TextMessage("{\"type\":\"lcu_status_ack\",\"success\":false,\"error\":\"data required\"}"));
+            session.sendMessage(
+                    new TextMessage("{\"type\":\"lcu_status_ack\",\"success\":false,\"error\":\"data required\"}"));
             return;
         }
         lastLcuStatus.put(session.getId(), data);
@@ -84,6 +145,24 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             log.debug("[WS] LCU status from {}: {}", session.getId(), data.toString());
         }
         session.sendMessage(new TextMessage("{\"type\":\"lcu_status_ack\",\"success\":true}"));
+    }
+
+    /**
+     * Handler para resposta de lcu_request vinda do Electron main process
+     * Encaminha para o MatchmakingWebSocketService que gerencia o RPC
+     */
+    private void handleLcuResponse(WebSocketSession session, JsonNode root) {
+        String requestId = root.path("id").asText(null);
+        if (requestId == null || requestId.isEmpty()) {
+            log.warn("⚠️ [WS] lcu_response sem id recebida de session {}", session.getId());
+            return;
+        }
+
+        log.info("📬 [WS] lcu_response id={} recebida de session {}, encaminhando para MatchmakingWebSocketService",
+                requestId, session.getId());
+
+        // Encaminhar para o serviço que gerencia as requisições pendentes
+        webSocketService.handleLcuResponse(root);
     }
 
     private static final String FIELD_CUSTOM_LP = "customLp";
@@ -96,6 +175,13 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             return;
         }
         identifiedPlayers.put(session.getId(), playerData);
+
+        // ✅ CRÍTICO: Registrar jogador no SessionRegistry para que receba broadcasts
+        String summonerName = playerData.path(FIELD_SUMMONER_NAME).asText(null);
+        if (summonerName != null && !summonerName.isEmpty()) {
+            sessionRegistry.registerPlayer(summonerName, session.getId());
+        }
+
         session.sendMessage(new TextMessage("{\"type\":\"player_identified\",\"success\":true}"));
         // tentar reemitir match_found se estiver em aceitação
         long queuePlayerId = playerData.path("queuePlayerId").asLong(-1);
@@ -103,7 +189,6 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             matchmakingOrchestrator.reemitIfInAcceptance(queuePlayerId, session);
         }
         // reemitir snapshot de draft se player estiver em uma
-        String summonerName = playerData.path(FIELD_SUMMONER_NAME).asText(null);
         if (summonerName != null) {
             draftFlowService.reemitIfPlayerInDraft(summonerName, session);
             draftFlowService.reemitIfPlayerGameReady(summonerName, session);
@@ -116,6 +201,10 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         lastLcuStatus.remove(session.getId());
         sessionRegistry.remove(session.getId());
         webSocketService.removeSession(session.getId());
+
+        // 🗑️ Remover conexão LCU do registry
+        lcuConnectionRegistry.unregisterBySession(session.getId());
+
         log.info("Cliente desconectado: {} - status {}", session.getId(), status);
         // NÃO remover da fila aqui (mesma regra do Node)
     }

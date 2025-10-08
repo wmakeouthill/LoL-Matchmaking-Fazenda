@@ -1,6 +1,8 @@
 package br.com.lolmatchmaking.backend.controller;
 
 import br.com.lolmatchmaking.backend.service.MatchFoundService;
+import br.com.lolmatchmaking.backend.util.SummonerAuthUtil;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,11 +22,26 @@ public class MatchFoundController {
     /**
      * POST /api/match/accept
      * Aceitar partida encontrada
+     * ✅ MODIFICADO: Valida header X-Summoner-Name
      */
     @PostMapping("/accept")
-    public ResponseEntity<Map<String, Object>> acceptMatch(@RequestBody AcceptMatchRequest request) {
+    public ResponseEntity<Map<String, Object>> acceptMatch(
+            @RequestBody AcceptMatchRequest request,
+            HttpServletRequest httpRequest) {
         try {
-            log.info("✅ Jogador {} aceitando partida {}", request.getSummonerName(), request.getMatchId());
+            // ✅ Validar header X-Summoner-Name
+            String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
+            log.info("✅ [{}] Jogador {} aceitando partida {}",
+                    authenticatedSummoner, request.getSummonerName(), request.getMatchId());
+
+            // ✅ Validar se summonerName do body corresponde ao header
+            if (!authenticatedSummoner.equalsIgnoreCase(request.getSummonerName())) {
+                log.warn("⚠️ Tentativa de aceitar partida com summonerName diferente do autenticado: {} != {}",
+                        authenticatedSummoner, request.getSummonerName());
+                return ResponseEntity.badRequest()
+                        .body(Map.of("success", false, "error",
+                                "Nome do invocador não corresponde ao jogador autenticado"));
+            }
 
             matchFoundService.acceptMatch(request.getMatchId(), request.getSummonerName());
 
@@ -42,11 +59,26 @@ public class MatchFoundController {
     /**
      * POST /api/match/decline
      * Recusar partida encontrada
+     * ✅ MODIFICADO: Valida header X-Summoner-Name
      */
     @PostMapping("/decline")
-    public ResponseEntity<Map<String, Object>> declineMatch(@RequestBody DeclineMatchRequest request) {
+    public ResponseEntity<Map<String, Object>> declineMatch(
+            @RequestBody DeclineMatchRequest request,
+            HttpServletRequest httpRequest) {
         try {
-            log.info("❌ Jogador {} recusando partida {}", request.getSummonerName(), request.getMatchId());
+            // ✅ Validar header X-Summoner-Name
+            String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
+            log.info("❌ [{}] Jogador {} recusando partida {}",
+                    authenticatedSummoner, request.getSummonerName(), request.getMatchId());
+
+            // ✅ Validar se summonerName do body corresponde ao header
+            if (!authenticatedSummoner.equalsIgnoreCase(request.getSummonerName())) {
+                log.warn("⚠️ Tentativa de recusar partida com summonerName diferente do autenticado: {} != {}",
+                        authenticatedSummoner, request.getSummonerName());
+                return ResponseEntity.badRequest()
+                        .body(Map.of("success", false, "error",
+                                "Nome do invocador não corresponde ao jogador autenticado"));
+            }
 
             matchFoundService.declineMatch(request.getMatchId(), request.getSummonerName());
 
