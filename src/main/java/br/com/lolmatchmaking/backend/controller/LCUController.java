@@ -1,12 +1,15 @@
 package br.com.lolmatchmaking.backend.controller;
 
 import br.com.lolmatchmaking.backend.service.LCUService;
+import br.com.lolmatchmaking.backend.util.SummonerAuthUtil;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -57,14 +60,17 @@ public class LCUController {
 
     /**
      * GET /api/lcu/current-summoner
-     * Obtém dados do invocador atual conectado no LCU
+     * Obtém dados do invocador atual conectado no LCU (via registry por
+     * summonerName)
      */
     @GetMapping("/current-summoner")
-    public CompletableFuture<ResponseEntity<Map<String, Object>>> getCurrentSummoner() {
-        // Primary attempt via LCUService (may use direct LCU or gateway RPC). If that
-        // yields no data, try a direct gateway RPC as a last resort so the frontend
-        // receives data when the Electron gateway is available.
-        return lcuService.getCurrentSummoner()
+    public CompletableFuture<ResponseEntity<Map<String, Object>>> getCurrentSummoner(HttpServletRequest request) {
+        // Extrair summonerName do header X-Summoner-Name
+        String summonerName = SummonerAuthUtil.getSummonerNameFromRequest(request);
+        log.info("🎮 [LCU] /current-summoner para summonerName='{}'", summonerName);
+
+        // Primary attempt via LCUService with summonerName (routes via registry)
+        return lcuService.getCurrentSummoner(summonerName)
                 .thenCompose(summonerData -> {
                     if (summonerData != null) {
                         Map<String, Object> response = new HashMap<>();
@@ -73,10 +79,13 @@ public class LCUController {
                         // Also include nested shape expected by some frontend callers
                         response.put("data", Map.of("summoner", summonerData));
                         response.put(TIMESTAMP, System.currentTimeMillis());
+                        log.debug("✅ [LCU] Summoner obtido via registry para '{}'", summonerName);
                         return CompletableFuture.completedFuture(ResponseEntity.ok(response));
                     }
 
-                    // Fallback: try gateway RPC directly
+                    // Fallback: try gateway RPC directly (when registry has no connection)
+                    log.warn("⚠️ [LCU] Registry sem conexão para '{}', tentando fallback via gateway RPC",
+                            summonerName);
                     return CompletableFuture.supplyAsync(() -> {
                         Map<String, Object> response = new HashMap<>();
                         try {
@@ -93,6 +102,7 @@ public class LCUController {
                                     // Provide nested data shape as well
                                     response.put("data", Map.of("summoner", body));
                                     response.put(TIMESTAMP, System.currentTimeMillis());
+                                    log.debug("✅ [LCU] Fallback gateway RPC OK para '{}'", summonerName);
                                     return ResponseEntity.ok(response);
                                 }
                             } catch (Exception e) {
@@ -109,7 +119,7 @@ public class LCUController {
                     });
                 })
                 .exceptionally(ex -> {
-                    log.error("❌ Erro ao obter dados do invocador atual", ex);
+                    log.error("❌ Erro ao obter dados do invocador atual para '{}'", summonerName, ex);
                     Map<String, Object> errorResponse = new HashMap<>();
                     errorResponse.put(SUCCESS, false);
                     errorResponse.put(ERROR, ex.getMessage());
@@ -136,113 +146,178 @@ public class LCUController {
         }
     }
 
+    /**
+     * GET /api/lcu/match-history
+     * Obtém histórico de partidas do LCU
+     * ✅ MODIFICADO: Valida header X-Summoner-Name e roteia para LCU correto
+     */
     @GetMapping("/match-history")
-    public CompletableFuture<ResponseEntity<Map<String, Object>>> getMatchHistory() {
-        return lcuService.getMatchHistory()
-                .thenApply(matchHistory -> {
-                    Map<String, Object> response = new HashMap<>();
-                    if (matchHistory != null) {
-                        response.put(SUCCESS, true);
+    public CompletableFuture<ResponseEntity<Map<String, Object>>> getMatchHistory(
+            HttpServletRequest request) {
+        try {
+            // 🔒 Validar header X-Summoner-Name
+            String summonerName = SummonerAuthUtil.getSummonerNameFromRequest(request);
+            log.info("📜 [{}] Obtendo histórico de partidas via LCU", summonerName);
 
-                        // Extract games array from matchHistory.games.games structure
-                        List<Object> games = new ArrayList<>();
-                        if (matchHistory.has("games") && matchHistory.get("games").has("games")) {
-                            JsonNode gamesNode = matchHistory.get("games").get("games");
-                            if (gamesNode.isArray()) {
-                                gamesNode.forEach(game -> games.add(game));
+            return lcuService.getMatchHistory(summonerName)
+                    .thenApply(matchHistory -> {
+                        Map<String, Object> response = new HashMap<>();
+                        if (matchHistory != null) {
+                            response.put(SUCCESS, true);
+
+                            // Extract games array from matchHistory.games.games structure
+                            List<Object> games = new ArrayList<>();
+                            if (matchHistory.has("games") && matchHistory.get("games").has("games")) {
+                                JsonNode gamesNode = matchHistory.get("games").get("games");
+                                if (gamesNode.isArray()) {
+                                    gamesNode.forEach(game -> games.add(game));
+                                }
                             }
-                        }
 
-                        // Ensure frontend finds 'matches' array (legacy name) and nested shape
-                        response.put("matches", games);
-                        response.put("matchHistory", matchHistory);
-                        response.put("data", Map.of("matches", games, "matchHistory", matchHistory));
-                        response.put(TIMESTAMP, System.currentTimeMillis());
-                        return ResponseEntity.ok(response);
-                    } else {
-                        response.put(SUCCESS, false);
-                        response.put(ERROR, "Histórico não disponível");
-                        response.put(TIMESTAMP, System.currentTimeMillis());
-                        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(response);
-                    }
-                })
-                .exceptionally(ex -> {
-                    log.error("❌ Erro ao obter histórico de partidas", ex);
-                    Map<String, Object> errorResponse = new HashMap<>();
-                    errorResponse.put(SUCCESS, false);
-                    errorResponse.put(ERROR, ex.getMessage());
-                    errorResponse.put(TIMESTAMP, System.currentTimeMillis());
-                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
-                });
+                            // Ensure frontend finds 'matches' array (legacy name) and nested shape
+                            response.put("matches", games);
+                            response.put("matchHistory", matchHistory);
+                            response.put("data", Map.of("matches", games, "matchHistory", matchHistory));
+                            response.put(TIMESTAMP, System.currentTimeMillis());
+
+                            log.info("✅ [{}] Histórico de partidas obtido: {} jogos", summonerName, games.size());
+                            return ResponseEntity.ok(response);
+                        } else {
+                            log.warn("⚠️ [{}] Histórico não disponível", summonerName);
+                            response.put(SUCCESS, false);
+                            response.put(ERROR, "Histórico não disponível");
+                            response.put(TIMESTAMP, System.currentTimeMillis());
+                            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(response);
+                        }
+                    })
+                    .exceptionally(ex -> {
+                        log.error("❌ [{}] Erro ao obter histórico de partidas", summonerName, ex);
+                        Map<String, Object> errorResponse = new HashMap<>();
+                        errorResponse.put(SUCCESS, false);
+                        errorResponse.put(ERROR, ex.getMessage());
+                        errorResponse.put(TIMESTAMP, System.currentTimeMillis());
+                        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+                    });
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao validar header para match-history", e);
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put(SUCCESS, false);
+            errorResponse.put(ERROR, e.getMessage());
+            errorResponse.put(TIMESTAMP, System.currentTimeMillis());
+            return CompletableFuture.completedFuture(
+                    ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(errorResponse));
+        }
     }
 
     /**
      * GET /api/lcu/game-status
      * Obtém status do jogo atual
+     * ✅ MODIFICADO: Valida header X-Summoner-Name e roteia para LCU correto
      */
     @GetMapping("/game-status")
-    public CompletableFuture<ResponseEntity<Map<String, Object>>> getCurrentGameStatus() {
-        return lcuService.getCurrentGameStatus()
-                .thenApply(gameStatus -> {
-                    Map<String, Object> response = new HashMap<>();
-                    if (gameStatus != null) {
-                        response.put(SUCCESS, true);
-                        response.put("gameStatus", gameStatus);
-                        response.put("data", Map.of("gameStatus", gameStatus));
-                        response.put(TIMESTAMP, System.currentTimeMillis());
-                        return ResponseEntity.ok(response);
-                    } else {
-                        response.put(SUCCESS, false);
-                        response.put(ERROR, "Status do jogo não disponível");
-                        response.put(TIMESTAMP, System.currentTimeMillis());
-                        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(response);
-                    }
-                })
-                .exceptionally(ex -> {
-                    log.error("❌ Erro ao obter status do jogo", ex);
-                    Map<String, Object> errorResponse = new HashMap<>();
-                    errorResponse.put(SUCCESS, false);
-                    errorResponse.put(ERROR, ex.getMessage());
-                    errorResponse.put(TIMESTAMP, System.currentTimeMillis());
-                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
-                });
+    public CompletableFuture<ResponseEntity<Map<String, Object>>> getCurrentGameStatus(
+            HttpServletRequest request) {
+        try {
+            // 🔒 Validar header X-Summoner-Name
+            String summonerName = SummonerAuthUtil.getSummonerNameFromRequest(request);
+            log.info("🎮 [{}] Obtendo status do jogo via LCU", summonerName);
+
+            return lcuService.getCurrentGameStatus(summonerName)
+                    .thenApply(gameStatus -> {
+                        Map<String, Object> response = new HashMap<>();
+                        if (gameStatus != null) {
+                            response.put(SUCCESS, true);
+                            response.put("gameStatus", gameStatus);
+                            response.put("data", Map.of("gameStatus", gameStatus));
+                            response.put(TIMESTAMP, System.currentTimeMillis());
+
+                            log.info("✅ [{}] Status do jogo obtido", summonerName);
+                            return ResponseEntity.ok(response);
+                        } else {
+                            log.warn("⚠️ [{}] Status do jogo não disponível", summonerName);
+                            response.put(SUCCESS, false);
+                            response.put(ERROR, "Status do jogo não disponível");
+                            response.put(TIMESTAMP, System.currentTimeMillis());
+                            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(response);
+                        }
+                    })
+                    .exceptionally(ex -> {
+                        log.error("❌ [{}] Erro ao obter status do jogo", summonerName, ex);
+                        Map<String, Object> errorResponse = new HashMap<>();
+                        errorResponse.put(SUCCESS, false);
+                        errorResponse.put(ERROR, ex.getMessage());
+                        errorResponse.put(TIMESTAMP, System.currentTimeMillis());
+                        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+                    });
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao validar header para game-status", e);
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put(SUCCESS, false);
+            errorResponse.put(ERROR, e.getMessage());
+            errorResponse.put(TIMESTAMP, System.currentTimeMillis());
+            return CompletableFuture.completedFuture(
+                    ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(errorResponse));
+        }
     }
 
     /**
      * GET /api/lcu/game-data
      * Obtém dados da partida atual
+     * ✅ MODIFICADO: Valida header X-Summoner-Name e roteia para LCU correto
      */
     @GetMapping("/game-data")
-    public CompletableFuture<ResponseEntity<Map<String, Object>>> getCurrentGameData() {
-        return lcuService.getCurrentGameData()
-                .thenApply(gameData -> {
-                    Map<String, Object> response = new HashMap<>();
-                    if (gameData != null) {
-                        response.put(SUCCESS, true);
-                        response.put("gameData", gameData);
-                        response.put("data", Map.of("gameData", gameData));
-                        response.put(TIMESTAMP, System.currentTimeMillis());
-                        return ResponseEntity.ok(response);
-                    } else {
-                        response.put(SUCCESS, false);
-                        response.put(ERROR, "Dados da partida não disponíveis");
-                        response.put(TIMESTAMP, System.currentTimeMillis());
-                        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(response);
-                    }
-                })
-                .exceptionally(ex -> {
-                    log.error("❌ Erro ao obter dados da partida", ex);
-                    Map<String, Object> errorResponse = new HashMap<>();
-                    errorResponse.put(SUCCESS, false);
-                    errorResponse.put(ERROR, ex.getMessage());
-                    errorResponse.put(TIMESTAMP, System.currentTimeMillis());
-                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
-                });
+    public CompletableFuture<ResponseEntity<Map<String, Object>>> getCurrentGameData(
+            HttpServletRequest request) {
+        try {
+            // 🔒 Validar header X-Summoner-Name
+            String summonerName = SummonerAuthUtil.getSummonerNameFromRequest(request);
+            log.info("📊 [{}] Obtendo dados da partida via LCU", summonerName);
+
+            return lcuService.getCurrentGameData(summonerName)
+                    .thenApply(gameData -> {
+                        Map<String, Object> response = new HashMap<>();
+                        if (gameData != null) {
+                            response.put(SUCCESS, true);
+                            response.put("gameData", gameData);
+                            response.put("data", Map.of("gameData", gameData));
+                            response.put(TIMESTAMP, System.currentTimeMillis());
+
+                            log.info("✅ [{}] Dados da partida obtidos", summonerName);
+                            return ResponseEntity.ok(response);
+                        } else {
+                            log.warn("⚠️ [{}] Dados da partida não disponíveis", summonerName);
+                            response.put(SUCCESS, false);
+                            response.put(ERROR, "Dados da partida não disponíveis");
+                            response.put(TIMESTAMP, System.currentTimeMillis());
+                            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(response);
+                        }
+                    })
+                    .exceptionally(ex -> {
+                        log.error("❌ [{}] Erro ao obter dados da partida", summonerName, ex);
+                        Map<String, Object> errorResponse = new HashMap<>();
+                        errorResponse.put(SUCCESS, false);
+                        errorResponse.put(ERROR, ex.getMessage());
+                        errorResponse.put(TIMESTAMP, System.currentTimeMillis());
+                        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+                    });
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao validar header para game-data", e);
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put(SUCCESS, false);
+            errorResponse.put(ERROR, e.getMessage());
+            errorResponse.put(TIMESTAMP, System.currentTimeMillis());
+            return CompletableFuture.completedFuture(
+                    ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(errorResponse));
+        }
     }
 
     /**
      * POST /api/lcu/create-lobby
      * Cria um lobby personalizado via LCU
+     * ⚠️ Sistema cria lobby em LCU específico (não precisa de header individual)
      */
     @PostMapping("/create-lobby")
     public CompletableFuture<ResponseEntity<Map<String, Object>>> createLobby(
@@ -283,29 +358,47 @@ public class LCUController {
     /**
      * POST /api/lcu/accept-match
      * Aceita uma partida encontrada via LCU
+     * ✅ MODIFICADO: Valida header X-Summoner-Name e roteia para LCU correto
      */
     @PostMapping("/accept-match")
-    public CompletableFuture<ResponseEntity<Map<String, Object>>> acceptMatch() {
-        return lcuService.sendLCUCommand("/lol-matchmaking/v1/ready-check/accept", "POST", null)
-                .thenApply(success -> {
-                    Map<String, Object> response = new HashMap<>();
-                    if (Boolean.TRUE.equals(success)) {
-                        response.put(SUCCESS, true);
-                        response.put("message", "Partida aceita");
-                        return ResponseEntity.ok(response);
-                    } else {
-                        response.put(SUCCESS, false);
-                        response.put(ERROR, "Falha ao aceitar partida");
-                        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
-                    }
-                })
-                .exceptionally(ex -> {
-                    log.error("❌ Erro ao aceitar partida", ex);
-                    Map<String, Object> errorResponse = new HashMap<>();
-                    errorResponse.put(SUCCESS, false);
-                    errorResponse.put(ERROR, ex.getMessage());
-                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
-                });
+    public CompletableFuture<ResponseEntity<Map<String, Object>>> acceptMatch(
+            HttpServletRequest request) {
+        try {
+            // 🔒 Validar header X-Summoner-Name
+            String summonerName = SummonerAuthUtil.getSummonerNameFromRequest(request);
+            log.info("✅ [{}] Aceitando partida via LCU", summonerName);
+
+            return lcuService.sendLCUCommand(summonerName, "/lol-matchmaking/v1/ready-check/accept", "POST", null)
+                    .thenApply(success -> {
+                        Map<String, Object> response = new HashMap<>();
+                        if (Boolean.TRUE.equals(success)) {
+                            response.put(SUCCESS, true);
+                            response.put("message", "Partida aceita");
+                            log.info("✅ [{}] Partida aceita com sucesso", summonerName);
+                            return ResponseEntity.ok(response);
+                        } else {
+                            log.warn("⚠️ [{}] Falha ao aceitar partida", summonerName);
+                            response.put(SUCCESS, false);
+                            response.put(ERROR, "Falha ao aceitar partida");
+                            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+                        }
+                    })
+                    .exceptionally(ex -> {
+                        log.error("❌ [{}] Erro ao aceitar partida", summonerName, ex);
+                        Map<String, Object> errorResponse = new HashMap<>();
+                        errorResponse.put(SUCCESS, false);
+                        errorResponse.put(ERROR, ex.getMessage());
+                        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+                    });
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao validar header para accept-match", e);
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put(SUCCESS, false);
+            errorResponse.put(ERROR, e.getMessage());
+            return CompletableFuture.completedFuture(
+                    ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(errorResponse));
+        }
     }
 
     /**

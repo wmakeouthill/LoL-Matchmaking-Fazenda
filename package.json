@@ -7,9 +7,9 @@
     "build": "npx tsc",
     "build:frontend": "cd frontend && npm run build:prod",
     "build:all": "npm run build:frontend && npm run build",
-  "dev:electron": "npx electron . --dev",
-  "electron": "node scripts/start-electron.js",
-  "electron:run-wrapper": "npx electron .",
+    "dev:electron": "npx electron . --dev",
+    "electron": "node scripts/start-electron.js",
+    "electron:run-wrapper": "npx electron .",
     "electron:dev": "npx electron . --dev",
     "electron:build": "npm run build:all && npx electron .",
     "electron:new": "npx electron ./electron",
@@ -34,10 +34,11 @@
   "author": "LOL Matchmaking Team",
   "license": "MIT",
   "devDependencies": {
+    "@types/node": "^20.0.0",
     "electron": "^28.0.0",
     "electron-builder": "^24.6.4",
-    "typescript": "^5.0.0",
-    "@types/node": "^20.0.0"
+    "js-yaml": "^4.1.0",
+    "typescript": "^5.0.0"
   },
   "dependencies": {
     "ws": "^8.13.0"

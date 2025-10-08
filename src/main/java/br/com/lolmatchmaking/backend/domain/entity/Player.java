@@ -101,6 +101,19 @@ public class Player {
     @Column(name = "stats_last_updated")
     private Instant statsLastUpdated; // Última atualização das estatísticas
 
+    // LCU Configuration (per player) - Lockfile do League Client
+    @Column(name = "lcu_port")
+    private Integer lcuPort;
+
+    @Column(name = "lcu_protocol", length = 10)
+    private String lcuProtocol;
+
+    @Column(name = "lcu_password")
+    private String lcuPassword;
+
+    @Column(name = "lcu_last_updated")
+    private Instant lcuLastUpdated;
+
     @Column(name = "created_at")
     private Instant createdAt;
 

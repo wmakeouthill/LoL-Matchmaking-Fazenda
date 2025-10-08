@@ -6,7 +6,18 @@ const path = require('path');
 const WebSocket = require('ws');
 const { ipcMain } = require('electron');
 
-const LOG_FILE = path.join(__dirname, '..', 'electron.log');
+// Caminho de log - será atualizado quando app estiver pronto
+// Por enquanto usa console.log que vai para stdout
+let LOG_FILE = null;
+
+// Aguarda app pronto para definir caminho do log
+app.whenReady().then(() => {
+  LOG_FILE = path.join(app.getPath('userData'), 'electron-main.log');
+  // Primeiro log após app pronto
+  const initMsg = `🚀 [ELECTRON MAIN] App pronto! Logs salvos em: ${LOG_FILE}\n`;
+  fs.appendFileSync(LOG_FILE, new Date().toISOString() + ' ' + initMsg, { encoding: 'utf8' });
+  console.log('[electron]', initMsg.trim());
+});
 
 function sanitizeForLog(value) {
   try {
@@ -33,7 +44,12 @@ function appendLogLine(line) {
   try {
     const ts = new Date().toISOString();
     const out = ts + ' ' + line + '\n';
-    fs.appendFileSync(LOG_FILE, out, { encoding: 'utf8' });
+    // Se LOG_FILE ainda não foi definido (app não pronto), apenas console
+    if (LOG_FILE) {
+      fs.appendFileSync(LOG_FILE, out, { encoding: 'utf8' });
+    } else {
+      console.log('[electron] (log file not ready yet)', line);
+    }
   } catch (e) {
     // best-effort; don't crash the app for logging failures
     console.error('[electron] failed to append log', String(e));
@@ -89,8 +105,14 @@ function checkReachable(u, timeout = 2000) {
 }
 
 async function pickBackendUrl() {
+  // CONFIGURAÇÃO DE REDE: Altere esta URL para o IP do servidor na rede
+  // Para testes locais: 'http://localhost:8080/'
+  // Para rede local: 'http://192.168.1.5:8080/' (seu IP)
+  // Para cloud: 'https://seu-app.run.app/'
+  const HARDCODED_BACKEND_URL = 'http://192.168.1.5:8080/';
+  
   const env = process.env.BACKEND_URL || '';
-  const defaultBase = env || 'http://localhost:8080/';
+  const defaultBase = env || HARDCODED_BACKEND_URL;
   const baseNoSlash = defaultBase.replace(/\/+$/, '');
 
   const candidates = [
@@ -156,19 +178,28 @@ function createWindow(startUrl, isDev) {
 }
 
 app.whenReady().then(async () => {
+  console.log('[electron] ========== APP READY ==========');
   const isDev = process.argv.includes('--dev') || process.env.ELECTRON_DEV === '1';
+  console.log('[electron] isDev:', isDev);
   const startUrl = await pickBackendUrl();
+  console.log('[electron] Backend URL:', startUrl);
   createWindow(startUrl, isDev);
+  console.log('[electron] Janela criada, iniciando watchers...');
   // start monitoring lockfile and report to backend
   try {
     startLockfileWatcher(startUrl);
+    console.log('[electron] Lockfile watcher iniciado');
     // also start websocket gateway client to backend for LCU RPCs
     try {
+      console.log('[electron] *** CHAMANDO startWebSocketGateway ***');
       startWebSocketGateway(startUrl);
+      console.log('[electron] *** startWebSocketGateway RETORNOU ***');
     } catch (err) {
+      console.error('[electron] ❌ ERRO no startWebSocketGateway:', err);
       safeLog('websocket gateway failed to start', err);
     }
   } catch (err) {
+    console.error('[electron] ❌ ERRO no lockfile watcher:', err);
     safeLog('lockfile watcher failed to start', err);
   }
 }).catch(err => { safeLog('app.whenReady error', err); app.quit(); });
@@ -289,13 +320,19 @@ function startLockfileWatcher(backendBase) {
 
 // --- WebSocket gateway client ---------------------------------------------------
 function startWebSocketGateway(backendBase) {
+  // Log direto para garantir que aparece mesmo se safeLog falhar
+  console.log('[electron] === startWebSocketGateway CHAMADO ===');
+  console.log('[electron] backendBase:', backendBase);
+  
   try {
     // backendBase is like http://localhost:8080/ -> ws url replace protocol
     const parsed = new URL(backendBase);
     const wsProtocol = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = wsProtocol + '//' + parsed.hostname + (parsed.port ? ':' + parsed.port : '') + '/client-ws';
+    // ✅ CORREÇÃO: Usar /api/ws que tem CoreWebSocketHandler com suporte a register_lcu_connection
+    const wsUrl = wsProtocol + '//' + parsed.hostname + (parsed.port ? ':' + parsed.port : '') + '/api/ws';
 
-    safeLog('ws gateway connecting to', wsUrl);
+    console.log('[electron] 🔌 WebSocket URL construída:', wsUrl);
+    safeLog('🔌 [ELECTRON MAIN] Tentando conectar WebSocket gateway em:', wsUrl);
 
     wsClient = new WebSocket(wsUrl, {
       headers: {
@@ -305,7 +342,7 @@ function startWebSocketGateway(backendBase) {
     });
 
     wsClient.on('open', () => {
-      safeLog('ws gateway connected');
+      safeLog('✅ [ELECTRON MAIN] WebSocket gateway conectado:', wsUrl);
       resetWebSocketReconnect(); // Reset tentativas de reconexão
       startWebSocketHeartbeat(); // Iniciar heartbeat
       // send a register/identify message
@@ -321,6 +358,43 @@ function startWebSocketGateway(backendBase) {
               try {
                 const result = await performLcuRequest('GET', '/lol-summoner/v1/current-summoner');
                 safeLog('proactive lcu current-summoner ->', result);
+                
+                // ✅ NOVO: Enviar identify com summonerName para configurar LCU no banco
+                if (result && typeof result === 'object' && result.gameName && result.tagLine) {
+                  const summonerName = `${result.gameName}#${result.tagLine}`;
+                  const identifyWithSummoner = {
+                    type: 'identify',
+                    playerId: process.env.ELECTRON_CLIENT_ID || 'electron-client',
+                    summonerName: summonerName,
+                    data: { 
+                      lockfile: info,
+                      gameName: result.gameName,
+                      tagLine: result.tagLine
+                    }
+                  };
+                  try {
+                    wsClient.send(JSON.stringify(identifyWithSummoner));
+                    safeLog(`✅ Identify com summonerName enviado: ${summonerName}`);
+                  } catch (e) {
+                    safeLog('❌ Erro ao enviar identify com summonerName', String(e));
+                  }
+
+                  // ✅ NOVO: Registrar conexão LCU no registry para roteamento multi-player
+                  const registerLcuConnection = {
+                    type: 'register_lcu_connection',
+                    summonerName: summonerName,
+                    port: info.port,
+                    authToken: info.password,
+                    protocol: info.protocol || 'https'
+                  };
+                  try {
+                    wsClient.send(JSON.stringify(registerLcuConnection));
+                    safeLog(`🎯 LCU connection registrada para ${summonerName} na porta ${info.port}`);
+                  } catch (e) {
+                    safeLog('❌ Erro ao registrar LCU connection', String(e));
+                  }
+                }
+                
                 // attempt to extract a stable summoner identifier so backend can mark the gateway as connected
                 let summonerId = null;
                 try {
@@ -361,11 +435,14 @@ function startWebSocketGateway(backendBase) {
     });
 
     wsClient.on('message', async (msg) => {
+      console.log('[electron] 📨 [MAIN] Mensagem WebSocket recebida (raw):', msg.toString().substring(0, 200));
       try {
         const json = JSON.parse(msg.toString());
+        console.log('[electron] 📨 [MAIN] Mensagem WebSocket parsed, type:', json.type);
         
         // Handle LCU requests
         if (json.type === 'lcu_request') {
+          console.log('[electron] 🎯 [MAIN] LCU REQUEST recebido!', json.id, json.method, json.path);
           safeLog('ws gateway received lcu_request', json.id, json.method, json.path);
           try {
             safeLog('ws gateway calling performLcuRequest for', json.path);
@@ -431,12 +508,15 @@ function startWebSocketGateway(backendBase) {
     });
 
     wsClient.on('close', (code, reason) => { 
-      safeLog('ws gateway closed', code, reason && reason.toString()); 
+      safeLog('⚠️ [ELECTRON MAIN] WebSocket gateway fechado - code:', code, 'reason:', reason && reason.toString()); 
       stopWebSocketHeartbeat(); // Parar heartbeat
       wsClient = null; 
       scheduleWebSocketReconnect(backendBase);
     });
-    wsClient.on('error', (err) => { safeLog('ws gateway error', String(err)); });
+    wsClient.on('error', (err) => { 
+      safeLog('❌ [ELECTRON MAIN] Erro no WebSocket gateway:', String(err)); 
+      safeLog('❌ [ELECTRON MAIN] Detalhes do erro:', JSON.stringify(err, null, 2));
+    });
   } catch (err) {
     safeLog('startWebSocketGateway error', String(err));
   }
@@ -743,3 +823,8 @@ function initializeDiscordOnConnect() {
 }
 
 // -------------------------------------------------------------------------------
+
+// Log onde os logs estão sendo salvos
+safeLog('🚀 [ELECTRON MAIN] Iniciando processo principal do Electron');
+safeLog('📁 [ELECTRON MAIN] Logs sendo salvos em:', LOG_FILE);
+

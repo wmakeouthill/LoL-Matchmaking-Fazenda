@@ -176,11 +176,24 @@ public class MatchmakingOrchestrator {
 
     private void broadcastMatchFound(long matchTempId, List<QueuePlayer> players) {
         try {
+            // ✅ Extrair lista de summonerNames dos jogadores da partida
+            List<String> playerNames = players.stream()
+                    .map(QueuePlayer::getSummonerName)
+                    .collect(java.util.stream.Collectors.toList());
+
             String payload = mapper.writeValueAsString(java.util.Map.of(
                     FIELD_TYPE, "match_found",
                     FIELD_MATCH_TEMP_ID, matchTempId,
                     FIELD_PLAYERS, players));
-            sessionRegistry.all().forEach(ws -> {
+
+            // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida
+            java.util.Collection<org.springframework.web.socket.WebSocketSession> playerSessions = sessionRegistry
+                    .getByPlayers(playerNames);
+
+            log.info("📤 Enviando match_found para {} jogadores (de {} esperados)",
+                    playerSessions.size(), playerNames.size());
+
+            playerSessions.forEach(ws -> {
                 try {
                     ws.sendMessage(new TextMessage(payload));
                 } catch (Exception e) {

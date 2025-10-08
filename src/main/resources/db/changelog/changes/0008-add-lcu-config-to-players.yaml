@@ -1,0 +1,27 @@
+databaseChangeLog:
+  - changeSet:
+      id: 0008-add-lcu-config-to-players
+      author: system
+      comment: "Adiciona colunas de configuração LCU por jogador na tabela players"
+      changes:
+        - addColumn:
+            tableName: players
+            columns:
+              - column:
+                  name: lcu_port
+                  type: INT
+                  defaultValueNumeric: 0
+                  remarks: "Porta do LCU deste jogador"
+              - column:
+                  name: lcu_protocol
+                  type: VARCHAR(10)
+                  defaultValue: "https"
+                  remarks: "Protocolo do LCU (https ou http)"
+              - column:
+                  name: lcu_password
+                  type: VARCHAR(255)
+                  remarks: "Password do lockfile do LCU"
+              - column:
+                  name: lcu_last_updated
+                  type: TIMESTAMP
+                  remarks: "Última atualização da configuração LCU"

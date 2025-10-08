@@ -5,6 +5,8 @@ import br.com.lolmatchmaking.backend.dto.PlayerDTO;
 import br.com.lolmatchmaking.backend.service.PlayerService;
 import br.com.lolmatchmaking.backend.service.RiotAPIService;
 import br.com.lolmatchmaking.backend.service.LCUService;
+import br.com.lolmatchmaking.backend.util.SummonerAuthUtil;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,13 +33,21 @@ public class PlayerController {
     /**
      * GET /api/player/current-details
      * Obtém detalhes do jogador atual via LCU
+     * 
+     * @param summonerNameHeader Optional header para especificar qual sessão LCU
+     *                           usar
      */
     @GetMapping("/current-details")
-    public CompletableFuture<ResponseEntity<Map<String, Object>>> getCurrentPlayerDetails() {
+    public CompletableFuture<ResponseEntity<Map<String, Object>>> getCurrentPlayerDetails(
+            @RequestHeader(value = "X-Summoner-Name", required = false) String summonerNameHeader) {
         try {
-            log.info("🔍 Obtendo detalhes do jogador atual via LCU");
+            if (summonerNameHeader != null && !summonerNameHeader.isEmpty()) {
+                log.info("🔍 Obtendo detalhes do jogador atual via LCU para: {}", summonerNameHeader);
+            } else {
+                log.info("🔍 Obtendo detalhes do jogador atual via LCU (sem header X-Summoner-Name)");
+            }
 
-            return lcuService.getCurrentSummoner()
+            return lcuService.getCurrentSummoner(summonerNameHeader)
                     .thenApply(summonerData -> {
                         Map<String, Object> response = new HashMap<>();
 
@@ -400,11 +410,19 @@ public class PlayerController {
     /**
      * GET /api/player/{playerId}/stats
      * Obtém estatísticas de um jogador
+     * ✅ MODIFICADO: Valida header X-Summoner-Name
      */
     @GetMapping("/{playerId}/stats")
-    public ResponseEntity<Map<String, Object>> getPlayerStats(@PathVariable Long playerId) {
+    public ResponseEntity<Map<String, Object>> getPlayerStats(
+            @PathVariable Long playerId,
+            HttpServletRequest request) {
         try {
-            log.info("📊 Obtendo estatísticas do jogador: {}", playerId);
+            // ✅ Validar header X-Summoner-Name
+            String summonerName = SummonerAuthUtil.getSummonerNameFromRequest(request);
+            log.info("📊 [{}] Obtendo estatísticas do jogador: {}", summonerName, playerId);
+
+            // TODO: Validar se playerId pertence ao summonerName autenticado
+            // Por enquanto, apenas logando para visibilidade
 
             PlayerService.PlayerStats serviceStats = playerService.getPlayerStats(playerId);
             if (serviceStats != null) {
@@ -437,13 +455,17 @@ public class PlayerController {
     /**
      * GET /api/stats/leaderboard
      * Obtém leaderboard de jogadores
+     * ✅ MODIFICADO: Valida header X-Summoner-Name
      */
     @GetMapping("/leaderboard")
     public ResponseEntity<Map<String, Object>> getLeaderboard(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "50") int limit) {
+            @RequestParam(defaultValue = "50") int limit,
+            HttpServletRequest request) {
         try {
-            log.info("🏆 Obtendo leaderboard (page: {}, limit: {})", page, limit);
+            // ✅ Validar header X-Summoner-Name
+            String summonerName = SummonerAuthUtil.getSummonerNameFromRequest(request);
+            log.info("🏆 [{}] Obtendo leaderboard (page: {}, limit: {})", summonerName, page, limit);
 
             List<PlayerDTO> leaderboard = playerService.getLeaderboard(page, limit);
 
@@ -454,6 +476,10 @@ public class PlayerController {
                     "limit", limit,
                     "total", leaderboard.size()));
 
+        } catch (IllegalArgumentException e) {
+            log.warn("⚠️ Header X-Summoner-Name ausente em requisição de leaderboard");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("success", false, "error", "Header X-Summoner-Name obrigatório"));
         } catch (Exception e) {
             log.error("❌ Erro ao obter leaderboard", e);
             return ResponseEntity.internalServerError()
@@ -464,11 +490,16 @@ public class PlayerController {
     /**
      * GET /api/summoner/{displayName}
      * Busca invocador por nome de exibição
+     * ✅ MODIFICADO: Valida header X-Summoner-Name
      */
     @GetMapping("/summoner/{displayName}")
-    public ResponseEntity<Map<String, Object>> getSummonerByDisplayName(@PathVariable String displayName) {
+    public ResponseEntity<Map<String, Object>> getSummonerByDisplayName(
+            @PathVariable String displayName,
+            HttpServletRequest request) {
         try {
-            log.info("🔍 Buscando invocador: {}", displayName);
+            // ✅ Validar header X-Summoner-Name
+            String summonerName = SummonerAuthUtil.getSummonerNameFromRequest(request);
+            log.info("🔍 [{}] Buscando invocador: {}", summonerName, displayName);
 
             Map<String, Object> summonerData = riotAPIService.getSummonerByDisplayName(displayName, "br1");
             if (summonerData != null) {
@@ -479,6 +510,10 @@ public class PlayerController {
                 return ResponseEntity.notFound().build();
             }
 
+        } catch (IllegalArgumentException e) {
+            log.warn("⚠️ Header X-Summoner-Name ausente em requisição de busca de summoner");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("success", false, "error", "Header X-Summoner-Name obrigatório"));
         } catch (Exception e) {
             log.error("❌ Erro ao buscar invocador", e);
             return ResponseEntity.internalServerError()
@@ -489,11 +524,16 @@ public class PlayerController {
     /**
      * GET /api/player/details/{displayName}
      * Obtém detalhes de jogador por nome de exibição
+     * ✅ MODIFICADO: Valida header X-Summoner-Name
      */
     @GetMapping("/details/{displayName}")
-    public ResponseEntity<Map<String, Object>> getPlayerDetails(@PathVariable String displayName) {
+    public ResponseEntity<Map<String, Object>> getPlayerDetails(
+            @PathVariable String displayName,
+            HttpServletRequest request) {
         try {
-            log.info("🔍 Obtendo detalhes do jogador: {}", displayName);
+            // ✅ Validar header X-Summoner-Name
+            String summonerName = SummonerAuthUtil.getSummonerNameFromRequest(request);
+            log.info("🔍 [{}] Obtendo detalhes do jogador: {}", summonerName, displayName);
 
             PlayerDTO player = playerService.getPlayerByDisplayName(displayName);
             if (player != null) {
@@ -504,6 +544,10 @@ public class PlayerController {
                 return ResponseEntity.notFound().build();
             }
 
+        } catch (IllegalArgumentException e) {
+            log.warn("⚠️ Header X-Summoner-Name ausente em requisição de detalhes de jogador");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("success", false, "error", "Header X-Summoner-Name obrigatório"));
         } catch (Exception e) {
             log.error("❌ Erro ao obter detalhes do jogador", e);
             return ResponseEntity.internalServerError()
@@ -514,11 +558,16 @@ public class PlayerController {
     /**
      * POST /api/player/refresh-by-display-name
      * Atualiza dados do jogador via Riot API
+     * ✅ MODIFICADO: Valida header X-Summoner-Name
      */
     @PostMapping("/refresh-by-display-name")
-    public ResponseEntity<Map<String, Object>> refreshPlayerByDisplayName(@RequestBody RefreshPlayerRequest request) {
+    public ResponseEntity<Map<String, Object>> refreshPlayerByDisplayName(
+            @RequestBody RefreshPlayerRequest request,
+            HttpServletRequest httpRequest) {
         try {
-            log.info("🔄 Atualizando jogador: {}", request.getDisplayName());
+            // ✅ Validar header X-Summoner-Name
+            String summonerName = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
+            log.info("🔄 [{}] Atualizando jogador: {}", summonerName, request.getDisplayName());
 
             PlayerDTO player = playerService.refreshPlayerByDisplayName(
                     request.getDisplayName(),
@@ -533,6 +582,10 @@ public class PlayerController {
                         .body(Map.of("success", false, "error", "Jogador não encontrado"));
             }
 
+        } catch (IllegalArgumentException e) {
+            log.warn("⚠️ Header X-Summoner-Name ausente em requisição de refresh de jogador");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("success", false, "error", "Header X-Summoner-Name obrigatório"));
         } catch (Exception e) {
             log.error("❌ Erro ao atualizar jogador", e);
             return ResponseEntity.internalServerError()

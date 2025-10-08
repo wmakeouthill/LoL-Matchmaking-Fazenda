@@ -60,24 +60,21 @@ const electronAPI = {
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   getVersion: () => process.versions?.electron || 'unknown',
   getBackendApiUrl: () => {
+    // CONFIGURAÇÃO DE REDE: Altere esta URL para o IP do servidor na rede
+    // Para testes locais: 'http://localhost:8080'
+    // Para rede local: 'http://192.168.1.5:8080' (seu IP)
+    // Para cloud: 'https://seu-app.run.app'
+    const HARDCODED_BACKEND_URL = 'http://192.168.1.5:8080';
+    
     // If BACKEND_URL is provided in the environment, normalize it and return
     const raw = (process.env && process.env['BACKEND_URL']) ? String(process.env['BACKEND_URL']).replace(/\/+$/, '') : null;
     if (raw) {
       return raw.endsWith('/api') ? raw : `${raw}/api`;
     }
 
-    // Otherwise, build an absolute URL based on the current renderer location
-    // so the frontend can safely use it with URL() and WebSocket construction.
-    try {
-      const loc = globalThis.location;
-      const proto = loc.protocol || 'http:';
-      const host = loc.hostname || 'localhost';
-      const port = loc.port ? `:${loc.port}` : '';
-      return `${proto}//${host}${port}/api`;
-    } catch (e) {
-      // Fallback to localhost absolute URL
-      return 'http://localhost:8080/api';
-    }
+    // Use hardcoded URL
+    const hardcoded = HARDCODED_BACKEND_URL.replace(/\/+$/, '');
+    return hardcoded.endsWith('/api') ? hardcoded : `${hardcoded}/api`;
   },
   isElectron: () => {
     try {
@@ -181,7 +178,11 @@ try {
   try {
     const info = readLockfile();
     if (!info) return;
-    const backend = (process.env && process.env['BACKEND_URL']) ? String(process.env['BACKEND_URL']).replace(/\/+$/, '') : 'http://127.0.0.1:8080';
+    
+    // CONFIGURAÇÃO DE REDE: Use a mesma URL configurada acima
+    const HARDCODED_BACKEND_URL = 'http://192.168.1.5:8080';
+    
+    const backend = (process.env && process.env['BACKEND_URL']) ? String(process.env['BACKEND_URL']).replace(/\/+$/, '') : HARDCODED_BACKEND_URL;
     const url = backend.endsWith('/api') ? `${backend}/lcu/configure` : `${backend}/api/lcu/configure`;
     const explicitHost = (process.env && process.env['LCU_HOST']) ? String(process.env['LCU_HOST']) : null;
     const candidateHosts = explicitHost ? [explicitHost] : ['host.docker.internal', '127.0.0.1'];

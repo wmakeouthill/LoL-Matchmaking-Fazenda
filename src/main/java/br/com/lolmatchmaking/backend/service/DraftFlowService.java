@@ -852,15 +852,55 @@ public class DraftFlowService {
             log.info("{}", mapper.writerWithDefaultPrettyPrinter().writeValueAsString(updateData));
             log.info("====================================================");
 
-            sessionRegistry.all().forEach(ws -> {
-                try {
-                    ws.sendMessage(new TextMessage(payload));
-                } catch (Exception ignored) {
-                    /* ignore individual send errors */ }
-            });
+            // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida (não para todos)
+            sendToMatchPlayers(st, payload);
         } catch (Exception e) {
             log.error("Erro broadcast draft_updated", e);
         }
+    }
+
+    /**
+     * ✅ NOVO: Envia mensagem específica para UM jogador
+     */
+    private void sendToPlayer(String summonerName, String payload) {
+        if (summonerName == null)
+            return;
+
+        sessionRegistry.getByPlayer(summonerName).ifPresent(ws -> {
+            try {
+                ws.sendMessage(new TextMessage(payload));
+                log.debug("📤 Mensagem enviada para jogador: {}", summonerName);
+            } catch (Exception e) {
+                log.warn("⚠️ Erro ao enviar mensagem para {}: {}", summonerName, e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * ✅ NOVO: Envia mensagem para OS 10 JOGADORES da partida (broadcast restrito)
+     * Usado para: match_found, draft_updated, game_in_progress
+     */
+    private void sendToMatchPlayers(DraftState st, String payload) {
+        // Combinar todos os jogadores da partida (time 1 + time 2)
+        Collection<String> allPlayers = new java.util.ArrayList<>();
+        allPlayers.addAll(st.getTeam1Players());
+        allPlayers.addAll(st.getTeam2Players());
+
+        // Buscar sessões apenas desses 10 jogadores
+        Collection<org.springframework.web.socket.WebSocketSession> playerSessions = sessionRegistry
+                .getByPlayers(allPlayers);
+
+        log.info("📤 Enviando mensagem para {} jogadores da partida (de {} esperados)",
+                playerSessions.size(), allPlayers.size());
+
+        // Enviar apenas para esses jogadores
+        playerSessions.forEach(ws -> {
+            try {
+                ws.sendMessage(new TextMessage(payload));
+            } catch (Exception e) {
+                log.warn("⚠️ Erro ao enviar para jogador: {}", e.getMessage());
+            }
+        });
     }
 
     private void broadcastDraftCompleted(DraftState st) {
@@ -868,12 +908,9 @@ public class DraftFlowService {
             String payload = mapper.writeValueAsString(Map.of(
                     KEY_TYPE, "draft_completed",
                     KEY_MATCH_ID, st.getMatchId()));
-            sessionRegistry.all().forEach(ws -> {
-                try {
-                    ws.sendMessage(new TextMessage(payload));
-                } catch (Exception ignored) {
-                    /* ignore */ }
-            });
+
+            // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida
+            sendToMatchPlayers(st, payload);
         } catch (Exception e) {
             log.error("Erro broadcast draft_completed", e);
         }
@@ -884,12 +921,9 @@ public class DraftFlowService {
             String payload = mapper.writeValueAsString(Map.of(
                     KEY_TYPE, "draft_confirmed",
                     KEY_MATCH_ID, st.getMatchId()));
-            sessionRegistry.all().forEach(ws -> {
-                try {
-                    ws.sendMessage(new TextMessage(payload));
-                } catch (Exception ignored) {
-                    /* ignore */ }
-            });
+
+            // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida
+            sendToMatchPlayers(st, payload);
         } catch (Exception e) {
             log.error("Erro broadcast draft_confirmed", e);
         }
@@ -1238,13 +1272,9 @@ public class DraftFlowService {
                     KEY_MATCH_ID, st.getMatchId(),
                     "team1", team1Data,
                     "team2", team2Data));
-            sessionRegistry.all().forEach(ws -> {
-                try {
-                    ws.sendMessage(new TextMessage(payload));
-                } catch (Exception ignored) {
-                    // ignorar falha individual de envio
-                }
-            });
+
+            // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida
+            sendToMatchPlayers(st, payload);
         } catch (Exception e) {
             log.error("Erro broadcast match_game_ready", e);
         }
@@ -1654,10 +1684,17 @@ public class DraftFlowService {
     }
 
     /**
-     * ✅ NOVO: Broadcast atualização de confirmações para todos os jogadores
+     * ✅ NOVO: Broadcast atualização de confirmações para os 10 jogadores da partida
      */
     private void broadcastConfirmationUpdate(Long matchId, Set<String> confirmations, int totalPlayers) {
         try {
+            // Buscar DraftState para pegar lista de jogadores
+            DraftState st = states.get(matchId);
+            if (st == null) {
+                log.warn("⚠️ [DraftFlow] DraftState não encontrado para matchId={}", matchId);
+                return;
+            }
+
             Map<String, Object> payload = Map.of(
                     "type", "draft_confirmation_update",
                     "matchId", matchId,
@@ -1667,15 +1704,12 @@ public class DraftFlowService {
                     "allConfirmed", confirmations.size() >= totalPlayers);
 
             String json = mapper.writeValueAsString(payload);
-            sessionRegistry.all().forEach(ws -> {
-                try {
-                    ws.sendMessage(new TextMessage(json));
-                } catch (Exception e) {
-                    log.warn("⚠️ Erro ao enviar atualização de confirmação", e);
-                }
-            });
 
-            log.info("📡 [DraftFlow] Broadcast: {}/{} jogadores confirmaram", confirmations.size(), totalPlayers);
+            // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida
+            sendToMatchPlayers(st, json);
+
+            log.info("📡 [DraftFlow] Broadcast para 10 jogadores: {}/{} confirmaram", confirmations.size(),
+                    totalPlayers);
 
         } catch (Exception e) {
             log.error("❌ [DraftFlow] Erro ao broadcast confirmação", e);
@@ -1712,10 +1746,17 @@ public class DraftFlowService {
     }
 
     /**
-     * ✅ NOVO: Broadcast evento game_ready
+     * ✅ NOVO: Broadcast evento game_ready para os 10 jogadores
      */
     private void broadcastGameReady(Long matchId) {
         try {
+            // Buscar DraftState para pegar lista de jogadores
+            DraftState st = states.get(matchId);
+            if (st == null) {
+                log.warn("⚠️ [DraftFlow] DraftState não encontrado para matchId={}", matchId);
+                return;
+            }
+
             Map<String, Object> payload = Map.of(
                     "type", "match_game_ready",
                     "matchId", matchId,
@@ -1723,15 +1764,10 @@ public class DraftFlowService {
                     "message", "Todos confirmaram! Jogo iniciando...");
 
             String json = mapper.writeValueAsString(payload);
-            sessionRegistry.all().forEach(ws -> {
-                try {
-                    ws.sendMessage(new TextMessage(json));
-                } catch (Exception e) {
-                    log.warn("⚠️ Erro ao enviar game_ready", e);
-                }
-            });
 
-            log.info("📡 [DraftFlow] Broadcast: match_game_ready");
+            // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida
+            sendToMatchPlayers(st, json);
+            log.info("📡 [DraftFlow] Broadcast game_ready para 10 jogadores");
 
         } catch (Exception e) {
             log.error("❌ [DraftFlow] Erro ao broadcast game_ready", e);
@@ -1758,11 +1794,13 @@ public class DraftFlowService {
 
             // 3. Limpar confirmações da memória
             finalConfirmations.remove(matchId);
+
+            // 4. Broadcast evento de cancelamento ANTES de remover do states
+            broadcastMatchCancelled(matchId);
+
+            // 5. Remover do states DEPOIS do broadcast (precisa dos jogadores)
             states.remove(matchId);
             log.info("🧹 [DraftFlow] Cache de confirmações limpo");
-
-            // 4. Broadcast evento de cancelamento para todos os jogadores
-            broadcastMatchCancelled(matchId);
 
             log.info("✅ [DraftFlow] Partida cancelada com sucesso!");
 
@@ -1773,26 +1811,40 @@ public class DraftFlowService {
     }
 
     /**
-     * ✅ NOVO: Broadcast evento de cancelamento
+     * ✅ NOVO: Broadcast evento de cancelamento para os 10 jogadores
      */
     private void broadcastMatchCancelled(Long matchId) {
         try {
+            // Buscar DraftState para pegar lista de jogadores
+            DraftState st = states.get(matchId);
+            if (st == null) {
+                log.warn("⚠️ [DraftFlow] DraftState não encontrado para matchId={} - broadcast para todos", matchId);
+                // Fallback: broadcast global se não temos os jogadores
+                Map<String, Object> payload = Map.of(
+                        "type", "match_cancelled",
+                        "matchId", matchId,
+                        "message", "Partida cancelada pelo líder");
+                String json = mapper.writeValueAsString(payload);
+                sessionRegistry.all().forEach(ws -> {
+                    try {
+                        ws.sendMessage(new TextMessage(json));
+                    } catch (Exception e) {
+                        log.warn("⚠️ Erro ao enviar match_cancelled", e);
+                    }
+                });
+                return;
+            }
+
             Map<String, Object> payload = Map.of(
                     "type", "match_cancelled",
                     "matchId", matchId,
                     "message", "Partida cancelada pelo líder");
 
             String json = mapper.writeValueAsString(payload);
-            sessionRegistry.all().forEach(ws -> {
-                try {
-                    ws.sendMessage(new TextMessage(json));
-                    log.debug("📡 Evento match_cancelled enviado para sessão WebSocket");
-                } catch (Exception e) {
-                    log.warn("⚠️ Erro ao enviar match_cancelled", e);
-                }
-            });
 
-            log.info("📡 [DraftFlow] Broadcast: match_cancelled enviado para todos os jogadores");
+            // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida
+            sendToMatchPlayers(st, json);
+            log.info("📡 [DraftFlow] Broadcast match_cancelled para 10 jogadores");
 
         } catch (Exception e) {
             log.error("❌ [DraftFlow] Erro ao broadcast match_cancelled", e);

@@ -1,7 +1,7 @@
 import { Component, OnInit, OnDestroy, ChangeDetectorRef, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Subject, takeUntil, take, firstValueFrom } from 'rxjs';
+import { Subject, takeUntil, take, firstValueFrom, timeout, catchError, of } from 'rxjs';
 
 import { DashboardComponent } from './components/dashboard/dashboard';
 import { QueueComponent } from './components/queue/queue';
@@ -190,13 +190,10 @@ export class App implements OnInit, OnDestroy {
       console.log('🔄 [App] Passo 3: Configurando WebSocket...');
       await this.setupBackendCommunication();
 
-      // 4. Carregar dados do jogador
-      console.log('🔄 [App] Passo 4: Carregando dados do jogador...');
-      await this.loadPlayerDataWithRetry();
-
-      // 5. Identificar jogador no WebSocket (agora que temos os dados)
-      console.log('🔄 [App] Passo 5: Identificando jogador...');
-      await this.identifyPlayerSafely();
+      // ✅ REMOVIDO: Passos 4 e 5 agora são executados APENAS quando evento lcu_connection_registered chegar
+      // Isso garante que o summonerName esteja disponível ANTES de qualquer chamada HTTP
+      // 4. Carregar dados do jogador - AGORA FEITO NO EVENTO lcu_connection_registered
+      // 5. Identificar jogador no WebSocket - AGORA FEITO NO EVENTO lcu_connection_registered
 
       // 6. Buscar status inicial da fila
       console.log('🔄 [App] Passo 6: Buscando status da fila...');
@@ -267,6 +264,39 @@ export class App implements OnInit, OnDestroy {
       complete: () => {
         console.log('🔌 [App] Conexão WebSocket fechada');
         this.isConnected = false;
+      }
+    });
+
+    // ✅ NOVO: Aguardar evento de registro do LCU antes de carregar dados do jogador
+    this.apiService.onLcuRegistered().pipe(
+      take(1), // Apenas o primeiro evento
+      timeout(10000), // Timeout de 10 segundos
+      catchError(err => {
+        console.warn('⚠️ [App] Timeout aguardando evento LCU, carregando dados mesmo assim...');
+        return of('timeout'); // Emite valor para continuar o fluxo
+      }),
+      takeUntil(this.destroy$)
+    ).subscribe({
+      next: async (summonerName: string) => {
+        if (summonerName !== 'timeout') {
+          console.log('✅ [App] LCU registrado para:', summonerName);
+          console.log('🔄 [App] Carregando dados do jogador com summonerName já conhecido...');
+
+          // Armazenar summonerName no ApiService ANTES de qualquer chamada HTTP
+          this.apiService.setCurrentSummonerName(summonerName);
+          console.log(`✅ [App] SummonerName configurado: ${summonerName}`);
+        } else {
+          console.log('⏳ [App] Carregando dados sem summonerName (fallback)...');
+        }
+
+        // Agora que temos o summonerName, carregar dados do jogador via HTTP
+        // tryGetCurrentPlayerDetails() chamará identifyCurrentPlayerOnConnect() automaticamente
+        this.tryGetCurrentPlayerDetails();
+      },
+      error: (error: any) => {
+        console.error('❌ [App] Erro ao receber evento LCU:', error);
+        // Tentar carregar mesmo assim como fallback
+        this.tryGetCurrentPlayerDetails();
       }
     });
 
@@ -1053,8 +1083,11 @@ export class App implements OnInit, OnDestroy {
               this.cdr.detectChanges();
             },
             error: () => {
-              // tentar detalhes como fallback (ainda via gateway)
-              this.tryGetCurrentPlayerDetails();
+              // ✅ REMOVIDO: Agora aguardamos o evento lcu_connection_registered no setupBackendCommunication()
+              // antes de chamar tryGetCurrentPlayerDetails(), para garantir que o header X-Summoner-Name
+              // esteja presente desde a primeira chamada HTTP, evitando flash de dados errados em multi-PC.
+              // this.tryGetCurrentPlayerDetails();
+              console.log('⏳ [App] Aguardando evento lcu_connection_registered para carregar dados do jogador...');
             }
           });
         }
@@ -1626,6 +1659,19 @@ export class App implements OnInit, OnDestroy {
       next: (player: Player) => {
         console.log('✅ [App] Dados do jogador carregados do LCU:', player);
         this.currentPlayer = player;
+
+        // ✅ CRÍTICO: Armazenar summonerName no ApiService ANTES de qualquer API call
+        const playerName = player.gameName && player.tagLine
+          ? `${player.gameName}#${player.tagLine}`
+          : player.displayName || player.summonerName || '';
+
+        if (playerName) {
+          this.apiService.setCurrentSummonerName(playerName);
+          console.log(`✅ [App] SummonerName configurado no ApiService: ${playerName}`);
+        } else {
+          console.error('❌ [App] Não foi possível extrair summonerName do player:', player);
+        }
+
         this.savePlayerData(player);
         this.updateSettingsForm();
 
@@ -1701,6 +1747,13 @@ export class App implements OnInit, OnDestroy {
           };
 
           this.currentPlayer = player;
+
+          // ✅ CRÍTICO: Armazenar summonerName no ApiService ANTES de qualquer API call
+          if (displayName) {
+            this.apiService.setCurrentSummonerName(displayName);
+            console.log(`✅ [App] SummonerName configurado no ApiService (getCurrentPlayerDetails): ${displayName}`);
+          }
+
           localStorage.setItem('currentPlayer', JSON.stringify(player));
 
           // ✅ ADICIONADO: Atualizar formulário de configurações
@@ -1708,6 +1761,9 @@ export class App implements OnInit, OnDestroy {
 
           console.log('✅ [App] Dados do jogador mapeados com sucesso:', player.summonerName, 'displayName:', player.displayName);
           this.addNotification('success', 'Jogador Detectado', `Logado como: ${player.summonerName}`);
+
+          // ✅ NOVO: Identificar jogador no WebSocket após carregar dados
+          this.identifyCurrentPlayerOnConnect();
         }
       },
       error: (error) => {
@@ -1732,6 +1788,17 @@ export class App implements OnInit, OnDestroy {
           } else if (this.currentPlayer.summonerName?.includes('#')) {
             this.currentPlayer.displayName = this.currentPlayer.summonerName;
             console.log('🔧 [App] DisplayName definido como summonerName do localStorage:', this.currentPlayer.displayName);
+          }
+        }
+
+        // ✅ CRÍTICO: Armazenar summonerName no ApiService ANTES de qualquer API call
+        if (this.currentPlayer) {
+          const playerName = this.currentPlayer.displayName || this.currentPlayer.summonerName || '';
+          if (playerName) {
+            this.apiService.setCurrentSummonerName(playerName);
+            console.log(`✅ [App] SummonerName configurado no ApiService (localStorage): ${playerName}`);
+          } else {
+            console.error('❌ [App] Não foi possível extrair summonerName do localStorage:', this.currentPlayer);
           }
         }
 
