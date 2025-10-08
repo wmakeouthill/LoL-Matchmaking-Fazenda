@@ -73,6 +73,15 @@ public class PlayerDTO {
     private String favoriteChampion;
     private Integer favoriteChampionGames;
 
+    // Estatísticas detalhadas de campeões (JSON strings do banco)
+    private String playerStatsDraft; // JSON com top 5 campeões das custom matches
+    private String masteryChampions; // JSON com top 3 campeões de maestria (Riot API)
+    private String rankedChampions; // JSON com top 5 campeões ranked (Riot API)
+    private String statsLastUpdated; // Última atualização das estatísticas
+
+    // Títulos de campeonato (JSON string)
+    private String championshipTitles; // JSON array: [{"title": "...", "date": "...", "lpBonus": 100}]
+
     public Double getWinRate() {
         if (wins == null || losses == null || (wins + losses) == 0) {
             return null;
