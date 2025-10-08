@@ -92,6 +92,10 @@ public class QueueManagementService {
 
             queueCache.clear();
             for (QueuePlayer player : activePlayers) {
+                // ✅ CORREÇÃO: Resetar acceptanceStatus para 0 (disponível) ao carregar do banco
+                // Isso garante que jogadores salvos com status pendente voltem disponíveis
+                player.setAcceptanceStatus(0);
+
                 queueCache.put(player.getSummonerName(), player);
                 log.debug("📥 Sincronizado: {} (status: {}, LP: {})",
                         player.getSummonerName(), player.getAcceptanceStatus(), player.getCustomLp());
@@ -113,7 +117,8 @@ public class QueueManagementService {
     public boolean addToQueue(String summonerName, String region, Long playerId,
             Integer customLp, String primaryLane, String secondaryLane) {
         try {
-            log.info("➕ Adicionando jogador à fila: {}", summonerName);
+            log.info("➕ [addToQueue] Adicionando jogador à fila: {} (cache size antes: {})",
+                    summonerName, queueCache.size());
 
             // Verificar se já está na fila
             if (queueCache.containsKey(summonerName)) {
@@ -169,6 +174,7 @@ public class QueueManagementService {
 
             // Adicionar ao cache
             queueCache.put(summonerName, queuePlayer);
+            log.info("✅ [addToQueue] Jogador adicionado ao cache (cache size agora: {})", queueCache.size());
 
             // Atualizar posições
             updateQueuePositions();
@@ -263,7 +269,12 @@ public class QueueManagementService {
     @Scheduled(fixedRate = 5000) // Executa a cada 5 segundos
     public void processQueue() {
         try {
+            log.debug("🔍 [Scheduled] Verificando fila... Cache: {} jogadores, MATCH_SIZE: {}",
+                    queueCache.size(), MATCH_SIZE);
+
             if (queueCache.size() < MATCH_SIZE) {
+                log.debug("⏭️ [Scheduled] Fila insuficiente ({} < {}), aguardando mais jogadores",
+                        queueCache.size(), MATCH_SIZE);
                 return;
             }
 

@@ -112,7 +112,7 @@ export class App implements OnInit, OnDestroy {
   // ✅ NOVO: Controle para priorizar backend sobre QueueStateService
   private hasRecentBackendQueueStatus = false;
 
-  private readonly lcuCheckInterval: any;
+  private lcuCheckInterval: any; // ✅ REMOVIDO readonly para permitir reatribuição
   private readonly LCU_CHECK_INTERVAL = 5000; // Intervalo de verificação do status do LCU
 
   // Update the notifications array and addNotification method
@@ -142,8 +142,8 @@ export class App implements OnInit, OnDestroy {
   ) {
     console.log(`[App] Constructor`);
 
-    // Inicialização da verificação de status do LCU
-    this.lcuCheckInterval = setInterval(() => this.startLCUStatusCheck(), this.LCU_CHECK_INTERVAL);
+    // ✅ REMOVIDO: Não criar interval duplicado aqui (será criado em ngOnInit)
+    // this.lcuCheckInterval = setInterval(() => this.startLCUStatusCheck(), this.LCU_CHECK_INTERVAL);
 
     this.isElectron = !!(window as any).electronAPI;
   }
@@ -285,8 +285,13 @@ export class App implements OnInit, OnDestroy {
           // Armazenar summonerName no ApiService ANTES de qualquer chamada HTTP
           this.apiService.setCurrentSummonerName(summonerName);
           console.log(`✅ [App] SummonerName configurado: ${summonerName}`);
+
+          // ✅ NOVO: Tentar carregar dados salvos deste jogador específico
+          await this.tryLoadPlayerData(summonerName);
         } else {
           console.log('⏳ [App] Carregando dados sem summonerName (fallback)...');
+          // Fallback: carregar sem summonerName específico (usará localStorage)
+          await this.tryLoadPlayerData();
         }
 
         // Agora que temos o summonerName, carregar dados do jogador via HTTP
@@ -373,10 +378,13 @@ export class App implements OnInit, OnDestroy {
       }
     };
 
-    // Disparar imediatamente e a cada N segundos
+    // ✅ OTIMIZADO: Usar polling mais lento quando jogador já identificado
+    const intervalTime = this.currentPlayer ? 15000 : 5000;
+
+    // Disparar imediatamente e depois repetir no intervalo
     tick();
-    this.lcuTelemetryInterval = setInterval(tick, this.LCU_TELEMETRY_INTERVAL_MS);
-    console.log('📡 [App] Telemetria LCU iniciada');
+    this.lcuTelemetryInterval = setInterval(tick, intervalTime);
+    console.log(`📡 [App] Telemetria LCU iniciada com intervalo de ${intervalTime}ms`);
   }
 
   // Simplificar para evitar referências indefinidas
@@ -960,8 +968,23 @@ export class App implements OnInit, OnDestroy {
     // Placeholder: enviar uma mensagem ao backend se necessário
   }
 
-  private savePlayerData(player: any): void {
-    try { localStorage.setItem('currentPlayer', JSON.stringify(player)); } catch { }
+  private async savePlayerData(player: any): Promise<void> {
+    const summonerName = player.summonerName || player.displayName || '';
+
+    if (this.isElectron && (window as any).electronAPI?.storage && summonerName) {
+      try {
+        const result = await (window as any).electronAPI.storage.savePlayerData(summonerName, player);
+        console.log(`💾 [Electron] Dados salvos para: ${summonerName}`, result);
+      } catch (error) {
+        console.error('❌ [Electron] Erro ao salvar via Electron storage:', error);
+        // Fallback para localStorage em caso de erro
+        try { localStorage.setItem('currentPlayer', JSON.stringify(player)); } catch { }
+      }
+    } else {
+      // Fallback para web ou se Electron storage não disponível
+      try { localStorage.setItem('currentPlayer', JSON.stringify(player)); } catch { }
+      console.log('💾 [Web] Dados salvos no localStorage');
+    }
   }
 
   private identifyCurrentPlayerOnConnect(): void {
@@ -1050,9 +1073,15 @@ export class App implements OnInit, OnDestroy {
             const displayName = (lcuData.gameName && lcuData.tagLine)
               ? `${lcuData.gameName}#${lcuData.tagLine}`
               : (lcuData.displayName || undefined);
+
+            // ✅ CORREÇÃO: summonerName deve ser gameName#tagLine completo
+            const summonerName = (lcuData.gameName && lcuData.tagLine)
+              ? `${lcuData.gameName}#${lcuData.tagLine}`
+              : (lcuData.gameName || lcuData.displayName || 'Unknown');
+
             const player: Player = {
               id: lcuData.summonerId || 0,
-              summonerName: lcuData.gameName || lcuData.displayName || 'Unknown',
+              summonerName,
               displayName,
               gameName: lcuData.gameName || null,
               tagLine: lcuData.tagLine || null,
@@ -1067,8 +1096,13 @@ export class App implements OnInit, OnDestroy {
               losses: undefined
             };
             this.currentPlayer = player;
-            this.savePlayerData(player);
+            this.savePlayerData(player).catch(err => console.error('Erro ao salvar dados:', err));
             this.updateSettingsForm();
+
+            // ✅ OTIMIZAÇÃO: Reiniciar intervalos com polling mais lento após identificar jogador
+            this.startLCUStatusCheck(); // Ajusta para intervalo de 20s
+            this.startLcuTelemetry(); // Ajusta para intervalo de 15s
+
             this.cdr.detectChanges();
           }
         },
@@ -1078,8 +1112,13 @@ export class App implements OnInit, OnDestroy {
           this.apiService.getPlayerFromLCU().subscribe({
             next: (player: Player) => {
               this.currentPlayer = player;
-              this.savePlayerData(player);
+              this.savePlayerData(player).catch(err => console.error('Erro ao salvar dados:', err));
               this.updateSettingsForm();
+
+              // ✅ OTIMIZAÇÃO: Reiniciar intervalos com polling mais lento após identificar jogador
+              this.startLCUStatusCheck(); // Ajusta para intervalo de 20s
+              this.startLcuTelemetry(); // Ajusta para intervalo de 15s
+
               this.cdr.detectChanges();
             },
             error: () => {
@@ -1672,7 +1711,7 @@ export class App implements OnInit, OnDestroy {
           console.error('❌ [App] Não foi possível extrair summonerName do player:', player);
         }
 
-        this.savePlayerData(player);
+        this.savePlayerData(player).catch(err => console.error('Erro ao salvar dados:', err));
         this.updateSettingsForm();
 
         // ✅ NOVO: Identificar jogador no WebSocket após carregar dados
@@ -1774,6 +1813,63 @@ export class App implements OnInit, OnDestroy {
     });
   }
 
+  private async tryLoadPlayerData(summonerName?: string): Promise<void> {
+    console.log('🔍 [App] Tentando carregar dados do jogador...', summonerName ? `para: ${summonerName}` : 'sem summonerName');
+
+    // Se estamos no Electron e temos um summonerName, tentar carregar do Electron storage
+    if (this.isElectron && (window as any).electronAPI?.storage && summonerName) {
+      try {
+        const result = await (window as any).electronAPI.storage.loadPlayerData(summonerName);
+        if (result.success && result.data) {
+          this.currentPlayer = result.data;
+
+          // ✅ Garantir que displayName seja definido se ausente
+          if (this.currentPlayer && !this.currentPlayer.displayName) {
+            if (this.currentPlayer.gameName && this.currentPlayer.tagLine) {
+              this.currentPlayer.displayName = `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`;
+              console.log('🔧 [App] DisplayName construído:', this.currentPlayer.displayName);
+            } else if (this.currentPlayer.summonerName?.includes('#')) {
+              this.currentPlayer.displayName = this.currentPlayer.summonerName;
+              console.log('🔧 [App] DisplayName definido como summonerName:', this.currentPlayer.displayName);
+            }
+          }
+
+          console.log(`✅ [Electron] Dados do jogador carregados: ${summonerName}`, result.path);
+          return;
+        } else {
+          console.log(`ℹ️ [Electron] Nenhum dado salvo encontrado para: ${summonerName}`);
+        }
+      } catch (error) {
+        console.warn('⚠️ [Electron] Erro ao carregar via Electron storage:', error);
+      }
+    }
+
+    // Fallback: tentar localStorage (para web ou se Electron storage falhar)
+    const stored = localStorage.getItem('currentPlayer');
+    if (stored) {
+      try {
+        this.currentPlayer = JSON.parse(stored);
+
+        // ✅ Garantir que displayName seja definido se ausente
+        if (this.currentPlayer && !this.currentPlayer.displayName) {
+          if (this.currentPlayer.gameName && this.currentPlayer.tagLine) {
+            this.currentPlayer.displayName = `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`;
+            console.log('🔧 [App] DisplayName construído do localStorage:', this.currentPlayer.displayName);
+          } else if (this.currentPlayer.summonerName?.includes('#')) {
+            this.currentPlayer.displayName = this.currentPlayer.summonerName;
+            console.log('🔧 [App] DisplayName definido como summonerName do localStorage:', this.currentPlayer.displayName);
+          }
+        }
+
+        console.log('✅ [Web] Dados do jogador carregados do localStorage, displayName:', this.currentPlayer?.displayName);
+      } catch (error) {
+        console.warn('⚠️ [App] Erro ao carregar do localStorage:', error);
+      }
+    } else {
+      console.log('ℹ️ [App] Nenhum dado encontrado no localStorage');
+    }
+  }
+
   private tryLoadFromLocalStorage(): void {
     const stored = localStorage.getItem('currentPlayer');
     if (stored) {
@@ -1791,18 +1887,24 @@ export class App implements OnInit, OnDestroy {
           }
         }
 
-        // ✅ CRÍTICO: Armazenar summonerName no ApiService ANTES de qualquer API call
-        if (this.currentPlayer) {
-          const playerName = this.currentPlayer.displayName || this.currentPlayer.summonerName || '';
-          if (playerName) {
-            this.apiService.setCurrentSummonerName(playerName);
-            console.log(`✅ [App] SummonerName configurado no ApiService (localStorage): ${playerName}`);
-          } else {
-            console.error('❌ [App] Não foi possível extrair summonerName do localStorage:', this.currentPlayer);
-          }
-        }
+        // ❌ REMOVIDO: NÃO setar summonerName do localStorage no ApiService!
+        // O summonerName DEVE vir APENAS do evento WebSocket 'lcu_connection_registered'
+        // para garantir que seja o jogador correto conectado no LCU agora.
+        // Setar do localStorage causava confusão quando testando em múltiplos PCs
+        // pois o localStorage pode ter dados de sessões antigas/outros jogadores.
+
+        // if (this.currentPlayer) {
+        //   const playerName = this.currentPlayer.displayName || this.currentPlayer.summonerName || '';
+        //   if (playerName) {
+        //     this.apiService.setCurrentSummonerName(playerName);
+        //     console.log(`✅ [App] SummonerName configurado no ApiService (localStorage): ${playerName}`);
+        //   } else {
+        //     console.error('❌ [App] Não foi possível extrair summonerName do localStorage:', this.currentPlayer);
+        //   }
+        // }
 
         console.log('✅ [App] Dados do jogador carregados do localStorage, displayName:', this.currentPlayer?.displayName);
+        console.log('⏳ [App] SummonerName será definido quando evento WebSocket "lcu_connection_registered" chegar');
       } catch (error) {
         console.warn('⚠️ [App] Erro ao carregar do localStorage:', error);
       }
@@ -1913,14 +2015,17 @@ export class App implements OnInit, OnDestroy {
   }
 
   private startLCUStatusCheck(): void {
-    // Evitar criação de múltiplos intervals
+    // ✅ OTIMIZADO: Se já temos jogador identificado, reduzir frequência de polling
+    // Limpar interval anterior se existir
     if (this.lcuCheckInterval) {
       clearInterval(this.lcuCheckInterval);
+      this.lcuCheckInterval = null;
     }
-    const intervalId = setInterval(() => {
+
+    // Função para fazer uma única verificação
+    const checkOnce = () => {
       this.apiService.getLCUStatus().subscribe({
         next: (status) => {
-          // status pode vir como { isConnected, status: {...} }
           const isConnected = !!(status && (status as any).isConnected);
           const details = (status as any).status || {};
           this.lcuStatus = {
@@ -1931,8 +2036,17 @@ export class App implements OnInit, OnDestroy {
         },
         error: () => this.lcuStatus = { isConnected: false }
       });
-    }, 5000);
-    (this as any).lcuCheckInterval = intervalId;
+    };
+
+    // Verificar imediatamente uma vez
+    checkOnce();
+
+    // ✅ Se já temos jogador identificado e conectado, usar polling mais lento (20s)
+    // ✅ Se não temos jogador, usar polling rápido (5s) para identificar logo
+    const intervalTime = this.currentPlayer ? 20000 : 5000;
+
+    this.lcuCheckInterval = setInterval(checkOnce, intervalTime);
+    console.log(`🔄 [App] LCU status check iniciado com intervalo de ${intervalTime}ms`);
   }
 
   // ✅ NOVO: Método para simular partida personalizada
