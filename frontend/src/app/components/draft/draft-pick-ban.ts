@@ -911,7 +911,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       logDraft(`🔄 [syncSessionWithBackend] URL: ${url}`);
       saveLogToRoot(`🔄 [syncSessionWithBackend] Sincronizando com: ${url}`);
 
-      const response: any = await firstValueFrom(this.http.get(url));
+      const response: any = await firstValueFrom(this.http.get(url, {
+        headers: this.apiService.getAuthenticatedHeaders()
+      }));
 
       // ✅ CORREÇÃO: Backend retorna dados diretamente (sem wrapper "session")
       if (!response || response.exists === false) {
@@ -971,7 +973,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         }
 
         const url = `${this.baseUrl}/match/${validation.effectiveMatchId}/draft-session`;
-        const response: any = await firstValueFrom(this.http.get(url));
+        const response: any = await firstValueFrom(this.http.get(url, {
+          headers: this.apiService.getAuthenticatedHeaders()
+        }));
 
         // ✅ CORREÇÃO: Backend retorna dados diretamente (sem wrapper)
         if (response && response.exists !== false) {
@@ -1871,7 +1875,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
       logDraft('🔄 [syncConfirmationData] Sincronizando dados de confirmação...');
 
-      const response = await firstValueFrom(this.http.get(`${this.baseUrl}/match/${this.matchId}/confirmation-status`));
+      const response = await firstValueFrom(this.http.get(`${this.baseUrl}/match/${this.matchId}/confirmation-status`, {
+        headers: this.apiService.getAuthenticatedHeaders()
+      }));
 
       if (response && (response as any).confirmationData) {
         this.confirmationData = (response as any).confirmationData;
@@ -2027,7 +2033,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
         const response = await firstValueFrom(this.http.post(url, requestData, {
           headers: {
-            'Content-Type': 'application/json',
+            ...this.apiService.getAuthenticatedHeaders(),
             'Accept': 'application/json'
           }
         }));
@@ -2072,7 +2078,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           try {
             saveLogToRoot(`🔄 [onanySelected] Tentativa fallback: ${JSON.stringify(fallbackRequestData)}`);
             const fallbackResponse = await firstValueFrom(this.http.post(fallbackUrl, fallbackRequestData, {
-              headers: { 'Content-Type': 'application/json' }
+              headers: this.apiService.getAuthenticatedHeaders()
             }));
             saveLogToRoot(`✅ [onanySelected] Fallback bem-sucedido: ${JSON.stringify(fallbackResponse)}`);
 
@@ -2136,6 +2142,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       const response = await firstValueFrom(this.http.post(`${this.baseUrl}/match/confirm-draft`, {
         matchId: this.matchId,
         playerId: playerId
+      }, {
+        headers: this.apiService.getAuthenticatedHeaders()
       }));
 
       logDraft('✅ [onConfirmationModalConfirm] Draft confirmado com sucesso:', response);
@@ -2294,6 +2302,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         championId: championId,
         action: 'pick', // Para changePlayerPick sempre é pick
         actionIndex: 0 // Para mudança de pick, usar 0 como padrão
+      }, {
+        headers: this.apiService.getAuthenticatedHeaders()
       }));
 
       logDraft('✅ [changePlayerPick] Pick alterado com sucesso:', response);
@@ -2358,7 +2368,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       console.log(`🔍 [updatePlayerPick] Request body: ${JSON.stringify(requestBody, null, 2)}`);
 
       console.log('📤 [updatePlayerPick] Enviando requisição HTTP...');
-      const response = await firstValueFrom(this.http.post(fullUrl, requestBody));
+      const response = await firstValueFrom(this.http.post(fullUrl, requestBody, {
+        headers: this.apiService.getAuthenticatedHeaders()
+      }));
       console.log('✅ [updatePlayerPick] Resposta recebida:', response);
 
       logDraft('✅ [updatePlayerPick] Pick atualizado com sucesso:', response);
