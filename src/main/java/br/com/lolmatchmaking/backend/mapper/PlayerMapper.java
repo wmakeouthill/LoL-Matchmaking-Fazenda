@@ -19,6 +19,7 @@ public interface PlayerMapper {
     @Mapping(target = "status", ignore = true) // Será preenchido externamente
     @Mapping(target = "gameName", ignore = true) // Será preenchido externamente
     @Mapping(target = "tagLine", ignore = true) // Será preenchido externamente
+    @Mapping(target = "statsLastUpdated", expression = "java(player.getStatsLastUpdated() != null ? player.getStatsLastUpdated().toString() : null)")
     PlayerDTO toDTO(Player player);
 
     @Mapping(target = "id", ignore = true)
@@ -35,5 +36,14 @@ public interface PlayerMapper {
     @Mapping(target = "customLosses", ignore = true)
     @Mapping(target = "customWinStreak", ignore = true)
     @Mapping(target = "customLp", ignore = true)
+    @Mapping(target = "lcuPort", ignore = true)
+    @Mapping(target = "lcuProtocol", ignore = true)
+    @Mapping(target = "lcuPassword", ignore = true)
+    @Mapping(target = "lcuLastUpdated", ignore = true)
+    @Mapping(target = "playerStatsDraft", ignore = true)
+    @Mapping(target = "masteryChampions", ignore = true)
+    @Mapping(target = "rankedChampions", ignore = true)
+    @Mapping(target = "statsLastUpdated", ignore = true)
+    @Mapping(target = "championshipTitles", ignore = true)
     Player toEntity(PlayerDTO playerDTO);
 }

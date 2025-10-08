@@ -488,8 +488,107 @@ public class PlayerController {
     }
 
     /**
-     * GET /api/summoner/{displayName}
-     * Busca invocador por nome de exibição
+     * GET /api/player/all
+     * Lista todos os jogadores registrados (para modais administrativos)
+     * ✅ REQUER: Header X-Summoner-Name para isolamento de sessão
+     */
+    @GetMapping("/all")
+    public ResponseEntity<Map<String, Object>> getAllPlayers(HttpServletRequest request) {
+        try {
+            // ✅ Validar header X-Summoner-Name para isolamento de sessão
+            String summonerName = SummonerAuthUtil.getSummonerNameFromRequest(request);
+            log.info("📋 [{}] Listando todos os jogadores", summonerName);
+
+            List<PlayerDTO> players = playerService.getAllPlayers();
+
+            // Retornar apenas dados básicos necessários para os modais
+            List<Map<String, Object>> playerList = players.stream()
+                    .map(player -> {
+                        Map<String, Object> data = new HashMap<>();
+                        data.put("summonerName", player.getSummonerName());
+                        data.put("gameName", player.getGameName());
+                        data.put("tagLine", player.getTagLine());
+                        data.put("lp", player.getCustomLp() != null ? player.getCustomLp() : 0);
+                        data.put("championshipTitles",
+                                player.getChampionshipTitles() != null ? player.getChampionshipTitles() : "[]");
+                        return data;
+                    })
+                    .toList();
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "players", playerList));
+
+        } catch (IllegalArgumentException e) {
+            log.warn("⚠️ Header X-Summoner-Name ausente em requisição de listar jogadores");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("success", false, "error", "Header X-Summoner-Name obrigatório"));
+        } catch (Exception e) {
+            log.error("❌ Erro ao listar jogadores", e);
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    /**
+     * GET /api/player/stats/{displayName}
+     * Busca estatísticas de jogador DIRETO DO BANCO (para modal de ajuda)
+     * ✅ REQUER: Header X-Summoner-Name para isolamento de sessão
+     * Retorna: player_stats_draft, mastery_champions, ranked_champions
+     */
+    @GetMapping("/stats/{displayName}")
+    public ResponseEntity<Map<String, Object>> getPlayerStats(
+            @PathVariable String displayName,
+            HttpServletRequest request) {
+        try {
+            // ✅ Validar header X-Summoner-Name para isolamento de sessão
+            String summonerName = SummonerAuthUtil.getSummonerNameFromRequest(request);
+            log.info("📊 [{}] Buscando estatísticas do banco para: {}", summonerName, displayName);
+
+            // Buscar jogador do banco via PlayerDTO
+            PlayerDTO playerDTO = playerService.getPlayerByDisplayName(displayName);
+
+            if (playerDTO == null) {
+                log.warn("⚠️ [{}] Jogador não encontrado: {}", summonerName, displayName);
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(Map.of("success", false, "error", "Jogador não encontrado"));
+            }
+
+            // Retornar dados do banco (JSON já parseado no frontend)
+            Map<String, Object> stats = new HashMap<>();
+            stats.put("success", true);
+            stats.put("summonerName", playerDTO.getSummonerName());
+            stats.put("gameName", playerDTO.getGameName());
+            stats.put("tagLine", playerDTO.getTagLine());
+
+            // Campos JSON (string) - frontend fará o parse
+            stats.put("playerStatsDraft",
+                    playerDTO.getPlayerStatsDraft() != null ? playerDTO.getPlayerStatsDraft() : "[]");
+            stats.put("masteryChampions",
+                    playerDTO.getMasteryChampions() != null ? playerDTO.getMasteryChampions() : "[]");
+            stats.put("rankedChampions",
+                    playerDTO.getRankedChampions() != null ? playerDTO.getRankedChampions() : "[]");
+            stats.put("statsLastUpdated",
+                    playerDTO.getStatsLastUpdated() != null ? playerDTO.getStatsLastUpdated() : null);
+
+            log.info("✅ [{}] Estatísticas encontradas para: {}", summonerName, displayName);
+            return ResponseEntity.ok(stats);
+
+        } catch (IllegalArgumentException e) {
+            log.warn("⚠️ Header X-Summoner-Name ausente em requisição de stats");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("success", false, "error", "Header X-Summoner-Name obrigatório"));
+        } catch (Exception e) {
+            log.error("❌ Erro ao buscar estatísticas do jogador", e);
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    /**
+     * GET /api/player/summoner/{displayName}
+     * Busca invocador por nome de exibição NA RIOT API (usado por outras
+     * funcionalidades)
      * ✅ MODIFICADO: Valida header X-Summoner-Name
      */
     @GetMapping("/summoner/{displayName}")
@@ -499,7 +598,7 @@ public class PlayerController {
         try {
             // ✅ Validar header X-Summoner-Name
             String summonerName = SummonerAuthUtil.getSummonerNameFromRequest(request);
-            log.info("🔍 [{}] Buscando invocador: {}", summonerName, displayName);
+            log.info("🔍 [{}] Buscando invocador na Riot API: {}", summonerName, displayName);
 
             Map<String, Object> summonerData = riotAPIService.getSummonerByDisplayName(displayName, "br1");
             if (summonerData != null) {
