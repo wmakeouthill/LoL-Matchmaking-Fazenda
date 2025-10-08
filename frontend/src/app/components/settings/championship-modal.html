@@ -1,0 +1,107 @@
+<div class="modal-overlay" *ngIf="isVisible" (click)="close()" role="dialog" aria-modal="true" aria-label="Premiar Campeonato">
+  <div class="modal-container" (click)="$event.stopPropagation()">
+    <!-- Header -->
+    <div class="modal-header">
+      <h2>🏆 Premiar Campeonato</h2>
+      <button class="close-btn" (click)="close()" aria-label="Fechar">✕</button>
+    </div>
+
+    <!-- Formulário -->
+    <div class="modal-body">
+      <!-- Seleção de Jogador -->
+      <div class="form-group">
+        <label for="player-select">Jogador:</label>
+        <select
+          id="player-select"
+          [(ngModel)]="selectedPlayer"
+          class="form-control"
+          [disabled]="loading">
+          <option value="">Selecione um jogador</option>
+          <option *ngFor="let player of players" [value]="player.summonerName">
+            {{ player.summonerName }}
+          </option>
+        </select>
+      </div>
+
+      <!-- Seleção de Campeonato -->
+      <div class="form-group">
+        <label>Título de Campeonato:</label>
+        <div class="championships-grid">
+          <div
+            *ngFor="let championship of championships"
+            class="championship-card"
+            [class.selected]="selectedChampionship?.id === championship.id"
+            (click)="onChampionshipSelect(championship)">
+            <div class="championship-icon">{{ championship.name }}</div>
+            <div class="championship-info">
+              <div class="championship-description">{{ championship.description }}</div>
+              <div class="championship-lp">+{{ championship.defaultLp }} LP</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bônus de LP Customizado -->
+      <div class="form-group" *ngIf="selectedChampionship">
+        <label for="lp-bonus">Bônus de LP:</label>
+        <input
+          type="number"
+          id="lp-bonus"
+          [(ngModel)]="customLpBonus"
+          class="form-control"
+          min="1"
+          [disabled]="loading">
+        <small class="help-text">
+          Você pode ajustar o bônus de LP padrão
+        </small>
+      </div>
+
+      <!-- Preview da Premiação -->
+      <div class="award-preview" *ngIf="selectedPlayer && selectedChampionship">
+        <div class="preview-header">📋 Preview da Premiação:</div>
+        <div class="preview-content">
+          <div class="preview-item">
+            <span class="preview-label">Jogador:</span>
+            <span class="preview-value">{{ selectedPlayer }}</span>
+          </div>
+          <div class="preview-item">
+            <span class="preview-label">Título:</span>
+            <span class="preview-value">{{ selectedChampionship.name }}</span>
+          </div>
+          <div class="preview-item">
+            <span class="preview-label">Bônus LP:</span>
+            <span class="preview-value">+{{ customLpBonus }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mensagens -->
+      <div class="alert alert-error" *ngIf="errorMessage">
+        ❌ {{ errorMessage }}
+      </div>
+
+      <div class="alert alert-success" *ngIf="successMessage">
+        ✅ {{ successMessage }}
+      </div>
+
+      <!-- Loading -->
+      <div class="loading-spinner" *ngIf="loading">
+        <div class="spinner"></div>
+        <span>Processando...</span>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="modal-footer">
+      <button class="btn btn-secondary" (click)="close()" [disabled]="loading">
+        Cancelar
+      </button>
+      <button
+        class="btn btn-primary"
+        (click)="awardChampionship()"
+        [disabled]="loading || !selectedPlayer || !selectedChampionship">
+        🏆 Premiar Jogador
+      </button>
+    </div>
+  </div>
+</div>

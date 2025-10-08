@@ -278,7 +278,7 @@ export class DraftConfirmationModalComponent implements OnChanges {
 
         const response = await firstValueFrom(
           this.http.post<any>(url, body, {
-            headers: { 'Content-Type': 'application/json' }
+            headers: this.apiService.getAuthenticatedHeaders()
           })
         );
 
@@ -1072,7 +1072,7 @@ export class DraftConfirmationModalComponent implements OnChanges {
 
       const response: any = await firstValueFrom(
         this.http.post(url, body, {
-          headers: { 'Content-Type': 'application/json' }
+          headers: this.apiService.getAuthenticatedHeaders()
         })
       );
 

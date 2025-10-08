@@ -10,6 +10,8 @@ import { LeaderboardComponent } from './components/leaderboard/leaderboard';
 import { MatchFoundComponent, MatchFoundData } from './components/match-found/match-found';
 import { DraftPickBanComponent } from './components/draft/draft-pick-ban';
 import { GameInProgressComponent } from './components/game-in-progress/game-in-progress';
+import { AdjustLpModalComponent } from './components/settings/adjust-lp-modal';
+import { ChampionshipModalComponent } from './components/settings/championship-modal';
 import { ApiService } from './services/api';
 import { QueueStateService } from './services/queue-state';
 import { DiscordIntegrationService } from './services/discord-integration.service';
@@ -30,7 +32,9 @@ import { logApp } from './utils/app-logger';
     LeaderboardComponent,
     MatchFoundComponent,
     DraftPickBanComponent,
-    GameInProgressComponent
+    GameInProgressComponent,
+    AdjustLpModalComponent,
+    ChampionshipModalComponent
   ],
   templateUrl: './app-simple.html',
   styleUrl: './app.scss'
@@ -99,6 +103,10 @@ export class App implements OnInit, OnDestroy {
     activeMatches: 0,
     inChannel: false
   };
+
+  // ✅ NOVO: Controle dos modais de Special Users
+  showAdjustLpModal: boolean = false;
+  showChampionshipModal: boolean = false;
 
   private readonly destroy$ = new Subject<void>();
   private lastIgnoreLogTime = 0;
@@ -1227,6 +1235,38 @@ export class App implements OnInit, OnDestroy {
       return String((playerInfo as any).name).toLowerCase().trim();
     }
     return '';
+  }
+
+  // ✅ NOVO: Métodos para controlar modais de Special Users
+
+  openAdjustLpModal(): void {
+    console.log('💰 [App] Abrindo modal de ajustar LP');
+    this.showAdjustLpModal = true;
+  }
+
+  closeAdjustLpModal(): void {
+    console.log('💰 [App] Fechando modal de ajustar LP');
+    this.showAdjustLpModal = false;
+  }
+
+  onLpAdjusted(event: any): void {
+    console.log('✅ [App] LP ajustado com sucesso:', event);
+    // Pode adicionar lógica adicional aqui, como atualizar leaderboard
+  }
+
+  openChampionshipModal(): void {
+    console.log('🏆 [App] Abrindo modal de campeonatos');
+    this.showChampionshipModal = true;
+  }
+
+  closeChampionshipModal(): void {
+    console.log('🏆 [App] Fechando modal de campeonatos');
+    this.showChampionshipModal = false;
+  }
+
+  onChampionshipAwarded(event: any): void {
+    console.log('✅ [App] Campeonato premiado com sucesso:', event);
+    // Pode adicionar lógica adicional aqui, como atualizar leaderboard
   }
 
   // ✅ SIMPLIFICADO: Apenas comunicar com backend
