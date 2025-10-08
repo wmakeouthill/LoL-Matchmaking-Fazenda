@@ -120,6 +120,11 @@ public class Player {
     @Column(name = "updated_at")
     private Instant updatedAt;
 
+    // ✅ NOVO: Títulos de campeonato conquistados (JSON array)
+    @Column(name = "championship_titles", columnDefinition = "TEXT")
+    private String championshipTitles; // JSON: [{"title": "🏆 Campeão da Colheita 2025", "date":
+                                       // "2025-10-08T10:00:00Z", "lpBonus": 100}]
+
     @PrePersist
     public void prePersist() {
         Instant now = Instant.now();
@@ -135,6 +140,8 @@ public class Player {
             customPeakMmr = customMmr;
         if (customLp == null)
             customLp = 0;
+        if (championshipTitles == null)
+            championshipTitles = "[]"; // ✅ NOVO: Inicializar como array vazio
     }
 
     @PreUpdate

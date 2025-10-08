@@ -1,0 +1,18 @@
+databaseChangeLog:
+  - changeSet:
+      id: 0009-add-championship-titles
+      author: system
+      changes:
+        - addColumn:
+            tableName: players
+            columns:
+              - column:
+                  name: championship_titles
+                  type: TEXT
+                  remarks: 'JSON array storing championship titles awarded to the player'
+        - sql:
+            sql: UPDATE players SET championship_titles = '[]' WHERE championship_titles IS NULL
+      rollback:
+        - dropColumn:
+            tableName: players
+            columnName: championship_titles

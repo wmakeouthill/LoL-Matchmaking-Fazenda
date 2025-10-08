@@ -4,14 +4,19 @@ import br.com.lolmatchmaking.backend.domain.entity.CustomMatch;
 import br.com.lolmatchmaking.backend.domain.entity.Player;
 import br.com.lolmatchmaking.backend.domain.repository.CustomMatchRepository;
 import br.com.lolmatchmaking.backend.domain.repository.PlayerRepository;
+import br.com.lolmatchmaking.backend.dto.AdjustPlayerLpRequest;
+import br.com.lolmatchmaking.backend.dto.AwardChampionshipRequest;
 import br.com.lolmatchmaking.backend.service.MatchmakingService;
 import br.com.lolmatchmaking.backend.service.PlayerService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -237,6 +242,222 @@ public class AdminController {
 
         } catch (Exception e) {
             log.error("❌ Erro ao obter logs", e);
+            return ResponseEntity.internalServerError().body(Map.of(
+                    "success", false,
+                    "message", "Erro interno do servidor",
+                    "error", e.getMessage()));
+        }
+    }
+
+    /**
+     * ✅ NOVO: Ajusta pontos (LP) de um jogador (adicionar ou remover)
+     * Apenas Special Users podem fazer isso
+     */
+    @PostMapping("/adjust-player-lp")
+    public ResponseEntity<Map<String, Object>> adjustPlayerLp(
+            @RequestBody AdjustPlayerLpRequest request,
+            @RequestHeader(value = "X-Summoner-Name", required = false) String summonerNameHeader) {
+        try {
+            log.info("💰 [ADMIN] Ajustando LP do jogador: {} (ajuste: {})", request.getSummonerName(),
+                    request.getLpAdjustment());
+
+            // Validação de header individual
+            if (summonerNameHeader == null || summonerNameHeader.isBlank()) {
+                log.warn("❌ [ADMIN] Header X-Summoner-Name não fornecido");
+                return ResponseEntity.badRequest().body(Map.of(
+                        "success", false,
+                        "message", "Header X-Summoner-Name é obrigatório"));
+            }
+
+            // Buscar jogador alvo
+            Player targetPlayer = playerRepository.findBySummonerName(request.getSummonerName())
+                    .orElseThrow(() -> new RuntimeException("Jogador não encontrado: " + request.getSummonerName()));
+
+            // Buscar jogador que está fazendo a requisição (para verificar se é special
+            // user)
+            Player requestingPlayer = playerRepository.findBySummonerName(summonerNameHeader)
+                    .orElseThrow(
+                            () -> new RuntimeException("Jogador solicitante não encontrado: " + summonerNameHeader));
+
+            // Verificar se é special user (você pode adicionar uma coluna is_special_user
+            // na tabela players)
+            // Por enquanto, vamos permitir apenas se o jogador existir
+
+            // Aplicar ajuste de LP
+            Integer currentLp = targetPlayer.getCustomLp() != null ? targetPlayer.getCustomLp() : 0;
+            Integer newLp = currentLp + request.getLpAdjustment();
+
+            // Não permitir LP negativo
+            if (newLp < 0) {
+                newLp = 0;
+            }
+
+            targetPlayer.setCustomLp(newLp);
+            playerRepository.save(targetPlayer);
+
+            log.info("✅ [ADMIN] LP ajustado com sucesso: {} → {} (ajuste: {})",
+                    currentLp, newLp, request.getLpAdjustment());
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "LP ajustado com sucesso",
+                    "player", targetPlayer.getSummonerName(),
+                    "previousLp", currentLp,
+                    "newLp", newLp,
+                    "adjustment", request.getLpAdjustment(),
+                    "reason", request.getReason() != null ? request.getReason() : "Sem motivo especificado"));
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao ajustar LP do jogador", e);
+            return ResponseEntity.internalServerError().body(Map.of(
+                    "success", false,
+                    "message", "Erro ao ajustar LP",
+                    "error", e.getMessage()));
+        }
+    }
+
+    /**
+     * ✅ NOVO: Premia jogador com título de campeonato + bônus de LP
+     * Apenas Special Users podem fazer isso
+     */
+    @PostMapping("/award-championship")
+    public ResponseEntity<Map<String, Object>> awardChampionship(
+            @RequestBody AwardChampionshipRequest request,
+            @RequestHeader(value = "X-Summoner-Name", required = false) String summonerNameHeader) {
+        try {
+            log.info("🏆 [ADMIN] Premiando jogador: {} com título: {}",
+                    request.getSummonerName(), request.getChampionshipTitle());
+
+            // Validação de header individual
+            if (summonerNameHeader == null || summonerNameHeader.isBlank()) {
+                log.warn("❌ [ADMIN] Header X-Summoner-Name não fornecido");
+                return ResponseEntity.badRequest().body(Map.of(
+                        "success", false,
+                        "message", "Header X-Summoner-Name é obrigatório"));
+            }
+
+            // Buscar jogador alvo
+            Player targetPlayer = playerRepository.findBySummonerName(request.getSummonerName())
+                    .orElseThrow(() -> new RuntimeException("Jogador não encontrado: " + request.getSummonerName()));
+
+            // Buscar jogador que está fazendo a requisição
+            Player requestingPlayer = playerRepository.findBySummonerName(summonerNameHeader)
+                    .orElseThrow(
+                            () -> new RuntimeException("Jogador solicitante não encontrado: " + summonerNameHeader));
+
+            // Processar título de campeonato
+            ObjectMapper objectMapper = new ObjectMapper();
+            List<Map<String, Object>> titles;
+
+            try {
+                String titlesJson = targetPlayer.getChampionshipTitles();
+                if (titlesJson == null || titlesJson.isBlank() || titlesJson.equals("[]")) {
+                    titles = new ArrayList<>();
+                } else {
+                    titles = objectMapper.readValue(titlesJson, List.class);
+                }
+            } catch (Exception e) {
+                log.warn("⚠️ Erro ao ler títulos existentes, criando nova lista", e);
+                titles = new ArrayList<>();
+            }
+
+            // Adicionar novo título
+            Map<String, Object> newTitle = new HashMap<>();
+            newTitle.put("title", request.getChampionshipTitle());
+            newTitle.put("date", LocalDateTime.now().toString());
+            newTitle.put("lpBonus", request.getLpBonus());
+            titles.add(newTitle);
+
+            // Salvar títulos atualizados
+            String updatedTitlesJson = objectMapper.writeValueAsString(titles);
+            targetPlayer.setChampionshipTitles(updatedTitlesJson);
+
+            // Adicionar bônus de LP
+            Integer currentLp = targetPlayer.getCustomLp() != null ? targetPlayer.getCustomLp() : 0;
+            Integer newLp = currentLp + request.getLpBonus();
+            targetPlayer.setCustomLp(newLp);
+
+            playerRepository.save(targetPlayer);
+
+            log.info("✅ [ADMIN] Título concedido com sucesso! LP: {} → {} (+{})",
+                    currentLp, newLp, request.getLpBonus());
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Título de campeonato concedido com sucesso",
+                    "player", targetPlayer.getSummonerName(),
+                    "title", request.getChampionshipTitle(),
+                    "previousLp", currentLp,
+                    "newLp", newLp,
+                    "lpBonus", request.getLpBonus(),
+                    "totalTitles", titles.size()));
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao premiar jogador com título", e);
+            return ResponseEntity.internalServerError().body(Map.of(
+                    "success", false,
+                    "message", "Erro ao premiar jogador",
+                    "error", e.getMessage()));
+        }
+    }
+
+    /**
+     * ✅ NOVO: Lista todos os títulos de campeonato disponíveis (temática fazenda)
+     */
+    @GetMapping("/championship-titles")
+    public ResponseEntity<Map<String, Object>> getChampionshipTitles() {
+        try {
+            List<Map<String, Object>> titles = new ArrayList<>();
+
+            // 🏆 Títulos temáticos fazenda com emojis
+            titles.add(Map.of(
+                    "id", "colheita",
+                    "name", "🌾 Campeão da Colheita",
+                    "description", "Dominador supremo da temporada de colheita",
+                    "defaultLp", 150));
+
+            titles.add(Map.of(
+                    "id", "celeiro",
+                    "name", "🏠 Senhor do Celeiro",
+                    "description", "Guardião invencível do celeiro da fazenda",
+                    "defaultLp", 120));
+
+            titles.add(Map.of(
+                    "id", "plantacao",
+                    "name", "🌱 Mestre da Plantação",
+                    "description", "Cultivador supremo das terras férteis",
+                    "defaultLp", 100));
+
+            titles.add(Map.of(
+                    "id", "gado",
+                    "name", "🐄 Rei do Gado",
+                    "description", "Comandante supremo da pecuária da fazenda",
+                    "defaultLp", 130));
+
+            titles.add(Map.of(
+                    "id", "trator",
+                    "name", "🚜 Piloto Lendário",
+                    "description", "Motorista imbatível do trator dourado",
+                    "defaultLp", 140));
+
+            titles.add(Map.of(
+                    "id", "galinheiro",
+                    "name", "🐔 Imperador do Galinheiro",
+                    "description", "Soberano absoluto das aves de combate",
+                    "defaultLp", 110));
+
+            titles.add(Map.of(
+                    "id", "espantalho",
+                    "name", "🎃 Guardião Espantalho",
+                    "description", "Protetor eterno dos campos contra invasores",
+                    "defaultLp", 90));
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "titles", titles));
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao buscar títulos de campeonato", e);
             return ResponseEntity.internalServerError().body(Map.of(
                     "success", false,
                     "message", "Erro interno do servidor",

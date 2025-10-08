@@ -80,8 +80,19 @@
                 [alt]="champ.name"
               />
               <div class="pick-info">
-                <span class="champion-name">{{ champ.name }}</span>
-                <span class="player-name">{{ player.summonerName }}</span>
+                <div class="player-header">
+                  <div class="player-info-text">
+                    <span class="champion-name">{{ champ.name }}</span>
+                    <span class="player-name">{{ player.summonerName }}</span>
+                  </div>
+                  <button
+                    class="help-btn"
+                    (click)="openPlayerHelpModal(player)"
+                    title="Ver estatísticas do jogador"
+                    aria-label="Ver estatísticas do jogador">
+                    ❓
+                  </button>
+                </div>
                 <div class="lane-info">
                   <span class="player-lane">{{ getLaneDisplayWithAutofill(player) }}</span>
                   <span
@@ -101,8 +112,19 @@
             <ng-template #pickPlaceholder>
               <div class="champion-placeholder">?</div>
               <div class="pick-info">
-                <span class="champion-name">Aguardando Pick</span>
-                <span class="player-name">{{ player.summonerName }}</span>
+                <div class="player-header">
+                  <div class="player-info-text">
+                    <span class="champion-name">Aguardando Pick</span>
+                    <span class="player-name">{{ player.summonerName }}</span>
+                  </div>
+                  <button
+                    class="help-btn"
+                    (click)="openPlayerHelpModal(player)"
+                    title="Ver estatísticas do jogador"
+                    aria-label="Ver estatísticas do jogador">
+                    ❓
+                  </button>
+                </div>
                 <div class="lane-info">
                   <span class="player-lane">{{ getLaneDisplayWithAutofill(player) }}</span>
                   <span
@@ -171,8 +193,19 @@
                 [alt]="champ.name"
               />
               <div class="pick-info">
-                <span class="champion-name">{{ champ.name }}</span>
-                <span class="player-name">{{ player.summonerName }}</span>
+                <div class="player-header">
+                  <div class="player-info-text">
+                    <span class="champion-name">{{ champ.name }}</span>
+                    <span class="player-name">{{ player.summonerName }}</span>
+                  </div>
+                  <button
+                    class="help-btn"
+                    (click)="openPlayerHelpModal(player)"
+                    title="Ver estatísticas do jogador"
+                    aria-label="Ver estatísticas do jogador">
+                    ❓
+                  </button>
+                </div>
                 <div class="lane-info">
                   <span class="player-lane">{{ getLaneDisplayWithAutofill(player) }}</span>
                   <span
@@ -192,8 +225,19 @@
             <ng-template #pickPlaceholderRed>
               <div class="champion-placeholder">?</div>
               <div class="pick-info">
-                <span class="champion-name">Aguardando Pick</span>
-                <span class="player-name">{{ player.summonerName }}</span>
+                <div class="player-header">
+                  <div class="player-info-text">
+                    <span class="champion-name">Aguardando Pick</span>
+                    <span class="player-name">{{ player.summonerName }}</span>
+                  </div>
+                  <button
+                    class="help-btn"
+                    (click)="openPlayerHelpModal(player)"
+                    title="Ver estatísticas do jogador"
+                    aria-label="Ver estatísticas do jogador">
+                    ❓
+                  </button>
+                </div>
                 <div class="lane-info">
                   <span class="player-lane">{{ getLaneDisplayWithAutofill(player) }}</span>
                   <span
@@ -266,6 +310,14 @@
     (onRefreshDraft)="onConfirmationModalRefresh()"
   >
   </app-draft-confirmation-modal>
+
+  <!-- ✅ NOVO: Modal de Ajuda do Jogador -->
+  <app-draft-player-help-modal
+    [isVisible]="showPlayerHelpModal"
+    [playerName]="selectedPlayerNameForHelp"
+    [playerSummonerName]="selectedPlayerForHelp"
+    (closed)="closePlayerHelpModal()">
+  </app-draft-player-help-modal>
 </div>
 
 <!-- Loading state -->

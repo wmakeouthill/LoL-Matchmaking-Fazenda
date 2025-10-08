@@ -15,3 +15,5 @@ databaseChangeLog:
       file: db/changelog/changes/0007-add-player-stats-draft.yaml
   - include:
       file: db/changelog/changes/0008-add-lcu-config-to-players.yaml
+  - include:
+      file: db/changelog/changes/0009-add-championship-titles.yaml

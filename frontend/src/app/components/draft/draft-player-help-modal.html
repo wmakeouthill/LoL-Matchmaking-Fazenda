@@ -1,0 +1,175 @@
+<div class="modal-overlay" *ngIf="isVisible" (click)="close()" role="dialog" aria-modal="true" [attr.aria-label]="'Estatísticas de ' + playerName">
+  <div class="modal-container" (click)="$event.stopPropagation()">
+    <!-- Header -->
+    <div class="modal-header">
+      <div class="modal-title">
+        <span class="icon">📊</span>
+        <h2>Estatísticas de {{ playerName || playerSummonerName }}</h2>
+      </div>
+      <button class="close-btn" (click)="close()">✕</button>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button
+        class="tab-btn"
+        [class.active]="activeTab === 'draft'"
+        (click)="setTab('draft')">
+        🎮 Draft (Servidor)
+      </button>
+      <button
+        class="tab-btn"
+        [class.active]="activeTab === 'mastery'"
+        (click)="setTab('mastery')">
+        ⭐ Maestria
+      </button>
+      <button
+        class="tab-btn"
+        [class.active]="activeTab === 'ranked'"
+        (click)="setTab('ranked')">
+        🏆 Ranqueada
+      </button>
+    </div>
+
+    <!-- Content -->
+    <div class="modal-content">
+      <!-- Loading State -->
+      <div *ngIf="loading" class="loading-state">
+        <div class="spinner"></div>
+        <p>Carregando dados...</p>
+      </div>
+
+      <!-- Error State -->
+      <div *ngIf="!loading && errorMessage" class="error-state">
+        <span class="error-icon">⚠️</span>
+        <p>{{ errorMessage }}</p>
+        <button class="retry-btn" (click)="loadPlayerData()">Tentar Novamente</button>
+      </div>
+
+      <!-- Data Loaded -->
+      <div *ngIf="!loading && !errorMessage && playerData" class="data-container">
+
+        <!-- Tab: Draft Stats -->
+        <div *ngIf="activeTab === 'draft'" class="tab-content">
+          <div *ngIf="playerData.draftStats.length === 0" class="empty-state">
+            <p>Nenhum dado de draft disponível</p>
+          </div>
+          <div *ngIf="playerData.draftStats.length > 0" class="champions-grid">
+            <div *ngFor="let champ of playerData.draftStats" class="champion-card">
+              <div class="champion-header">
+                <div class="champion-icon">🎮</div>
+                <div class="champion-info">
+                  <h4>{{ champ.championName }}</h4>
+                  <span class="champion-id">ID: {{ champ.championId }}</span>
+                </div>
+              </div>
+              <div class="champion-stats">
+                <div class="stat-row">
+                  <span class="stat-label">Partidas:</span>
+                  <span class="stat-value">{{ champ.gamesPlayed }}</span>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-label">Vitórias:</span>
+                  <span class="stat-value wins">{{ champ.wins }}</span>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-label">Derrotas:</span>
+                  <span class="stat-value losses">{{ champ.losses }}</span>
+                </div>
+                <div class="stat-row highlight">
+                  <span class="stat-label">Win Rate:</span>
+                  <span class="stat-value" [class.high-wr]="champ.winRate >= 55" [class.low-wr]="champ.winRate < 45">
+                    {{ formatWinRate(champ.winRate) }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab: Mastery -->
+        <div *ngIf="activeTab === 'mastery'" class="tab-content">
+          <div *ngIf="playerData.masteryChampions.length === 0" class="empty-state">
+            <p>Nenhum dado de maestria disponível</p>
+          </div>
+          <div *ngIf="playerData.masteryChampions.length > 0" class="champions-grid">
+            <div *ngFor="let champ of playerData.masteryChampions" class="champion-card">
+              <div class="champion-header">
+                <div class="mastery-badge" [style.background-color]="getMasteryColor(champ.championLevel)">
+                  <span class="mastery-level">{{ champ.championLevel }}</span>
+                </div>
+                <div class="champion-info">
+                  <h4>{{ champ.championName }}</h4>
+                  <span class="champion-id">ID: {{ champ.championId }}</span>
+                </div>
+              </div>
+              <div class="champion-stats">
+                <div class="stat-row highlight">
+                  <span class="stat-label">Pontos:</span>
+                  <span class="stat-value points">{{ formatNumber(champ.championPoints) }}</span>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-label">Desde Último:</span>
+                  <span class="stat-value">{{ formatNumber(champ.championPointsSinceLastLevel) }}</span>
+                </div>
+                <div class="stat-row" *ngIf="champ.championLevel < 7">
+                  <span class="stat-label">Até Próximo:</span>
+                  <span class="stat-value">{{ formatNumber(Math.abs(champ.championPointsUntilNextLevel)) }}</span>
+                </div>
+                <div class="stat-row" *ngIf="champ.championLevel >= 7">
+                  <span class="stat-badge max-level">Maestria Máxima</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab: Ranked -->
+        <div *ngIf="activeTab === 'ranked'" class="tab-content">
+          <div *ngIf="playerData.rankedChampions.length === 0" class="empty-state">
+            <p>Nenhum dado ranqueado disponível</p>
+          </div>
+          <div *ngIf="playerData.rankedChampions.length > 0" class="champions-grid">
+            <div *ngFor="let champ of playerData.rankedChampions" class="champion-card">
+              <div class="champion-header">
+                <div class="champion-icon ranked">🏆</div>
+                <div class="champion-info">
+                  <h4>{{ champ.championName }}</h4>
+                  <span class="tier-badge" [style.background-color]="getTierColor(champ.tier)">
+                    {{ champ.tier.replace('RANKED_', '') }}
+                  </span>
+                </div>
+              </div>
+              <div class="champion-stats">
+                <div class="stat-row">
+                  <span class="stat-label">Partidas:</span>
+                  <span class="stat-value">{{ champ.gamesPlayed }}</span>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-label">Vitórias:</span>
+                  <span class="stat-value wins">{{ champ.wins }}</span>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-label">Derrotas:</span>
+                  <span class="stat-value losses">{{ champ.losses }}</span>
+                </div>
+                <div class="stat-row highlight">
+                  <span class="stat-label">Win Rate:</span>
+                  <span class="stat-value" [class.high-wr]="champ.winRate >= 55" [class.low-wr]="champ.winRate < 45">
+                    {{ formatWinRate(champ.winRate) }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="modal-footer">
+      <button class="btn-secondary" (click)="close()">Fechar</button>
+    </div>
+  </div>
+</div>

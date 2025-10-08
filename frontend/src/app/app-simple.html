@@ -912,6 +912,50 @@
               >
                 🧹 Limpar Partidas de Teste
               </button>
+
+              <button
+                type="button"
+                (click)="openAdjustLpModal()"
+                style="
+                  background: linear-gradient(135deg, #f39c12 0%, #f1c40f 100%);
+                  color: #0f1419;
+                  border: none;
+                  padding: 12px 24px;
+                  border-radius: 8px;
+                  font-weight: bold;
+                  cursor: pointer;
+                  transition: all 0.3s ease;
+                  box-shadow: 0 4px 12px rgba(243, 156, 18, 0.3);
+                  display: flex;
+                  align-items: center;
+                  gap: 0.5rem;
+                  font-size: 1rem;
+                "
+              >
+                💰 Gerenciar Pontos (LP)
+              </button>
+
+              <button
+                type="button"
+                (click)="openChampionshipModal()"
+                style="
+                  background: linear-gradient(135deg, #16a085 0%, #1abc9c 100%);
+                  color: #ffffff;
+                  border: none;
+                  padding: 12px 24px;
+                  border-radius: 8px;
+                  font-weight: bold;
+                  cursor: pointer;
+                  transition: all 0.3s ease;
+                  box-shadow: 0 4px 12px rgba(22, 160, 133, 0.3);
+                  display: flex;
+                  align-items: center;
+                  gap: 0.5rem;
+                  font-size: 1rem;
+                "
+              >
+                🏆 Premiar Campeonato
+              </button>
             </div>
 
             <div
@@ -949,6 +993,22 @@
     (declineMatch)="onDeclineMatch($event)"
   >
   </app-match-found>
+
+  <!-- Adjust LP Modal -->
+  <app-adjust-lp-modal
+    [isVisible]="showAdjustLpModal"
+    (closed)="closeAdjustLpModal()"
+    (lpAdjusted)="onLpAdjusted($event)"
+  >
+  </app-adjust-lp-modal>
+
+  <!-- Championship Modal -->
+  <app-championship-modal
+    [isVisible]="showChampionshipModal"
+    (closed)="closeChampionshipModal()"
+    (championshipAwarded)="onChampionshipAwarded($event)"
+  >
+  </app-championship-modal>
 
   <!-- Enhanced Notifications -->
   <div class="notifications-container">

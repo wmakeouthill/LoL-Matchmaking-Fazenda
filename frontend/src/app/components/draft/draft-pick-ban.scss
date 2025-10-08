@@ -1,10 +1,13 @@
 // ========== ESTILOS PRINCIPAIS ==========
 .draft-pick-ban {
-  padding: 10px;
+  padding: 10px 10px 10px 10px; // ✅ AJUSTADO: Padding uniforme sem excesso embaixo
   background: linear-gradient(135deg, #0a1428 0%, #1e2e4b 100%);
-  min-height: 100vh;
+  min-height: auto; // ✅ AJUSTADO: Remove altura mínima fixa, adapta ao conteúdo
+  height: fit-content; // ✅ AJUSTADO: Altura se ajusta ao conteúdo
   color: #f0f2f5;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  display: flex; // ✅ AJUSTADO: Flexbox para melhor controle
+  flex-direction: column; // ✅ AJUSTADO: Coluna vertical
 }
 
 // ========== HEADER ==========
@@ -156,7 +159,7 @@
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   gap: 16px;
-  margin-bottom: 16px;
+  margin-bottom: 0; // ✅ AJUSTADO: Remove margem inferior extra
 }
 
 // ========== ESTILOS DOS TIMES ==========
@@ -323,6 +326,48 @@
   flex-direction: column;
   gap: 2px;
   flex: 1;
+}
+
+// ✅ NOVO: Header com nome do jogador e botão de ajuda
+.player-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+}
+
+.player-info-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0; // Permite truncamento de texto
+}
+
+// ✅ NOVO: Botão de ajuda do jogador
+.help-btn {
+  background: rgba(200, 170, 110, 0.1);
+  border: 1px solid rgba(200, 170, 110, 0.3);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: #c8aa6e;
+  flex-shrink: 0;
+  line-height: 1;
+
+  &:hover {
+    background: rgba(200, 170, 110, 0.2);
+    border-color: rgba(200, 170, 110, 0.5);
+    transform: scale(1.1);
+    box-shadow: 0 2px 8px rgba(200, 170, 110, 0.3);
+  }
+
+  &:active {
+    transform: scale(0.95);
+  }
 }
 
 .champion-name {

@@ -1,0 +1,82 @@
+<div class="modal-overlay" *ngIf="isVisible" (click)="close()" role="dialog" aria-modal="true" aria-label="Ajustar Pontos LP">
+  <div class="modal-container" (click)="$event.stopPropagation()">
+    <!-- Header -->
+    <div class="modal-header">
+      <h2>💰 Ajustar Pontos (LP)</h2>
+      <button class="close-btn" (click)="close()" aria-label="Fechar">✕</button>
+    </div>
+
+    <!-- Formulário -->
+    <div class="modal-body">
+      <!-- Seleção de Jogador -->
+      <div class="form-group">
+        <label for="player-select">Jogador:</label>
+        <select
+          id="player-select"
+          [(ngModel)]="selectedPlayer"
+          class="form-control"
+          [disabled]="loading">
+          <option value="">Selecione um jogador</option>
+          <option *ngFor="let player of players" [value]="player.summonerName">
+            {{ player.summonerName }} (LP: {{ player.customLp || 0 }})
+          </option>
+        </select>
+      </div>
+
+      <!-- Ajuste de LP -->
+      <div class="form-group">
+        <label for="lp-adjustment">Ajuste de LP:</label>
+        <input
+          type="number"
+          id="lp-adjustment"
+          [(ngModel)]="lpAdjustment"
+          class="form-control"
+          placeholder="Ex: +50 ou -30"
+          [disabled]="loading">
+        <small class="help-text">
+          Use valores positivos para adicionar e negativos para remover
+        </small>
+      </div>
+
+      <!-- Motivo (opcional) -->
+      <div class="form-group">
+        <label for="reason">Motivo (opcional):</label>
+        <input
+          type="text"
+          id="reason"
+          [(ngModel)]="reason"
+          class="form-control"
+          placeholder="Ex: Correção manual, evento especial..."
+          [disabled]="loading">
+      </div>
+
+      <!-- Mensagens -->
+      <div class="alert alert-error" *ngIf="errorMessage">
+        ❌ {{ errorMessage }}
+      </div>
+
+      <div class="alert alert-success" *ngIf="successMessage">
+        ✅ {{ successMessage }}
+      </div>
+
+      <!-- Loading -->
+      <div class="loading-spinner" *ngIf="loading">
+        <div class="spinner"></div>
+        <span>Processando...</span>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="modal-footer">
+      <button class="btn btn-secondary" (click)="close()" [disabled]="loading">
+        Cancelar
+      </button>
+      <button
+        class="btn btn-primary"
+        (click)="adjustLp()"
+        [disabled]="loading || !selectedPlayer || lpAdjustment === 0">
+        Ajustar LP
+      </button>
+    </div>
+  </div>
+</div>

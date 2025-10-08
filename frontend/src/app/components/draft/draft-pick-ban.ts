@@ -6,6 +6,7 @@ import { ChampionService } from '../../services/champion.service';
 import { BotService } from '../../services/bot.service';
 import { DraftanyModalComponent } from './draft-champion-modal';
 import { DraftConfirmationModalComponent } from './draft-confirmation-modal';
+import { DraftPlayerHelpModalComponent } from './draft-player-help-modal';
 import { firstValueFrom } from 'rxjs';
 import { ApiService } from '../../services/api';
 
@@ -53,7 +54,8 @@ function saveLogToRoot(message: string, filename: string = 'draft-debug.log') {
     CommonModule,
     FormsModule,
     DraftanyModalComponent,
-    DraftConfirmationModalComponent
+    DraftConfirmationModalComponent,
+    DraftPlayerHelpModalComponent
   ],
   templateUrl: './draft-pick-ban.html',
   styleUrl: './draft-pick-ban.scss',
@@ -92,6 +94,11 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   private isInitializing: boolean = false;
   private lastMatchDataHash: string = '';
   private updateInProgress: boolean = false;
+
+  // ✅ NOVO: Controle do modal de ajuda do jogador
+  showPlayerHelpModal: boolean = false;
+  selectedPlayerForHelp: string = '';
+  selectedPlayerNameForHelp: string = '';
 
   @ViewChild('confirmationModal') confirmationModal!: DraftConfirmationModalComponent;
   private readonly baseUrl: string;
@@ -178,6 +185,12 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   ngOnDestroy() {
     logDraft('[DraftPickBan] === ngOnDestroy INICIADO ===');
     saveLogToRoot(`🔄 [ngOnDestroy] Destruindo componente. Session exists: ${!!this.session}, actions: ${this.session?.actions?.length || 0}`);
+
+    // ✅ NOVO: Fechar modal de ajuda se estiver aberto
+    if (this.showPlayerHelpModal) {
+      this.showPlayerHelpModal = false;
+      saveLogToRoot(`🔄 [ngOnDestroy] Modal de ajuda fechado`);
+    }
 
     // ✅ NOVO: Preservar dados importantes antes da destruição
     if (this.session?.actions?.length > 0) {
@@ -2804,5 +2817,35 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       case 'autofill': return 'Auto-fill';
       default: return '';
     }
+  }
+
+  /**
+   * ✅ NOVO: Abre o modal de ajuda para exibir estatísticas do jogador
+   */
+  openPlayerHelpModal(player: any): void {
+    logDraft('[DraftPickBan] Abrindo modal de ajuda para jogador:', player);
+
+    // Determinar summonerName correto
+    this.selectedPlayerForHelp = player.summonerName || `${player.gameName}#${player.tagLine}`;
+
+    // Determinar nome para exibição
+    this.selectedPlayerNameForHelp = player.name || player.gameName || player.summonerName || 'Jogador';
+
+    this.showPlayerHelpModal = true;
+
+    saveLogToRoot(`📊 [openPlayerHelpModal] Modal aberto para: ${this.selectedPlayerNameForHelp} (${this.selectedPlayerForHelp})`);
+
+    // Forçar atualização da interface
+    this.cdr.detectChanges();
+  }
+
+  /**
+   * ✅ NOVO: Fecha o modal de ajuda do jogador
+   */
+  closePlayerHelpModal(): void {
+    logDraft('[DraftPickBan] Fechando modal de ajuda');
+    this.showPlayerHelpModal = false;
+    saveLogToRoot(`📊 [closePlayerHelpModal] Modal fechado`);
+    this.cdr.detectChanges();
   }
 }
