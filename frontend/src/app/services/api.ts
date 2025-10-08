@@ -236,7 +236,7 @@ export class ApiService {
    * ✅ NOVO: Cria headers HTTP com identificação do jogador
    * Todas as requisições HTTP devem usar este método
    */
-  private getAuthenticatedHeaders(): { [header: string]: string } {
+  public getAuthenticatedHeaders(): { [header: string]: string } {
     const headers: { [header: string]: string } = {
       'Content-Type': 'application/json'
     };
