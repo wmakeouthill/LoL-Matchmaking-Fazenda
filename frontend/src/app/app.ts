@@ -615,9 +615,16 @@ export class App implements OnInit, OnDestroy {
     });
     console.log(`📡 [App] ========================================`);
 
-    // ✅ NOVO: Despachar evento customizado para o document (para listeners em outros componentes)
-    const customEvent = new CustomEvent(message.type, { detail: message });
-    document.dispatchEvent(customEvent);
+    // ✅ CORREÇÃO: Filtrar mensagens de ACK para não despachar eventos desnecessários
+    // Mensagens "_ack" são apenas confirmações internas e não devem ser processadas como eventos
+    const isAckMessage = message.type && message.type.endsWith('_ack');
+    if (!isAckMessage) {
+      // ✅ NOVO: Despachar evento customizado para o document (para listeners em outros componentes)
+      const customEvent = new CustomEvent(message.type, { detail: message });
+      document.dispatchEvent(customEvent);
+    } else {
+      console.log(`🔕 [App] Mensagem ACK ignorada (não despachada como evento): ${message.type}`);
+    }
 
     switch (message.type) {
       case 'queue_status':
@@ -819,6 +826,7 @@ export class App implements OnInit, OnDestroy {
           currentAction: currentAction,  // ✅ Passar currentAction explicitamente
           currentIndex: currentAction,  // ✅ Adicionar também como "currentIndex" para compatibilidade
           currentPlayer: draftData.currentPlayer,  // ✅ CRÍTICO: Jogador da VEZ (do backend), não jogador logado
+          timeRemaining: draftData.timeRemaining || 30,  // ✅ CORREÇÃO: Timer inicial do backend (30s padrão)
           averageMMR: draftData.averageMMR || this.matchFoundData?.averageMMR,
           balanceQuality: draftData.balanceQuality,
           autofillCount: draftData.autofillCount
@@ -830,7 +838,8 @@ export class App implements OnInit, OnDestroy {
           team2Length: this.draftData.team2?.length || 0,
           phasesLength: this.draftData.phases?.length || 0,
           currentAction: this.draftData.currentAction,
-          currentPlayer: this.draftData.currentPlayer
+          currentPlayer: this.draftData.currentPlayer,
+          timeRemaining: this.draftData.timeRemaining
         });
 
         // Entrar no draft
@@ -2120,6 +2129,13 @@ export class App implements OnInit, OnDestroy {
   }
 
   private startLCUStatusCheck(): void {
+    // ✅ DESABILITADO: Polling HTTP causando oscilação no status do LCU
+    // O WebSocket já envia atualizações de status via 'lcu_connection_registered' e outros eventos
+    // Manter polling causa race conditions e sobrescreve dados do WebSocket
+    console.warn('⚠️ [App] LCU polling desabilitado - usando apenas WebSocket para status');
+    return;
+
+    /* CÓDIGO DESABILITADO - Causando oscilação no status do LCU
     // ✅ OTIMIZADO: Se já temos jogador identificado, reduzir frequência de polling
     // Limpar interval anterior se existir
     if (this.lcuCheckInterval) {
@@ -2152,6 +2168,7 @@ export class App implements OnInit, OnDestroy {
 
     this.lcuCheckInterval = setInterval(checkOnce, intervalTime);
     console.log(`🔄 [App] LCU status check iniciado com intervalo de ${intervalTime}ms`);
+    */
   }
 
   // ✅ NOVO: Método para simular partida personalizada
