@@ -241,6 +241,40 @@ public class DraftService {
             startDraftTimer(matchId);
             broadcastDraftStarted(matchId, draftData);
 
+            // ✅ NOVO: Criar canais Discord e mover jogadores para times
+            try {
+                List<String> blueTeam = team1.stream()
+                        .map(p -> p.getSummonerName())
+                        .filter(Objects::nonNull)
+                        .toList();
+
+                List<String> redTeam = team2.stream()
+                        .map(p -> p.getSummonerName())
+                        .filter(Objects::nonNull)
+                        .toList();
+
+                log.info("🎮 [startDraft] Criando canais Discord para match {}", matchId);
+                log.info("🔵 [startDraft] Blue Team: {}", blueTeam);
+                log.info("🔴 [startDraft] Red Team: {}", redTeam);
+
+                DiscordService.DiscordMatch discordMatch = discordService.createMatchChannels(
+                        matchId, blueTeam, redTeam);
+
+                if (discordMatch != null) {
+                    // Aguardar 2 segundos para os canais serem criados
+                    CompletableFuture.delayedExecutor(2, java.util.concurrent.TimeUnit.SECONDS)
+                            .execute(() -> {
+                                log.info("🔄 [startDraft] Movendo jogadores para canais do match {}", matchId);
+                                discordService.movePlayersToTeamChannels(matchId);
+                            });
+                } else {
+                    log.warn("⚠️ [startDraft] Falha ao criar canais Discord para match {}", matchId);
+                }
+            } catch (Exception e) {
+                log.error("❌ [startDraft] Erro ao criar canais Discord: {}", e.getMessage());
+                // Não bloquear o draft se Discord falhar
+            }
+
             log.info("✅ Draft iniciado para partida: {}", matchId);
             return true;
 
@@ -491,6 +525,14 @@ public class DraftService {
             activeDrafts.remove(matchId);
             draftTimers.remove(matchId);
 
+            // ✅ NOVO: Limpar canais Discord e mover jogadores de volta
+            try {
+                log.info("🧹 [timeoutDraft] Limpando canais Discord do match {}", matchId);
+                discordService.deleteMatchChannels(matchId, true); // true = mover jogadores de volta
+            } catch (Exception e) {
+                log.error("❌ [timeoutDraft] Erro ao limpar canais Discord: {}", e.getMessage());
+            }
+
             CustomMatch match = customMatchRepository.findById(matchId).orElse(null);
             if (match != null) {
                 match.setStatus("cancelled");
@@ -633,10 +675,60 @@ public class DraftService {
             data.put("picks", draftData.getPicks());
             webSocketService.broadcastToAll("draft_finished", data);
 
-            log.info("🏁 Draft finalizado: {}", matchId);
+            log.info("✅ Draft finalizado para partida: {}", matchId);
 
         } catch (Exception e) {
             log.error("❌ Erro ao finalizar draft", e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Cancela um draft e limpa canais Discord
+     * 
+     * @param matchId ID da partida
+     */
+    public void cancelDraft(Long matchId) {
+        try {
+            log.warn("🚫 Cancelando draft para partida: {}", matchId);
+
+            DraftData draftData = activeDrafts.remove(matchId);
+            if (draftData == null) {
+                log.warn("⚠️ Draft {} não encontrado para cancelar", matchId);
+                return;
+            }
+
+            // Remover timer
+            DraftTimer timer = draftTimers.remove(matchId);
+            if (timer != null && timer.getTimeoutFuture() != null) {
+                timer.getTimeoutFuture().cancel(true);
+            }
+
+            // ✅ Limpar canais Discord e mover jogadores de volta
+            try {
+                log.info("🧹 [cancelDraft] Limpando canais Discord do match {}", matchId);
+                discordService.deleteMatchChannels(matchId, true); // true = mover jogadores de volta
+            } catch (Exception e) {
+                log.error("❌ [cancelDraft] Erro ao limpar canais Discord: {}", e.getMessage());
+            }
+
+            // Atualizar status da partida
+            CustomMatch match = customMatchRepository.findById(matchId).orElse(null);
+            if (match != null) {
+                match.setStatus("cancelled");
+                match.setUpdatedAt(Instant.now());
+                customMatchRepository.save(match);
+            }
+
+            // Broadcast do cancelamento
+            Map<String, Object> data = new HashMap<>();
+            data.put("matchId", matchId);
+            data.put("reason", "draft_cancelled");
+            webSocketService.broadcastToAll("draft_cancelled", data);
+
+            log.info("✅ Draft cancelado para partida: {}", matchId);
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao cancelar draft", e);
         }
     }
 

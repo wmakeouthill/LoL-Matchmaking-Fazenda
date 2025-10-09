@@ -1,0 +1,68 @@
+<div class="modal-overlay" (click)="closeModal()">
+  <div class="modal-container" (click)="$event.stopPropagation()">
+    <!-- Header -->
+    <div class="modal-header">
+      <h2>👥 Espectadores</h2>
+      <button class="close-btn" (click)="closeModal()">✕</button>
+    </div>
+
+    <!-- Loading State -->
+    <div *ngIf="loading && spectators.length === 0" class="loading-state">
+      <div class="spinner"></div>
+      <p>Carregando espectadores...</p>
+    </div>
+
+    <!-- Error State -->
+    <div *ngIf="error" class="error-state">
+      <p>⚠️ {{ error }}</p>
+      <button class="retry-btn" (click)="loadSpectators()">Tentar novamente</button>
+    </div>
+
+    <!-- Empty State -->
+    <div *ngIf="!loading && !error && spectators.length === 0" class="empty-state">
+      <p>👻 Nenhum espectador assistindo</p>
+      <small>Quando alguém entrar nos canais da partida, aparecerá aqui</small>
+    </div>
+
+    <!-- Spectators List -->
+    <div *ngIf="!loading && !error && spectators.length > 0" class="spectators-list">
+      <div class="spectators-count">
+        <span>{{ spectators.length }} espectador{{ spectators.length !== 1 ? 'es' : '' }}</span>
+      </div>
+
+      <div class="spectator-item" *ngFor="let spectator of spectators">
+        <div class="spectator-info">
+          <div class="spectator-avatar">
+            <span>👤</span>
+          </div>
+          <div class="spectator-details">
+            <div class="spectator-name">{{ spectator.discordUsername }}</div>
+            <div class="spectator-channel">
+              <span class="channel-badge" [ngClass]="getChannelBadgeClass(spectator.channelName)">
+                {{ spectator.channelName }}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="spectator-actions">
+          <button
+            class="mute-btn"
+            [class.muted]="spectator.isMuted"
+            (click)="toggleMute(spectator)"
+            [title]="getMuteText(spectator.isMuted)">
+            <span class="icon">{{ getMuteIcon(spectator.isMuted) }}</span>
+            <span class="text">{{ getMuteText(spectator.isMuted) }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="modal-footer">
+      <small class="refresh-info">
+        🔄 Atualização automática a cada 5 segundos
+      </small>
+    </div>
+  </div>
+</div>

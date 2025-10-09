@@ -17,7 +17,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -29,6 +31,7 @@ public class MatchFoundService {
     private final MatchmakingWebSocketService webSocketService;
     private final QueueManagementService queueManagementService;
     private final DraftFlowService draftFlowService;
+    private final DiscordService discordService;
 
     // Constructor manual para @Lazy
     public MatchFoundService(
@@ -36,12 +39,14 @@ public class MatchFoundService {
             CustomMatchRepository customMatchRepository,
             MatchmakingWebSocketService webSocketService,
             @Lazy QueueManagementService queueManagementService,
-            DraftFlowService draftFlowService) {
+            DraftFlowService draftFlowService,
+            DiscordService discordService) {
         this.queuePlayerRepository = queuePlayerRepository;
         this.customMatchRepository = customMatchRepository;
         this.webSocketService = webSocketService;
         this.queueManagementService = queueManagementService;
         this.draftFlowService = draftFlowService;
+        this.discordService = discordService;
     }
 
     // Tracking de partidas pendentes de aceitação
@@ -410,6 +415,35 @@ public class MatchFoundService {
                 log.info("🎬 [MatchFound] Iniciando DraftFlowService para criar ações...");
                 var draftState = draftFlowService.startDraft(matchId, team1Names, team2Names);
                 log.info("✅ [MatchFound] DraftFlowService iniciado - {} ações criadas", draftState.getActions().size());
+
+                // 🎮 INTEGRAÇÃO DISCORD: Criar canais e mover jogadores
+                try {
+                    log.info("🎮 [MatchFound] Criando canais Discord para match {}", matchId);
+                    log.info("📋 [MatchFound] Blue Team ({}): {}", team1Names.size(), team1Names);
+                    log.info("📋 [MatchFound] Red Team ({}): {}", team2Names.size(), team2Names);
+
+                    DiscordService.DiscordMatch discordMatch = discordService.createMatchChannels(matchId, team1Names,
+                            team2Names);
+
+                    if (discordMatch != null) {
+                        log.info("✅ [MatchFound] Canais Discord criados com sucesso");
+
+                        // Aguardar 2 segundos antes de mover os jogadores
+                        CompletableFuture.delayedExecutor(2, TimeUnit.SECONDS).execute(() -> {
+                            try {
+                                log.info("🚚 [MatchFound] Movendo jogadores para canais de time...");
+                                discordService.movePlayersToTeamChannels(matchId);
+                                log.info("✅ [MatchFound] Jogadores movidos com sucesso");
+                            } catch (Exception e) {
+                                log.error("❌ [MatchFound] Erro ao mover jogadores: {}", e.getMessage());
+                            }
+                        });
+                    } else {
+                        log.warn("⚠️ [MatchFound] Falha ao criar canais Discord (retornou null)");
+                    }
+                } catch (Exception e) {
+                    log.error("❌ [MatchFound] Erro na integração Discord: {}", e.getMessage(), e);
+                }
 
                 // ✅ Agora buscar as ações do DraftState recém-criado
                 List<Map<String, Object>> actions = draftState.getActions().stream()

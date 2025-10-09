@@ -189,4 +189,128 @@ public class DiscordController {
                     ERROR, e.getMessage()));
         }
     }
+
+    // ========================================
+    // ✅ NOVOS ENDPOINTS: GERENCIAMENTO DE ESPECTADORES
+    // ========================================
+
+    /**
+     * Lista espectadores de uma partida (excluindo os 10 jogadores)
+     * Requer header X-Summoner-Name para validação
+     */
+    @GetMapping("/match/{matchId}/spectators")
+    public ResponseEntity<Map<String, Object>> getMatchSpectators(
+            @PathVariable Long matchId,
+            @RequestHeader(value = "X-Summoner-Name", required = false) String summonerName) {
+        try {
+            // Validar header (isolamento por jogador)
+            if (summonerName == null || summonerName.isBlank()) {
+                log.warn("⚠️ [DiscordController] Header X-Summoner-Name ausente");
+                return ResponseEntity.badRequest().body(Map.of(
+                        SUCCESS, false,
+                        MESSAGE, "Header X-Summoner-Name é obrigatório"));
+            }
+
+            // Buscar espectadores
+            List<DiscordService.SpectatorDTO> spectators = discordService.getMatchSpectators(matchId);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put(SUCCESS, true);
+            response.put("spectators", spectators);
+            response.put("count", spectators.size());
+            response.put(TIMESTAMP, System.currentTimeMillis());
+
+            log.info("👀 [DiscordController] Espectadores da partida {} solicitados por {}: {} espectadores",
+                    matchId, summonerName, spectators.size());
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            log.error("❌ [DiscordController] Erro ao listar espectadores", e);
+            return ResponseEntity.internalServerError().body(Map.of(
+                    SUCCESS, false,
+                    MESSAGE, "Erro ao listar espectadores",
+                    ERROR, e.getMessage()));
+        }
+    }
+
+    /**
+     * Muta um espectador no Discord (SERVER MUTE - espectador não pode se desmutar)
+     * Requer header X-Summoner-Name para validação
+     */
+    @PostMapping("/match/{matchId}/spectator/{discordId}/mute")
+    public ResponseEntity<Map<String, Object>> muteSpectator(
+            @PathVariable Long matchId,
+            @PathVariable String discordId,
+            @RequestHeader(value = "X-Summoner-Name", required = false) String summonerName) {
+        try {
+            // Validar header (isolamento por jogador)
+            if (summonerName == null || summonerName.isBlank()) {
+                log.warn("⚠️ [DiscordController] Header X-Summoner-Name ausente");
+                return ResponseEntity.badRequest().body(Map.of(
+                        SUCCESS, false,
+                        MESSAGE, "Header X-Summoner-Name é obrigatório"));
+            }
+
+            // Mutar espectador
+            boolean success = discordService.muteSpectator(matchId, discordId);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put(SUCCESS, success);
+            response.put(MESSAGE, success ? "Espectador mutado com sucesso" : "Erro ao mutar espectador");
+            response.put(TIMESTAMP, System.currentTimeMillis());
+
+            log.info("🔇 [DiscordController] Espectador {} mutado na partida {} por {}",
+                    discordId, matchId, summonerName);
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            log.error("❌ [DiscordController] Erro ao mutar espectador", e);
+            return ResponseEntity.internalServerError().body(Map.of(
+                    SUCCESS, false,
+                    MESSAGE, "Erro ao mutar espectador",
+                    ERROR, e.getMessage()));
+        }
+    }
+
+    /**
+     * Desmuta um espectador no Discord (remove SERVER MUTE)
+     * Requer header X-Summoner-Name para validação
+     */
+    @PostMapping("/match/{matchId}/spectator/{discordId}/unmute")
+    public ResponseEntity<Map<String, Object>> unmuteSpectator(
+            @PathVariable Long matchId,
+            @PathVariable String discordId,
+            @RequestHeader(value = "X-Summoner-Name", required = false) String summonerName) {
+        try {
+            // Validar header (isolamento por jogador)
+            if (summonerName == null || summonerName.isBlank()) {
+                log.warn("⚠️ [DiscordController] Header X-Summoner-Name ausente");
+                return ResponseEntity.badRequest().body(Map.of(
+                        SUCCESS, false,
+                        MESSAGE, "Header X-Summoner-Name é obrigatório"));
+            }
+
+            // Desmutar espectador
+            boolean success = discordService.unmuteSpectator(matchId, discordId);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put(SUCCESS, success);
+            response.put(MESSAGE, success ? "Espectador desmutado com sucesso" : "Erro ao desmutar espectador");
+            response.put(TIMESTAMP, System.currentTimeMillis());
+
+            log.info("🔊 [DiscordController] Espectador {} desmutado na partida {} por {}",
+                    discordId, matchId, summonerName);
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            log.error("❌ [DiscordController] Erro ao desmutar espectador", e);
+            return ResponseEntity.internalServerError().body(Map.of(
+                    SUCCESS, false,
+                    MESSAGE, "Erro ao desmutar espectador",
+                    ERROR, e.getMessage()));
+        }
+    }
 }

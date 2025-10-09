@@ -218,6 +218,12 @@
       <span class="btn-icon">❌</span>
       Cancelar Partida
     </button>
+
+    <!-- ✅ NOVO: Botão Espectadores -->
+    <button class="btn btn-info" (click)="openSpectatorsModal()">
+      <span class="btn-icon">👥</span>
+      Espectadores
+    </button>
   </div>
 
   <!-- Debug Info (only in development) -->
@@ -372,4 +378,13 @@
     (onConfirm)="onWinnerConfirmed($event)"
     (onCancel)="onWinnerConfirmationCancelled()">
   </app-winner-confirmation-modal>
+
+  <!-- ✅ NOVO: Modal de Espectadores -->
+  <app-spectators-modal
+    *ngIf="showSpectatorsModal"
+    [matchId]="gameData?.matchId"
+    [summonerName]="summonerName"
+    (closed)="closeSpectatorsModal()">
+  </app-spectators-modal>
 </div>
+

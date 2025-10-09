@@ -255,6 +255,21 @@ public class GameInProgressService {
             }
 
             activeGames.remove(matchId);
+
+            // ✅ NOVO: Mover espectadores e jogadores de volta, depois limpar canais Discord
+            try {
+                log.info("👥 [finishGame] Movendo espectadores de volta ao lobby - match {}", matchId);
+                discordService.moveSpectatorsBackToLobby(matchId);
+
+                // Aguardar 1 segundo antes de deletar canais
+                Thread.sleep(1000);
+
+                log.info("🧹 [finishGame] Limpando canais Discord do match {}", matchId);
+                discordService.deleteMatchChannels(matchId, true); // true = mover jogadores de volta
+            } catch (Exception e) {
+                log.error("❌ [finishGame] Erro ao limpar canais Discord: {}", e.getMessage());
+            }
+
             log.info("✅ Jogo finalizado para partida {}: Team {} venceu - motivo: {}", matchId, winnerTeam, endReason);
 
         } catch (Exception e) {
@@ -271,6 +286,14 @@ public class GameInProgressService {
             log.info("❌ Cancelando jogo para partida {}: {}", matchId, reason);
 
             activeGames.remove(matchId);
+
+            // ✅ NOVO: Limpar canais Discord e mover jogadores de volta
+            try {
+                log.info("🧹 [cancelGame] Limpando canais Discord do match {}", matchId);
+                discordService.deleteMatchChannels(matchId, true); // true = mover jogadores de volta
+            } catch (Exception e) {
+                log.error("❌ [cancelGame] Erro ao limpar canais Discord: {}", e.getMessage());
+            }
 
             CustomMatch match = customMatchRepository.findById(matchId).orElse(null);
             if (match != null) {

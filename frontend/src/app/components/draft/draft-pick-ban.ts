@@ -7,6 +7,7 @@ import { BotService } from '../../services/bot.service';
 import { DraftanyModalComponent } from './draft-champion-modal';
 import { DraftConfirmationModalComponent } from './draft-confirmation-modal';
 import { DraftPlayerHelpModalComponent } from './draft-player-help-modal';
+import { SpectatorsModalComponent } from '../spectators-modal/spectators-modal.component';
 import { firstValueFrom } from 'rxjs';
 import { ApiService } from '../../services/api';
 
@@ -55,7 +56,8 @@ function saveLogToRoot(message: string, filename: string = 'draft-debug.log') {
     FormsModule,
     DraftanyModalComponent,
     DraftConfirmationModalComponent,
-    DraftPlayerHelpModalComponent
+    DraftPlayerHelpModalComponent,
+    SpectatorsModalComponent
   ],
   templateUrl: './draft-pick-ban.html',
   styleUrl: './draft-pick-ban.scss',
@@ -99,6 +101,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   showPlayerHelpModal: boolean = false;
   selectedPlayerForHelp: string = '';
   selectedPlayerNameForHelp: string = '';
+
+  // ✅ NOVO: Controle do modal de espectadores
+  showSpectatorsModal: boolean = false;
 
   @ViewChild('confirmationModal') confirmationModal!: DraftConfirmationModalComponent;
   private readonly baseUrl: string;
@@ -2846,6 +2851,26 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     logDraft('[DraftPickBan] Fechando modal de ajuda');
     this.showPlayerHelpModal = false;
     saveLogToRoot(`📊 [closePlayerHelpModal] Modal fechado`);
+    this.cdr.detectChanges();
+  }
+
+  /**
+   * ✅ NOVO: Abre o modal de espectadores
+   */
+  openSpectatorsModal(): void {
+    logDraft('[DraftPickBan] Abrindo modal de espectadores');
+    this.showSpectatorsModal = true;
+    saveLogToRoot(`👥 [openSpectatorsModal] Modal de espectadores aberto para match ${this.session?.matchId}`);
+    this.cdr.detectChanges();
+  }
+
+  /**
+   * ✅ NOVO: Fecha o modal de espectadores
+   */
+  closeSpectatorsModal(): void {
+    logDraft('[DraftPickBan] Fechando modal de espectadores');
+    this.showSpectatorsModal = false;
+    saveLogToRoot(`👥 [closeSpectatorsModal] Modal de espectadores fechado`);
     this.cdr.detectChanges();
   }
 }

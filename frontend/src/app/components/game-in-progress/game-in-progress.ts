@@ -8,6 +8,7 @@ import { ProfileIconService } from '../../services/profile-icon.service';
 import { BotService } from '../../services/bot.service';
 import { LcuMatchConfirmationModalComponent } from '../lcu-match-confirmation-modal/lcu-match-confirmation-modal';
 import { WinnerConfirmationModalComponent } from '../winner-confirmation-modal/winner-confirmation-modal.component';
+import { SpectatorsModalComponent } from '../spectators-modal/spectators-modal.component';
 
 type TeamColor = 'blue' | 'red';
 
@@ -56,7 +57,7 @@ function logGameInProgress(...args: any[]) {
 @Component({
   selector: 'app-game-in-progress',
   standalone: true,
-  imports: [CommonModule, WinnerConfirmationModalComponent],
+  imports: [CommonModule, WinnerConfirmationModalComponent, SpectatorsModalComponent],
   templateUrl: './game-in-progress.html',
   styleUrl: './game-in-progress.scss'
 })
@@ -82,6 +83,9 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   showWinnerConfirmationModal: boolean = false;
   customMatchesForConfirmation: any[] = [];
   isAutoDetecting: boolean = false;
+
+  // ✅ NOVO: Controle do modal de espectadores
+  showSpectatorsModal: boolean = false;
 
   // Timers
   private gameTimer: Subscription | null = null;
@@ -2069,4 +2073,21 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       default: return '';
     }
   }
+
+  /**
+   * ✅ NOVO: Abre o modal de espectadores
+   */
+  openSpectatorsModal(): void {
+    console.log('[GameInProgress] Abrindo modal de espectadores');
+    this.showSpectatorsModal = true;
+  }
+
+  /**
+   * ✅ NOVO: Fecha o modal de espectadores
+   */
+  closeSpectatorsModal(): void {
+    console.log('[GameInProgress] Fechando modal de espectadores');
+    this.showSpectatorsModal = false;
+  }
 }
+
