@@ -5,7 +5,7 @@ server:
 spring:
   datasource:
     # O Cloud Run vai receber as variáveis de ambiente
-    url: jdbc:mysql://${MYSQL_HOST:lolmatchmaking.mysql.uhserver.com}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:lolmatchmaking}?useSSL=true&requireSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&useUnicode=true&characterEncoding=utf8&autoReconnect=true&connectTimeout=30000&socketTimeout=30000
+    url: jdbc:mysql://${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
     username: ${MYSQL_USER:wmakeouthill}
     password: ${MYSQL_PASSWORD}
     hikari:
@@ -36,9 +36,16 @@ app:
       - "capacitor://localhost"
       - "http://localhost"
       - "http://localhost:*"
-  # Desabilitar funcionalidades que requerem LCU local (não funciona na nuvem)
+  # ✅ CONFIGURAÇÃO LCU PARA CLOUD RUN
+  # O Cloud Run atua como GATEWAY CENTRAL para múltiplos Electron clients
+  # Cada Electron client (rodando nos PCs dos jogadores) conecta via WebSocket
+  # e envia dados do LCU local para o backend na nuvem
   lcu:
-    enabled: false
+    prefer-gateway: true # ✅ OBRIGATÓRIO: Usar gateway RPC via WebSocket
+    host: 127.0.0.1 # Não usado no Cloud Run (cada client tem seu próprio LCU)
+    protocol: https # Protocolo dos LCU clients
+    port: 0 # Não usado no Cloud Run (cada client tem porta diferente)
+    password: "" # Não usado no Cloud Run (cada client tem senha diferente)
 
 # Configurações específicas para Cloud Run
 management:
