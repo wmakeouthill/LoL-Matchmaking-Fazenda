@@ -54,12 +54,12 @@ export class SpectatorsModalComponent implements OnInit {
   }
 
   ngOnInit(): void {
-    console.log('🔵 [SpectatorsModal] ngOnInit chamado', {
-      matchId: this.matchId,
-      summonerName: this.summonerName,
-      hasMatchId: !!this.matchId,
-      hasSummonerName: !!this.summonerName
-    });
+    console.log('🔵 [SpectatorsModal] ngOnInit chamado');
+    console.log('🔑 [SpectatorsModal] matchId recebido:', this.matchId);
+    console.log('🔑 [SpectatorsModal] typeof matchId:', typeof this.matchId);
+    console.log('🔑 [SpectatorsModal] summonerName:', this.summonerName);
+    console.log('✅ [SpectatorsModal] hasMatchId:', !!this.matchId);
+    console.log('✅ [SpectatorsModal] hasSummonerName:', !!this.summonerName);
 
     // ✅ VALIDAÇÃO: Verificar se matchId existe
     if (!this.matchId) {
