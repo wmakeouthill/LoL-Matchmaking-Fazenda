@@ -50,6 +50,12 @@ export class SpectatorsModalComponent implements OnInit {
   }
 
   ngOnInit(): void {
+    console.log('🔵 [SpectatorsModal] ngOnInit chamado', {
+      matchId: this.matchId,
+      summonerName: this.summonerName,
+      hasMatchId: !!this.matchId,
+      hasSummonerName: !!this.summonerName
+    });
     this.loadSpectators();
     // Auto-refresh a cada 5 segundos
     setInterval(() => this.loadSpectators(), 5000);

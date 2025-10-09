@@ -508,7 +508,10 @@ public class PlayerController {
                         data.put("summonerName", player.getSummonerName());
                         data.put("gameName", player.getGameName());
                         data.put("tagLine", player.getTagLine());
-                        data.put("lp", player.getCustomLp() != null ? player.getCustomLp() : 0);
+                        data.put("customLp", player.getCustomLp() != null ? player.getCustomLp() : 0); // ✅ CORREÇÃO:
+                                                                                                       // usar
+                                                                                                       // "customLp" em
+                                                                                                       // vez de "lp"
                         data.put("championshipTitles",
                                 player.getChampionshipTitles() != null ? player.getChampionshipTitles() : "[]");
                         return data;
