@@ -29,8 +29,9 @@ COPY --from=backend-build /workspace/target/*.jar app.jar
 EXPOSE 8080
 
 # Variáveis de ambiente para configuração
-ENV JAVA_OPTS=""
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -XX:+UseContainerSupport"
 ENV SPRING_PROFILES_ACTIVE="gcp"
 
 # Iniciar aplicacao e respeitar PORT do ambiente (Cloud Run fornece PORT)
-ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -Djava.security.egd=file:/dev/./urandom -jar app.jar"]
+# Cloud Run injeta PORT automaticamente, Spring Boot precisa de --server.port
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -Djava.security.egd=file:/dev/./urandom -jar app.jar --server.port=${PORT:-8080}"]

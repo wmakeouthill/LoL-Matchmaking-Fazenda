@@ -8,7 +8,7 @@ steps:
       - '-t'
       - 'gcr.io/$PROJECT_ID/lol-matchmaking:latest'
       - '-f'
-      - 'Dockerfile.cloudrun'
+      - 'Dockerfile'
       - '.'
     
   # Push da imagem para Google Container Registry
@@ -48,9 +48,7 @@ steps:
       - '0'
       - '--port'
       - '8080'
-      - '--cpu-throttling'
-      - '--no-cpu-boost'
-      - '--startup-cpu-boost'
+      - '--no-cpu-throttling'
       - '--set-env-vars'
       - 'SPRING_PROFILES_ACTIVE=gcp'
       - '--set-env-vars'
