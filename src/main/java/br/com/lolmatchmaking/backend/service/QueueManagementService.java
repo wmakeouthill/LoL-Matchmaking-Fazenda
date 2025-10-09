@@ -546,6 +546,7 @@ public class QueueManagementService {
      * Verifica se jogador pode entrar na fila (LCU + Discord + Canal)
      */
     public boolean canPlayerJoinQueue(String summonerName) {
+        log.info("🔍 [canPlayerJoinQueue] Verificando se {} pode entrar na fila", summonerName);
         try {
             // ✅ CORREÇÃO: Verificar se LCU está disponível via gateway OU conexão direta
             // No Cloud Run, usamos gateway WebSocket do Electron, não HTTP direto
@@ -555,16 +556,24 @@ public class QueueManagementService {
             Optional<br.com.lolmatchmaking.backend.service.LCUConnectionRegistry.LCUConnectionInfo> lcuConnection = lcuConnectionRegistry
                     .getConnection(summonerName);
 
+            log.info("🔍 [canPlayerJoinQueue] Gateway registry check: present={}", lcuConnection.isPresent());
+
             if (lcuConnection.isPresent()) {
-                log.debug("✅ LCU disponível via gateway para {}", summonerName);
+                log.info("✅ [canPlayerJoinQueue] LCU disponível via gateway para {}", summonerName);
                 lcuAvailable = true;
-            } else if (lcuService.isConnected()) {
-                log.debug("✅ LCU disponível via conexão direta para {}", summonerName);
-                lcuAvailable = true;
+            } else {
+                boolean directConnected = lcuService.isConnected();
+                log.info("🔍 [canPlayerJoinQueue] Direct LCU check: connected={}", directConnected);
+                if (directConnected) {
+                    log.info("✅ [canPlayerJoinQueue] LCU disponível via conexão direta para {}", summonerName);
+                    lcuAvailable = true;
+                }
             }
 
             if (!lcuAvailable) {
-                log.debug("⚠️ LCU não disponível para {} (sem gateway registrado e sem conexão direta)", summonerName);
+                log.warn(
+                        "⚠️ [canPlayerJoinQueue] LCU não disponível para {} (sem gateway registrado e sem conexão direta)",
+                        summonerName);
                 return false;
             }
 
@@ -582,10 +591,11 @@ public class QueueManagementService {
             // return false;
             // }
 
+            log.info("✅ [canPlayerJoinQueue] {} PODE entrar na fila!", summonerName);
             return true;
 
         } catch (Exception e) {
-            log.error("❌ Erro ao verificar se jogador pode entrar na fila", e);
+            log.error("❌ [canPlayerJoinQueue] Erro ao verificar se jogador pode entrar na fila: {}", e.getMessage(), e);
             return false;
         }
     }
