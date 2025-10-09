@@ -748,10 +748,52 @@ public class DraftService {
 
     private void updateTimers() {
         try {
-            draftTimers.entrySet().removeIf(entry -> {
+            // ✅ CORREÇÃO: Decrementar timers e broadcast updates
+            for (Map.Entry<Long, DraftTimer> entry : draftTimers.entrySet()) {
+                Long matchId = entry.getKey();
                 DraftTimer timer = entry.getValue();
-                return timer.getTimeoutFuture().isDone();
-            });
+
+                // Se o timer terminou, skip
+                if (timer.getTimeoutFuture().isDone()) {
+                    continue;
+                }
+
+                // Decrementar tempo
+                int newTime = timer.getTimeRemaining() - 1;
+
+                if (newTime <= 0) {
+                    // Timer expirou
+                    log.warn("⏰ Timer expirou para match {}", matchId);
+                    timer.getTimeoutFuture().cancel(true);
+                    if (timer.getOnTimeout() != null) {
+                        timer.getOnTimeout().run();
+                    }
+                } else {
+                    // Atualizar tempo
+                    timer.setTimeRemaining(newTime);
+
+                    // ✅ BROADCAST: Enviar update a cada segundo
+                    DraftData draftData = activeDrafts.get(matchId);
+                    if (draftData != null) {
+                        Map<String, Object> updateData = Map.of(
+                                "matchId", matchId,
+                                "timeRemaining", newTime,
+                                "currentAction", draftData.getCurrentAction(),
+                                "phase", draftData.getPhase());
+
+                        webSocketService.broadcastToAll("draft_update", updateData);
+
+                        // Log a cada 10 segundos para não poluir
+                        if (newTime % 10 == 0 || newTime <= 5) {
+                            log.debug("⏰ Timer atualizado - Match {}: {}s restantes", matchId, newTime);
+                        }
+                    }
+                }
+            }
+
+            // Limpar timers finalizados
+            draftTimers.entrySet().removeIf(entry -> entry.getValue().getTimeoutFuture().isDone());
+
         } catch (Exception e) {
             log.error("❌ Erro ao atualizar timers", e);
         }

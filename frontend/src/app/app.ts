@@ -732,6 +732,7 @@ export class App implements OnInit, OnDestroy {
           const oldDraftData = this.draftData;
           this.draftData = {
             ...this.draftData,
+            matchId: this.draftData.matchId, // ✅ CRÍTICO: Preservar matchId explicitamente
             phases: newPhases,
             actions: newPhases,
             currentAction: newCurrentAction,
@@ -753,6 +754,15 @@ export class App implements OnInit, OnDestroy {
             old: oldDraftData,
             new: this.draftData,
             referenceChanged: oldDraftData !== this.draftData
+          });
+
+          // ✅ CRÍTICO: Log detalhado do matchId antes de disparar evento
+          console.log('🔑 [App] Verificando matchId antes de disparar eventos:', {
+            'this.draftData.matchId': this.draftData.matchId,
+            'typeof': typeof this.draftData.matchId,
+            'oldDraftData.matchId': oldDraftData?.matchId,
+            'updateData.matchId': updateData.matchId,
+            'message.matchId': message.matchId
           });
 
           // ✅ NOVO: Despachar evento de timer para o componente
@@ -1844,6 +1854,25 @@ export class App implements OnInit, OnDestroy {
             return;
           }
 
+          // ✅ CORREÇÃO: Extrair wins/losses e dados ranqueados do LCU
+          const wins = data.player?.wins || lcuData.wins || 0;
+          const losses = data.player?.losses || lcuData.losses || 0;
+          const rankData = data.player?.rank || lcuData.rank || null;
+
+          // ✅ NOVO: Estruturar rankedData para o frontend
+          let rankedData: { soloQueue?: any; flexQueue?: any; } | undefined = undefined;
+          if (rankData && rankData.tier && rankData.tier !== 'UNRANKED') {
+            rankedData = {
+              soloQueue: {
+                tier: rankData.tier || 'UNRANKED',
+                rank: rankData.rank || '',
+                leaguePoints: rankData.lp || 0,
+                wins: rankData.wins || wins || 0,
+                losses: rankData.losses || losses || 0
+              }
+            };
+          }
+
           const player: Player = {
             id: lcuData.summonerId || 0,
             summonerName: displayName, // Use displayName as summonerName
@@ -1856,7 +1885,17 @@ export class App implements OnInit, OnDestroy {
             summonerLevel: lcuData.summonerLevel || 30,
             region: 'br1',
             currentMMR: 1200,
-            customLp: 1200
+            customLp: 1200,
+            // ✅ ADICIONADO: Incluir dados do ranked
+            wins: wins,
+            losses: losses,
+            rankedData: rankedData,
+            rank: rankData ? {
+              tier: rankData.tier || 'UNRANKED',
+              rank: rankData.rank || '',
+              display: rankData.tier && rankData.rank ? `${rankData.tier} ${rankData.rank}` : 'Unranked',
+              lp: rankData.lp || 0
+            } : undefined
           };
 
           this.currentPlayer = player;
