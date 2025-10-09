@@ -31,9 +31,14 @@ function sanitizeForLog(value) {
 }
 
 function appendLogLine(line) {
-  // ⚠️ LOGS EM ARQUIVO DESABILITADOS EM PRODUÇÃO
-  // Apenas console.log para debug local, sem salvar em arquivo
-  return;
+  // ✅ LOGS EM ARQUIVO TEMPORARIAMENTE REATIVADOS PARA DEBUG
+  try {
+    const LOG_FILE = path.join(__dirname, '..', 'electron-console.log');
+    const ts = new Date().toISOString();
+    fs.appendFileSync(LOG_FILE, ts + ' ' + line + '\n', { encoding: 'utf8' });
+  } catch (e) {
+    // ignore file errors
+  }
 }
 
 function safeLog(...args) {
