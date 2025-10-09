@@ -381,6 +381,15 @@ public class DiscordService extends ListenerAdapter {
                 }
             }
 
+            // ✅ CORREÇÃO CRITICAL: NÃO enviar lista vazia - causa reconexões falsas no
+            // frontend
+            if (currentUsers.isEmpty() && !usersInChannel.isEmpty()) {
+                log.debug(
+                        "⚠️ [DiscordService] Lista vazia recebida mas cache tem {} usuários - ignorando atualização vazia",
+                        usersInChannel.size());
+                return;
+            }
+
             // ✅ CORREÇÃO: Atualizar incrementalmente sem limpar todos os usuários
             final boolean[] hasChanges = { false };
 
