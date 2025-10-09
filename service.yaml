@@ -1,0 +1,57 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: lol-matchmaking
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        # Aumenta timeout do startup probe para 60 segundos
+        run.googleapis.com/startup-cpu-boost: 'true'
+        autoscaling.knative.dev/maxScale: '10'
+        autoscaling.knative.dev/minScale: '0'
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 300
+      containers:
+      - image: gcr.io/lol-matchmaking-464309/lol-matchmaking:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SPRING_PROFILES_ACTIVE
+          value: gcp
+        - name: MYSQL_HOST
+          value: lolmatchmaking.mysql.uhserver.com
+        - name: MYSQL_PORT
+          value: "3306"
+        - name: MYSQL_DATABASE
+          value: lolmatchmaking
+        - name: MYSQL_USER
+          value: wmakeouthill
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: MYSQL_PASSWORD
+              key: latest
+        resources:
+          limits:
+            memory: 2Gi
+            cpu: "2"
+        startupProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          initialDelaySeconds: 10
+          timeoutSeconds: 5
+          periodSeconds: 5
+          failureThreshold: 12  # 12 * 5 = 60 segundos de timeout total
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3

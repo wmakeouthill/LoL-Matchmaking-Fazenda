@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: lol-matchmaking-backend
+  labels:
+    app: lol-matchmaking
+    component: backend
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+spec:
+  type: LoadBalancer
+  selector:
+    app: lol-matchmaking
+    component: backend
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800

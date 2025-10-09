@@ -47,7 +47,7 @@ configmap.yaml
 deployment.yaml
 hpa.yaml
 secret.yaml
-service.yaml
+
 *.bat
 *.sh
 Dockerfile.cloudrun
