@@ -1,0 +1,57 @@
+steps:
+  # Build da imagem Docker
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/lol-matchmaking:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/lol-matchmaking:latest'
+      - '-f'
+      - 'Dockerfile'
+      - '.'
+    
+  # Push da imagem para Google Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/lol-matchmaking:$COMMIT_SHA'
+    
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/lol-matchmaking:latest'
+    
+  # Deploy para Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'lol-matchmaking'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/lol-matchmaking:$COMMIT_SHA'
+      - '--region'
+      - 'southamerica-east1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--memory'
+      - '2Gi'
+      - '--cpu'
+      - '1'
+      - '--timeout'
+      - '300'
+      - '--max-instances'
+      - '10'
+      - '--set-env-vars'
+      - 'SPRING_PROFILES_ACTIVE=gcp,MYSQL_HOST=lolmatchmaking.mysql.uhserver.com,MYSQL_PORT=3306,MYSQL_DATABASE=lolmatchmaking,MYSQL_USER=wmakeouthill,MYSQL_PASSWORD=$$MYSQL_PASSWORD'
+
+timeout: 1200s
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
+
+images:
+  - 'gcr.io/$PROJECT_ID/lol-matchmaking:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/lol-matchmaking:latest'
