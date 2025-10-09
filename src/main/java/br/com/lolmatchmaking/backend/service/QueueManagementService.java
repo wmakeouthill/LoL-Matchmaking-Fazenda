@@ -30,6 +30,7 @@ public class QueueManagementService {
     private final MatchmakingWebSocketService webSocketService;
     private final DiscordService discordService;
     private final LCUService lcuService;
+    private final LCUConnectionRegistry lcuConnectionRegistry;
     private final ObjectMapper objectMapper;
     private final MatchFoundService matchFoundService;
     private final PlayerService playerService;
@@ -41,6 +42,7 @@ public class QueueManagementService {
             MatchmakingWebSocketService webSocketService,
             DiscordService discordService,
             LCUService lcuService,
+            LCUConnectionRegistry lcuConnectionRegistry,
             ObjectMapper objectMapper,
             @Lazy MatchFoundService matchFoundService,
             PlayerService playerService) {
@@ -50,6 +52,7 @@ public class QueueManagementService {
         this.webSocketService = webSocketService;
         this.discordService = discordService;
         this.lcuService = lcuService;
+        this.lcuConnectionRegistry = lcuConnectionRegistry;
         this.objectMapper = objectMapper;
         this.matchFoundService = matchFoundService;
         this.playerService = playerService;
@@ -544,9 +547,24 @@ public class QueueManagementService {
      */
     public boolean canPlayerJoinQueue(String summonerName) {
         try {
-            // Verificar se LCU está conectado
-            if (!lcuService.isConnected()) {
-                log.debug("⚠️ LCU não conectado para {}", summonerName);
+            // ✅ CORREÇÃO: Verificar se LCU está disponível via gateway OU conexão direta
+            // No Cloud Run, usamos gateway WebSocket do Electron, não HTTP direto
+            boolean lcuAvailable = false;
+
+            // Verificar se há conexão LCU registrada no registry para este jogador
+            Optional<br.com.lolmatchmaking.backend.service.LCUConnectionRegistry.LCUConnectionInfo> lcuConnection = lcuConnectionRegistry
+                    .getConnection(summonerName);
+
+            if (lcuConnection.isPresent()) {
+                log.debug("✅ LCU disponível via gateway para {}", summonerName);
+                lcuAvailable = true;
+            } else if (lcuService.isConnected()) {
+                log.debug("✅ LCU disponível via conexão direta para {}", summonerName);
+                lcuAvailable = true;
+            }
+
+            if (!lcuAvailable) {
+                log.debug("⚠️ LCU não disponível para {} (sem gateway registrado e sem conexão direta)", summonerName);
                 return false;
             }
 
