@@ -47,6 +47,10 @@ export class SpectatorsModalComponent implements OnInit {
     private readonly currentSummonerService: CurrentSummonerService
   ) {
     this.baseUrl = this.apiService.getBaseUrl();
+    console.log('🎯 [SpectatorsModal] CONSTRUCTOR - Componente criado!', {
+      baseUrl: this.baseUrl,
+      timestamp: new Date().toISOString()
+    });
   }
 
   ngOnInit(): void {
@@ -56,6 +60,15 @@ export class SpectatorsModalComponent implements OnInit {
       hasMatchId: !!this.matchId,
       hasSummonerName: !!this.summonerName
     });
+
+    // ✅ VALIDAÇÃO: Verificar se matchId existe
+    if (!this.matchId) {
+      console.error('❌ [SpectatorsModal] matchId é undefined! Não é possível carregar espectadores');
+      this.error = 'ID da partida não disponível';
+      this.loading = false;
+      return;
+    }
+
     this.loadSpectators();
     // Auto-refresh a cada 5 segundos
     setInterval(() => this.loadSpectators(), 5000);
@@ -83,32 +96,44 @@ export class SpectatorsModalComponent implements OnInit {
 
     const url = `${this.baseUrl}/discord/match/${this.matchId}/spectators`;
 
-    console.log('📡 [SpectatorsModal] Carregando espectadores:', {
-      url,
-      matchId: this.matchId,
-      summonerName,
-      hasHeader: !!summonerName
+    console.log('📡 [SpectatorsModal] ========== INICIANDO REQUISIÇÃO ==========');
+    console.log('📡 [SpectatorsModal] URL completa:', url);
+    console.log('📡 [SpectatorsModal] matchId:', this.matchId);
+    console.log('📡 [SpectatorsModal] summonerName:', summonerName);
+    console.log('📡 [SpectatorsModal] Headers:', {
+      'X-Summoner-Name': summonerName
     });
+    console.log('📡 [SpectatorsModal] baseUrl:', this.baseUrl);
 
     this.http.get<SpectatorResponse>(url, { headers }).subscribe({
       next: (response: SpectatorResponse) => {
+        console.log('✅ [SpectatorsModal] ========== RESPOSTA RECEBIDA ==========');
+        console.log('✅ [SpectatorsModal] Response completo:', response);
+        console.log('✅ [SpectatorsModal] Success:', response.success);
+        console.log('✅ [SpectatorsModal] Count:', response.count);
+        console.log('✅ [SpectatorsModal] Spectators:', response.spectators);
+
         if (response.success) {
           this.spectators = response.spectators;
-          console.log(`✅ [SpectatorsModal] ${response.count} espectadores carregados`);
+          console.log(`✅ [SpectatorsModal] ${response.count} espectadores carregados com sucesso`);
         } else {
           this.error = 'Erro ao carregar espectadores';
-          console.error('❌ [SpectatorsModal] Resposta de erro:', response);
+          console.error('❌ [SpectatorsModal] Resposta indicou falha:', response);
         }
         this.loading = false;
       },
       error: (err: any) => {
-        console.error('❌ [SpectatorsModal] Erro ao carregar espectadores:', err);
-        console.error('Details:', {
-          status: err.status,
-          statusText: err.statusText,
-          error: err.error,
-          message: err.message
+        console.error('❌ [SpectatorsModal] ========== ERRO NA REQUISIÇÃO ==========');
+        console.error('❌ [SpectatorsModal] Erro completo:', err);
+        console.error('❌ [SpectatorsModal] Status:', err.status);
+        console.error('❌ [SpectatorsModal] StatusText:', err.statusText);
+        console.error('❌ [SpectatorsModal] Error body:', err.error);
+        console.error('❌ [SpectatorsModal] Message:', err.message);
+        console.error('❌ [SpectatorsModal] URL chamada:', err.url);
+        console.error('❌ [SpectatorsModal] Headers enviados:', {
+          'X-Summoner-Name': summonerName
         });
+
         this.error = `Erro ao comunicar com o servidor: ${err.status || 'Unknown'} ${err.statusText || ''}`;
         this.loading = false;
       }

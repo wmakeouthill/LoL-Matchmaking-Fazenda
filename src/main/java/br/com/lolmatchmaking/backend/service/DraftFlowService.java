@@ -25,6 +25,7 @@ public class DraftFlowService {
     private final DataDragonService dataDragonService;
     private final ObjectMapper mapper = new ObjectMapper();
     private final GameInProgressService gameInProgressService;
+    private final DiscordService discordService;
 
     @Value("${app.draft.action-timeout-ms:30000}")
     private long configuredActionTimeoutMs;
@@ -1788,17 +1789,21 @@ public class DraftFlowService {
 
             log.info("📊 [DraftFlow] Partida encontrada - Status: {}", match.getStatus());
 
-            // 2. Deletar partida do banco de dados
+            // 2. Limpar Discord (mover jogadores de volta e deletar canais)
+            discordService.deleteMatchChannels(matchId, true);
+            log.info("🧹 [DraftFlow] Canais do Discord limpos e jogadores movidos de volta");
+
+            // 3. Deletar partida do banco de dados
             customMatchRepository.deleteById(matchId);
             log.info("🗑️ [DraftFlow] Partida deletada do banco de dados");
 
-            // 3. Limpar confirmações da memória
+            // 4. Limpar confirmações da memória
             finalConfirmations.remove(matchId);
 
-            // 4. Broadcast evento de cancelamento ANTES de remover do states
+            // 5. Broadcast evento de cancelamento ANTES de remover do states
             broadcastMatchCancelled(matchId);
 
-            // 5. Remover do states DEPOIS do broadcast (precisa dos jogadores)
+            // 6. Remover do states DEPOIS do broadcast (precisa dos jogadores)
             states.remove(matchId);
             log.info("🧹 [DraftFlow] Cache de confirmações limpo");
 

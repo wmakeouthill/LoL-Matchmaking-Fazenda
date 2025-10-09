@@ -3309,7 +3309,7 @@ export class App implements OnInit, OnDestroy {
       console.log(`🔄 [App] Cancelando partida ${matchId}...`);
 
       const response: any = await firstValueFrom(
-        this.http.delete(`${this.apiService.getBaseUrl()}/draft/match/${matchId}/cancel`)
+        this.http.delete(`${this.apiService.getBaseUrl()}/match/${matchId}/cancel`)
       );
 
       if (response.success) {
