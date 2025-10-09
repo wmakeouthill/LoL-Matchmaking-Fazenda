@@ -22,45 +22,18 @@ steps:
       - 'push'
       - 'gcr.io/$PROJECT_ID/lol-matchmaking:latest'
     
-  # Deploy para Cloud Run
+  # Deploy para Cloud Run com configuração de health checks
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
       - 'run'
-      - 'deploy'
-      - 'lol-matchmaking'
-      - '--image'
-      - 'gcr.io/$PROJECT_ID/lol-matchmaking:$COMMIT_SHA'
+      - 'services'
+      - 'replace'
+      - 'service.yaml'
       - '--region'
       - 'southamerica-east1'
       - '--platform'
       - 'managed'
-      - '--allow-unauthenticated'
-      - '--memory'
-      - '2Gi'
-      - '--cpu'
-      - '2'
-      - '--timeout'
-      - '300'  # Timeout de 5 minutos (máximo para WebSocket no Free Tier)
-      - '--max-instances'
-      - '10'
-      - '--min-instances'
-      - '0'
-      - '--port'
-      - '8080'
-      - '--no-cpu-throttling'
-      - '--set-env-vars'
-      - 'SPRING_PROFILES_ACTIVE=gcp'
-      - '--set-env-vars'
-      - 'MYSQL_HOST=lolmatchmaking.mysql.uhserver.com'
-      - '--set-env-vars'
-      - 'MYSQL_PORT=3306'
-      - '--set-env-vars'
-      - 'MYSQL_DATABASE=lolmatchmaking'
-      - '--set-env-vars'
-      - 'MYSQL_USER=wmakeouthill'
-      - '--update-secrets'
-      - 'MYSQL_PASSWORD=MYSQL_PASSWORD:latest'
 
 timeout: 1200s
 options:
