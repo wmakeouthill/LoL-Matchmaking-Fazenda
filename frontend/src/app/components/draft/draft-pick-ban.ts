@@ -2880,14 +2880,16 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
    * ✅ NOVO: Abre o modal de espectadores
    */
   openSpectatorsModal(): void {
-    console.log('👥 [openSpectatorsModal] Iniciando abertura do modal', {
-      matchId: this.session?.matchId,
-      summonerName: this.summonerName,
-      showSpectatorsModal: this.showSpectatorsModal
-    });
+    console.log('👥 [openSpectatorsModal] Iniciando abertura do modal');
+    console.log('📦 [openSpectatorsModal] session completo:', JSON.stringify(this.session, null, 2));
+    console.log('🔑 [openSpectatorsModal] session?.matchId:', this.session?.matchId);
+    console.log('🔑 [openSpectatorsModal] session?.id:', (this.session as any)?.id);
+    console.log('🔑 [openSpectatorsModal] session?.data?.matchId:', (this.session as any)?.data?.matchId);
+    console.log('🗝️ [openSpectatorsModal] Todas as keys:', this.session ? Object.keys(this.session) : 'session é null/undefined');
+
     logDraft('[DraftPickBan] Abrindo modal de espectadores');
     this.showSpectatorsModal = true;
-    saveLogToRoot(`👥 [openSpectatorsModal] Modal de espectadores aberto para match ${this.session?.matchId}`);
+    saveLogToRoot(`👥 [openSpectatorsModal] Modal de espectadores aberto`);
     console.log('✅ [openSpectatorsModal] Modal marcado como visível');
     this.cdr.detectChanges();
   }

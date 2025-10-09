@@ -382,7 +382,7 @@
   <!-- ✅ NOVO: Modal de Espectadores -->
   <app-spectators-modal
     *ngIf="showSpectatorsModal"
-    [matchId]="gameData?.matchId"
+    [matchId]="gameData?.id"
     [summonerName]="summonerName"
     (closed)="closeSpectatorsModal()">
   </app-spectators-modal>

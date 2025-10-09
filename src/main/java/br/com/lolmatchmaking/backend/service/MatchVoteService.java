@@ -29,6 +29,7 @@ public class MatchVoteService {
     private final SpecialUserService specialUserService;
     private final LCUService lcuService;
     private final LPCalculationService lpCalculationService;
+    private final DiscordService discordService;
 
     private static final int VOTES_REQUIRED_FOR_AUTO_LINK = 5;
     private final Map<Long, Map<Long, Long>> temporaryVotes = new ConcurrentHashMap<>();
@@ -340,6 +341,17 @@ public class MatchVoteService {
             temporaryVotes.remove(matchId);
 
             log.info("🎉 Partida {} vinculada com sucesso! LCU Game ID: {}", matchId, lcuGameId);
+
+            // ✅ NOVO: Limpar canais Discord e mover jogadores de volta após vinculação
+            try {
+                log.info("🧹 [linkMatch] Limpando canais Discord do match {}", matchId);
+                discordService.deleteMatchChannels(matchId, true); // true = mover jogadores de volta
+                log.info("✅ [linkMatch] Canais Discord limpos e jogadores movidos de volta");
+            } catch (Exception discordError) {
+                log.error("❌ [linkMatch] Erro ao limpar canais Discord: {}", discordError.getMessage());
+                // Não falhar a vinculação por erro na limpeza do Discord
+            }
+
         } catch (Exception e) {
             log.error("❌ Erro ao vincular partida: {}", e.getMessage(), e);
             throw new IllegalStateException("Erro ao vincular partida", e);
