@@ -66,8 +66,10 @@ public class LCUService {
     private final Map<String, Object> lcuStatus = new ConcurrentHashMap<>();
     // Track last time a gateway (Electron) reported successful LCU activity
     private Instant lastGatewaySeen = null;
-    // TTL (ms) to consider gateway-reported connection as valid before falling back
-    private static final long GATEWAY_CONNECTION_TTL_MS = 60_000; // 60 seconds
+    // ✅ CORREÇÃO: Aumentar TTL para 180 segundos (3x o heartbeat de 60s)
+    // Isso evita race conditions onde o gateway expira logo antes do próximo
+    // heartbeat
+    private static final long GATEWAY_CONNECTION_TTL_MS = 180_000; // 180 seconds = 3 minutes
 
     /**
      * Inicializa as propriedades do LCU a partir do AppProperties

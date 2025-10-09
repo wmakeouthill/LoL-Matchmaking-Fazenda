@@ -41,7 +41,7 @@ steps:
       - '--cpu'
       - '2'
       - '--timeout'
-      - '300'
+      - '3600'  # ✅ CORREÇÃO: 3600s = 1 hora (Cloud Run suporta até 1h para HTTP/2 e WebSocket)
       - '--max-instances'
       - '10'
       - '--min-instances'
@@ -49,6 +49,8 @@ steps:
       - '--port'
       - '8080'
       - '--no-cpu-throttling'
+      - '--use-http2'  # ✅ NOVO: Habilitar HTTP/2 para melhor suporte a WebSocket
+      - '--session-affinity'  # ✅ NOVO: Session affinity para manter WebSocket na mesma instância
       - '--set-env-vars'
       - 'SPRING_PROFILES_ACTIVE=gcp'
       - '--set-env-vars'

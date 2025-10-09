@@ -89,6 +89,7 @@ async function pickBackendUrl() {
   // Para testes locais: 'http://localhost:8080/'
   // Para rede local: 'http://192.168.1.5:8080/' (seu IP)
   // Para cloud: 'https://seu-app.run.app/'
+  // ✅ CORREÇÃO: URL correta do Cloud Run (nome do serviço é 'lol-matchmaking')
   const HARDCODED_BACKEND_URL = 'https://lol-matchmaking-368951732227.southamerica-east1.run.app/';
   
   const env = process.env.BACKEND_URL || '';
