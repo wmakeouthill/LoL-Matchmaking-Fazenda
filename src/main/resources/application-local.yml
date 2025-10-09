@@ -38,21 +38,21 @@ spring:
     max-binary-message-buffer-size: 4194304
 
 # Configurações do DevTools para evitar restarts desnecessários
-spring:
-  devtools:
-    restart:
-      enabled: false # Desabilitar restart automático
-    livereload:
-      enabled: true # Manter LiveReload para frontend
-    additional-paths: src/main/java # Monitorar apenas mudanças em Java
+# spring:
+#   devtools:
+#     restart:
+#       enabled: false # Desabilitar restart automático
+#     livereload:
+#       enabled: true # Manter LiveReload para frontend
+#     additional-paths: src/main/java # Monitorar apenas mudanças em Java
 
 # Logs controlados para debugging
 logging:
   level:
     root: INFO
-    "[br.com.lolmatchmaking.backend.service.LCUService]": INFO
-    "[br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService]": INFO
-    "[org.hibernate.SQL]": WARN
-    "[org.hibernate.type.descriptor.sql.BasicBinder]": WARN
-    "[org.springframework.web]": WARN
-    "[org.springframework.security]": WARN
+    br.com.lolmatchmaking.backend.service.LCUService: INFO
+    br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService: INFO
+    org.hibernate.SQL: WARN
+    org.hibernate.type.descriptor.sql.BasicBinder: WARN
+    org.springframework.web: WARN
+    org.springframework.security: WARN

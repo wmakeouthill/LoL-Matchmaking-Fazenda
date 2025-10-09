@@ -15,9 +15,9 @@ app:
 logging:
   level:
     root: INFO
-    "[br.com.lolmatchmaking.backend.service.LCUService]": INFO
-    "[br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService]": INFO
-    "[org.hibernate.SQL]": WARN
-    "[org.hibernate.type.descriptor.sql.BasicBinder]": WARN
-    "[org.springframework.web]": WARN
-    "[org.springframework.security]": WARN
+    br.com.lolmatchmaking.backend.service.LCUService: INFO
+    br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService: INFO
+    org.hibernate.SQL: WARN
+    org.hibernate.type.descriptor.sql.BasicBinder: WARN
+    org.springframework.web: WARN
+    org.springframework.security: WARN

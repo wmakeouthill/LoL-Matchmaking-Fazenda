@@ -1,0 +1,34 @@
+{
+  "frontend": {
+    "enabled": false,
+    "saveToFile": false,
+    "files": {
+      "draft-debug.log": false,
+      "electron.log": false
+    },
+    "note": "Logs do frontend desabilitados em produção"
+  },
+  "backend": {
+    "enabled": true,
+    "saveToFile": true,
+    "files": {
+      "backend.log": false,
+      "application.log": true
+    },
+    "levels": {
+      "root": "INFO",
+      "application": "INFO"
+    },
+    "note": "backend.log desabilitado em produção, apenas logs/application.log interno"
+  },
+  "electron": {
+    "enabled": false,
+    "saveToFile": false,
+    "mainLog": false,
+    "consoleMessages": false,
+    "note": "Logs do Electron desabilitados em produção - não salva electron.log"
+  },
+  "production": {
+    "note": "Configuração de produção - sem arquivos de log na raiz do projeto ou no PC dos jogadores"
+  }
+}
