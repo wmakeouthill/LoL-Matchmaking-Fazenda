@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter, OnInit } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnInit, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -12,7 +12,7 @@ import { firstValueFrom } from 'rxjs';
   templateUrl: './adjust-lp-modal.html',
   styleUrl: './adjust-lp-modal.css'
 })
-export class AdjustLpModalComponent implements OnInit {
+export class AdjustLpModalComponent implements OnInit, OnChanges {
   @Input() isVisible: boolean = false;
   @Output() closed = new EventEmitter<void>();
   @Output() lpAdjusted = new EventEmitter<any>();
@@ -34,8 +34,16 @@ export class AdjustLpModalComponent implements OnInit {
     this.baseUrl = this.apiService.getBaseUrl();
   }
 
-  async ngOnInit() {
-    await this.loadPlayers();
+  ngOnInit(): void {
+    // ✅ FIX: Não carregar jogadores automaticamente no init
+    // Apenas carregar quando modal for aberto (isVisible = true)
+  }
+
+  ngOnChanges(changes: SimpleChanges): void {
+    // ✅ FIX: Carregar jogadores apenas quando modal se tornar visível
+    if (changes['isVisible'] && changes['isVisible'].currentValue === true) {
+      this.loadPlayers();
+    }
   }
 
   async loadPlayers(): Promise<void> {

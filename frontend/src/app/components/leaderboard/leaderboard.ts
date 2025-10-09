@@ -1,10 +1,11 @@
 import { Component, OnInit, OnDestroy, ChangeDetectorRef, ChangeDetectionStrategy } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { interval, Subscription, debounceTime, distinctUntilChanged, Observable, firstValueFrom } from 'rxjs';
 import { ChampionService } from '../../services/champion.service';
 import { ProfileIconService } from '../../services/profile-icon.service';
 import { ApiService } from '../../services/api';
+import { CurrentSummonerService } from '../../services/current-summoner.service';
 
 interface LeaderboardPlayer {
   rank: number;
@@ -74,11 +75,12 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
   private baseUrl: string;
 
   constructor(
-    private http: HttpClient,
-    private championService: ChampionService,
-    private profileIconService: ProfileIconService,
-    private apiService: ApiService,
-    private cdr: ChangeDetectorRef
+    private readonly http: HttpClient,
+    private readonly championService: ChampionService,
+    private readonly profileIconService: ProfileIconService,
+    private readonly apiService: ApiService,
+    private readonly currentSummonerService: CurrentSummonerService,
+    private readonly cdr: ChangeDetectorRef
   ) {
     this.baseUrl = this.apiService.getBaseUrl();
   }
@@ -159,7 +161,20 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
     }
 
     try {
-      const response = await firstValueFrom(this.http.get<any>(`${this.baseUrl}/stats/participants-leaderboard?limit=500`));
+      // ✅ CORREÇÃO: Obter summoner name do serviço e adicionar header
+      const summonerName = this.currentSummonerService.getSummonerNameForHeader();
+      if (!summonerName) {
+        console.warn('⚠️ [Leaderboard] Summoner name não disponível - tentando carregar sem header');
+      }
+
+      const headers: Record<string, string> = {};
+      if (summonerName) {
+        headers['X-Summoner-Name'] = summonerName;
+      }
+
+      const response = await firstValueFrom(
+        this.http.get<any>(`${this.baseUrl}/stats/participants-leaderboard?limit=500`, { headers })
+      );
       if (response.success) {
         console.log('📊 [loadLeaderboard] Response sample:', response.data[0]);
         console.log('📊 [loadLeaderboard] Favorite champion raw:', response.data[0]?.favoriteChampion);
@@ -319,7 +334,16 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
 
   private async fetchPlayerCustomMatches(playerIdentifier: string): Promise<any[]> {
     try {
-      const response = await firstValueFrom(this.http.get<any>(`${this.baseUrl}/matches/custom/${encodeURIComponent(playerIdentifier)}?limit=500`));
+      // ✅ CORREÇÃO: Obter summoner name do serviço e adicionar header
+      const summonerName = this.currentSummonerService.getSummonerNameForHeader();
+      const headers: Record<string, string> = {};
+      if (summonerName) {
+        headers['X-Summoner-Name'] = summonerName;
+      }
+
+      const response = await firstValueFrom(
+        this.http.get<any>(`${this.baseUrl}/matches/custom/${encodeURIComponent(playerIdentifier)}?limit=500`, { headers })
+      );
       return response.success ? response.data : [];
     } catch (error) {
       console.warn(`Erro ao buscar partidas customizadas para ${playerIdentifier}:`, error);

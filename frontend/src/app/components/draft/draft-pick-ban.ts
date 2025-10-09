@@ -105,6 +105,28 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   // ✅ NOVO: Controle do modal de espectadores
   showSpectatorsModal: boolean = false;
 
+  // ✅ NOVO: Getter para obter summoner name do currentPlayer
+  get summonerName(): string {
+    if (!this.currentPlayer) return '';
+
+    // Prioridade 1: displayName
+    if (this.currentPlayer.displayName) {
+      return this.currentPlayer.displayName;
+    }
+
+    // Prioridade 2: gameName#tagLine
+    if (this.currentPlayer.gameName && this.currentPlayer.tagLine) {
+      return `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`;
+    }
+
+    // Prioridade 3: summonerName
+    if (this.currentPlayer.summonerName) {
+      return this.currentPlayer.summonerName;
+    }
+
+    return '';
+  }
+
   @ViewChild('confirmationModal') confirmationModal!: DraftConfirmationModalComponent;
   private readonly baseUrl: string;
 

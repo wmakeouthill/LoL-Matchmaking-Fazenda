@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { ApiService } from '../../services/api';
+import { ChampionService } from '../../services/champion.service';
 
 interface ChampionDraftStats {
   championId: number;
@@ -60,7 +61,8 @@ export class DraftPlayerHelpModalComponent implements OnInit, OnChanges {
 
   constructor(
     private readonly http: HttpClient,
-    private readonly apiService: ApiService
+    private readonly apiService: ApiService,
+    private readonly championService: ChampionService
   ) { }
 
   ngOnInit(): void {
@@ -106,6 +108,9 @@ export class DraftPlayerHelpModalComponent implements OnInit, OnChanges {
         rankedChampions: this.parseJsonField(response.rankedChampions) || []
       };
 
+      // ✅ Normalizar nomes de campeões usando ChampionService
+      this.normalizeChampionNames();
+
       // Ordenar dados
       this.sortData();
 
@@ -146,6 +151,35 @@ export class DraftPlayerHelpModalComponent implements OnInit, OnChanges {
     this.playerData.rankedChampions.sort((a, b) => b.gamesPlayed - a.gamesPlayed);
   }
 
+  /**
+   * ✅ NOVO: Normaliza nomes de campeões usando ChampionService
+   * Substitui "Champion 20" pelo nome real do campeão
+   */
+  private normalizeChampionNames(): void {
+    if (!this.playerData) return;
+
+    // Normalizar Draft Stats
+    this.playerData.draftStats.forEach(champ => {
+      if (champ.championName.startsWith('Champion ')) {
+        champ.championName = this.championService.getChampionName(champ.championId);
+      }
+    });
+
+    // Normalizar Mastery Champions
+    this.playerData.masteryChampions.forEach(champ => {
+      if (champ.championName.startsWith('Champion ')) {
+        champ.championName = this.championService.getChampionName(champ.championId);
+      }
+    });
+
+    // Normalizar Ranked Champions
+    this.playerData.rankedChampions.forEach(champ => {
+      if (champ.championName.startsWith('Champion ')) {
+        champ.championName = this.championService.getChampionName(champ.championId);
+      }
+    });
+  }
+
   close(): void {
     console.log('🔵 [PlayerHelpModal] Closing modal');
     this.closed.emit();
@@ -156,8 +190,7 @@ export class DraftPlayerHelpModalComponent implements OnInit, OnChanges {
   }
 
   getChampionImageUrl(championId: number): string {
-    // Placeholder - ajustar para o serviço real de imagens
-    return `https://ddragon.leagueoflegends.com/cdn/13.24.1/img/champion/champion_${championId}.png`;
+    return this.championService.getChampionImageUrl(championId);
   }
 
   formatNumber(num: number): string {

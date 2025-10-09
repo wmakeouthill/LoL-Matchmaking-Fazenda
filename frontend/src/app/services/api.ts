@@ -3,6 +3,7 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, throwError, Subject, firstValueFrom, of, forkJoin, from } from 'rxjs';
 import { catchError, retry, map, switchMap, tap } from 'rxjs/operators';
 import { Player, RefreshPlayerResponse } from '../interfaces';
+import { CurrentSummonerService } from './current-summoner.service';
 
 interface QueueStatus {
   playersInQueue: number;
@@ -89,7 +90,10 @@ export class ApiService {
   private wsLastMessageAt = 0;
   private readonly wsMessageQueue: any[] = [];
 
-  constructor(@Inject(HttpClient) private readonly http: HttpClient) {
+  constructor(
+    @Inject(HttpClient) private readonly http: HttpClient,
+    private readonly currentSummonerService: CurrentSummonerService
+  ) {
     // ✅ CORREÇÃO: Inicializar baseUrl aqui, quando o contexto está pronto
     this.baseUrl = this.getBaseUrl();
 
@@ -241,7 +245,14 @@ export class ApiService {
       'Content-Type': 'application/json'
     };
 
-    // Adicionar X-Summoner-Name se disponível
+    // ✅ PRIORIDADE 1: Tentar obter do CurrentSummonerService (fonte mais confiável)
+    const summonerName = this.currentSummonerService.getSummonerNameForHeader();
+    if (summonerName) {
+      headers['X-Summoner-Name'] = summonerName;
+      return headers;
+    }
+
+    // ✅ PRIORIDADE 2: Fallback para _currentSummonerName (legado)
     if (this._currentSummonerName) {
       headers['X-Summoner-Name'] = this._currentSummonerName;
     }
