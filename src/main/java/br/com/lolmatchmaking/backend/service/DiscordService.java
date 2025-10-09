@@ -9,7 +9,10 @@ import lombok.extern.slf4j.Slf4j;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.entities.Member;
+import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.channel.concrete.VoiceChannel;
+import net.dv8tion.jda.api.entities.channel.concrete.Category;
+import net.dv8tion.jda.api.entities.channel.ChannelType;
 import net.dv8tion.jda.api.events.guild.voice.GuildVoiceUpdateEvent;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
@@ -44,6 +47,9 @@ public class DiscordService extends ListenerAdapter {
     private final Map<String, DiscordUser> usersInChannel = new ConcurrentHashMap<>();
     private final Map<String, DiscordPlayer> discordQueue = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+
+    // ✅ NOVO: Armazenamento de partidas ativas com canais Discord
+    private final Map<Long, DiscordMatch> activeMatches = new ConcurrentHashMap<>();
 
     private boolean isConnected = false;
     private String botUsername;
@@ -668,6 +674,629 @@ public class DiscordService extends ListenerAdapter {
         return true;
     }
 
+    // ========================================
+    // ✅ AUTOMAÇÃO DE CANAIS DISCORD
+    // ========================================
+
+    /**
+     * Cria canais temporários de time para uma partida
+     * 
+     * @param matchId               ID da partida
+     * @param blueTeamSummonerNames Lista de summoner names (gameName#tagLine) do
+     *                              time azul
+     * @param redTeamSummonerNames  Lista de summoner names (gameName#tagLine) do
+     *                              time vermelho
+     * @return DiscordMatch com os canais criados ou null se falhar
+     */
+    public DiscordMatch createMatchChannels(Long matchId,
+            List<String> blueTeamSummonerNames,
+            List<String> redTeamSummonerNames) {
+
+        if (!isConnected || jda == null) {
+            log.warn("⚠️ [DiscordService] Discord não conectado, não é possível criar canais");
+            return null;
+        }
+
+        try {
+            log.info("🎮 [createMatchChannels] Criando canais para match {}", matchId);
+            log.info("🔵 [createMatchChannels] Blue Team: {}", blueTeamSummonerNames);
+            log.info("🔴 [createMatchChannels] Red Team: {}", redTeamSummonerNames);
+
+            // 1. Encontrar guild
+            Guild guild = jda.getGuilds().stream().findFirst().orElse(null);
+            if (guild == null) {
+                log.error("❌ [createMatchChannels] Guild não encontrada");
+                return null;
+            }
+
+            // 2. Criar categoria
+            String categoryName = "Match #" + matchId;
+            Category category = guild.createCategory(categoryName).complete();
+            log.info("✅ [createMatchChannels] Categoria criada: {} ({})", category.getName(), category.getId());
+
+            // 3. Criar canal Blue Team
+            VoiceChannel blueChannel = guild.createVoiceChannel("🔵-blue-team-" + matchId)
+                    .setParent(category)
+                    .complete();
+            log.info("✅ [createMatchChannels] Canal Blue criado: {} ({})", blueChannel.getName(), blueChannel.getId());
+
+            // 4. Criar canal Red Team
+            VoiceChannel redChannel = guild.createVoiceChannel("🔴-red-team-" + matchId)
+                    .setParent(category)
+                    .complete();
+            log.info("✅ [createMatchChannels] Canal Red criado: {} ({})", redChannel.getName(), redChannel.getId());
+
+            // 5. Converter summoner names para Discord IDs
+            List<String> blueTeamDiscordIds = new ArrayList<>();
+            List<String> redTeamDiscordIds = new ArrayList<>();
+
+            for (String summonerName : blueTeamSummonerNames) {
+                String discordId = findDiscordIdBySummonerName(summonerName);
+                if (discordId != null) {
+                    blueTeamDiscordIds.add(discordId);
+                    log.info("🔗 [createMatchChannels] Blue: {} -> Discord ID: {}", summonerName, discordId);
+                } else {
+                    log.warn("⚠️ [createMatchChannels] Blue: {} não tem vinculação Discord", summonerName);
+                }
+            }
+
+            for (String summonerName : redTeamSummonerNames) {
+                String discordId = findDiscordIdBySummonerName(summonerName);
+                if (discordId != null) {
+                    redTeamDiscordIds.add(discordId);
+                    log.info("🔗 [createMatchChannels] Red: {} -> Discord ID: {}", summonerName, discordId);
+                } else {
+                    log.warn("⚠️ [createMatchChannels] Red: {} não tem vinculação Discord", summonerName);
+                }
+            }
+
+            // 6. Criar objeto DiscordMatch
+            DiscordMatch match = new DiscordMatch();
+            match.setMatchId(matchId);
+            match.setCategoryId(category.getId());
+            match.setBlueChannelId(blueChannel.getId());
+            match.setRedChannelId(redChannel.getId());
+            match.setBlueTeamDiscordIds(blueTeamDiscordIds);
+            match.setRedTeamDiscordIds(redTeamDiscordIds);
+
+            // 7. Armazenar em activeMatches
+            activeMatches.put(matchId, match);
+
+            log.info("✅ [createMatchChannels] Match {} criado com sucesso! Blue: {}, Red: {}",
+                    matchId, blueTeamDiscordIds.size(), redTeamDiscordIds.size());
+
+            // 8. Agendar timeout de limpeza (3 horas)
+            scheduler.schedule(() -> {
+                if (activeMatches.containsKey(matchId)) {
+                    log.warn("⚠️ [createMatchChannels] Match {} excedeu timeout de 3 horas, limpando...", matchId);
+                    deleteMatchChannels(matchId, true);
+                }
+            }, 3, TimeUnit.HOURS);
+
+            return match;
+
+        } catch (Exception e) {
+            log.error("❌ [createMatchChannels] Erro ao criar canais para match {}", matchId, e);
+            return null;
+        }
+    }
+
+    /**
+     * Move jogadores para seus respectivos canais de time
+     * 
+     * @param matchId ID da partida
+     */
+    public void movePlayersToTeamChannels(Long matchId) {
+        DiscordMatch match = activeMatches.get(matchId);
+        if (match == null) {
+            log.warn("⚠️ [movePlayersToTeamChannels] Match {} não encontrado", matchId);
+            return;
+        }
+
+        if (!isConnected || jda == null) {
+            log.warn("⚠️ [movePlayersToTeamChannels] Discord não conectado");
+            return;
+        }
+
+        try {
+            Guild guild = jda.getGuilds().stream().findFirst().orElse(null);
+            if (guild == null) {
+                log.error("❌ [movePlayersToTeamChannels] Guild não encontrada");
+                return;
+            }
+
+            VoiceChannel blueChannel = guild.getVoiceChannelById(match.getBlueChannelId());
+            VoiceChannel redChannel = guild.getVoiceChannelById(match.getRedChannelId());
+
+            if (blueChannel == null || redChannel == null) {
+                log.error("❌ [movePlayersToTeamChannels] Canais não encontrados");
+                return;
+            }
+
+            log.info("🔄 [movePlayersToTeamChannels] Movendo jogadores para match {}", matchId);
+
+            int movedBlue = 0;
+            int movedRed = 0;
+
+            // Mover Blue Team
+            for (String discordId : match.getBlueTeamDiscordIds()) {
+                Member member = guild.getMemberById(discordId);
+                if (member != null && member.getVoiceState() != null && member.getVoiceState().getChannel() != null) {
+                    VoiceChannel currentChannel = (VoiceChannel) member.getVoiceState().getChannel();
+
+                    // Salvar canal original
+                    match.getOriginalChannels().put(discordId, currentChannel.getId());
+
+                    // Mover para Blue Team
+                    guild.moveVoiceMember(member, blueChannel).queue(
+                            success -> log.info("✅ [movePlayersToTeamChannels] 🔵 {} movido de {} para {}",
+                                    member.getEffectiveName(), currentChannel.getName(), blueChannel.getName()),
+                            error -> log.error("❌ [movePlayersToTeamChannels] Erro ao mover {}: {}",
+                                    member.getEffectiveName(), error.getMessage()));
+                    movedBlue++;
+                } else {
+                    log.warn("⚠️ [movePlayersToTeamChannels] Jogador Blue {} não está em canal de voz", discordId);
+                }
+            }
+
+            // Mover Red Team
+            for (String discordId : match.getRedTeamDiscordIds()) {
+                Member member = guild.getMemberById(discordId);
+                if (member != null && member.getVoiceState() != null && member.getVoiceState().getChannel() != null) {
+                    VoiceChannel currentChannel = (VoiceChannel) member.getVoiceState().getChannel();
+
+                    // Salvar canal original
+                    match.getOriginalChannels().put(discordId, currentChannel.getId());
+
+                    // Mover para Red Team
+                    guild.moveVoiceMember(member, redChannel).queue(
+                            success -> log.info("✅ [movePlayersToTeamChannels] 🔴 {} movido de {} para {}",
+                                    member.getEffectiveName(), currentChannel.getName(), redChannel.getName()),
+                            error -> log.error("❌ [movePlayersToTeamChannels] Erro ao mover {}: {}",
+                                    member.getEffectiveName(), error.getMessage()));
+                    movedRed++;
+                } else {
+                    log.warn("⚠️ [movePlayersToTeamChannels] Jogador Red {} não está em canal de voz", discordId);
+                }
+            }
+
+            log.info("✅ [movePlayersToTeamChannels] Match {}: {} Blue movidos, {} Red movidos",
+                    matchId, movedBlue, movedRed);
+
+        } catch (Exception e) {
+            log.error("❌ [movePlayersToTeamChannels] Erro ao mover jogadores", e);
+        }
+    }
+
+    /**
+     * Deleta canais de uma partida e move jogadores de volta
+     * 
+     * @param matchId         ID da partida
+     * @param movePlayersBack Se true, move jogadores de volta ao canal original
+     */
+    public void deleteMatchChannels(Long matchId, boolean movePlayersBack) {
+        DiscordMatch match = activeMatches.get(matchId);
+        if (match == null) {
+            log.warn("⚠️ [deleteMatchChannels] Match {} não encontrado", matchId);
+            return;
+        }
+
+        if (!isConnected || jda == null) {
+            log.warn("⚠️ [deleteMatchChannels] Discord não conectado");
+            activeMatches.remove(matchId);
+            return;
+        }
+
+        try {
+            Guild guild = jda.getGuilds().stream().findFirst().orElse(null);
+            if (guild == null) {
+                log.error("❌ [deleteMatchChannels] Guild não encontrada");
+                activeMatches.remove(matchId);
+                return;
+            }
+
+            log.info("🧹 [deleteMatchChannels] Limpando match {}, movePlayersBack={}", matchId, movePlayersBack);
+
+            // 1. Mover jogadores de volta (se solicitado)
+            if (movePlayersBack) {
+                VoiceChannel mainChannel = guild.getVoiceChannels().stream()
+                        .filter(ch -> ch.getName().equals(discordChannelName))
+                        .findFirst()
+                        .orElse(null);
+
+                if (mainChannel == null) {
+                    log.warn("⚠️ [deleteMatchChannels] Canal principal '{}' não encontrado", discordChannelName);
+                }
+
+                // Combinar todos os jogadores
+                List<String> allPlayers = new ArrayList<>();
+                allPlayers.addAll(match.getBlueTeamDiscordIds());
+                allPlayers.addAll(match.getRedTeamDiscordIds());
+
+                for (String discordId : allPlayers) {
+                    Member member = guild.getMemberById(discordId);
+                    if (member != null && member.getVoiceState() != null
+                            && member.getVoiceState().getChannel() != null) {
+
+                        // Tentar mover para canal original
+                        String originalChannelId = match.getOriginalChannels().get(discordId);
+                        VoiceChannel targetChannel = null;
+
+                        if (originalChannelId != null) {
+                            targetChannel = guild.getVoiceChannelById(originalChannelId);
+                        }
+
+                        // Se canal original não existe mais, usar canal principal
+                        if (targetChannel == null) {
+                            targetChannel = mainChannel;
+                        }
+
+                        if (targetChannel != null) {
+                            final VoiceChannel finalTarget = targetChannel;
+                            guild.moveVoiceMember(member, targetChannel).queue(
+                                    success -> log.info("✅ [deleteMatchChannels] {} movido de volta para {}",
+                                            member.getEffectiveName(), finalTarget.getName()),
+                                    error -> log.error("❌ [deleteMatchChannels] Erro ao mover {}: {}",
+                                            member.getEffectiveName(), error.getMessage()));
+                        }
+                    }
+                }
+
+                // Aguardar 2 segundos para completar movimentações
+                Thread.sleep(2000);
+            }
+
+            // 2. Deletar canais Blue e Red
+            VoiceChannel blueChannel = guild.getVoiceChannelById(match.getBlueChannelId());
+            if (blueChannel != null) {
+                blueChannel.delete().queue(
+                        success -> log.info("✅ [deleteMatchChannels] Canal Blue deletado"),
+                        error -> log.error("❌ [deleteMatchChannels] Erro ao deletar Blue: {}", error.getMessage()));
+            }
+
+            VoiceChannel redChannel = guild.getVoiceChannelById(match.getRedChannelId());
+            if (redChannel != null) {
+                redChannel.delete().queue(
+                        success -> log.info("✅ [deleteMatchChannels] Canal Red deletado"),
+                        error -> log.error("❌ [deleteMatchChannels] Erro ao deletar Red: {}", error.getMessage()));
+            }
+
+            // 3. Deletar categoria
+            Category category = guild.getCategoryById(match.getCategoryId());
+            if (category != null) {
+                // Aguardar um pouco para os canais serem deletados primeiro
+                scheduler.schedule(() -> {
+                    category.delete().queue(
+                            success -> log.info("✅ [deleteMatchChannels] Categoria deletada"),
+                            error -> log.error("❌ [deleteMatchChannels] Erro ao deletar categoria: {}",
+                                    error.getMessage()));
+                }, 3, TimeUnit.SECONDS);
+            }
+
+            // 4. Remover do cache
+            activeMatches.remove(matchId);
+
+            log.info("✅ [deleteMatchChannels] Match {} limpo com sucesso", matchId);
+
+        } catch (Exception e) {
+            log.error("❌ [deleteMatchChannels] Erro ao limpar match {}", matchId, e);
+            activeMatches.remove(matchId);
+        }
+    }
+
+    /**
+     * Move apenas espectadores (quem está assistindo) de volta ao canal principal
+     * 
+     * @param matchId ID da partida
+     */
+    public void moveSpectatorsBackToLobby(Long matchId) {
+        DiscordMatch match = activeMatches.get(matchId);
+        if (match == null) {
+            log.warn("⚠️ [moveSpectatorsBackToLobby] Match {} não encontrado", matchId);
+            return;
+        }
+
+        if (!isConnected || jda == null) {
+            log.warn("⚠️ [moveSpectatorsBackToLobby] Discord não conectado");
+            return;
+        }
+
+        try {
+            Guild guild = jda.getGuilds().stream().findFirst().orElse(null);
+            if (guild == null) {
+                log.error("❌ [moveSpectatorsBackToLobby] Guild não encontrada");
+                return;
+            }
+
+            VoiceChannel blueChannel = guild.getVoiceChannelById(match.getBlueChannelId());
+            VoiceChannel redChannel = guild.getVoiceChannelById(match.getRedChannelId());
+            VoiceChannel mainChannel = guild.getVoiceChannels().stream()
+                    .filter(ch -> ch.getName().equals(discordChannelName))
+                    .findFirst()
+                    .orElse(null);
+
+            if (mainChannel == null) {
+                log.warn("⚠️ [moveSpectatorsBackToLobby] Canal principal '{}' não encontrado", discordChannelName);
+                return;
+            }
+
+            log.info("👥 [moveSpectatorsBackToLobby] Movendo espectadores do match {} de volta ao lobby", matchId);
+
+            // Combinar IDs dos jogadores reais
+            List<String> realPlayerIds = new ArrayList<>();
+            realPlayerIds.addAll(match.getBlueTeamDiscordIds());
+            realPlayerIds.addAll(match.getRedTeamDiscordIds());
+
+            int movedSpectators = 0;
+
+            // Verificar Blue Channel
+            if (blueChannel != null) {
+                for (Member member : blueChannel.getMembers()) {
+                    if (!realPlayerIds.contains(member.getId())) {
+                        guild.moveVoiceMember(member, mainChannel).queue(
+                                success -> log.info(
+                                        "✅ [moveSpectatorsBackToLobby] Espectador {} movido de Blue para lobby",
+                                        member.getEffectiveName()),
+                                error -> log.error("❌ [moveSpectatorsBackToLobby] Erro ao mover {}: {}",
+                                        member.getEffectiveName(), error.getMessage()));
+                        movedSpectators++;
+                    }
+                }
+            }
+
+            // Verificar Red Channel
+            if (redChannel != null) {
+                for (Member member : redChannel.getMembers()) {
+                    if (!realPlayerIds.contains(member.getId())) {
+                        guild.moveVoiceMember(member, mainChannel).queue(
+                                success -> log.info(
+                                        "✅ [moveSpectatorsBackToLobby] Espectador {} movido de Red para lobby",
+                                        member.getEffectiveName()),
+                                error -> log.error("❌ [moveSpectatorsBackToLobby] Erro ao mover {}: {}",
+                                        member.getEffectiveName(), error.getMessage()));
+                        movedSpectators++;
+                    }
+                }
+            }
+
+            log.info("✅ [moveSpectatorsBackToLobby] {} espectadores movidos de volta ao lobby", movedSpectators);
+
+        } catch (Exception e) {
+            log.error("❌ [moveSpectatorsBackToLobby] Erro ao mover espectadores", e);
+        }
+    }
+
+    /**
+     * Método auxiliar para encontrar Discord ID por summoner name
+     * 
+     * @param summonerName gameName#tagLine
+     * @return Discord ID ou null se não encontrado
+     */
+    private String findDiscordIdBySummonerName(String summonerName) {
+        try {
+            // PRIMEIRA TENTATIVA: Buscar direto pela coluna summoner_name (mais preciso)
+            Optional<DiscordLoLLink> linkBySummonerName = discordLoLLinkService.findBySummonerName(summonerName);
+
+            if (linkBySummonerName.isPresent()) {
+                log.debug(
+                        "✅ [findDiscordIdBySummonerName] Vinculação encontrada por summoner_name: {} -> Discord ID: {}",
+                        summonerName, linkBySummonerName.get().getDiscordId());
+                return linkBySummonerName.get().getDiscordId();
+            }
+
+            // SEGUNDA TENTATIVA (fallback): Separar gameName#tagLine e buscar
+            String gameName;
+            String tagLine;
+
+            if (summonerName.contains("#")) {
+                String[] parts = summonerName.split("#");
+                if (parts.length != 2) {
+                    log.warn("⚠️ [findDiscordIdBySummonerName] Formato inválido: {}", summonerName);
+                    return null;
+                }
+                gameName = parts[0];
+                tagLine = parts[1];
+            } else {
+                // Bots ou jogadores sem tagLine (fallback: usar apenas gameName)
+                gameName = summonerName;
+                tagLine = ""; // TagLine vazio para bots
+                log.debug("🤖 [findDiscordIdBySummonerName] Summoner sem tagLine (bot?): {}", summonerName);
+            }
+
+            // Buscar por gameName + tagLine
+            Optional<DiscordLoLLink> link = discordLoLLinkService.findByGameNameAndTagLine(gameName, tagLine);
+
+            if (link.isPresent()) {
+                log.debug(
+                        "✅ [findDiscordIdBySummonerName] Vinculação encontrada por gameName+tagLine: {} -> Discord ID: {}",
+                        summonerName, link.get().getDiscordId());
+                return link.get().getDiscordId();
+            } else {
+                log.warn(
+                        "⚠️ [findDiscordIdBySummonerName] Vinculação não encontrada para {} (tentou summoner_name, gameName={}, tagLine={})",
+                        summonerName, gameName, tagLine);
+                return null;
+            }
+
+        } catch (Exception e) {
+            log.error("❌ [findDiscordIdBySummonerName] Erro ao buscar Discord ID para {}", summonerName, e);
+            return null;
+        }
+    }
+
+    // ========================================
+    // ✅ GERENCIAMENTO DE ESPECTADORES
+    // ========================================
+
+    /**
+     * Lista espectadores de uma partida (excluindo os 10 jogadores)
+     * 
+     * @param matchId ID da partida
+     * @return Lista de espectadores
+     */
+    public List<SpectatorDTO> getMatchSpectators(Long matchId) {
+        DiscordMatch match = activeMatches.get(matchId);
+        if (match == null) {
+            log.warn("⚠️ [getMatchSpectators] Match {} não encontrado", matchId);
+            return Collections.emptyList();
+        }
+
+        if (!isConnected || jda == null) {
+            log.warn("⚠️ [getMatchSpectators] Discord não conectado");
+            return Collections.emptyList();
+        }
+
+        try {
+            Guild guild = jda.getGuilds().stream().findFirst().orElse(null);
+            if (guild == null) {
+                log.warn("⚠️ [getMatchSpectators] Guild não encontrada");
+                return Collections.emptyList();
+            }
+
+            VoiceChannel blueChannel = guild.getVoiceChannelById(match.getBlueChannelId());
+            VoiceChannel redChannel = guild.getVoiceChannelById(match.getRedChannelId());
+
+            List<SpectatorDTO> spectators = new ArrayList<>();
+
+            // IDs dos jogadores reais da partida (não são espectadores)
+            List<String> realPlayerIds = new ArrayList<>();
+            realPlayerIds.addAll(match.getBlueTeamDiscordIds());
+            realPlayerIds.addAll(match.getRedTeamDiscordIds());
+
+            // Verificar Blue Channel
+            if (blueChannel != null) {
+                for (Member member : blueChannel.getMembers()) {
+                    if (!realPlayerIds.contains(member.getId())) {
+                        boolean isMuted = member.getVoiceState() != null && member.getVoiceState().isMuted();
+                        spectators.add(new SpectatorDTO(
+                                member.getId(),
+                                member.getEffectiveName(),
+                                "Blue Team",
+                                isMuted));
+                        log.debug("👀 [getMatchSpectators] Espectador encontrado em Blue: {} (mutado: {})",
+                                member.getEffectiveName(), isMuted);
+                    }
+                }
+            }
+
+            // Verificar Red Channel
+            if (redChannel != null) {
+                for (Member member : redChannel.getMembers()) {
+                    if (!realPlayerIds.contains(member.getId())) {
+                        boolean isMuted = member.getVoiceState() != null && member.getVoiceState().isMuted();
+                        spectators.add(new SpectatorDTO(
+                                member.getId(),
+                                member.getEffectiveName(),
+                                "Red Team",
+                                isMuted));
+                        log.debug("👀 [getMatchSpectators] Espectador encontrado em Red: {} (mutado: {})",
+                                member.getEffectiveName(), isMuted);
+                    }
+                }
+            }
+
+            log.info("👥 [getMatchSpectators] Match {}: {} espectadores encontrados", matchId, spectators.size());
+            return spectators;
+
+        } catch (Exception e) {
+            log.error("❌ [getMatchSpectators] Erro ao listar espectadores", e);
+            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * Muta um espectador no Discord (SERVER MUTE - espectador não pode se desmutar)
+     * 
+     * @param matchId   ID da partida
+     * @param discordId Discord ID do espectador
+     * @return true se mutou com sucesso
+     */
+    public boolean muteSpectator(Long matchId, String discordId) {
+        DiscordMatch match = activeMatches.get(matchId);
+        if (match == null) {
+            log.warn("⚠️ [muteSpectator] Match {} não encontrado", matchId);
+            return false;
+        }
+
+        if (!isConnected || jda == null) {
+            log.warn("⚠️ [muteSpectator] Discord não conectado");
+            return false;
+        }
+
+        try {
+            Guild guild = jda.getGuilds().stream().findFirst().orElse(null);
+            if (guild == null) {
+                log.warn("⚠️ [muteSpectator] Guild não encontrada");
+                return false;
+            }
+
+            Member member = guild.getMemberById(discordId);
+            if (member == null) {
+                log.warn("⚠️ [muteSpectator] Membro {} não encontrado", discordId);
+                return false;
+            }
+
+            // ✅ SERVER MUTE (guild.mute) - espectador NÃO consegue se desmutar sozinho
+            member.mute(true).queue(
+                    success -> log.info("✅ [muteSpectator] 🔇 Espectador {} mutado (SERVER MUTE)",
+                            member.getEffectiveName()),
+                    error -> log.error("❌ [muteSpectator] Erro ao mutar {}: {}", member.getEffectiveName(),
+                            error.getMessage()));
+
+            return true;
+
+        } catch (Exception e) {
+            log.error("❌ [muteSpectator] Erro ao mutar espectador", e);
+            return false;
+        }
+    }
+
+    /**
+     * Desmuta um espectador no Discord (remove SERVER MUTE)
+     * 
+     * @param matchId   ID da partida
+     * @param discordId Discord ID do espectador
+     * @return true se desmutou com sucesso
+     */
+    public boolean unmuteSpectator(Long matchId, String discordId) {
+        DiscordMatch match = activeMatches.get(matchId);
+        if (match == null) {
+            log.warn("⚠️ [unmuteSpectator] Match {} não encontrado", matchId);
+            return false;
+        }
+
+        if (!isConnected || jda == null) {
+            log.warn("⚠️ [unmuteSpectator] Discord não conectado");
+            return false;
+        }
+
+        try {
+            Guild guild = jda.getGuilds().stream().findFirst().orElse(null);
+            if (guild == null) {
+                log.warn("⚠️ [unmuteSpectator] Guild não encontrada");
+                return false;
+            }
+
+            Member member = guild.getMemberById(discordId);
+            if (member == null) {
+                log.warn("⚠️ [unmuteSpectator] Membro {} não encontrado", discordId);
+                return false;
+            }
+
+            // Remove SERVER MUTE
+            member.mute(false).queue(
+                    success -> log.info("✅ [unmuteSpectator] 🔊 Espectador {} desmutado", member.getEffectiveName()),
+                    error -> log.error("❌ [unmuteSpectator] Erro ao desmutar {}: {}", member.getEffectiveName(),
+                            error.getMessage()));
+
+            return true;
+
+        } catch (Exception e) {
+            log.error("❌ [unmuteSpectator] Erro ao desmutar espectador", e);
+            return false;
+        }
+    }
+
     // Inner classes
     public static class DiscordUser {
         private String id;
@@ -821,5 +1450,137 @@ public class DiscordService extends ListenerAdapter {
     // ✅ NOVO: Método getter para o token do Discord
     public String getDiscordToken() {
         return discordToken;
+    }
+
+    // ✅ NOVO: Classe para representar uma partida ativa com canais Discord
+    public static class DiscordMatch {
+        private Long matchId;
+        private String categoryId; // ID da categoria Discord
+        private String blueChannelId; // ID do canal Blue Team
+        private String redChannelId; // ID do canal Red Team
+        private List<String> blueTeamDiscordIds; // IDs Discord do time azul
+        private List<String> redTeamDiscordIds; // IDs Discord do time vermelho
+        private Map<String, String> originalChannels; // discordId -> originalChannelId
+        private java.time.Instant createdAt;
+
+        public DiscordMatch() {
+            this.originalChannels = new HashMap<>();
+            this.blueTeamDiscordIds = new ArrayList<>();
+            this.redTeamDiscordIds = new ArrayList<>();
+            this.createdAt = java.time.Instant.now();
+        }
+
+        // Getters e Setters
+        public Long getMatchId() {
+            return matchId;
+        }
+
+        public void setMatchId(Long matchId) {
+            this.matchId = matchId;
+        }
+
+        public String getCategoryId() {
+            return categoryId;
+        }
+
+        public void setCategoryId(String categoryId) {
+            this.categoryId = categoryId;
+        }
+
+        public String getBlueChannelId() {
+            return blueChannelId;
+        }
+
+        public void setBlueChannelId(String blueChannelId) {
+            this.blueChannelId = blueChannelId;
+        }
+
+        public String getRedChannelId() {
+            return redChannelId;
+        }
+
+        public void setRedChannelId(String redChannelId) {
+            this.redChannelId = redChannelId;
+        }
+
+        public List<String> getBlueTeamDiscordIds() {
+            return blueTeamDiscordIds;
+        }
+
+        public void setBlueTeamDiscordIds(List<String> blueTeamDiscordIds) {
+            this.blueTeamDiscordIds = blueTeamDiscordIds;
+        }
+
+        public List<String> getRedTeamDiscordIds() {
+            return redTeamDiscordIds;
+        }
+
+        public void setRedTeamDiscordIds(List<String> redTeamDiscordIds) {
+            this.redTeamDiscordIds = redTeamDiscordIds;
+        }
+
+        public Map<String, String> getOriginalChannels() {
+            return originalChannels;
+        }
+
+        public void setOriginalChannels(Map<String, String> originalChannels) {
+            this.originalChannels = originalChannels;
+        }
+
+        public java.time.Instant getCreatedAt() {
+            return createdAt;
+        }
+
+        public void setCreatedAt(java.time.Instant createdAt) {
+            this.createdAt = createdAt;
+        }
+    }
+
+    // ✅ NOVO: Classe para representar espectadores
+    public static class SpectatorDTO {
+        private String discordId;
+        private String discordUsername;
+        private String channelName; // "Blue Team" ou "Red Team"
+        private boolean isMuted;
+
+        public SpectatorDTO(String discordId, String discordUsername, String channelName, boolean isMuted) {
+            this.discordId = discordId;
+            this.discordUsername = discordUsername;
+            this.channelName = channelName;
+            this.isMuted = isMuted;
+        }
+
+        // Getters and Setters
+        public String getDiscordId() {
+            return discordId;
+        }
+
+        public void setDiscordId(String discordId) {
+            this.discordId = discordId;
+        }
+
+        public String getDiscordUsername() {
+            return discordUsername;
+        }
+
+        public void setDiscordUsername(String discordUsername) {
+            this.discordUsername = discordUsername;
+        }
+
+        public String getChannelName() {
+            return channelName;
+        }
+
+        public void setChannelName(String channelName) {
+            this.channelName = channelName;
+        }
+
+        public boolean isMuted() {
+            return isMuted;
+        }
+
+        public void setMuted(boolean muted) {
+            isMuted = muted;
+        }
     }
 }

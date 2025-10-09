@@ -107,6 +107,13 @@ public class DiscordLoLLinkService {
     }
 
     /**
+     * Busca vinculação por Summoner Name (coluna summoner_name)
+     */
+    public Optional<DiscordLoLLink> findBySummonerName(String summonerName) {
+        return repository.findBySummonerNameAndActive(summonerName);
+    }
+
+    /**
      * Busca todas as vinculações ativas
      */
     public List<DiscordLoLLink> getAllActiveLinks() {
