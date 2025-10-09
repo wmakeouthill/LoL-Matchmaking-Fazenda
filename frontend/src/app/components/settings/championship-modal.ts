@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter, OnInit } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnInit, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -12,7 +12,7 @@ import { firstValueFrom } from 'rxjs';
   templateUrl: './championship-modal.html',
   styleUrl: './championship-modal.css'
 })
-export class ChampionshipModalComponent implements OnInit {
+export class ChampionshipModalComponent implements OnInit, OnChanges {
   @Input() isVisible: boolean = false;
   @Output() closed = new EventEmitter<void>();
   @Output() championshipAwarded = new EventEmitter<any>();
@@ -35,9 +35,17 @@ export class ChampionshipModalComponent implements OnInit {
     this.baseUrl = this.apiService.getBaseUrl();
   }
 
-  async ngOnInit() {
-    await this.loadPlayers();
-    await this.loadChampionships();
+  ngOnInit(): void {
+    // ✅ FIX: Não carregar dados automaticamente no init
+    // Apenas carregar quando modal for aberto (isVisible = true)
+  }
+
+  ngOnChanges(changes: SimpleChanges): void {
+    // ✅ FIX: Carregar dados apenas quando modal se tornar visível
+    if (changes['isVisible'] && changes['isVisible'].currentValue === true) {
+      this.loadPlayers();
+      this.loadChampionships();
+    }
   }
 
   async loadPlayers(): Promise<void> {

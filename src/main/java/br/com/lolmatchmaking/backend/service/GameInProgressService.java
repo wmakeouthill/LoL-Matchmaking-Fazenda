@@ -270,6 +270,15 @@ public class GameInProgressService {
                 log.error("❌ [finishGame] Erro ao limpar canais Discord: {}", e.getMessage());
             }
 
+            // ✅ FIX: Deletar registro da partida do banco de dados após finalização
+            try {
+                log.info("🗑️ [finishGame] Deletando registro do match {} do banco de dados", matchId);
+                customMatchRepository.deleteById(matchId);
+                log.info("✅ [finishGame] Match {} deletado com sucesso do banco", matchId);
+            } catch (Exception e) {
+                log.error("❌ [finishGame] Erro ao deletar match {} do banco: {}", matchId, e.getMessage(), e);
+            }
+
             log.info("✅ Jogo finalizado para partida {}: Team {} venceu - motivo: {}", matchId, winnerTeam, endReason);
 
         } catch (Exception e) {

@@ -400,6 +400,16 @@
   box-shadow: 0 4px 12px rgba(200, 170, 110, 0.2);
 }
 
+/* ✅ Champion Icon Images */
+.champion-icon-img {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  border: 1px solid rgba(200, 170, 110, 0.3);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
 /* Animations */
 @keyframes fadeIn {
   from {

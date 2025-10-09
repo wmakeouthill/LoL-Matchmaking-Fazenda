@@ -1,6 +1,7 @@
 import { Component, OnInit, OnDestroy, ChangeDetectorRef, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { HttpClient } from '@angular/common/http';
 import { Subject, takeUntil, take, firstValueFrom, timeout, catchError, of } from 'rxjs';
 
 import { DashboardComponent } from './components/dashboard/dashboard';
@@ -16,6 +17,7 @@ import { ApiService } from './services/api';
 import { QueueStateService } from './services/queue-state';
 import { DiscordIntegrationService } from './services/discord-integration.service';
 import { BotService } from './services/bot.service';
+import { CurrentSummonerService } from './services/current-summoner.service';
 import { Player, QueueStatus, LCUStatus, QueuePreferences } from './interfaces';
 import type { Notification } from './interfaces';
 import { logApp } from './utils/app-logger';
@@ -48,8 +50,15 @@ export class App implements OnInit, OnDestroy {
   isConnected = false;
   isInQueue: boolean = false;
 
-  // ✅ MANTIDO: Dados do jogador
-  currentPlayer: Player | null = null;
+  // ✅ MANTIDO: Dados do jogador (com setter para sincronizar com CurrentSummonerService)
+  private _currentPlayer: Player | null = null;
+  get currentPlayer(): Player | null {
+    return this._currentPlayer;
+  }
+  set currentPlayer(value: Player | null) {
+    this._currentPlayer = value;
+    this.updateCurrentSummonerService();
+  }
 
   // ✅ MANTIDO: Status da fila e do LCU (para exibição)
   queueStatus: QueueStatus = {
@@ -142,10 +151,12 @@ export class App implements OnInit, OnDestroy {
   private readonly LCU_TELEMETRY_INTERVAL_MS = 5000;
 
   constructor(
+    private readonly http: HttpClient,
     private readonly apiService: ApiService,
     private readonly queueStateService: QueueStateService,
     private readonly discordService: DiscordIntegrationService,
     private readonly botService: BotService,
+    private readonly currentSummonerService: CurrentSummonerService,
     private readonly cdr: ChangeDetectorRef
   ) {
     console.log(`[App] Constructor`);
@@ -1240,6 +1251,13 @@ export class App implements OnInit, OnDestroy {
   // ✅ NOVO: Métodos para controlar modais de Special Users
 
   openAdjustLpModal(): void {
+    // ✅ FIX: Validar se currentPlayer está disponível antes de abrir modal
+    if (!this.currentPlayer) {
+      console.warn('⚠️ [App] Cannot open Adjust LP Modal: currentPlayer not available');
+      alert('Por favor, aguarde enquanto o sistema se conecta ao League of Legends.');
+      return;
+    }
+
     console.log('💰 [App] Abrindo modal de ajustar LP');
     this.showAdjustLpModal = true;
   }
@@ -1255,6 +1273,13 @@ export class App implements OnInit, OnDestroy {
   }
 
   openChampionshipModal(): void {
+    // ✅ FIX: Validar se currentPlayer está disponível antes de abrir modal
+    if (!this.currentPlayer) {
+      console.warn('⚠️ [App] Cannot open Championship Modal: currentPlayer not available');
+      alert('Por favor, aguarde enquanto o sistema se conecta ao League of Legends.');
+      return;
+    }
+
     console.log('🏆 [App] Abrindo modal de campeonatos');
     this.showChampionshipModal = true;
   }
@@ -1949,6 +1974,46 @@ export class App implements OnInit, OnDestroy {
         console.warn('⚠️ [App] Erro ao carregar do localStorage:', error);
       }
     }
+  }
+
+  /**
+   * 🆕 Helper para atualizar o CurrentSummonerService sempre que currentPlayer mudar
+   * Deve ser chamado toda vez que this.currentPlayer for modificado
+   */
+  private updateCurrentSummonerService(): void {
+    if (!this.currentPlayer) {
+      this.currentSummonerService.clearSummoner();
+      return;
+    }
+
+    // Construir displayName se ausente
+    let displayName = this.currentPlayer.displayName;
+    if (!displayName) {
+      if (this.currentPlayer.gameName && this.currentPlayer.tagLine) {
+        displayName = `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`;
+      } else if (this.currentPlayer.summonerName) {
+        displayName = this.currentPlayer.summonerName;
+      }
+    }
+
+    // Converter profileIconId para number se for string
+    let profileIconId: number | undefined;
+    if (typeof this.currentPlayer.profileIconId === 'string') {
+      profileIconId = parseInt(this.currentPlayer.profileIconId, 10);
+    } else {
+      profileIconId = this.currentPlayer.profileIconId;
+    }
+
+    this.currentSummonerService.setSummoner({
+      summonerName: this.currentPlayer.summonerName || '',
+      gameName: this.currentPlayer.gameName || '',
+      tagLine: this.currentPlayer.tagLine || '',
+      displayName: displayName || '',
+      id: this.currentPlayer.id,
+      puuid: this.currentPlayer.puuid,
+      profileIconId: profileIconId,
+      summonerLevel: this.currentPlayer.summonerLevel
+    });
   }
 
   private refreshQueueStatus(): void {
@@ -3222,6 +3287,46 @@ export class App implements OnInit, OnDestroy {
     this.isRestoredMatch = false; // ✅ RESETAR FLAG
 
     console.log('🔄 [App] Estados limpos com sucesso');
+  }
+
+  /**
+   * ✅ NOVO: Handler para cancelar draft
+   * Chama endpoint backend para cancelar partida, deletar canais e mover jogadores
+   */
+  async exitDraft(): Promise<void> {
+    console.log('❌ [App] exitDraft() chamado - cancelando draft');
+
+    const matchId = this.draftData?.matchId || this.matchFoundData?.matchId;
+
+    if (!matchId) {
+      console.warn('⚠️ [App] Nenhum matchId disponível para cancelar');
+      this.clearActiveStates();
+      this.cdr.detectChanges();
+      return;
+    }
+
+    try {
+      console.log(`🔄 [App] Cancelando partida ${matchId}...`);
+
+      const response: any = await firstValueFrom(
+        this.http.delete(`${this.apiService.getBaseUrl()}/draft/match/${matchId}/cancel`)
+      );
+
+      if (response.success) {
+        console.log('✅ [App] Partida cancelada com sucesso:', response.message);
+        this.addNotification('success', 'Draft Cancelado', 'A partida foi cancelada e os canais foram deletados');
+      } else {
+        console.error('❌ [App] Erro ao cancelar partida:', response.error);
+        this.addNotification('error', 'Erro ao Cancelar', response.error || 'Erro desconhecido');
+      }
+    } catch (error: any) {
+      console.error('❌ [App] Erro ao cancelar draft:', error);
+      this.addNotification('error', 'Erro ao Cancelar', error.message || 'Erro ao comunicar com servidor');
+    } finally {
+      // Limpar estados independentemente do resultado
+      this.clearActiveStates();
+      this.cdr.detectChanges();
+    }
   }
 
   // ✅ NOVO: Handler para cancelamento de jogo

@@ -2,6 +2,7 @@ import { Component, Input, Output, EventEmitter, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { ApiService } from '../../services/api';
+import { CurrentSummonerService } from '../../services/current-summoner.service';
 
 interface SpectatorDTO {
   discordId: string;
@@ -41,8 +42,9 @@ export class SpectatorsModalComponent implements OnInit {
   private readonly baseUrl: string;
 
   constructor(
-    private http: HttpClient,
-    private apiService: ApiService
+    private readonly http: HttpClient,
+    private readonly apiService: ApiService,
+    private readonly currentSummonerService: CurrentSummonerService
   ) {
     this.baseUrl = this.apiService.getBaseUrl();
   }
@@ -62,25 +64,46 @@ export class SpectatorsModalComponent implements OnInit {
     this.loading = true;
     this.error = null;
 
+    // ✅ CORREÇÃO: Obter summoner name com fallback
+    let summonerName = this.summonerName;
+    if (!summonerName) {
+      summonerName = this.currentSummonerService.getSummonerNameForHeader() || '';
+      console.warn('⚠️ [SpectatorsModal] summonerName não passado via @Input, usando CurrentSummonerService:', summonerName);
+    }
+
     const headers = new HttpHeaders({
-      'X-Summoner-Name': this.summonerName
+      'X-Summoner-Name': summonerName
     });
 
     const url = `${this.baseUrl}/discord/match/${this.matchId}/spectators`;
+
+    console.log('📡 [SpectatorsModal] Carregando espectadores:', {
+      url,
+      matchId: this.matchId,
+      summonerName,
+      hasHeader: !!summonerName
+    });
 
     this.http.get<SpectatorResponse>(url, { headers }).subscribe({
       next: (response: SpectatorResponse) => {
         if (response.success) {
           this.spectators = response.spectators;
-          console.log(`👀 [SpectatorsModal] ${response.count} espectadores carregados`);
+          console.log(`✅ [SpectatorsModal] ${response.count} espectadores carregados`);
         } else {
           this.error = 'Erro ao carregar espectadores';
+          console.error('❌ [SpectatorsModal] Resposta de erro:', response);
         }
         this.loading = false;
       },
       error: (err: any) => {
         console.error('❌ [SpectatorsModal] Erro ao carregar espectadores:', err);
-        this.error = 'Erro ao comunicar com o servidor';
+        console.error('Details:', {
+          status: err.status,
+          statusText: err.statusText,
+          error: err.error,
+          message: err.message
+        });
+        this.error = `Erro ao comunicar com o servidor: ${err.status || 'Unknown'} ${err.statusText || ''}`;
         this.loading = false;
       }
     });

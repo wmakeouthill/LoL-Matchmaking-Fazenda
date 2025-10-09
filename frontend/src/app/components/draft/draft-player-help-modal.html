@@ -57,7 +57,7 @@
           <div *ngIf="playerData.draftStats.length > 0" class="champions-grid">
             <div *ngFor="let champ of playerData.draftStats" class="champion-card">
               <div class="champion-header">
-                <div class="champion-icon">🎮</div>
+                <img [src]="getChampionImageUrl(champ.championId)" [alt]="champ.championName" class="champion-icon-img" />
                 <div class="champion-info">
                   <h4>{{ champ.championName }}</h4>
                   <span class="champion-id">ID: {{ champ.championId }}</span>
@@ -95,6 +95,7 @@
           <div *ngIf="playerData.masteryChampions.length > 0" class="champions-grid">
             <div *ngFor="let champ of playerData.masteryChampions" class="champion-card">
               <div class="champion-header">
+                <img [src]="getChampionImageUrl(champ.championId)" [alt]="champ.championName" class="champion-icon-img mastery-img" />
                 <div class="mastery-badge" [style.background-color]="getMasteryColor(champ.championLevel)">
                   <span class="mastery-level">{{ champ.championLevel }}</span>
                 </div>
@@ -132,7 +133,7 @@
           <div *ngIf="playerData.rankedChampions.length > 0" class="champions-grid">
             <div *ngFor="let champ of playerData.rankedChampions" class="champion-card">
               <div class="champion-header">
-                <div class="champion-icon ranked">🏆</div>
+                <img [src]="getChampionImageUrl(champ.championId)" [alt]="champ.championName" class="champion-icon-img" />
                 <div class="champion-info">
                   <h4>{{ champ.championName }}</h4>
                   <span class="tier-badge" [style.background-color]="getTierColor(champ.tier)">
