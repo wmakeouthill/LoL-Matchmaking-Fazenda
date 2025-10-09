@@ -32,6 +32,10 @@ app:
       - "${BACKEND_URL:https://fazenda-inhouse-368951732227.southamerica-east1.run.app}"
       - "https://*.run.app"
       - "https://fazenda-inhouse-368951732227.southamerica-east1.run.app"
+      - "file://"
+      - "capacitor://localhost"
+      - "http://localhost"
+      - "http://localhost:*"
   # Desabilitar funcionalidades que requerem LCU local (não funciona na nuvem)
   lcu:
     enabled: false
