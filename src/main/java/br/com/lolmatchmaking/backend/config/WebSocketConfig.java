@@ -51,8 +51,10 @@ public class WebSocketConfig implements WebSocketConfigurer {
                 ServletServerContainerFactoryBean container = new ServletServerContainerFactoryBean();
                 container.setMaxTextMessageBufferSize(4194304); // 4MB
                 container.setMaxBinaryMessageBufferSize(4194304); // 4MB
-                container.setMaxSessionIdleTimeout(120000L); // 120 segundos
-                log.info("🔧 WebSocket container configurado com buffers de 4MB");
+                // ✅ CORREÇÃO: Aumentar timeout para 10 minutos (Cloud Run suporta até 60 min)
+                // Electron envia heartbeat a cada 60s, então 10min (600s) é seguro
+                container.setMaxSessionIdleTimeout(600000L); // 600 segundos = 10 minutos
+                log.info("🔧 WebSocket container configurado: buffers 4MB, timeout 10min");
                 return container;
         }
 }
