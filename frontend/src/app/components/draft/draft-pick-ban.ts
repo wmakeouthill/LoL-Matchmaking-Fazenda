@@ -64,8 +64,10 @@ function saveLogToRoot(message: string, filename: string = 'draft-debug.log') {
     SpectatorsModalComponent
   ],
   templateUrl: './draft-pick-ban.html',
-  styleUrl: './draft-pick-ban.scss',
-  changeDetection: ChangeDetectionStrategy.OnPush
+  styleUrl: './draft-pick-ban.scss'
+  // ✅ CORREÇÃO: Removido OnPush porque o componente atualiza propriedades internas
+  // baseado em eventos WebSocket (timeRemaining, session, etc) que não são @Input
+  // changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   @Input() matchData: any = null;
@@ -366,6 +368,10 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           if (currentValue.timeRemaining !== undefined) {
             this.timeRemaining = currentValue.timeRemaining;
             console.log(`⏰ [processNgOnChanges] Timer atualizado via @Input: ${this.timeRemaining}s`);
+            saveLogToRoot(`⏰ [processNgOnChanges] Timer atualizado via @Input matchData: ${this.timeRemaining}s`);
+          } else {
+            console.warn(`⚠️ [processNgOnChanges] matchData SEM timeRemaining!`, currentValue);
+            saveLogToRoot(`⚠️ [processNgOnChanges] matchData veio SEM timeRemaining: ${JSON.stringify(currentValue)}`);
           }
 
           // ✅ NOVA ESTRUTURA HIERÁRQUICA: Processar teams.blue/red se existirem
@@ -2459,19 +2465,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     saveLogToRoot(`⏰ [updateTimerFromBackend] Timer atualizado: ${oldTimeRemaining}s → ${data.timeRemaining}s`);
     logDraft(`⏰ [updateTimerFromBackend] Timer do backend: ${data.timeRemaining}s`);
 
-    // ✅ CRÍTICO: Forçar atualização da interface
-    this.cdr.markForCheck();
-    this.cdr.detectChanges();
-
-    // ✅ CORREÇÃO: Se o modal estiver aberto, forçar atualização específica
-    if (this.showChampionModal) {
-      console.log('⏰ [updateTimerFromBackend] Modal aberto - forçando atualização específica');
-      // Forçar nova detecção de mudanças para o modal
-      setTimeout(() => {
-        this.cdr.detectChanges();
-        console.log('⏰ [updateTimerFromBackend] Timer após timeout no modal:', this.timeRemaining);
-      }, 0);
-    }
+    // ✅ Não precisa mais forçar change detection - usando Default strategy
 
     // ✅ CORREÇÃO: Verificar se timer expirou
     if (data.timeRemaining <= 0) {

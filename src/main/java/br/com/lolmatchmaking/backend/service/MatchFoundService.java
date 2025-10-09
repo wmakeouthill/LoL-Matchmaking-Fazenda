@@ -482,6 +482,7 @@ public class MatchFoundService {
                 draftData.put("actions", actions); // ✅ CRÍTICO: 20 ações do DraftState
                 draftData.put("currentIndex", currentIndex); // ✅ CRÍTICO: Índice atual (0)
                 draftData.put("currentPlayer", currentPlayer); // ✅ CRÍTICO: Jogador da vez inicial
+                draftData.put("timeRemaining", 30); // ✅ CORREÇÃO: Timer inicial em segundos (30s padrão)
 
                 // ✅ Log detalhado do que será enviado
                 log.info("📢 [MatchFound] Enviando draft_starting via WebSocket:");
@@ -491,6 +492,7 @@ public class MatchFoundService {
                 log.info("  - actions: {} fases", actions.size());
                 log.info("  - currentIndex: {}", currentIndex);
                 log.info("  - currentPlayer: {}", currentPlayer);
+                log.info("  - timeRemaining: 30s (inicial)");
 
                 webSocketService.broadcastToAll("draft_starting", draftData);
 

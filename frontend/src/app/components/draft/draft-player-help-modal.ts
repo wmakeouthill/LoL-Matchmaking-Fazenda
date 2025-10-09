@@ -52,8 +52,6 @@ export class DraftPlayerHelpModalComponent implements OnInit, OnChanges {
   @Input() playerSummonerName: string = '';
   @Output() closed = new EventEmitter<void>();
 
-  private readonly baseUrl = 'http://localhost:8080/api';
-
   playerData: PlayerChampionData | null = null;
   loading: boolean = false;
   errorMessage: string = '';
@@ -90,8 +88,9 @@ export class DraftPlayerHelpModalComponent implements OnInit, OnChanges {
       console.log('📡 [PlayerHelpModal] Loading stats from database for:', this.playerSummonerName);
 
       // ✅ NOVO: Endpoint que busca direto do banco
+      const baseUrl = this.apiService.getBaseUrl();
       const response: any = await firstValueFrom(
-        this.http.get(`${this.baseUrl}/player/stats/${encodeURIComponent(this.playerSummonerName)}`, {
+        this.http.get(`${baseUrl}/player/stats/${encodeURIComponent(this.playerSummonerName)}`, {
           headers: this.apiService.getAuthenticatedHeaders()
         })
       );
