@@ -1,6 +1,8 @@
 import { Component, Input, Output, EventEmitter, OnInit, OnChanges, SimpleChanges, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Lane, QueuePreferences } from '../../interfaces';
+import { DiscordIntegrationService } from '../../services/discord-integration.service';
+import { CurrentSummonerService } from '../../services/current-summoner.service';
 
 @Component({
   selector: 'app-lane-selector',
@@ -15,6 +17,7 @@ export class LaneSelectorComponent implements OnInit, OnChanges, OnDestroy {
     primaryLane: '',
     secondaryLane: ''
   };
+  @Input() currentSummonerName = '';
 
   @Output() close = new EventEmitter<void>();
   @Output() confirm = new EventEmitter<QueuePreferences>();
@@ -54,15 +57,31 @@ export class LaneSelectorComponent implements OnInit, OnChanges, OnDestroy {
 
   selectedPrimary = '';
   selectedSecondary = '';
+  isPlayerOnDiscord = false;
+  private discordSubscription: any;
+
+  constructor(
+    private readonly discordService: DiscordIntegrationService,
+    private readonly currentSummonerService: CurrentSummonerService
+  ) { }
 
   ngOnInit() {
     console.log('🎯 [LaneSelector] Componente inicializado');
     console.log('🎯 [LaneSelector] Estado inicial:', {
       isVisible: this.isVisible,
-      currentPreferences: this.currentPreferences
+      currentPreferences: this.currentPreferences,
+      currentSummonerName: this.currentSummonerName
     });
     this.selectedPrimary = this.currentPreferences.primaryLane;
     this.selectedSecondary = this.currentPreferences.secondaryLane;
+
+    // Verificar se jogador está no Discord
+    this.checkPlayerOnDiscord();
+
+    // Subscribir para mudanças nos usuários Discord
+    this.discordSubscription = this.discordService.onUsersUpdate().subscribe(() => {
+      this.checkPlayerOnDiscord();
+    });
   }
 
   ngOnChanges(changes: SimpleChanges) {
@@ -75,10 +94,8 @@ export class LaneSelectorComponent implements OnInit, OnChanges, OnDestroy {
 
       if (changes['isVisible'].currentValue === true) {
         console.log('🎯 [LaneSelector] MODAL DEVE ESTAR VISÍVEL AGORA!');
-        // Forçar detecção de mudanças após um pequeno delay
-        setTimeout(() => {
-          console.log('🎯 [LaneSelector] Verificando se modal está realmente visível no DOM...');
-        }, 100);
+        // Verificar Discord quando modal abrir
+        this.checkPlayerOnDiscord();
       }
     }
   }
@@ -99,7 +116,77 @@ export class LaneSelectorComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   isValidSelection(): boolean {
-    return this.selectedPrimary !== '' && this.selectedSecondary !== '';
+    return this.selectedPrimary !== '' &&
+      this.selectedSecondary !== '' &&
+      this.isPlayerOnDiscord;
+  }
+
+  checkPlayerOnDiscord(): void {
+    const discordUsers = this.discordService.getDiscordUsersOnline();
+    const currentName = this.currentSummonerName || this.currentSummonerService.getSummonerNameForHeader();
+
+    if (!currentName) {
+      this.isPlayerOnDiscord = false;
+      console.log('🎯 [LaneSelector] Sem summoner name disponível');
+      return;
+    }
+
+    // Normalizar o nome atual (remover espaços e lowercase)
+    const normalizedCurrent = currentName.toLowerCase().trim();
+
+    this.isPlayerOnDiscord = discordUsers.some(user => {
+      // Verificar vários campos possíveis onde o summoner name pode estar
+      const linkedNickname = this.getLinkedNickname(user);
+      const summonerName = user.summonerName || '';
+      const linkedDisplayName = user.linkedDisplayName || '';
+
+      // Comparar com todos os campos possíveis
+      return (
+        linkedNickname?.toLowerCase().trim() === normalizedCurrent ||
+        summonerName?.toLowerCase().trim() === normalizedCurrent ||
+        linkedDisplayName?.toLowerCase().trim() === normalizedCurrent
+      );
+    });
+
+    console.log('🎯 [LaneSelector] Verificação Discord:', {
+      currentName,
+      normalizedCurrent,
+      discordUsers: discordUsers.length,
+      discordUsersSample: discordUsers.slice(0, 2).map(u => ({
+        summonerName: u.summonerName,
+        linkedNickname: this.getLinkedNickname(u),
+        linkedDisplayName: u.linkedDisplayName
+      })),
+      isPlayerOnDiscord: this.isPlayerOnDiscord
+    });
+  }
+
+  private getLinkedNickname(user: any): string {
+    if (!user?.linkedNickname) {
+      return '';
+    }
+
+    // Se for string (displayName direto), retornar
+    if (typeof user.linkedNickname === 'string') {
+      return user.linkedNickname;
+    }
+
+    // Se for objeto com {gameName, tagLine}, montar displayName
+    if (typeof user.linkedNickname === 'object' &&
+      user.linkedNickname.gameName &&
+      user.linkedNickname.tagLine) {
+      const tagLine = user.linkedNickname.tagLine.startsWith('#')
+        ? user.linkedNickname.tagLine
+        : `#${user.linkedNickname.tagLine}`;
+      return `${user.linkedNickname.gameName}${tagLine}`;
+    }
+
+    // Verificar se tem linkedDisplayName (novo formato)
+    if (user.linkedDisplayName && typeof user.linkedDisplayName === 'string') {
+      return user.linkedDisplayName;
+    }
+
+    return '';
   }
 
   onConfirm() {
@@ -118,6 +205,9 @@ export class LaneSelectorComponent implements OnInit, OnChanges, OnDestroy {
 
   ngOnDestroy() {
     console.log('🎯 [LaneSelector] Componente destruído');
+    if (this.discordSubscription) {
+      this.discordSubscription.unsubscribe();
+    }
   }
 
   getLaneName(laneId: string): string {

@@ -6,6 +6,18 @@
       <button class="close-btn" (click)="closeModal()">✕</button>
     </div>
 
+    <!-- ✅ NOVO: Auto-refresh Toggle -->
+    <div class="auto-refresh-control">
+      <label class="checkbox-label">
+        <input
+          type="checkbox"
+          [checked]="autoRefresh"
+          (change)="toggleAutoRefresh()"
+        />
+        <span>🔄 Atualizar automaticamente (5s)</span>
+      </label>
+    </div>
+
     <!-- Loading State -->
     <div *ngIf="loading && spectators.length === 0" class="loading-state">
       <div class="spinner"></div>

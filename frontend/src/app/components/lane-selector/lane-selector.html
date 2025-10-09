@@ -1,18 +1,4 @@
 <div class="lane-selector-overlay" *ngIf="isVisible" (click)="onClose()">
-  <!-- Debug: Verificar se componente está sendo renderizado -->
-  <div
-    style="
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      background: red;
-      color: white;
-      padding: 5px;
-      z-index: 10000;
-    "
-  >
-    🎯 MODAL DEBUG - Visível: {{ isVisible }}
-  </div>
   <div class="lane-selector-modal" (click)="$event.stopPropagation()">
     <div class="modal-header">
       <h3>🎯 Selecionar Posições</h3>
@@ -68,6 +54,11 @@
           getLaneName(selectedSecondary) }}
         </div>
       </div>
+
+      <div class="warning-message" *ngIf="!isPlayerOnDiscord && selectedPrimary && selectedSecondary">
+        <span class="warning-icon">⚠️</span>
+        <span class="warning-text">Você precisa estar conectado no Discord monitorado para entrar na fila</span>
+      </div>
     </div>
 
     <div class="modal-footer">
@@ -75,6 +66,7 @@
       <button
         class="btn-primary"
         [disabled]="!isValidSelection()"
+        [title]="!isPlayerOnDiscord ? 'Você precisa estar no Discord monitorado' : ''"
         (click)="onConfirm()"
       >
         🚀 Entrar na Fila

@@ -897,7 +897,7 @@ public class DiscordService extends ListenerAdapter {
 
             log.info("🧹 [deleteMatchChannels] Limpando match {}, movePlayersBack={}", matchId, movePlayersBack);
 
-            // 1. Mover jogadores de volta (se solicitado)
+            // 1. Mover TODOS os usuários de volta (jogadores + espectadores)
             if (movePlayersBack) {
                 VoiceChannel mainChannel = guild.getVoiceChannels().stream()
                         .filter(ch -> ch.getName().equals(discordChannelName))
@@ -908,18 +908,31 @@ public class DiscordService extends ListenerAdapter {
                     log.warn("⚠️ [deleteMatchChannels] Canal principal '{}' não encontrado", discordChannelName);
                 }
 
-                // Combinar todos os jogadores
-                List<String> allPlayers = new ArrayList<>();
-                allPlayers.addAll(match.getBlueTeamDiscordIds());
-                allPlayers.addAll(match.getRedTeamDiscordIds());
+                // ✅ NOVO: Pegar TODOS os membros nos canais Blue e Red (jogadores +
+                // espectadores)
+                VoiceChannel blueChannel = guild.getVoiceChannelById(match.getBlueChannelId());
+                VoiceChannel redChannel = guild.getVoiceChannelById(match.getRedChannelId());
 
-                for (String discordId : allPlayers) {
-                    Member member = guild.getMemberById(discordId);
-                    if (member != null && member.getVoiceState() != null
-                            && member.getVoiceState().getChannel() != null) {
+                Set<Member> allMembers = new HashSet<>();
+
+                if (blueChannel != null) {
+                    allMembers.addAll(blueChannel.getMembers());
+                    log.info("👥 [deleteMatchChannels] {} membros no canal Blue", blueChannel.getMembers().size());
+                }
+
+                if (redChannel != null) {
+                    allMembers.addAll(redChannel.getMembers());
+                    log.info("👥 [deleteMatchChannels] {} membros no canal Red", redChannel.getMembers().size());
+                }
+
+                log.info("👥 [deleteMatchChannels] Total de {} membros para mover de volta", allMembers.size());
+
+                // Mover cada membro de volta
+                for (Member member : allMembers) {
+                    if (member.getVoiceState() != null && member.getVoiceState().getChannel() != null) {
 
                         // Tentar mover para canal original
-                        String originalChannelId = match.getOriginalChannels().get(discordId);
+                        String originalChannelId = match.getOriginalChannels().get(member.getId());
                         VoiceChannel targetChannel = null;
 
                         if (originalChannelId != null) {
