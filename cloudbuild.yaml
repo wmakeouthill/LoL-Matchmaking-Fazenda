@@ -49,8 +49,6 @@ steps:
       - '--port'
       - '8080'
       - '--no-cpu-throttling'
-      - '--use-http2'  # ✅ NOVO: Habilitar HTTP/2 para melhor suporte a WebSocket
-      - '--session-affinity'  # ✅ NOVO: Session affinity para manter WebSocket na mesma instância
       - '--set-env-vars'
       - 'SPRING_PROFILES_ACTIVE=gcp'
       - '--set-env-vars'
