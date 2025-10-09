@@ -91,6 +91,17 @@
   transition: all 0.2s ease;
 }
 
+/* ✅ CORREÇÃO: Estilo para options do select */
+.form-control option {
+  background: #1a2332;
+  color: #f0f2f5;
+  padding: 8px;
+}
+
+.form-control option:hover {
+  background: #2a3342;
+}
+
 .form-control:focus {
   outline: none;
   border-color: #c8aa6e;
