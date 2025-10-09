@@ -27,6 +27,7 @@
         <jda.version>5.0.0-beta.15</jda.version>
         <resilience4j.version>2.2.0</resilience4j.version>
         <angular.build.config>production</angular.build.config>
+        <frontend.skip>false</frontend.skip>
     </properties>
 
     <dependencies>
@@ -230,6 +231,7 @@
                 <artifactId>frontend-maven-plugin</artifactId>
                 <version>1.15.0</version>
                 <configuration>
+                    <skip>${frontend.skip}</skip>
                     <workingDirectory>frontend</workingDirectory>
                     <installDirectory>target</installDirectory>
                 </configuration>
@@ -250,7 +252,7 @@
                             <goal>npm</goal>
                         </goals>
                         <configuration>
-                            <arguments>ci</arguments>
+                            <arguments>install</arguments>
                         </configuration>
                     </execution>
                     <execution>

@@ -19,7 +19,8 @@
         </encoder>
     </appender>
 
-    <!-- Appender para backend.log na raiz do diretório -->
+    <!-- ⚠️ DESABILITADO EM PRODUÇÃO: backend.log na raiz -->
+    <!-- 
     <appender name="BACKEND_LOG" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>backend.log</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
@@ -30,6 +31,7 @@
             <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{50} - %msg%n</pattern>
         </encoder>
     </appender>
+    -->
 
     <!-- Configurações específicas por ambiente -->
     <springProfile name="local">
@@ -60,10 +62,9 @@
         <logger name="com.zaxxer.hikari" level="WARN" />
     </springProfile>
 
-    <!-- Root logger -->
+    <!-- Root logger - BACKEND_LOG removido para não salvar na raiz -->
     <root level="INFO">
         <appender-ref ref="CONSOLE" />
         <appender-ref ref="FILE" />
-        <appender-ref ref="BACKEND_LOG" />
     </root>
 </configuration>

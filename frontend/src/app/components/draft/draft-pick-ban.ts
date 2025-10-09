@@ -26,8 +26,14 @@ function logDraft(...args: any[]) {
   console.log('[DraftPickBan]', ...args);
 }
 
-// ✅ NOVO: Função para salvar logs na raiz do projeto
+// ✅ NOVO: Função para salvar logs na raiz do projeto (com controle via log-config.json)
 function saveLogToRoot(message: string, filename: string = 'draft-debug.log') {
+  // Verificar se logs estão habilitados
+  const logConfig = (window as any).logConfig;
+  if (logConfig?.frontend?.saveToFile === false) {
+    return; // Logs desabilitados
+  }
+
   const fs = (window as any).electronAPI?.fs;
   const path = (window as any).electronAPI?.path;
   const process = (window as any).electronAPI?.process;
@@ -41,8 +47,6 @@ function saveLogToRoot(message: string, filename: string = 'draft-debug.log') {
     fs.appendFile(logPath, logLine, (err: any) => {
       if (err) {
         console.error('Erro ao salvar log na raiz:', err);
-      } else {
-        console.log(`Log salvo em: ${logPath}`);
       }
     });
   }

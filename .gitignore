@@ -13,6 +13,13 @@ electron/node_modules
 *.class
 *.jar
 *.war
+*.gz
+/lol-matchmaking-prod.tar.gz
+lol-matchmaking-prod.tar.gz/
+/lol-matchmaking-prod.tar.gz/
+lol-matchmaking-prod.tar.gz
+*.tar.gz
+*.tar
 *.ear
 hs_err_pid*
 /old electron/

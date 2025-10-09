@@ -6,18 +6,8 @@ const path = require('path');
 const WebSocket = require('ws');
 const { ipcMain } = require('electron');
 
-// Caminho de log - será atualizado quando app estiver pronto
-// Por enquanto usa console.log que vai para stdout
-let LOG_FILE = null;
-
-// Aguarda app pronto para definir caminho do log
-app.whenReady().then(() => {
-  LOG_FILE = path.join(app.getPath('userData'), 'electron-main.log');
-  // Primeiro log após app pronto
-  const initMsg = `🚀 [ELECTRON MAIN] App pronto! Logs salvos em: ${LOG_FILE}\n`;
-  fs.appendFileSync(LOG_FILE, new Date().toISOString() + ' ' + initMsg, { encoding: 'utf8' });
-  console.log('[electron]', initMsg.trim());
-});
+// ⚠️ LOGS DESABILITADOS EM PRODUÇÃO - Não salvar arquivos de log
+let LOG_FILE = null; // Mantido como null para desabilitar logs em arquivo
 
 function sanitizeForLog(value) {
   try {
@@ -41,19 +31,9 @@ function sanitizeForLog(value) {
 }
 
 function appendLogLine(line) {
-  try {
-    const ts = new Date().toISOString();
-    const out = ts + ' ' + line + '\n';
-    // Se LOG_FILE ainda não foi definido (app não pronto), apenas console
-    if (LOG_FILE) {
-      fs.appendFileSync(LOG_FILE, out, { encoding: 'utf8' });
-    } else {
-      console.log('[electron] (log file not ready yet)', line);
-    }
-  } catch (e) {
-    // best-effort; don't crash the app for logging failures
-    console.error('[electron] failed to append log', String(e));
-  }
+  // ⚠️ LOGS EM ARQUIVO DESABILITADOS EM PRODUÇÃO
+  // Apenas console.log para debug local, sem salvar em arquivo
+  return;
 }
 
 function safeLog(...args) {
