@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter, OnInit } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { ApiService } from '../../services/api';
@@ -31,7 +31,7 @@ interface MuteResponse {
   templateUrl: './spectators-modal.component.html',
   styleUrls: ['./spectators-modal.component.css']
 })
-export class SpectatorsModalComponent implements OnInit {
+export class SpectatorsModalComponent implements OnInit, OnDestroy {
   @Input() matchId!: number;
   @Input() summonerName!: string;
   @Output() closed = new EventEmitter<void>();
@@ -39,6 +39,8 @@ export class SpectatorsModalComponent implements OnInit {
   spectators: SpectatorDTO[] = [];
   loading = false;
   error: string | null = null;
+  autoRefresh = true; // ✅ NOVO: Controle de auto-refresh
+  private refreshInterval: any = null; // ✅ NOVO: Referência ao interval
   private readonly baseUrl: string;
 
   constructor(
@@ -70,8 +72,48 @@ export class SpectatorsModalComponent implements OnInit {
     }
 
     this.loadSpectators();
-    // Auto-refresh a cada 5 segundos
-    setInterval(() => this.loadSpectators(), 5000);
+    // ✅ NOVO: Auto-refresh condicional
+    this.startAutoRefresh();
+  }
+
+  /**
+   * ✅ NOVO: Inicia o auto-refresh
+   */
+  private startAutoRefresh(): void {
+    if (this.autoRefresh && !this.refreshInterval) {
+      this.refreshInterval = setInterval(() => this.loadSpectators(), 5000);
+      console.log('🔄 [SpectatorsModal] Auto-refresh ATIVADO (5s)');
+    }
+  }
+
+  /**
+   * ✅ NOVO: Para o auto-refresh
+   */
+  private stopAutoRefresh(): void {
+    if (this.refreshInterval) {
+      clearInterval(this.refreshInterval);
+      this.refreshInterval = null;
+      console.log('⏸️ [SpectatorsModal] Auto-refresh DESATIVADO');
+    }
+  }
+
+  /**
+   * ✅ NOVO: Toggle do auto-refresh
+   */
+  toggleAutoRefresh(): void {
+    this.autoRefresh = !this.autoRefresh;
+    console.log(`🔄 [SpectatorsModal] Auto-refresh ${this.autoRefresh ? 'ATIVADO' : 'DESATIVADO'}`);
+
+    if (this.autoRefresh) {
+      this.startAutoRefresh();
+    } else {
+      this.stopAutoRefresh();
+    }
+  }
+
+  ngOnDestroy(): void {
+    // ✅ NOVO: Limpar interval ao destruir componente
+    this.stopAutoRefresh();
   }
 
   /**

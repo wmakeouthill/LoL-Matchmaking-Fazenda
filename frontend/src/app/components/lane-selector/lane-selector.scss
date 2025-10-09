@@ -73,16 +73,18 @@
 }
 
 .lane-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 12px;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 8px;
+  overflow-x: auto;
 }
 
 .lane-button {
   background: linear-gradient(135deg, #3c3c41 0%, #1e2328 100%);
   border: 2px solid #463714;
   border-radius: 8px;
-  padding: 16px 12px;
+  padding: 12px 8px;
   cursor: pointer;
   transition: all 0.3s ease;
   color: #cdbe91;
@@ -90,7 +92,8 @@
   flex-direction: column;
   align-items: center;
   text-align: center;
-  min-height: 100px;
+  min-width: 100px;
+  flex: 1;
 }
 
 .lane-button:hover:not(:disabled) {
@@ -218,6 +221,28 @@
 .btn-secondary:hover {
   border-color: #c89b3c;
   background: rgba(200, 155, 60, 0.1);
+}
+
+.warning-message {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: rgba(255, 200, 0, 0.15);
+  border: 1px solid rgba(255, 200, 0, 0.4);
+  border-radius: 6px;
+  margin-top: 16px;
+  color: #ffc800;
+}
+
+.warning-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.warning-text {
+  font-size: 0.9rem;
+  line-height: 1.4;
 }
 
 /* Responsive */

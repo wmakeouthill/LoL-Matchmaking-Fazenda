@@ -475,6 +475,7 @@
   <app-lane-selector
     [isVisible]="showLaneSelector"
     [currentPreferences]="queuePreferences"
+    [currentSummonerName]="currentPlayer?.displayName || ''"
     (close)="onCloseLaneSelector()"
     (confirm)="onConfirmDiscordQueue($event)"
   >
