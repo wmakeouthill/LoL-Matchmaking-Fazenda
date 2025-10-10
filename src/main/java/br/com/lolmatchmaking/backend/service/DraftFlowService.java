@@ -114,16 +114,13 @@ public class DraftFlowService {
         }
     }
 
-    // ✅ MANTIDO: DraftState é cache de trabalho em tempo real (atualizado a cada
-    // pick/ban)
-    // Diferente dos outros HashMaps que eram duplicação de dados:
-    // - Usado em scheduled tasks (@Scheduled fixedDelay=1000ms) para timer/timeouts
-    // - Atualizado em tempo real a cada ação (processAction chamado pelo frontend)
-    // - Persistido no Redis via redisDraftFlow.saveDraftState() após cada mudança
-    // - Restaurado do banco no @PostConstruct (restoreDraftStates)
-    // Redis continua sendo fonte da verdade (persist() salva lá), mas states é
-    // cache quente
-    private final Map<Long, DraftState> states = new ConcurrentHashMap<>();
+    // ❌ REMOVIDO: HashMap local - migrado para 100% Redis
+    // ✅ NOVO FLUXO:
+    // - getDraftStateFromRedis(matchId) → busca do Redis
+    // - Se Redis vazio → busca do MySQL (pick_ban_data_json) e cacheia no Redis
+    // - Salva no Redis após cada ação via redisDraftFlow.saveDraftState()
+    // - NUNCA mais usa HashMap local states
+    // private final Map<Long, DraftState> states = new ConcurrentHashMap<>();
 
     @PostConstruct
     public void restoreDraftStates() {
@@ -158,10 +155,20 @@ public class DraftFlowService {
                 try {
                     Thread.sleep(1000); // 1 segundo
 
-                    // Para cada draft ativo
-                    for (Map.Entry<Long, DraftState> entry : states.entrySet()) {
-                        Long matchId = entry.getKey();
-                        DraftState st = entry.getValue();
+                    // ✅ REFATORADO: Buscar drafts ativos do MySQL (não de HashMap)
+                    List<br.com.lolmatchmaking.backend.domain.entity.CustomMatch> activeDrafts = customMatchRepository
+                            .findByStatus("draft");
+
+                    for (br.com.lolmatchmaking.backend.domain.entity.CustomMatch match : activeDrafts) {
+                        Long matchId = match.getId();
+
+                        // ✅ Buscar estado do Redis (com fallback MySQL)
+                        DraftState st = getDraftStateFromRedis(matchId);
+
+                        if (st == null) {
+                            log.debug("⚠️ [Timer] DraftState não encontrado: matchId={}", matchId);
+                            continue;
+                        }
 
                         // Só se não estiver completo
                         if (st.getCurrentIndex() >= st.getActions().size()) {
@@ -268,7 +275,8 @@ public class DraftFlowService {
                         while (st.getCurrentIndex() < cur && st.getCurrentIndex() < actions.size()) {
                             st.advance();
                         }
-                        states.put(cm.getId(), st);
+                        // ✅ Salvar no Redis (não mais em HashMap)
+                        saveDraftStateToRedis(cm.getId(), st);
                         log.info("Draft restaurado matchId={} actions={} currentIndex={}", cm.getId(), actions.size(),
                                 st.getCurrentIndex());
                     } catch (Exception e) {
@@ -283,10 +291,190 @@ public class DraftFlowService {
         return Arrays.stream(csv.split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList();
     }
 
+    // ========================================
+    // ✅ NOVO: MÉTODOS PARA REDIS 100%
+    // ========================================
+
+    /**
+     * ✅ NOVO: Busca DraftState do Redis ou MySQL (NUNCA de HashMap)
+     * 
+     * FLUXO:
+     * 1. Tentar Redis (redisDraftFlow.getDraftState)
+     * 2. Se vazio → Buscar MySQL (custom_matches.pick_ban_data_json)
+     * 3. Cachear no Redis
+     * 4. Retornar DraftState
+     */
+    private DraftState getDraftStateFromRedis(Long matchId) {
+        try {
+            // ✅ 1. Tentar buscar do Redis
+            Map<String, Object> redisState = redisDraftFlow.getDraftState(matchId);
+
+            if (redisState != null) {
+                // Converter Map para DraftState
+                return deserializeDraftState(matchId, redisState);
+            }
+
+            // ✅ 2. Redis vazio → Buscar do MySQL
+            log.info("🔄 [DraftFlow] Redis vazio, buscando do MySQL: matchId={}", matchId);
+
+            DraftState stateFromMySQL = loadDraftStateFromMySQL(matchId);
+
+            if (stateFromMySQL != null) {
+                // ✅ 3. Cachear no Redis
+                saveDraftStateToRedis(matchId, stateFromMySQL);
+                log.info("✅ [DraftFlow] Estado carregado do MySQL e cacheado no Redis");
+                return stateFromMySQL;
+            }
+
+            log.warn("⚠️ [DraftFlow] Draft {} não encontrado nem no Redis nem no MySQL", matchId);
+            return null;
+
+        } catch (Exception e) {
+            log.error("❌ [DraftFlow] Erro ao buscar DraftState: matchId={}", matchId, e);
+            return null;
+        }
+    }
+
+    /**
+     * ✅ NOVO: Carrega DraftState do MySQL (custom_matches.pick_ban_data_json)
+     */
+    private DraftState loadDraftStateFromMySQL(Long matchId) {
+        try {
+            return customMatchRepository.findById(matchId)
+                    .filter(cm -> "draft".equalsIgnoreCase(cm.getStatus()))
+                    .filter(cm -> cm.getPickBanDataJson() != null && !cm.getPickBanDataJson().isBlank())
+                    .map(cm -> {
+                        try {
+                            return parseDraftStateFromJSON(matchId, cm);
+                        } catch (Exception e) {
+                            log.error("❌ Erro ao parsear DraftState do MySQL", e);
+                            return null;
+                        }
+                    })
+                    .orElse(null);
+
+        } catch (Exception e) {
+            log.error("❌ [DraftFlow] Erro ao carregar do MySQL: matchId={}", matchId, e);
+            return null;
+        }
+    }
+
+    /**
+     * ✅ NOVO: Parseia DraftState do JSON do MySQL
+     */
+    private DraftState parseDraftStateFromJSON(Long matchId, br.com.lolmatchmaking.backend.domain.entity.CustomMatch cm)
+            throws Exception {
+        Map<?, ?> snap = mapper.readValue(cm.getPickBanDataJson(), Map.class);
+        Object actionsObj = snap.get("actions");
+        Object currentIdxObj = snap.get("currentIndex");
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> actionMaps = actionsObj instanceof List<?> l
+                ? (List<Map<String, Object>>) (List<?>) l
+                : List.of();
+
+        List<DraftAction> actions = new ArrayList<>();
+        for (Map<String, Object> am : actionMaps) {
+            int idx = ((Number) am.getOrDefault("index", 0)).intValue();
+            String type = (String) am.getOrDefault("type", "pick");
+            int team = ((Number) am.getOrDefault("team", 1)).intValue();
+            String champId = (String) am.get("championId");
+            String byPlayer = (String) am.get("byPlayer");
+
+            String championName = null;
+            if (champId != null && !champId.isBlank() && !"SKIPPED".equalsIgnoreCase(champId)) {
+                championName = dataDragonService.getChampionName(champId);
+            }
+
+            actions.add(new DraftAction(idx, type, team, champId, championName, byPlayer));
+        }
+
+        List<String> team1 = parseCSV(cm.getTeam1PlayersJson());
+        List<String> team2 = parseCSV(cm.getTeam2PlayersJson());
+        DraftState st = new DraftState(matchId, actions, team1, team2);
+
+        int cur = currentIdxObj instanceof Number n ? n.intValue() : 0;
+        while (st.getCurrentIndex() < cur && st.getCurrentIndex() < actions.size()) {
+            st.advance();
+        }
+
+        return st;
+    }
+
+    /**
+     * ✅ NOVO: Salva DraftState no Redis
+     */
+    private void saveDraftStateToRedis(Long matchId, DraftState st) {
+        try {
+            Map<String, Object> stateMap = serializeDraftState(st);
+            redisDraftFlow.saveDraftState(matchId, stateMap);
+            log.debug("💾 [DraftFlow] Estado salvo no Redis: matchId={}", matchId);
+        } catch (Exception e) {
+            log.error("❌ [DraftFlow] Erro ao salvar no Redis: matchId={}", matchId, e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Serializa DraftState para Map
+     */
+    private Map<String, Object> serializeDraftState(DraftState st) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("matchId", st.getMatchId());
+        map.put("actions", st.getActions());
+        map.put("currentIndex", st.getCurrentIndex());
+        map.put("team1Players", new ArrayList<>(st.getTeam1Players()));
+        map.put("team2Players", new ArrayList<>(st.getTeam2Players()));
+        map.put("confirmations", new ArrayList<>(st.getConfirmations()));
+        map.put("lastActionStartMs", st.getLastActionStartMs());
+        return map;
+    }
+
+    /**
+     * ✅ NOVO: Desserializa Map para DraftState
+     */
+    @SuppressWarnings("unchecked")
+    private DraftState deserializeDraftState(Long matchId, Map<String, Object> map) {
+        try {
+            List<Map<String, Object>> actionsData = (List<Map<String, Object>>) map.get("actions");
+            List<DraftAction> actions = new ArrayList<>();
+
+            for (Map<String, Object> actionData : actionsData) {
+                actions.add(new DraftAction(
+                        ((Number) actionData.get("index")).intValue(),
+                        (String) actionData.get("type"),
+                        ((Number) actionData.get("team")).intValue(),
+                        (String) actionData.get("championId"),
+                        (String) actionData.get("championName"),
+                        (String) actionData.get("byPlayer")));
+            }
+
+            List<String> team1 = (List<String>) map.get("team1Players");
+            List<String> team2 = (List<String>) map.get("team2Players");
+
+            DraftState st = new DraftState(matchId, actions, team1, team2);
+
+            int currentIdx = ((Number) map.getOrDefault("currentIndex", 0)).intValue();
+            while (st.getCurrentIndex() < currentIdx && st.getCurrentIndex() < actions.size()) {
+                st.advance();
+            }
+
+            return st;
+
+        } catch (Exception e) {
+            log.error("❌ [DraftFlow] Erro ao desserializar DraftState", e);
+            return null;
+        }
+    }
+
+    /**
+     * ✅ REFATORADO: Inicia draft usando 100% Redis
+     */
     public DraftState startDraft(long matchId, List<String> team1Players, List<String> team2Players) {
         List<DraftAction> actions = buildDefaultActionSequence();
         DraftState st = new DraftState(matchId, actions, team1Players, team2Players);
-        states.put(matchId, st);
+
+        // ✅ Salvar no Redis (fonte ÚNICA)
+        saveDraftStateToRedis(matchId, st);
 
         log.info("🎬 [DraftFlow] startDraft - matchId={}, actions={}, currentIndex={}, team1={}, team2={}",
                 matchId, actions.size(), st.getCurrentIndex(), team1Players, team2Players);
@@ -294,14 +482,14 @@ public class DraftFlowService {
         // ⚡ REDIS: Inicializar timer (30 segundos)
         redisDraftFlow.initTimer(matchId);
 
-        // ✅ Persistir o estado inicial no banco
+        // ✅ Persistir o estado inicial no MySQL
         persist(matchId, st);
 
-        // ✅ CORREÇÃO: NÃO fazer broadcast aqui, o MatchFoundService já envia
-        // draft_starting
-        // broadcastUpdate(st, false);
+        log.info("📡 [DraftFlow] startDraft - Estado salvo no Redis e MySQL: matchId={}", matchId);
 
-        log.info("📡 [DraftFlow] startDraft - Estado criado e persistido para matchId={}", matchId);
+        // ✅ CRÍTICO: Fazer broadcast inicial para frontend
+        broadcastUpdate(st, false);
+        log.info("✅ [DraftFlow] startDraft - Broadcast inicial enviado para frontend");
 
         return st;
     }
@@ -372,8 +560,39 @@ public class DraftFlowService {
         return null;
     }
 
+    /**
+     * ✅ REFATORADO: Processa ação do draft usando 100% Redis + Distributed Lock
+     * Lock previne bugs quando 2+ players tentam ações simultâneas
+     */
     @Transactional
-    public synchronized boolean processAction(long matchId, int actionIndex, String championId, String byPlayer) {
+    public boolean processAction(long matchId, int actionIndex, String championId, String byPlayer) {
+        // ✅ CRÍTICO: Distributed lock para prevenir ações simultâneas
+        org.redisson.api.RLock lock = redisDraftFlow.getLock("draft_action:" + matchId);
+
+        try {
+            // Tentar adquirir lock por 5 segundos
+            if (!lock.tryLock(5, 30, java.util.concurrent.TimeUnit.SECONDS)) {
+                log.warn("⚠️ [processAction] Não foi possível adquirir lock para matchId={}", matchId);
+                return false;
+            }
+
+            return processActionWithLock(matchId, actionIndex, championId, byPlayer);
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("❌ [processAction] Lock interrompido", e);
+            return false;
+        } finally {
+            if (lock.isHeldByCurrentThread()) {
+                lock.unlock();
+            }
+        }
+    }
+
+    /**
+     * ✅ NOVO: Lógica interna com lock garantido
+     */
+    private boolean processActionWithLock(long matchId, int actionIndex, String championId, String byPlayer) {
         log.info("\n========================================");
         log.info("🔵 [processAction] === INICIANDO AÇÃO ===");
         log.info("========================================");
@@ -382,9 +601,10 @@ public class DraftFlowService {
         log.info("📋 Champion ID: {}", championId);
         log.info("📋 By Player: {}", byPlayer);
 
-        DraftState st = states.get(matchId);
+        // ✅ Buscar do Redis (que busca do MySQL se necessário)
+        DraftState st = getDraftStateFromRedis(matchId);
         if (st == null) {
-            log.warn("❌ [processAction] DraftState não encontrado para matchId={}", matchId);
+            log.warn("❌ [processAction] DraftState não encontrado no Redis/MySQL para matchId={}", matchId);
             log.info("========================================\n");
             return false;
         }
@@ -458,9 +678,15 @@ public class DraftFlowService {
         redisDraftFlow.resetTimer(matchId);
 
         // ✅ LOGS ANTES DE PERSISTIR
-        log.info("💾 Salvando ação no banco de dados...");
+        log.info("💾 Salvando ação no MySQL e Redis...");
+
+        // ✅ Persistir no MySQL
         persist(matchId, st);
-        log.info("✅ Ação salva com sucesso!");
+
+        // ✅ CRÍTICO: Salvar no Redis para sincronizar com outros backends
+        saveDraftStateToRedis(matchId, st);
+
+        log.info("✅ Ação salva com sucesso no MySQL e Redis!");
 
         // ✅ LOGS DETALHADOS DA AÇÃO SALVA
         log.info("\n========================================");
@@ -493,7 +719,9 @@ public class DraftFlowService {
         }
         log.info("========================================\n");
 
+        // ✅ Broadcast para TODOS (não só jogadores da partida)
         broadcastUpdate(st, false);
+
         if (st.getCurrentIndex() >= st.getActions().size()) {
             log.info("🏁 [processAction] Draft completo! Broadcast de conclusão...");
             broadcastDraftCompleted(st);
@@ -501,13 +729,25 @@ public class DraftFlowService {
         return true;
     }
 
+    /**
+     * ✅ REFATORADO: Confirma draft usando 100% Redis
+     */
     @Transactional
     public synchronized void confirmDraft(long matchId, String playerId) {
-        DraftState st = states.get(matchId);
-        if (st == null)
+        // ✅ Buscar do Redis
+        DraftState st = getDraftStateFromRedis(matchId);
+        if (st == null) {
+            log.warn("❌ [confirmDraft] DraftState não encontrado: matchId={}", matchId);
             return;
+        }
+
         st.getConfirmations().add(playerId);
+
+        // ✅ Salvar no Redis
+        saveDraftStateToRedis(matchId, st);
+
         broadcastUpdate(st, true);
+
         if (st.getConfirmations().size() >= 10) {
             customMatchRepository.findById(matchId).ifPresent(cm -> {
                 cm.setStatus("draft_completed");
@@ -530,9 +770,10 @@ public class DraftFlowService {
         log.info("📋 Player ID recebido: {}", playerId);
         log.info("📋 New Champion ID: {}", newChampionId);
 
-        DraftState st = states.get(matchId);
+        // ✅ Buscar do Redis
+        DraftState st = getDraftStateFromRedis(matchId);
         if (st == null) {
-            log.warn("❌ [changePick] DraftState não encontrado para matchId={}", matchId);
+            log.warn("❌ [changePick] DraftState não encontrado no Redis/MySQL: matchId={}", matchId);
             return;
         }
 
@@ -635,7 +876,8 @@ public class DraftFlowService {
     }
 
     public Optional<DraftState> getState(long matchId) {
-        return Optional.ofNullable(states.get(matchId));
+        // ✅ Buscar do Redis
+        return Optional.ofNullable(getDraftStateFromRedis(matchId));
     }
 
     private void persist(long matchId, DraftState st) {
@@ -808,6 +1050,7 @@ public class DraftFlowService {
             updateData.put(KEY_TYPE, "draft_updated");
             updateData.put(KEY_MATCH_ID, st.getMatchId());
             updateData.put(KEY_CURRENT_INDEX, st.getCurrentIndex());
+            updateData.put("currentAction", st.getCurrentIndex()); // ✅ CRÍTICO: Frontend espera currentAction
             updateData.put(KEY_ACTIONS, st.getActions());
             updateData.put(KEY_CONFIRMATIONS, st.getConfirmations());
             updateData.put("currentPlayer", currentPlayer); // ✅ Nome do jogador da vez
@@ -1294,7 +1537,7 @@ public class DraftFlowService {
     }
 
     public Map<String, Object> snapshot(long matchId) {
-        DraftState st = states.get(matchId);
+        DraftState st = getDraftStateFromRedis(matchId);
         if (st == null)
             return Map.of("exists", false);
         long remainingMs = calcRemainingMs(st);
@@ -1348,29 +1591,40 @@ public class DraftFlowService {
         return result;
     }
 
+    /**
+     * ✅ REFATORADO: Reemite draft usando MySQL como fonte
+     */
     public void reemitIfPlayerInDraft(String playerName, org.springframework.web.socket.WebSocketSession session) {
-        states.values().stream()
-                .filter(st -> st.getTeam1Players().contains(playerName) || st.getTeam2Players().contains(playerName))
-                .findFirst()
-                .ifPresent(st -> {
-                    try {
-                        long remainingMs = calcRemainingMs(st);
-                        String payload = mapper.writeValueAsString(Map.of(
-                                KEY_TYPE, "draft_snapshot",
-                                KEY_MATCH_ID, st.getMatchId(),
-                                KEY_CURRENT_INDEX, st.getCurrentIndex(),
-                                KEY_ACTIONS, st.getActions(),
-                                KEY_CONFIRMATIONS, st.getConfirmations(),
-                                KEY_TEAM1, st.getTeam1Players(),
-                                KEY_TEAM2, st.getTeam2Players(),
-                                KEY_REMAINING_MS, remainingMs,
-                                KEY_ACTION_TIMEOUT_MS, getActionTimeoutMs(),
-                                "success", true));
-                        session.sendMessage(new TextMessage(payload));
-                    } catch (Exception e) {
-                        log.warn("Falha reemitir draft_snapshot", e);
-                    }
-                });
+        // ✅ Buscar drafts ativos do MySQL
+        List<br.com.lolmatchmaking.backend.domain.entity.CustomMatch> drafts = customMatchRepository
+                .findByStatus("draft");
+
+        for (br.com.lolmatchmaking.backend.domain.entity.CustomMatch match : drafts) {
+            DraftState st = getDraftStateFromRedis(match.getId());
+            if (st != null &&
+                    (st.getTeam1Players().contains(playerName) || st.getTeam2Players().contains(playerName))) {
+                try {
+                    long remainingMs = calcRemainingMs(st);
+                    String payload = mapper.writeValueAsString(Map.of(
+                            KEY_TYPE, "draft_snapshot",
+                            KEY_MATCH_ID, st.getMatchId(),
+                            KEY_CURRENT_INDEX, st.getCurrentIndex(),
+                            KEY_ACTIONS, st.getActions(),
+                            KEY_CONFIRMATIONS, st.getConfirmations(),
+                            KEY_TEAM1, st.getTeam1Players(),
+                            KEY_TEAM2, st.getTeam2Players(),
+                            KEY_REMAINING_MS, remainingMs,
+                            KEY_ACTION_TIMEOUT_MS, getActionTimeoutMs(),
+                            "success", true));
+                    session.sendMessage(new TextMessage(payload));
+
+                    // Encontrou e enviou, sair do loop
+                    break;
+                } catch (Exception e) {
+                    log.warn("Falha reemitir draft_snapshot", e);
+                }
+            }
+        }
     }
 
     private void broadcastGameReady(DraftState st) {
@@ -1405,35 +1659,52 @@ public class DraftFlowService {
                 "picks", picks);
     }
 
+    /**
+     * ✅ REFATORADO: Reemite game_ready usando MySQL como fonte
+     */
     public void reemitIfPlayerGameReady(String playerName, org.springframework.web.socket.WebSocketSession session) {
-        // verifica drafts confirmados em memória com status game_ready no banco
-        states.values().stream()
-                .filter(st -> customMatchRepository.findById(st.getMatchId())
-                        .map(cm -> "game_ready".equalsIgnoreCase(cm.getStatus()))
-                        .orElse(false))
-                .filter(st -> st.getTeam1Players().contains(playerName) || st.getTeam2Players().contains(playerName))
-                .findFirst()
-                .ifPresent(st -> {
-                    // envia apenas para a sessão solicitante
-                    try {
-                        Map<String, Object> team1Data = buildTeamData(st, 1);
-                        Map<String, Object> team2Data = buildTeamData(st, 2);
-                        String payload = mapper.writeValueAsString(Map.of(
-                                KEY_TYPE, "match_game_ready",
-                                KEY_MATCH_ID, st.getMatchId(),
-                                "team1", team1Data,
-                                "team2", team2Data));
-                        session.sendMessage(new TextMessage(payload));
-                    } catch (Exception e) {
-                        log.warn("Falha reemitir match_game_ready", e);
-                    }
-                });
+        // ✅ Buscar drafts game_ready do MySQL
+        List<br.com.lolmatchmaking.backend.domain.entity.CustomMatch> drafts = customMatchRepository
+                .findByStatus("game_ready");
+
+        for (br.com.lolmatchmaking.backend.domain.entity.CustomMatch match : drafts) {
+            DraftState st = getDraftStateFromRedis(match.getId());
+            if (st != null &&
+                    (st.getTeam1Players().contains(playerName) || st.getTeam2Players().contains(playerName))) {
+                // envia apenas para a sessão solicitante
+                try {
+                    Map<String, Object> team1Data = buildTeamData(st, 1);
+                    Map<String, Object> team2Data = buildTeamData(st, 2);
+                    String payload = mapper.writeValueAsString(Map.of(
+                            KEY_TYPE, "match_game_ready",
+                            KEY_MATCH_ID, st.getMatchId(),
+                            "team1", team1Data,
+                            "team2", team2Data));
+                    session.sendMessage(new TextMessage(payload));
+                } catch (Exception e) {
+                    log.warn("Falha reemitir match_game_ready", e);
+                }
+                // Encontrou e enviou, sair do loop
+                break;
+            }
+        }
     }
 
+    /**
+     * ✅ REFATORADO: Monitora timeouts usando MySQL como fonte
+     */
     @Scheduled(fixedDelay = 1000)
     public void monitorActionTimeouts() {
         long now = System.currentTimeMillis();
-        states.values().forEach(st -> {
+
+        // ✅ Buscar drafts ativos do MySQL
+        List<br.com.lolmatchmaking.backend.domain.entity.CustomMatch> drafts = customMatchRepository
+                .findByStatus("draft");
+
+        for (br.com.lolmatchmaking.backend.domain.entity.CustomMatch match : drafts) {
+            DraftState st = getDraftStateFromRedis(match.getId());
+            if (st == null)
+                continue;
             if (st.getCurrentIndex() >= st.getActions().size())
                 return; // completo
 
@@ -1491,12 +1762,16 @@ public class DraftFlowService {
                 st.advance();
                 st.markActionStart();
                 persist(st.getMatchId(), st);
+
+                // ✅ Salvar estado no Redis
+                saveDraftStateToRedis(st.getMatchId(), st);
+
                 broadcastUpdate(st, false);
                 if (st.getCurrentIndex() >= st.getActions().size()) {
                     broadcastDraftCompleted(st);
                 }
             }
-        });
+        }
     }
 
     /**
@@ -1739,10 +2014,10 @@ public class DraftFlowService {
         log.info("🎯 Match ID: {}", matchId);
         log.info("👤 Player ID: {}", playerId);
 
-        // 1. Verificar se o draft existe
-        DraftState state = states.get(matchId);
+        // ✅ 1. Buscar draft do Redis (com fallback MySQL)
+        DraftState state = getDraftStateFromRedis(matchId);
         if (state == null) {
-            log.warn("⚠️ [DraftFlow] Draft não encontrado para match {}", matchId);
+            log.warn("⚠️ [DraftFlow] Draft não encontrado no Redis/MySQL para match {}", matchId);
             throw new RuntimeException("Draft não encontrado");
         }
 
@@ -1790,9 +2065,8 @@ public class DraftFlowService {
             // 9. ⚡ LIMPAR DADOS DO REDIS
             redisDraftFlow.clearAllDraftData(matchId);
 
-            // 10. Limpar states local (estados ainda são mantidos em memória para
-            // compatibilidade)
-            states.remove(matchId);
+            // ✅ REMOVIDO: states.remove() - não há mais HashMap local
+            log.info("🗑️ [DraftFlow] Dados do draft limpos do Redis");
         }
 
         // 11. Retornar resultado
@@ -1809,7 +2083,7 @@ public class DraftFlowService {
     private void broadcastConfirmationUpdate(Long matchId, Set<String> confirmations, int totalPlayers) {
         try {
             // Buscar DraftState para pegar lista de jogadores
-            DraftState st = states.get(matchId);
+            DraftState st = getDraftStateFromRedis(matchId);
             if (st == null) {
                 log.warn("⚠️ [DraftFlow] DraftState não encontrado para matchId={}", matchId);
                 return;
@@ -1871,7 +2145,7 @@ public class DraftFlowService {
     private void broadcastGameReady(Long matchId) {
         try {
             // Buscar DraftState para pegar lista de jogadores
-            DraftState st = states.get(matchId);
+            DraftState st = getDraftStateFromRedis(matchId);
             if (st == null) {
                 log.warn("⚠️ [DraftFlow] DraftState não encontrado para matchId={}", matchId);
                 return;
@@ -1920,12 +2194,12 @@ public class DraftFlowService {
             redisDraftFlow.clearAllDraftData(matchId);
             log.info("🧹 [DraftFlow] Dados limpos do Redis");
 
-            // 5. Broadcast evento de cancelamento ANTES de remover do states
+            // 5. Broadcast evento de cancelamento
             broadcastMatchCancelled(matchId);
 
-            // 6. Remover do states DEPOIS do broadcast (precisa dos jogadores)
-            states.remove(matchId);
-            log.info("🧹 [DraftFlow] Cache local limpo");
+            // ✅ 6. Limpar do Redis
+            redisDraftFlow.clearDraftState(matchId);
+            log.info("🗑️ [DraftFlow] Estado do draft limpo do Redis");
 
             log.info("✅ [DraftFlow] Partida cancelada com sucesso!");
 
@@ -1941,7 +2215,7 @@ public class DraftFlowService {
     private void broadcastMatchCancelled(Long matchId) {
         try {
             // Buscar DraftState para pegar lista de jogadores
-            DraftState st = states.get(matchId);
+            DraftState st = getDraftStateFromRedis(matchId);
             if (st == null) {
                 log.warn("⚠️ [DraftFlow] DraftState não encontrado para matchId={} - broadcast para todos", matchId);
                 // Fallback: broadcast global se não temos os jogadores

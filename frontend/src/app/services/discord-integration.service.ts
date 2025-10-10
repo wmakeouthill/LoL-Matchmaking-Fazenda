@@ -119,8 +119,8 @@ export class DiscordIntegrationService {
         this.lastDataUpdate = Date.now();
         this.isDataStale = false;
 
-        // ✅ NOVO: Persistir dados no localStorage para sobreviver a reconexões
-        this.persistDiscordData();
+        // ❌ REMOVIDO: localStorage cache
+        // Backend (Redis) é fonte única via WebSocket
 
         if (data.critical) {
           console.log(`🚨 [DiscordService #${this.instanceId}] Broadcast CRÍTICO recebido - atualização imediata`);
@@ -385,8 +385,8 @@ export class DiscordIntegrationService {
         users: this.discordUsersOnline,
         timestamp: Date.now()
       };
-      localStorage.setItem('discord_users_cache', JSON.stringify(data));
-      console.log(`💾 [DiscordService #${this.instanceId}] Dados do Discord persistidos:`, this.discordUsersOnline.length, 'usuários');
+      // ❌ REMOVIDO: localStorage cache
+      console.log(`✅ [DiscordService #${this.instanceId}] Dados do Discord atualizados do backend:`, this.discordUsersOnline.length, 'usuários');
     } catch (error) {
       console.warn(`⚠️ [DiscordService #${this.instanceId}] Falha ao persistir dados do Discord:`, error);
     }
@@ -395,8 +395,8 @@ export class DiscordIntegrationService {
   private persistCurrentUser(): void {
     try {
       if (this.currentDiscordUser) {
-        localStorage.setItem('discord_current_user', JSON.stringify(this.currentDiscordUser));
-        console.log(`💾 [DiscordService #${this.instanceId}] Usuário atual persistido:`, this.currentDiscordUser);
+        // ❌ REMOVIDO: localStorage cache
+        console.log(`✅ [DiscordService #${this.instanceId}] Usuário atual atualizado do backend:`, this.currentDiscordUser);
       }
     } catch (error) {
       console.warn(`⚠️ [DiscordService #${this.instanceId}] Falha ao persistir usuário atual:`, error);
@@ -405,25 +405,9 @@ export class DiscordIntegrationService {
 
   private restoreDiscordData(): void {
     try {
-      // Restaurar usuários do Discord
-      const usersData = localStorage.getItem('discord_users_cache');
-      if (usersData) {
-        const parsed = JSON.parse(usersData);
-        const age = Date.now() - parsed.timestamp;
-        // ✅ CORREÇÃO: Usar dados mesmo se forem mais antigos (até 1 hora) para evitar perda durante reconexões
-        if (age < 3600000 && parsed.users) {
-          this.discordUsersOnline = parsed.users;
-          this.usersSubject.next(this.discordUsersOnline);
-          console.log(`🔄 [DiscordService #${this.instanceId}] Dados do Discord restaurados:`, this.discordUsersOnline.length, 'usuários (idade:', Math.round(age / 1000), 's)');
-        }
-      }
-
-      // Restaurar usuário atual
-      const currentUserData = localStorage.getItem('discord_current_user');
-      if (currentUserData) {
-        this.currentDiscordUser = JSON.parse(currentUserData);
-        console.log(`🔄 [DiscordService #${this.instanceId}] Usuário atual restaurado:`, this.currentDiscordUser);
-      }
+      // ❌ REMOVIDO: localStorage cache
+      // Backend via WebSocket é fonte única
+      console.log(`✅ [DiscordService #${this.instanceId}] Aguardando dados do backend via WebSocket`);
     } catch (error) {
       console.warn(`⚠️ [DiscordService #${this.instanceId}] Falha ao restaurar dados do Discord:`, error);
     }

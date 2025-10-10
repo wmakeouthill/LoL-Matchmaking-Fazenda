@@ -14,16 +14,23 @@ import java.util.Map;
  * 
  * PROBLEMA RESOLVIDO:
  * - Cache local não é compartilhado entre instâncias do backend
- * - Cada requisição busca do Discord (lento)
+ * - Cada requisição busca do Discord JDA (lento)
  * 
  * SOLUÇÃO COM REDIS:
  * - Cache compartilhado entre todas instâncias
- * - TTL de 2 segundos (atualização rápida)
+ * - TTL de 5 minutos (usuários Discord não mudam tão rápido)
  * - Performance: O(1) para buscar lista cacheada
+ * - Fallback: Redis → JDA API → Cachear Redis (NUNCA HashMap local)
  * 
  * CHAVES REDIS:
  * - discord:users:cache → List<DiscordUser> (JSON)
  * - discord:status:cache → Map<String, Object> (JSON)
+ * 
+ * FLUXO CORRETO:
+ * 1. Buscar do Redis (cache)
+ * 2. Se vazio → Buscar do JDA API (fonte da verdade)
+ * 3. Cachear no Redis
+ * 4. Retornar dados
  */
 @Slf4j
 @Service
@@ -34,7 +41,8 @@ public class RedisDiscordCacheService {
 
     private static final String USERS_CACHE_KEY = "discord:users:cache";
     private static final String STATUS_CACHE_KEY = "discord:status:cache";
-    private static final Duration CACHE_TTL = Duration.ofSeconds(2);
+    // ✅ AUMENTADO: 2s → 5 minutos (usuários Discord não mudam tão rápido)
+    private static final Duration CACHE_TTL = Duration.ofMinutes(5);
 
     /**
      * ✅ Armazena lista de usuários no cache

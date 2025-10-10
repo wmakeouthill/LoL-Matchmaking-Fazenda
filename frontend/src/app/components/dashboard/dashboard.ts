@@ -38,8 +38,11 @@ export class DashboardComponent implements OnInit, OnDestroy, OnChanges {
   private customMatchesAttempted = false; // ✅ NOVO: Flag para custom matches
   private fallbackCompleted = false; // ✅ NOVO: Flag para fallback completo
   private processingPlayer = false; // ✅ NOVO: Flag para evitar processamento simultâneo
-  private lcuCacheKey = 'dashboard_lcu_cache'; // ✅ NOVO: Chave para cache do LCU
-  private cacheExpireMs = 30 * 60 * 1000; // ✅ NOVO: Cache expira em 30 minutos
+  // ❌ REMOVIDO: sessionStorage cache
+  // Frontend NÃO deve cachear dados de partidas
+  // Backend (Redis/MySQL) é a fonte ÚNICA da verdade
+  // private lcuCacheKey = 'dashboard_lcu_cache';
+  // private cacheExpireMs = 30 * 60 * 1000;
 
   // Dados de partidas - agora preenchidos com dados reais
   recentMatches: Match[] = [];
@@ -775,8 +778,8 @@ export class DashboardComponent implements OnInit, OnDestroy, OnChanges {
   public refreshAllData(): void {
     console.log('🔄 Atualizando todos os dados do dashboard');
 
-    // ✅ NOVO: Limpar cache do LCU para forçar nova busca
-    this.clearLCUCache();
+    // ❌ REMOVIDO: sessionStorage cache
+    // Backend orquestra via Redis
 
     this.dataLoaded = false; // Reset flag para permitir recarregamento
     this.lcuFallbackAttempted = false; // ✅ CORREÇÃO: Reset flag LCU para permitir nova tentativa
@@ -787,10 +790,10 @@ export class DashboardComponent implements OnInit, OnDestroy, OnChanges {
     this.dataLoaded = true;
   }
 
-  // ✅ NOVO: Método público para limpar cache do LCU
+  // ❌ REMOVIDO: sessionStorage cache
+  // Backend orquestra via Redis
   public clearLCUCacheManually(): void {
-    console.log('🗑️ [DASHBOARD] Manually clearing LCU cache...');
-    this.clearLCUCache();
+    console.log('✅ [DASHBOARD] Cache local removido - backend (Redis/MySQL) é fonte única');
   }
 
   // Método para carregar contagem de partidas customizadas
@@ -959,16 +962,9 @@ export class DashboardComponent implements OnInit, OnDestroy, OnChanges {
   private handleNoCustomMatches(): void {
     const playerIdentifier = this.getPlayerIdentifier(this.player!);
 
-    // ✅ NOVO: Verificar cache do LCU primeiro
-    const cachedData = this.getCachedLCUData(playerIdentifier);
-    if (cachedData) {
-      console.log('🎯 [DASHBOARD] Using cached LCU data instead of new request');
-      this.processLCUMatches(cachedData);
-      this.isLoadingMatches = false;
-      this.fallbackCompleted = true;
-      this.cdr.detectChanges();
-      return;
-    }
+    // ❌ REMOVIDO: sessionStorage cache
+    // Backend deve orquestrar via Redis
+    console.log('✅ [DASHBOARD] Cache local removido - buscando sempre do backend');
 
     // ✅ CORREÇÃO CRÍTICA: Fazer fallback para LCU apenas UMA VEZ
     if (!this.lcuFallbackAttempted && !this.fallbackCompleted) {
@@ -995,8 +991,8 @@ export class DashboardComponent implements OnInit, OnDestroy, OnChanges {
         next: (response) => {
           console.log('✅ [DASHBOARD] LCU match history loaded:', response);
 
-          // ✅ NOVO: Salvar no cache antes de processar
-          this.setCachedLCUData(playerIdentifier, response);
+          // ❌ REMOVIDO: sessionStorage cache
+          // Backend deve orquestrar via Redis
 
           this.processLCUMatches(response);
           this.isLoadingMatches = false;
@@ -1159,59 +1155,22 @@ export class DashboardComponent implements OnInit, OnDestroy, OnChanges {
     });
   }
 
-  // ✅ NOVO: Métodos para gerenciar cache do LCU
+  // ❌ REMOVIDO: sessionStorage cache
+  // Frontend NÃO deve cachear dados de partidas
+  // Backend (Redis/MySQL) é a fonte ÚNICA da verdade
   private getCachedLCUData(playerIdentifier: string): any | null {
-    try {
-      const cacheData = sessionStorage.getItem(this.lcuCacheKey);
-      if (!cacheData) return null;
-
-      const parsed = JSON.parse(cacheData);
-
-      // Verificar se o cache é para o mesmo player
-      if (parsed.playerIdentifier !== playerIdentifier) {
-        console.log('🗑️ [DASHBOARD] Cache is for different player, clearing...');
-        this.clearLCUCache();
-        return null;
-      }
-
-      // Verificar se o cache não expirou
-      const now = Date.now();
-      if (now - parsed.timestamp > this.cacheExpireMs) {
-        console.log('⏰ [DASHBOARD] Cache expired, clearing...');
-        this.clearLCUCache();
-        return null;
-      }
-
-      console.log('✅ [DASHBOARD] Found valid LCU cache for player:', playerIdentifier);
-      return parsed.data;
-    } catch (error) {
-      console.warn('⚠️ [DASHBOARD] Error reading LCU cache:', error);
-      this.clearLCUCache();
-      return null;
-    }
+    // Sempre retornar null → força buscar do backend
+    console.log('✅ [DASHBOARD] Cache local removido - buscando sempre do backend');
+    return null;
   }
 
   private setCachedLCUData(playerIdentifier: string, data: any): void {
-    try {
-      const cacheData = {
-        playerIdentifier: playerIdentifier,
-        timestamp: Date.now(),
-        data: data
-      };
-
-      sessionStorage.setItem(this.lcuCacheKey, JSON.stringify(cacheData));
-      console.log('💾 [DASHBOARD] LCU data cached for player:', playerIdentifier);
-    } catch (error) {
-      console.warn('⚠️ [DASHBOARD] Error saving to LCU cache:', error);
-    }
+    // Não fazer nada → Backend é fonte única
+    console.log('✅ [DASHBOARD] Cache local removido - backend (Redis/MySQL) é fonte única');
   }
 
   private clearLCUCache(): void {
-    try {
-      sessionStorage.removeItem(this.lcuCacheKey);
-      console.log('🗑️ [DASHBOARD] LCU cache cleared');
-    } catch (error) {
-      console.warn('⚠️ [DASHBOARD] Error clearing LCU cache:', error);
-    }
+    // Não fazer nada → Sem cache para limpar
+    console.log('✅ [DASHBOARD] Cache local removido - nada a limpar');
   }
 }

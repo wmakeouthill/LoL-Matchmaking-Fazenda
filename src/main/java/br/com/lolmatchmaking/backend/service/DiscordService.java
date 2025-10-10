@@ -40,19 +40,26 @@ public class DiscordService extends ListenerAdapter {
     private final MatchmakingWebSocketService webSocketService;
     private final DiscordLoLLinkService discordLoLLinkService;
 
-    // ✅ NOVO: Redis cache service
+    // ✅ NOVO: Redis services
     private final br.com.lolmatchmaking.backend.service.redis.RedisDiscordCacheService redisDiscordCache;
+    private final br.com.lolmatchmaking.backend.service.redis.RedisDiscordMatchService redisDiscordMatch;
+    private final br.com.lolmatchmaking.backend.service.redis.RedisSpectatorService redisSpectator;
 
     private JDA jda;
     private String discordToken;
     private String discordChannelName; // Mudança: usar nome do canal em vez de ID
     private VoiceChannel monitoredChannel;
-    private final Map<String, DiscordUser> usersInChannel = new ConcurrentHashMap<>();
-    private final Map<String, DiscordPlayer> discordQueue = new ConcurrentHashMap<>();
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
 
-    // ✅ NOVO: Armazenamento de partidas ativas com canais Discord
-    private final Map<Long, DiscordMatch> activeMatches = new ConcurrentHashMap<>();
+    // ❌ REMOVIDO: HashMaps locais - Redis é fonte ÚNICA da verdade
+    // NUNCA usar cache local, mesmo como fallback
+    // private final Map<String, DiscordUser> usersInChannel = new
+    // ConcurrentHashMap<>();
+    // private final Map<String, DiscordPlayer> discordQueue = new
+    // ConcurrentHashMap<>();
+    // private final Map<Long, DiscordMatch> activeMatches = new
+    // ConcurrentHashMap<>();
+
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
 
     private boolean isConnected = false;
     private String botUsername;
@@ -235,22 +242,29 @@ public class DiscordService extends ListenerAdapter {
         }
     }
 
+    /**
+     * ✅ REFATORADO: Busca usuários direto do JDA e cacheia no Redis
+     * NUNCA usa HashMap local
+     */
     private void loadCurrentUsersInChannel() {
         if (monitoredChannel == null)
             return;
 
         try {
             List<Member> members = monitoredChannel.getMembers();
-            usersInChannel.clear();
+            List<DiscordUser> users = new ArrayList<>();
 
             for (Member member : members) {
                 if (!member.getUser().isBot()) {
                     DiscordUser user = createDiscordUser(member);
-                    usersInChannel.put(user.getId(), user);
+                    users.add(user);
                 }
             }
 
-            log.info("👥 [DiscordService] {} usuários carregados do canal", usersInChannel.size());
+            // ✅ Cachear no Redis IMEDIATAMENTE
+            redisDiscordCache.cacheUsers(users);
+
+            log.info("👥 [DiscordService] {} usuários carregados do JDA e cacheados no Redis", users.size());
             notifyUsersUpdate();
 
         } catch (Exception e) {
@@ -310,7 +324,10 @@ public class DiscordService extends ListenerAdapter {
         }, 120, 120, TimeUnit.SECONDS); // A cada 2 minutos - apenas fallback
     }
 
-    // ✅ Event listeners - FONTE PRIMÁRIA de atualizações em tempo real
+    /**
+     * ✅ REFATORADO: Event listeners - FONTE PRIMÁRIA de atualizações em tempo real
+     * Busca do JDA e atualiza Redis IMEDIATAMENTE, sem passar por HashMap
+     */
     @Override
     public void onGuildVoiceUpdate(GuildVoiceUpdateEvent event) {
         String leftChannelName = event.getChannelLeft() != null ? event.getChannelLeft().getName() : null;
@@ -318,13 +335,15 @@ public class DiscordService extends ListenerAdapter {
 
         if (leftChannelName != null && leftChannelName.equals(discordChannelName)) {
             log.info("👋 [DiscordService] Usuário saiu do canal: {}", event.getMember().getEffectiveName());
-            usersInChannel.remove(event.getMember().getId());
-            notifyUsersUpdate(); // ✅ Atualiza cache Redis + WebSocket broadcast
+
+            // ✅ Recarregar TODOS os usuários do JDA e atualizar Redis
+            loadCurrentUsersInChannel();
+
         } else if (joinedChannelName != null && joinedChannelName.equals(discordChannelName)) {
             log.info("👋 [DiscordService] Usuário entrou no canal: {}", event.getMember().getEffectiveName());
-            DiscordUser user = createDiscordUser(event.getMember());
-            usersInChannel.put(user.getId(), user);
-            notifyUsersUpdate(); // ✅ Atualiza cache Redis + WebSocket broadcast
+
+            // ✅ Recarregar TODOS os usuários do JDA e atualizar Redis
+            loadCurrentUsersInChannel();
         }
     }
 
@@ -357,16 +376,19 @@ public class DiscordService extends ListenerAdapter {
     }
 
     /**
-     * ✅ OTIMIZADO: Notifica status do Discord com cache Redis
+     * ✅ REFATORADO: Notifica status do Discord - busca contagem do Redis
      */
     private void notifyDiscordStatus() {
+        // ✅ Buscar usuários do Redis para ter contagem correta
+        int usersCount = getUsersCount();
+
         Map<String, Object> status = new HashMap<>();
         status.put("isConnected", isConnected);
         status.put("botUsername", botUsername);
         status.put("channelName", channelName);
-        status.put("usersCount", usersInChannel.size());
+        status.put("usersCount", usersCount);
 
-        // ✅ NOVO: Cachear status no Redis
+        // Cachear status no Redis
         try {
             redisDiscordCache.cacheStatus(status);
         } catch (Exception e) {
@@ -374,33 +396,30 @@ public class DiscordService extends ListenerAdapter {
         }
 
         webSocketService.broadcastMessage("discord_status", status);
-        log.info("📡 [DiscordService] Status enviado via WebSocket: {}", status);
+        log.info("📡 [DiscordService] Status enviado via WebSocket: {} usuários", usersCount);
     }
 
     /**
-     * ✅ OTIMIZADO: Notifica atualização de usuários com cache Redis
-     * Atualiza cache antes do broadcast para garantir consistência
+     * ✅ REFATORADO: Notifica atualização de usuários - busca do Redis, NUNCA de
+     * HashMap
      */
     private void notifyUsersUpdate() {
-        List<DiscordUser> users = new ArrayList<>(usersInChannel.values());
+        // ✅ Buscar SEMPRE do Redis (fonte única da verdade)
+        List<DiscordUser> users = getUsersInChannel();
 
-        // ✅ NOVO: Cachear usuários no Redis ANTES do broadcast
-        // Isso garante que outros backends/instâncias vejam os dados atualizados
-        try {
-            redisDiscordCache.cacheUsers(users);
-            log.debug("✅ [DiscordService] {} usuários cacheados no Redis", users.size());
-        } catch (Exception e) {
-            log.debug("⚠️ [DiscordService] Erro ao cachear usuários (não crítico): {}", e.getMessage());
+        if (users.isEmpty()) {
+            log.warn("⚠️ [DiscordService] Nenhum usuário no Redis para notificar");
+            return;
         }
 
-        // Broadcast para todos os clientes WebSocket
+        // Broadcast para TODOS os clientes WebSocket
         webSocketService.broadcastMessage("discord_users", Map.of("users", users));
-        log.info("📡 [DiscordService] {} usuários enviados via WebSocket", users.size());
+        log.info("📡 [DiscordService] {} usuários (Redis) enviados via WebSocket", users.size());
     }
 
     /**
-     * ✅ OTIMIZADO: Atualiza usuários do Discord (usado como fallback de segurança)
-     * Eventos em tempo real (onGuildVoiceUpdate) são a fonte primária
+     * ✅ REFATORADO: Atualiza usuários do Discord (fallback de segurança)
+     * Busca do JDA e compara com Redis para detectar mudanças
      */
     private void updateDiscordUsers() {
         if (monitoredChannel == null) {
@@ -409,66 +428,65 @@ public class DiscordService extends ListenerAdapter {
         }
 
         try {
+            // ✅ 1. Buscar usuários atuais do JDA (fonte da verdade)
             List<Member> members = monitoredChannel.getMembers();
-            Map<String, DiscordUser> currentUsers = new ConcurrentHashMap<>();
+            List<DiscordUser> currentUsers = new ArrayList<>();
 
             for (Member member : members) {
                 if (!member.getUser().isBot()) {
-                    DiscordUser user = createDiscordUser(member);
-                    currentUsers.put(member.getId(), user);
+                    currentUsers.add(createDiscordUser(member));
                 }
             }
 
-            // ✅ PROTEÇÃO: NÃO enviar lista vazia - causa reconexões falsas no frontend
-            if (currentUsers.isEmpty() && !usersInChannel.isEmpty()) {
-                log.debug(
-                        "⚠️ [DiscordService] Lista vazia recebida mas cache tem {} usuários - ignorando atualização vazia",
-                        usersInChannel.size());
-                return;
+            // ✅ 2. Buscar usuários do Redis para comparação
+            List<DiscordUser> cachedUsers = getUsersInChannel();
+
+            // ✅ 3. Verificar se houve mudanças
+            boolean hasChanges = currentUsers.size() != cachedUsers.size();
+
+            if (!hasChanges) {
+                // Verificar mudanças individuais (IDs)
+                Set<String> currentIds = currentUsers.stream()
+                        .map(DiscordUser::getId)
+                        .collect(java.util.stream.Collectors.toSet());
+                Set<String> cachedIds = cachedUsers.stream()
+                        .map(DiscordUser::getId)
+                        .collect(java.util.stream.Collectors.toSet());
+                hasChanges = !currentIds.equals(cachedIds);
             }
 
-            // ✅ OTIMIZAÇÃO: Atualizar incrementalmente sem limpar todos os usuários
-            final boolean[] hasChanges = { false };
+            if (hasChanges) {
+                // ✅ 4. Cachear nova lista no Redis
+                redisDiscordCache.cacheUsers(currentUsers);
 
-            // Adicionar novos usuários
-            for (Map.Entry<String, DiscordUser> entry : currentUsers.entrySet()) {
-                if (!usersInChannel.containsKey(entry.getKey())) {
-                    usersInChannel.put(entry.getKey(), entry.getValue());
-                    hasChanges[0] = true;
-                    log.debug("➕ [DiscordService] Usuário adicionado (fallback): {}", entry.getValue().getUsername());
-                }
-            }
-
-            // Remover usuários que saíram
-            usersInChannel.entrySet().removeIf(entry -> {
-                if (!currentUsers.containsKey(entry.getKey())) {
-                    log.debug("➖ [DiscordService] Usuário removido (fallback): {}", entry.getValue().getUsername());
-                    hasChanges[0] = true;
-                    return true;
-                }
-                return false;
-            });
-
-            if (hasChanges[0]) {
+                // ✅ 5. Notificar via WebSocket
                 notifyUsersUpdate();
-                log.info("🔄 [DiscordService] Usuários atualizados via fallback: {} usuários", usersInChannel.size());
+
+                log.info("🔄 [DiscordService] Usuários atualizados via fallback: {} usuários (Redis)",
+                        currentUsers.size());
+            } else {
+                log.debug("✅ [DiscordService] Nenhuma mudança detectada no fallback");
             }
+
         } catch (Exception e) {
             log.warn("⚠️ [DiscordService] Erro ao atualizar usuários do Discord: {}", e.getMessage());
         }
     }
 
     /**
-     * ✅ OTIMIZADO: Envia status do Discord (usado como fallback de segurança)
+     * ✅ REFATORADO: Envia status do Discord - busca contagem do Redis
      */
     private void sendDiscordStatus() {
+        // ✅ Buscar usuários do Redis para ter contagem correta
+        int usersCount = getUsersCount();
+
         Map<String, Object> status = new HashMap<>();
         status.put("botUsername", botUsername);
         status.put("isConnected", isConnected);
         status.put("channelName", channelName);
-        status.put("usersCount", usersInChannel.size());
+        status.put("usersCount", usersCount);
 
-        // ✅ NOVO: Cachear status no Redis
+        // Cachear status no Redis
         try {
             redisDiscordCache.cacheStatus(status);
         } catch (Exception e) {
@@ -476,7 +494,7 @@ public class DiscordService extends ListenerAdapter {
         }
 
         webSocketService.broadcastMessage("discord_status", status);
-        log.debug("📡 [DiscordService] Status periódico enviado via WebSocket: {}", status);
+        log.debug("📡 [DiscordService] Status periódico enviado via WebSocket: {} usuários", usersCount);
     }
 
     // Public methods
@@ -493,15 +511,17 @@ public class DiscordService extends ListenerAdapter {
     }
 
     /**
-     * ✅ OTIMIZADO: Retorna usuários do canal (usa cache Redis se disponível)
+     * ✅ REFATORADO 100% REDIS: Retorna usuários APENAS do Redis
+     * Se Redis vazio, busca do JDA e cacheia
+     * NUNCA usa HashMap local
      */
     public List<DiscordUser> getUsersInChannel() {
-        // ✅ NOVO: Tentar buscar do cache Redis primeiro (melhor performance
-        // multi-instância)
         try {
+            // ✅ 1. Tentar buscar do Redis
             List<Object> cachedUsers = redisDiscordCache.getCachedUsers();
             if (cachedUsers != null && !cachedUsers.isEmpty()) {
-                log.debug("⚡ [DiscordService] Usuários retornados do cache Redis");
+                log.debug("⚡ [DiscordService] {} usuários retornados do Redis", cachedUsers.size());
+
                 // Converter List<Object> para List<DiscordUser>
                 List<DiscordUser> users = new ArrayList<>();
                 for (Object obj : cachedUsers) {
@@ -509,20 +529,49 @@ public class DiscordService extends ListenerAdapter {
                         users.add((DiscordUser) obj);
                     }
                 }
+
                 if (!users.isEmpty()) {
                     return users;
                 }
             }
-        } catch (Exception e) {
-            log.debug("⚠️ [DiscordService] Cache miss ou erro (usando memória local): {}", e.getMessage());
-        }
 
-        // Fallback: retornar da memória local
-        return new ArrayList<>(usersInChannel.values());
+            // ✅ 2. Redis vazio → Buscar do JDA (fonte da verdade)
+            log.debug("⚠️ [DiscordService] Redis vazio, buscando direto do JDA");
+
+            if (monitoredChannel != null) {
+                List<Member> members = monitoredChannel.getMembers();
+                List<DiscordUser> users = new ArrayList<>();
+
+                for (Member member : members) {
+                    if (!member.getUser().isBot()) {
+                        users.add(createDiscordUser(member));
+                    }
+                }
+
+                // ✅ 3. Cachear no Redis para próximas requisições
+                if (!users.isEmpty()) {
+                    redisDiscordCache.cacheUsers(users);
+                    log.info("✅ [DiscordService] {} usuários buscados do JDA e cacheados no Redis", users.size());
+                }
+
+                return users;
+            }
+
+            // ✅ 4. Se tudo falhar, retornar vazio (NUNCA usar HashMap!)
+            log.error("❌ [DiscordService] Canal não disponível e Redis vazio");
+            return Collections.emptyList();
+
+        } catch (Exception e) {
+            log.error("❌ [DiscordService] Erro ao buscar usuários: {}", e.getMessage(), e);
+            return Collections.emptyList();
+        }
     }
 
+    /**
+     * ✅ REFATORADO: Retorna contagem de usuários do Redis
+     */
     public int getUsersCount() {
-        return usersInChannel.size();
+        return getUsersInChannel().size();
     }
 
     public void refreshSettings() {
@@ -581,31 +630,14 @@ public class DiscordService extends ListenerAdapter {
             // Salvar no banco de dados
             discordLoLLinkService.createOrUpdateLink(userId, discordUsername, gameName, tagLine, "BR1");
 
-            // Atualizar usuário na memória se ele estiver no canal
-            DiscordUser user = usersInChannel.get(userId);
-            if (user == null) {
-                // Se o usuário não está no canal, criar um usuário temporário para exibição
-                log.info("🔗 [DiscordService] Usuário {} não está no canal, criando vinculação temporária",
-                        event.getUser().getAsTag());
-                user = new DiscordUser();
-                user.setId(userId);
-                user.setUsername(discordUsername);
-                user.setDisplayName(discordUsername);
-                user.setInChannel(false); // Não está no canal
-                user.setJoinedAt(new Date());
-                usersInChannel.put(userId, user);
-            }
+            // ✅ REFATORADO: Recarregar TODOS os usuários do JDA após vinculação
+            // Isso garante que a vinculação apareça para todos imediatamente
+            log.info("🔗 [DiscordService] Vinculação salva no MySQL: {} -> {}", discordUsername, gameName + tagLine);
 
-            // Criar LinkedNickname e aplicar ao usuário
-            LinkedNickname linkedNick = new LinkedNickname(gameName, tagLine);
-            user.setLinkedNickname(linkedNick);
-            user.setHasAppOpen(true);
+            // Recarregar usuários do JDA e cachear no Redis
+            loadCurrentUsersInChannel();
 
-            log.info("🔗 [DiscordService] Vinculação salva no MySQL e aplicada ao usuário: {} -> {}",
-                    user.getDisplayName(), gameName + tagLine);
-
-            // Notificar atualização via WebSocket
-            notifyUsersUpdate();
+            log.info("✅ [DiscordService] Usuários recarregados e cacheados no Redis com nova vinculação");
 
             event.reply("✅ Vinculação criada com sucesso!\n" +
                     "**LoL:** " + gameName + tagLine + "\n" +
@@ -635,19 +667,14 @@ public class DiscordService extends ListenerAdapter {
             // Remover do banco de dados
             boolean removed = discordLoLLinkService.removeLink(userId);
 
-            // Remover da memória
-            DiscordUser user = usersInChannel.get(userId);
-            if (user != null) {
-                user.setLinkedNickname(null);
-                user.setHasAppOpen(false);
-            }
-
             if (removed) {
-                log.info("🔓 [DiscordService] Vinculação removida do MySQL e da memória: {} (era: {})",
+                log.info("🔓 [DiscordService] Vinculação removida do MySQL: {} (era: {})",
                         event.getUser().getAsTag(), previousLinked);
 
-                // Notificar atualização via WebSocket
-                notifyUsersUpdate();
+                // ✅ REFATORADO: Recarregar usuários do JDA e cachear no Redis
+                loadCurrentUsersInChannel();
+
+                log.info("✅ [DiscordService] Usuários recarregados e cacheados no Redis sem a vinculação");
 
                 event.reply("✅ Vinculação removida com sucesso!\n" +
                         "**Vinculação anterior:** " + previousLinked).queue();
@@ -664,58 +691,58 @@ public class DiscordService extends ListenerAdapter {
         }
     }
 
+    /**
+     * ✅ REFATORADO: Busca fila do MySQL (não usa discordQueue HashMap)
+     */
     private void handleQueueCommand(SlashCommandInteractionEvent event) {
         try {
-            int queueSize = discordQueue.size();
+            // ❌ REMOVIDO: discordQueue (Discord não gerencia fila, MySQL sim)
+            // O sistema usa queue_players no MySQL como fonte da verdade
 
-            StringBuilder queueList = new StringBuilder();
-            if (queueSize == 0) {
-                queueList.append("Nenhum jogador na fila");
-            } else {
-                discordQueue.values().forEach(player -> {
-                    String nickname = player.getLinkedNickname() != null
-                            ? player.getLinkedNickname().getGameName() + "#" + player.getLinkedNickname().getTagLine()
-                            : player.getUsername();
-                    queueList.append("• ").append(nickname).append("\n");
-                });
-            }
+            event.reply("ℹ️ Use o aplicativo para ver a fila em tempo real.\n" +
+                    "A fila é gerenciada via MySQL e exibida no app.").setEphemeral(true).queue();
 
-            event.reply("🎯 **Fila de Matchmaking**\n\n" +
-                    "👥 **Jogadores na Fila:** " + queueSize + "/10\n\n" +
-                    "**Lista:**\n" + queueList.toString()).queue();
-
-            log.info("📊 [DiscordService] Status da fila consultado: {} jogadores", queueSize);
+            log.info("📊 [DiscordService] Comando /queue executado (redirecionado para app)");
 
         } catch (Exception e) {
-            log.error("❌ [DiscordService] Erro ao consultar fila", e);
-            event.reply("❌ Erro ao consultar fila").setEphemeral(true).queue();
+            log.error("❌ [DiscordService] Erro ao processar comando /queue", e);
+            event.reply("❌ Erro ao processar comando").setEphemeral(true).queue();
         }
     }
 
+    /**
+     * ✅ REFATORADO: Clear queue não usa discordQueue (Discord não gerencia fila)
+     */
     private void handleClearQueueCommand(SlashCommandInteractionEvent event) {
         try {
-            // TODO: Verificar se o usuário tem permissão de moderador
+            // ❌ REMOVIDO: discordQueue.clear()
+            // A fila é gerenciada pelo QueueManagementService via MySQL
 
-            discordQueue.clear();
-            event.reply("✅ Fila limpa com sucesso!").queue();
+            event.reply("ℹ️ Use o painel de administração do app para limpar a fila.\n" +
+                    "A fila é gerenciada via MySQL, não Discord.").setEphemeral(true).queue();
 
-            log.info("🧹 [DiscordService] Fila limpa por: {}", event.getUser().getAsTag());
+            log.info("📊 [DiscordService] Comando /clear_queue executado (redirecionado para app)");
 
         } catch (Exception e) {
-            log.error("❌ [DiscordService] Erro ao limpar fila", e);
-            event.reply("❌ Erro ao limpar fila").setEphemeral(true).queue();
+            log.error("❌ [DiscordService] Erro ao processar comando /clear_queue", e);
+            event.reply("❌ Erro ao processar comando").setEphemeral(true).queue();
         }
     }
 
+    /**
+     * ✅ REFATORADO: Busca usuários do Redis/JDA, NUNCA de HashMap
+     */
     private void handleLobbyCommand(SlashCommandInteractionEvent event) {
         try {
-            int usersInLobby = usersInChannel.size();
+            // ✅ Buscar usuários do Redis (que busca do JDA se necessário)
+            List<DiscordUser> users = getUsersInChannel();
+            int usersInLobby = users.size();
 
             StringBuilder lobbyList = new StringBuilder();
             if (usersInLobby == 0) {
                 lobbyList.append("Nenhum usuário no lobby");
             } else {
-                usersInChannel.values().forEach(user -> {
+                users.forEach(user -> {
                     String nickname = user.getLinkedNickname() != null
                             ? user.getLinkedNickname().getGameName() + "#" + user.getLinkedNickname().getTagLine()
                             : user.getDisplayName();
@@ -727,7 +754,7 @@ public class DiscordService extends ListenerAdapter {
                     "👥 **Usuários no Canal:** " + usersInLobby + "\n\n" +
                     "**Lista:**\n" + lobbyList.toString()).queue();
 
-            log.info("👥 [DiscordService] Lobby consultado: {} usuários", usersInLobby);
+            log.info("👥 [DiscordService] Lobby consultado: {} usuários (Redis)", usersInLobby);
 
         } catch (Exception e) {
             log.error("❌ [DiscordService] Erro ao consultar lobby", e);
@@ -839,15 +866,21 @@ public class DiscordService extends ListenerAdapter {
             match.setBlueTeamDiscordIds(blueTeamDiscordIds);
             match.setRedTeamDiscordIds(redTeamDiscordIds);
 
-            // 7. Armazenar em activeMatches
-            activeMatches.put(matchId, match);
+            // ✅ 7. Armazenar no Redis (fonte ÚNICA)
+            redisDiscordMatch.registerMatch(
+                    matchId,
+                    category.getId(),
+                    blueChannel.getId(),
+                    redChannel.getId(),
+                    blueTeamDiscordIds,
+                    redTeamDiscordIds);
 
-            log.info("✅ [createMatchChannels] Match {} criado com sucesso! Blue: {}, Red: {}",
+            log.info("✅ [createMatchChannels] Match {} criado e salvo no Redis! Blue: {}, Red: {}",
                     matchId, blueTeamDiscordIds.size(), redTeamDiscordIds.size());
 
-            // 8. Agendar timeout de limpeza (3 horas)
+            // ✅ 8. Agendar timeout de limpeza (3 horas) - verificando no Redis
             scheduler.schedule(() -> {
-                if (activeMatches.containsKey(matchId)) {
+                if (redisDiscordMatch.matchExists(matchId)) {
                     log.warn("⚠️ [createMatchChannels] Match {} excedeu timeout de 3 horas, limpando...", matchId);
                     deleteMatchChannels(matchId, true);
                 }
@@ -866,12 +899,20 @@ public class DiscordService extends ListenerAdapter {
      * 
      * @param matchId ID da partida
      */
+    /**
+     * ✅ REFATORADO: Busca match do Redis
+     */
     public void movePlayersToTeamChannels(Long matchId) {
-        DiscordMatch match = activeMatches.get(matchId);
-        if (match == null) {
-            log.warn("⚠️ [movePlayersToTeamChannels] Match {} não encontrado", matchId);
+        // ✅ Verificar se match existe no Redis
+        if (!redisDiscordMatch.matchExists(matchId)) {
+            log.warn("⚠️ [movePlayersToTeamChannels] Match {} não encontrado no Redis", matchId);
             return;
         }
+
+        // ✅ Buscar dados do Redis
+        Map<String, String> channels = redisDiscordMatch.getMatchChannels(matchId);
+        Set<String> blueTeamDiscordIds = redisDiscordMatch.getTeamPlayers(matchId, "blue");
+        Set<String> redTeamDiscordIds = redisDiscordMatch.getTeamPlayers(matchId, "red");
 
         if (!isConnected || jda == null) {
             log.warn("⚠️ [movePlayersToTeamChannels] Discord não conectado");
@@ -885,11 +926,20 @@ public class DiscordService extends ListenerAdapter {
                 return;
             }
 
-            VoiceChannel blueChannel = guild.getVoiceChannelById(match.getBlueChannelId());
-            VoiceChannel redChannel = guild.getVoiceChannelById(match.getRedChannelId());
+            // ✅ Buscar canais do Redis
+            String blueChannelId = channels.get("blue");
+            String redChannelId = channels.get("red");
+
+            if (blueChannelId == null || redChannelId == null) {
+                log.error("❌ [movePlayersToTeamChannels] IDs de canais não encontrados no Redis");
+                return;
+            }
+
+            VoiceChannel blueChannel = guild.getVoiceChannelById(blueChannelId);
+            VoiceChannel redChannel = guild.getVoiceChannelById(redChannelId);
 
             if (blueChannel == null || redChannel == null) {
-                log.error("❌ [movePlayersToTeamChannels] Canais não encontrados");
+                log.error("❌ [movePlayersToTeamChannels] Canais não encontrados no Discord");
                 return;
             }
 
@@ -899,13 +949,13 @@ public class DiscordService extends ListenerAdapter {
             int movedRed = 0;
 
             // Mover Blue Team
-            for (String discordId : match.getBlueTeamDiscordIds()) {
+            for (String discordId : blueTeamDiscordIds) {
                 Member member = guild.getMemberById(discordId);
                 if (member != null && member.getVoiceState() != null && member.getVoiceState().getChannel() != null) {
                     VoiceChannel currentChannel = (VoiceChannel) member.getVoiceState().getChannel();
 
-                    // Salvar canal original
-                    match.getOriginalChannels().put(discordId, currentChannel.getId());
+                    // ✅ Salvar canal original no Redis
+                    redisDiscordMatch.storeOriginalChannel(matchId, discordId, currentChannel.getId());
 
                     // Mover para Blue Team
                     guild.moveVoiceMember(member, blueChannel).queue(
@@ -920,13 +970,13 @@ public class DiscordService extends ListenerAdapter {
             }
 
             // Mover Red Team
-            for (String discordId : match.getRedTeamDiscordIds()) {
+            for (String discordId : redTeamDiscordIds) {
                 Member member = guild.getMemberById(discordId);
                 if (member != null && member.getVoiceState() != null && member.getVoiceState().getChannel() != null) {
                     VoiceChannel currentChannel = (VoiceChannel) member.getVoiceState().getChannel();
 
-                    // Salvar canal original
-                    match.getOriginalChannels().put(discordId, currentChannel.getId());
+                    // ✅ Salvar canal original no Redis
+                    redisDiscordMatch.storeOriginalChannel(matchId, discordId, currentChannel.getId());
 
                     // Mover para Red Team
                     guild.moveVoiceMember(member, redChannel).queue(
@@ -949,21 +999,26 @@ public class DiscordService extends ListenerAdapter {
     }
 
     /**
-     * Deleta canais de uma partida e move jogadores de volta
+     * ✅ REFATORADO: Deleta canais de uma partida e move jogadores de volta
+     * Busca dados do Redis, NUNCA de activeMatches HashMap
      * 
      * @param matchId         ID da partida
      * @param movePlayersBack Se true, move jogadores de volta ao canal original
      */
     public void deleteMatchChannels(Long matchId, boolean movePlayersBack) {
-        DiscordMatch match = activeMatches.get(matchId);
-        if (match == null) {
-            log.warn("⚠️ [deleteMatchChannels] Match {} não encontrado", matchId);
+        // ✅ Verificar se match existe no Redis
+        if (!redisDiscordMatch.matchExists(matchId)) {
+            log.warn("⚠️ [deleteMatchChannels] Match {} não encontrado no Redis", matchId);
             return;
         }
 
+        // ✅ Buscar dados do Redis
+        Map<String, String> channels = redisDiscordMatch.getMatchChannels(matchId);
+        Map<String, String> originalChannels = redisDiscordMatch.getOriginalChannels(matchId);
+
         if (!isConnected || jda == null) {
             log.warn("⚠️ [deleteMatchChannels] Discord não conectado");
-            activeMatches.remove(matchId);
+            redisDiscordMatch.removeMatch(matchId);
             return;
         }
 
@@ -971,11 +1026,16 @@ public class DiscordService extends ListenerAdapter {
             Guild guild = jda.getGuilds().stream().findFirst().orElse(null);
             if (guild == null) {
                 log.error("❌ [deleteMatchChannels] Guild não encontrada");
-                activeMatches.remove(matchId);
+                redisDiscordMatch.removeMatch(matchId);
                 return;
             }
 
             log.info("🧹 [deleteMatchChannels] Limpando match {}, movePlayersBack={}", matchId, movePlayersBack);
+
+            // ✅ Buscar IDs dos canais do Redis
+            String blueChannelId = channels.get("blue");
+            String redChannelId = channels.get("red");
+            String categoryId = channels.get("category");
 
             // 1. Mover TODOS os usuários de volta (jogadores + espectadores)
             if (movePlayersBack) {
@@ -988,10 +1048,9 @@ public class DiscordService extends ListenerAdapter {
                     log.warn("⚠️ [deleteMatchChannels] Canal principal '{}' não encontrado", discordChannelName);
                 }
 
-                // ✅ NOVO: Pegar TODOS os membros nos canais Blue e Red (jogadores +
-                // espectadores)
-                VoiceChannel blueChannel = guild.getVoiceChannelById(match.getBlueChannelId());
-                VoiceChannel redChannel = guild.getVoiceChannelById(match.getRedChannelId());
+                // ✅ Pegar TODOS os membros nos canais Blue e Red
+                VoiceChannel blueChannel = blueChannelId != null ? guild.getVoiceChannelById(blueChannelId) : null;
+                VoiceChannel redChannel = redChannelId != null ? guild.getVoiceChannelById(redChannelId) : null;
 
                 Set<Member> allMembers = new HashSet<>();
 
@@ -1011,8 +1070,8 @@ public class DiscordService extends ListenerAdapter {
                 for (Member member : allMembers) {
                     if (member.getVoiceState() != null && member.getVoiceState().getChannel() != null) {
 
-                        // Tentar mover para canal original
-                        String originalChannelId = match.getOriginalChannels().get(member.getId());
+                        // ✅ Tentar mover para canal original do Redis
+                        String originalChannelId = originalChannels.get(member.getId());
                         VoiceChannel targetChannel = null;
 
                         if (originalChannelId != null) {
@@ -1040,14 +1099,14 @@ public class DiscordService extends ListenerAdapter {
             }
 
             // 2. Deletar canais Blue e Red
-            VoiceChannel blueChannel = guild.getVoiceChannelById(match.getBlueChannelId());
+            VoiceChannel blueChannel = blueChannelId != null ? guild.getVoiceChannelById(blueChannelId) : null;
             if (blueChannel != null) {
                 blueChannel.delete().queue(
                         success -> log.info("✅ [deleteMatchChannels] Canal Blue deletado"),
                         error -> log.error("❌ [deleteMatchChannels] Erro ao deletar Blue: {}", error.getMessage()));
             }
 
-            VoiceChannel redChannel = guild.getVoiceChannelById(match.getRedChannelId());
+            VoiceChannel redChannel = redChannelId != null ? guild.getVoiceChannelById(redChannelId) : null;
             if (redChannel != null) {
                 redChannel.delete().queue(
                         success -> log.info("✅ [deleteMatchChannels] Canal Red deletado"),
@@ -1055,7 +1114,7 @@ public class DiscordService extends ListenerAdapter {
             }
 
             // 3. Deletar categoria
-            Category category = guild.getCategoryById(match.getCategoryId());
+            Category category = categoryId != null ? guild.getCategoryById(categoryId) : null;
             if (category != null) {
                 // Aguardar um pouco para os canais serem deletados primeiro
                 scheduler.schedule(() -> {
@@ -1066,28 +1125,33 @@ public class DiscordService extends ListenerAdapter {
                 }, 3, TimeUnit.SECONDS);
             }
 
-            // 4. Remover do cache
-            activeMatches.remove(matchId);
+            // ✅ 4. Remover do Redis
+            redisDiscordMatch.removeMatch(matchId);
 
-            log.info("✅ [deleteMatchChannels] Match {} limpo com sucesso", matchId);
+            log.info("✅ [deleteMatchChannels] Match {} limpo do Redis e Discord", matchId);
 
         } catch (Exception e) {
             log.error("❌ [deleteMatchChannels] Erro ao limpar match {}", matchId, e);
-            activeMatches.remove(matchId);
+            redisDiscordMatch.removeMatch(matchId);
         }
     }
 
     /**
-     * Move apenas espectadores (quem está assistindo) de volta ao canal principal
+     * ✅ REFATORADO: Move apenas espectadores de volta ao lobby - busca do Redis
      * 
      * @param matchId ID da partida
      */
     public void moveSpectatorsBackToLobby(Long matchId) {
-        DiscordMatch match = activeMatches.get(matchId);
-        if (match == null) {
-            log.warn("⚠️ [moveSpectatorsBackToLobby] Match {} não encontrado", matchId);
+        // ✅ Verificar se match existe no Redis
+        if (!redisDiscordMatch.matchExists(matchId)) {
+            log.warn("⚠️ [moveSpectatorsBackToLobby] Match {} não encontrado no Redis", matchId);
             return;
         }
+
+        // ✅ Buscar dados do Redis
+        Map<String, String> channels = redisDiscordMatch.getMatchChannels(matchId);
+        Set<String> blueTeamDiscordIds = redisDiscordMatch.getTeamPlayers(matchId, "blue");
+        Set<String> redTeamDiscordIds = redisDiscordMatch.getTeamPlayers(matchId, "red");
 
         if (!isConnected || jda == null) {
             log.warn("⚠️ [moveSpectatorsBackToLobby] Discord não conectado");
@@ -1101,8 +1165,12 @@ public class DiscordService extends ListenerAdapter {
                 return;
             }
 
-            VoiceChannel blueChannel = guild.getVoiceChannelById(match.getBlueChannelId());
-            VoiceChannel redChannel = guild.getVoiceChannelById(match.getRedChannelId());
+            // ✅ Buscar canais do Redis
+            String blueChannelId = channels.get("blue");
+            String redChannelId = channels.get("red");
+
+            VoiceChannel blueChannel = blueChannelId != null ? guild.getVoiceChannelById(blueChannelId) : null;
+            VoiceChannel redChannel = redChannelId != null ? guild.getVoiceChannelById(redChannelId) : null;
             VoiceChannel mainChannel = guild.getVoiceChannels().stream()
                     .filter(ch -> ch.getName().equals(discordChannelName))
                     .findFirst()
@@ -1115,10 +1183,10 @@ public class DiscordService extends ListenerAdapter {
 
             log.info("👥 [moveSpectatorsBackToLobby] Movendo espectadores do match {} de volta ao lobby", matchId);
 
-            // Combinar IDs dos jogadores reais
+            // ✅ Combinar IDs dos jogadores reais do Redis
             List<String> realPlayerIds = new ArrayList<>();
-            realPlayerIds.addAll(match.getBlueTeamDiscordIds());
-            realPlayerIds.addAll(match.getRedTeamDiscordIds());
+            realPlayerIds.addAll(blueTeamDiscordIds);
+            realPlayerIds.addAll(redTeamDiscordIds);
 
             int movedSpectators = 0;
 
@@ -1222,17 +1290,22 @@ public class DiscordService extends ListenerAdapter {
     // ========================================
 
     /**
-     * Lista espectadores de uma partida (excluindo os 10 jogadores)
+     * ✅ REFATORADO: Lista espectadores de uma partida - busca do Redis
      * 
      * @param matchId ID da partida
      * @return Lista de espectadores
      */
     public List<SpectatorDTO> getMatchSpectators(Long matchId) {
-        DiscordMatch match = activeMatches.get(matchId);
-        if (match == null) {
-            log.warn("⚠️ [getMatchSpectators] Match {} não encontrado", matchId);
+        // ✅ Verificar se match existe no Redis
+        if (!redisDiscordMatch.matchExists(matchId)) {
+            log.warn("⚠️ [getMatchSpectators] Match {} não encontrado no Redis", matchId);
             return Collections.emptyList();
         }
+
+        // ✅ Buscar dados do Redis
+        Map<String, String> channels = redisDiscordMatch.getMatchChannels(matchId);
+        Set<String> blueTeamDiscordIds = redisDiscordMatch.getTeamPlayers(matchId, "blue");
+        Set<String> redTeamDiscordIds = redisDiscordMatch.getTeamPlayers(matchId, "red");
 
         if (!isConnected || jda == null) {
             log.warn("⚠️ [getMatchSpectators] Discord não conectado");
@@ -1246,15 +1319,19 @@ public class DiscordService extends ListenerAdapter {
                 return Collections.emptyList();
             }
 
-            VoiceChannel blueChannel = guild.getVoiceChannelById(match.getBlueChannelId());
-            VoiceChannel redChannel = guild.getVoiceChannelById(match.getRedChannelId());
+            // ✅ Buscar canais do Redis
+            String blueChannelId = channels.get("blue");
+            String redChannelId = channels.get("red");
+
+            VoiceChannel blueChannel = blueChannelId != null ? guild.getVoiceChannelById(blueChannelId) : null;
+            VoiceChannel redChannel = redChannelId != null ? guild.getVoiceChannelById(redChannelId) : null;
 
             List<SpectatorDTO> spectators = new ArrayList<>();
 
-            // IDs dos jogadores reais da partida (não são espectadores)
+            // ✅ IDs dos jogadores reais da partida do Redis (não são espectadores)
             List<String> realPlayerIds = new ArrayList<>();
-            realPlayerIds.addAll(match.getBlueTeamDiscordIds());
-            realPlayerIds.addAll(match.getRedTeamDiscordIds());
+            realPlayerIds.addAll(blueTeamDiscordIds);
+            realPlayerIds.addAll(redTeamDiscordIds);
 
             // Verificar Blue Channel
             if (blueChannel != null) {
@@ -1298,16 +1375,16 @@ public class DiscordService extends ListenerAdapter {
     }
 
     /**
-     * Muta um espectador no Discord (SERVER MUTE - espectador não pode se desmutar)
+     * ✅ REFATORADO: Muta um espectador + Atualiza Redis + Broadcast em tempo real
      * 
      * @param matchId   ID da partida
      * @param discordId Discord ID do espectador
      * @return true se mutou com sucesso
      */
     public boolean muteSpectator(Long matchId, String discordId) {
-        DiscordMatch match = activeMatches.get(matchId);
-        if (match == null) {
-            log.warn("⚠️ [muteSpectator] Match {} não encontrado", matchId);
+        // ✅ Verificar se match existe no Redis
+        if (!redisDiscordMatch.matchExists(matchId)) {
+            log.warn("⚠️ [muteSpectator] Match {} não encontrado no Redis", matchId);
             return false;
         }
 
@@ -1329,10 +1406,17 @@ public class DiscordService extends ListenerAdapter {
                 return false;
             }
 
-            // ✅ SERVER MUTE (guild.mute) - espectador NÃO consegue se desmutar sozinho
+            // ✅ SERVER MUTE no Discord
             member.mute(true).queue(
-                    success -> log.info("✅ [muteSpectator] 🔇 Espectador {} mutado (SERVER MUTE)",
-                            member.getEffectiveName()),
+                    success -> {
+                        log.info("✅ [muteSpectator] 🔇 Espectador {} mutado (SERVER MUTE)", member.getEffectiveName());
+
+                        // ✅ CRÍTICO: Atualizar Redis
+                        redisSpectator.markAsMuted(matchId, discordId);
+
+                        // ✅ CRÍTICO: Broadcast para TODOS os jogadores da partida
+                        broadcastSpectatorUpdate(matchId);
+                    },
                     error -> log.error("❌ [muteSpectator] Erro ao mutar {}: {}", member.getEffectiveName(),
                             error.getMessage()));
 
@@ -1345,16 +1429,17 @@ public class DiscordService extends ListenerAdapter {
     }
 
     /**
-     * Desmuta um espectador no Discord (remove SERVER MUTE)
+     * ✅ REFATORADO: Desmuta um espectador + Atualiza Redis + Broadcast em tempo
+     * real
      * 
      * @param matchId   ID da partida
      * @param discordId Discord ID do espectador
      * @return true se desmutou com sucesso
      */
     public boolean unmuteSpectator(Long matchId, String discordId) {
-        DiscordMatch match = activeMatches.get(matchId);
-        if (match == null) {
-            log.warn("⚠️ [unmuteSpectator] Match {} não encontrado", matchId);
+        // ✅ Verificar se match existe no Redis
+        if (!redisDiscordMatch.matchExists(matchId)) {
+            log.warn("⚠️ [unmuteSpectator] Match {} não encontrado no Redis", matchId);
             return false;
         }
 
@@ -1376,9 +1461,17 @@ public class DiscordService extends ListenerAdapter {
                 return false;
             }
 
-            // Remove SERVER MUTE
+            // Remove SERVER MUTE no Discord
             member.mute(false).queue(
-                    success -> log.info("✅ [unmuteSpectator] 🔊 Espectador {} desmutado", member.getEffectiveName()),
+                    success -> {
+                        log.info("✅ [unmuteSpectator] 🔊 Espectador {} desmutado", member.getEffectiveName());
+
+                        // ✅ CRÍTICO: Atualizar Redis
+                        redisSpectator.markAsUnmuted(matchId, discordId);
+
+                        // ✅ CRÍTICO: Broadcast para TODOS os jogadores da partida
+                        broadcastSpectatorUpdate(matchId);
+                    },
                     error -> log.error("❌ [unmuteSpectator] Erro ao desmutar {}: {}", member.getEffectiveName(),
                             error.getMessage()));
 
@@ -1391,16 +1484,16 @@ public class DiscordService extends ListenerAdapter {
     }
 
     /**
-     * ✅ NOVO: Verifica se um espectador está mutado
+     * ✅ REFATORADO: Verifica se um espectador está mutado - verifica no Redis
      * 
      * @param matchId   ID da partida
      * @param discordId Discord ID do espectador
      * @return true se está mutado, false caso contrário
      */
     public boolean isSpectatorMuted(Long matchId, String discordId) {
-        DiscordMatch match = activeMatches.get(matchId);
-        if (match == null) {
-            log.warn("⚠️ [isSpectatorMuted] Match {} não encontrado", matchId);
+        // ✅ Verificar se match existe no Redis
+        if (!redisDiscordMatch.matchExists(matchId)) {
+            log.warn("⚠️ [isSpectatorMuted] Match {} não encontrado no Redis", matchId);
             return false;
         }
 
@@ -1587,6 +1680,53 @@ public class DiscordService extends ListenerAdapter {
     // ✅ NOVO: Método getter para o token do Discord
     public String getDiscordToken() {
         return discordToken;
+    }
+
+    /**
+     * ✅ NOVO: Broadcast de atualização de espectadores em tempo real
+     * Envia para TODOS os jogadores da partida quando espectador é mutado/desmutado
+     */
+    private void broadcastSpectatorUpdate(Long matchId) {
+        try {
+            // ✅ Buscar espectadores atualizados (com estados de mute do Redis)
+            List<SpectatorDTO> spectators = getMatchSpectators(matchId);
+
+            // ✅ Buscar jogadores da partida do Redis
+            Set<String> blueTeam = redisDiscordMatch.getTeamPlayers(matchId, "blue");
+            Set<String> redTeam = redisDiscordMatch.getTeamPlayers(matchId, "red");
+
+            // Combinar jogadores
+            List<String> allPlayerIds = new ArrayList<>();
+            allPlayerIds.addAll(blueTeam);
+            allPlayerIds.addAll(redTeam);
+
+            // Converter Discord IDs para Summoner Names (buscar vinculações)
+            List<String> summonerNames = new ArrayList<>();
+            for (String discordId : allPlayerIds) {
+                // Buscar vinculação Discord → LoL
+                Optional<br.com.lolmatchmaking.backend.entity.DiscordLoLLink> link = discordLoLLinkService
+                        .findByDiscordId(discordId);
+
+                if (link.isPresent()) {
+                    summonerNames.add(link.get().getSummonerName());
+                }
+            }
+
+            // ✅ Broadcast para os jogadores
+            if (!summonerNames.isEmpty()) {
+                Map<String, Object> data = new HashMap<>();
+                data.put("matchId", matchId);
+                data.put("spectators", spectators);
+                data.put("count", spectators.size());
+
+                webSocketService.sendToPlayers("spectators_update", data, summonerNames);
+                log.info("📡 [DiscordService] Broadcast de espectadores enviado para {} jogadores (match {})",
+                        summonerNames.size(), matchId);
+            }
+
+        } catch (Exception e) {
+            log.error("❌ [DiscordService] Erro ao fazer broadcast de espectadores", e);
+        }
     }
 
     // ✅ NOVO: Classe para representar uma partida ativa com canais Discord

@@ -36,10 +36,13 @@ import java.util.concurrent.CompletableFuture;
  * 
  * @deprecated Use DraftFlowService ao invés
  */
-@Deprecated(forRemoval = true)
 @Slf4j
 @Service
 @RequiredArgsConstructor
+@Deprecated(since = "2025-10", forRemoval = true)
+// ❌ DEPRECIADO: Use DraftFlowService que usa 100% Redis
+// Este serviço usa HashMaps locais (activeDrafts) que causam dessincronização
+// entre backends
 public class DraftService {
 
     private final CustomMatchRepository customMatchRepository;
@@ -56,9 +59,13 @@ public class DraftService {
     private static final int DRAFT_TIMEOUT_SECONDS = 30;
     private static final int MONITORING_INTERVAL_MS = 1000;
 
-    // Cache de drafts ativos (DEPRECIADO - mantido para compatibilidade, mas Redis
-    // é fonte da verdade)
+    // ❌ DEPRECIADO: Cache de drafts ativos
+    // PROBLEMA: HashMap local causa dessincronização entre backends
+    // SOLUÇÃO: Use DraftFlowService que gerencia estado via Redis 100%
+    @Deprecated(forRemoval = true)
     private final Map<Long, DraftData> activeDrafts = new ConcurrentHashMap<>();
+
+    @Deprecated(forRemoval = true)
     private final Map<Long, DraftTimer> draftTimers = new ConcurrentHashMap<>();
 
     @Data
