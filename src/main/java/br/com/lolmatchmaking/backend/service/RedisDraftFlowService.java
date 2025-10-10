@@ -50,6 +50,14 @@ public class RedisDraftFlowService {
     private static final String KEY_PREFIX = "draft_flow:";
     private static final long TTL_SECONDS = 3600; // 1 hora
 
+    /**
+     * ✅ NOVO: Retorna um distributed lock para operações atômicas
+     * Usado por DraftFlowService.processAction() para prevenir ações simultâneas
+     */
+    public RLock getLock(String lockKey) {
+        return redissonClient.getLock(lockKey);
+    }
+
     // ========================================
     // CONFIRMAÇÕES FINAIS (Modal de confirmação)
     // ========================================

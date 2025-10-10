@@ -61,9 +61,12 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
   lastUpdated: Date = new Date();
   private refreshSubscription?: Subscription;
   private playerTotalMMRCache: Map<string, number> = new Map();
-  private localStorageKey = 'leaderboard_cache';
-  private cacheVersion = '1.0.0';
-  private cacheExpiryTime = 5 * 60 * 1000; // 5 minutos
+  // ❌ REMOVIDO: localStorage cache
+  // Frontend NÃO deve cachear dados críticos
+  // Backend (Redis/MySQL) é a fonte ÚNICA da verdade
+  // private localStorageKey = 'leaderboard_cache';
+  // private cacheVersion = '1.0.0';
+  // private cacheExpiryTime = 5 * 60 * 1000;
 
   // Estados de carregamento detalhados
   isLoadingProfileIcons = false;
@@ -117,42 +120,19 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
     }
   }
 
+  // ❌ REMOVIDO: localStorage cache
+  // Backend (Redis/MySQL) é a fonte ÚNICA da verdade
   private loadCacheFromStorage(): boolean {
-    try {
-      const cached = localStorage.getItem(this.localStorageKey);
-      if (cached) {
-        const cacheData: CacheData = JSON.parse(cached);
-
-        // Verificar se o cache ainda é válido
-        if (cacheData.version === this.cacheVersion &&
-          Date.now() - cacheData.timestamp < this.cacheExpiryTime) {
-          this.leaderboardData = cacheData.data;
-          this.lastUpdated = new Date(cacheData.timestamp);
-          console.log('📦 Cache carregado do localStorage');
-
-          return true;
-        } else {
-          console.log('⏰ Cache expirado ou versão incompatível');
-        }
-      }
-    } catch (error) {
-      console.warn('Erro ao carregar cache do localStorage:', error);
-    }
+    // Sempre retornar false → força buscar do backend
+    console.log('✅ [Leaderboard] Cache local removido - buscando sempre do backend (Redis/MySQL)');
     return false;
   }
 
+  // ❌ REMOVIDO: localStorage cache
+  // Backend orquestra tudo via Redis
   private saveCacheToStorage(): void {
-    try {
-      const cacheData: CacheData = {
-        data: this.leaderboardData,
-        timestamp: Date.now(),
-        version: this.cacheVersion
-      };
-      localStorage.setItem(this.localStorageKey, JSON.stringify(cacheData));
-      console.log('💾 Cache salvo no localStorage');
-    } catch (error) {
-      console.warn('Erro ao salvar cache no localStorage:', error);
-    }
+    // Não fazer nada → Backend é fonte única
+    console.log('✅ [Leaderboard] Cache local removido - backend (Redis/MySQL) é fonte única');
   }
 
   async loadLeaderboard(showLoading = true) {

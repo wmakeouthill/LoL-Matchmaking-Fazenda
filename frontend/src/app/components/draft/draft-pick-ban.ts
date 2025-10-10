@@ -117,9 +117,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   // ✅ NOVO: Getter para obter o matchId com fallback robusto
   get draftMatchId(): number | undefined {
     // Tentar todas as propriedades possíveis onde o backend pode enviar o ID
-    return this.session?.matchId || 
-           (this.session as any)?.id || 
-           this.matchId;
+    return this.session?.matchId ||
+      (this.session as any)?.id ||
+      this.matchId;
   }
 
   // ✅ NOVO: Getter para obter summoner name do currentPlayer
@@ -244,18 +244,10 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       saveLogToRoot(`💾 [ngOnDestroy] Preservando ${this.session.actions.length} ações do draft antes da destruição`);
       saveLogToRoot(`💾 [ngOnDestroy] Ações preservadas: ${JSON.stringify(this.session.actions.map((a: any) => ({ champion: a.champion?.name, action: a.action, player: a.playerName })))}`);
 
-      // Salvar no localStorage como backup
-      try {
-        const backupData = {
-          matchId: this.matchId,
-          session: this.session,
-          timestamp: Date.now()
-        };
-        localStorage.setItem(`draftBackup_${this.matchId}`, JSON.stringify(backupData));
-        saveLogToRoot(`💾 [ngOnDestroy] Backup salvo no localStorage para match ${this.matchId}`);
-      } catch (error) {
-        saveLogToRoot(`❌ [ngOnDestroy] Erro ao salvar backup: ${error}`);
-      }
+      // ❌ REMOVIDO: localStorage backup
+      // Backend via Redis é a fonte ÚNICA da verdade
+      // localStorage pode ter dados desatualizados e causar dessincronização
+      saveLogToRoot(`✅ [ngOnDestroy] Draft finalizado - dados no backend (Redis/MySQL)`);
     }
 
     // ✅ NOVO: Limpar timers de debounce
@@ -685,55 +677,17 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     });
   }
 
-  // ✅ NOVO: Tentar restaurar dados do backup
+  // ❌ REMOVIDO: Restore from localStorage
+  // Backend (Redis/MySQL) é a fonte ÚNICA da verdade via WebSocket
   private tryRestoreFromBackup(): void {
     if (!this.matchId) {
-      saveLogToRoot(`❌ [tryRestoreFromBackup] matchId não disponível`);
+      saveLogToRoot(`ℹ️ [tryRestoreFromBackup] matchId não disponível`);
       return;
     }
 
-    try {
-      const backupKey = `draftBackup_${this.matchId}`;
-      const backupData = localStorage.getItem(backupKey);
-
-      if (backupData) {
-        const backup = JSON.parse(backupData);
-        const now = Date.now();
-        const backupAge = now - backup.timestamp;
-
-        // Só usar backup se for de menos de 5 minutos
-        if (backupAge < 5 * 60 * 1000) {
-          saveLogToRoot(`🔄 [tryRestoreFromBackup] Backup encontrado (${Math.round(backupAge / 1000)}s atrás), restaurando dados`);
-
-          if (backup.session?.actions?.length > 0) {
-            // Mesclar dados do backup com a sessão atual
-            this.session = {
-              ...this.session,
-              actions: backup.session.actions || [],
-              team1Picks: backup.session.team1Picks || [],
-              team1Bans: backup.session.team1Bans || [],
-              team2Picks: backup.session.team2Picks || [],
-              team2Bans: backup.session.team2Bans || [],
-              currentAction: backup.session.currentAction || this.session?.currentAction || 0,
-              // ✅ CRÍTICO: Preservar estrutura teams do backup
-              teams: backup.session.teams || this.session?.teams
-            };
-
-            saveLogToRoot(`✅ [tryRestoreFromBackup] ${backup.session.actions.length} ações restauradas do backup`);
-            saveLogToRoot(`✅ [tryRestoreFromBackup] currentAction: ${this.session.currentAction}`);
-          }
-
-          // Não remover o backup ainda, só em caso de sucesso
-        } else {
-          saveLogToRoot(`⏰ [tryRestoreFromBackup] Backup muito antigo (${Math.round(backupAge / 1000)}s), ignorando`);
-          localStorage.removeItem(backupKey);
-        }
-      } else {
-        saveLogToRoot(`ℹ️ [tryRestoreFromBackup] Nenhum backup encontrado para match ${this.matchId}`);
-      }
-    } catch (error) {
-      saveLogToRoot(`❌ [tryRestoreFromBackup] Erro ao restaurar backup: ${error}`);
-    }
+    // ✅ NOVO: Buscar SEMPRE do backend via WebSocket
+    // Backend retorna dados corretos do Redis (com fallback MySQL)
+    saveLogToRoot(`✅ [Draft] Dados serão recebidos do backend via WebSocket (Redis/MySQL)`);
   }
 
   // ✅ MELHORADO: Inicialização da sessão com logs detalhados

@@ -185,8 +185,13 @@ public class RedisLeaderboardService {
         Object lossesObj = data.get("losses");
         dto.setLosses(lossesObj instanceof Integer ? (Integer) lossesObj : Integer.parseInt(lossesObj.toString()));
 
+        // ✅ CORREÇÃO: Validar null antes de converter
         Object lpObj = data.get("leaguePoints");
-        dto.setLeaguePoints(lpObj instanceof Integer ? (Integer) lpObj : Integer.parseInt(lpObj.toString()));
+        if (lpObj != null) {
+            dto.setLeaguePoints(lpObj instanceof Integer ? (Integer) lpObj : Integer.parseInt(lpObj.toString()));
+        } else {
+            dto.setLeaguePoints(0); // Default 0 se null
+        }
 
         return dto;
     }
