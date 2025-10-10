@@ -3,6 +3,7 @@ package br.com.lolmatchmaking.backend.controller;
 import br.com.lolmatchmaking.backend.service.DiscordService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -18,18 +19,21 @@ public class DiscordController {
 
     private final DiscordService discordService;
 
+    // ✅ NOVO: Redis para validação de ownership
+    private final br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch;
+
+    // ✅ NOVO: Redis cache para performance
+    private final br.com.lolmatchmaking.backend.service.redis.RedisDiscordCacheService redisDiscordCache;
+
     private static final String IS_CONNECTED = "isConnected";
     private static final String TIMESTAMP = "timestamp";
     private static final String SUCCESS = "success";
     private static final String MESSAGE = "message";
     private static final String ERROR = "error";
 
-    // Cache para reduzir chamadas desnecessárias
-    private Map<String, Object> cachedStatus = null;
-    private long lastStatusUpdate = 0;
-    private Map<String, Object> cachedUsers = null;
-    private long lastUsersUpdate = 0;
-    private static final long CACHE_DURATION_MS = 2000; // 2 segundos de cache
+    // ✅ REMOVIDO: Cache local substituído por Redis (compartilhado entre
+    // instâncias)
+    // Use redisDiscordCache para cache distribuído
 
     /**
      * Obtém o status atual do Discord Bot
@@ -39,13 +43,16 @@ public class DiscordController {
         try {
             long currentTime = System.currentTimeMillis();
 
-            // Verificar se o cache ainda é válido
-            if (cachedStatus != null && (currentTime - lastStatusUpdate) < CACHE_DURATION_MS) {
-                log.debug("📊 [DiscordController] Retornando status do cache");
-                return ResponseEntity.ok(cachedStatus);
+            // ✅ NOVO: Tentar buscar do cache Redis primeiro
+            Map<String, Object> cachedFromRedis = redisDiscordCache.getCachedStatus();
+
+            if (cachedFromRedis != null) {
+                log.debug("⚡ [DiscordController] Status retornado do cache Redis (rápido)");
+                return ResponseEntity.ok(cachedFromRedis);
             }
 
-            // Atualizar cache
+            // Cache miss: Buscar do Discord e cachear no Redis
+            log.info("🔄 [DiscordController] Cache miss - buscando status do Discord");
             Map<String, Object> status = new HashMap<>();
             status.put(IS_CONNECTED, discordService.isConnected());
             status.put("botUsername", discordService.getBotUsername());
@@ -53,9 +60,9 @@ public class DiscordController {
             status.put("usersCount", discordService.getUsersCount());
             status.put(TIMESTAMP, currentTime);
 
-            // Armazenar no cache
-            cachedStatus = status;
-            lastStatusUpdate = currentTime;
+            // ✅ NOVO: Armazenar no Redis (compartilhado)
+            redisDiscordCache.cacheStatus(status);
+            log.info("✅ [DiscordController] Status cacheado no Redis");
 
             log.info("📊 [DiscordController] Status solicitado: {}", status);
             return ResponseEntity.ok(status);
@@ -77,13 +84,22 @@ public class DiscordController {
         try {
             long currentTime = System.currentTimeMillis();
 
-            // Verificar se o cache ainda é válido
-            if (cachedUsers != null && (currentTime - lastUsersUpdate) < CACHE_DURATION_MS) {
-                log.debug("👥 [DiscordController] Retornando usuários do cache");
-                return ResponseEntity.ok(cachedUsers);
+            // ✅ NOVO: Tentar buscar do cache Redis primeiro (compartilhado entre
+            // instâncias)
+            List<Object> cachedFromRedis = redisDiscordCache.getCachedUsers();
+
+            if (cachedFromRedis != null) {
+                log.debug("⚡ [DiscordController] Usuários retornados do cache Redis (rápido)");
+                Map<String, Object> response = new HashMap<>();
+                response.put(SUCCESS, true);
+                response.put("users", cachedFromRedis);
+                response.put("count", cachedFromRedis.size());
+                response.put(TIMESTAMP, currentTime);
+                return ResponseEntity.ok(response);
             }
 
-            // Atualizar cache
+            // Cache miss: Buscar do Discord e cachear no Redis
+            log.info("🔄 [DiscordController] Cache miss - buscando do Discord");
             List<DiscordService.DiscordUser> users = discordService.getUsersInChannel();
 
             Map<String, Object> response = new HashMap<>();
@@ -92,9 +108,9 @@ public class DiscordController {
             response.put("count", users.size());
             response.put(TIMESTAMP, currentTime);
 
-            // Armazenar no cache
-            cachedUsers = response;
-            lastUsersUpdate = currentTime;
+            // ✅ NOVO: Armazenar no Redis (compartilhado)
+            redisDiscordCache.cacheUsers(users);
+            log.info("✅ [DiscordController] {} usuários cacheados no Redis", users.size());
 
             log.info("👥 [DiscordController] {} usuários solicitados", users.size());
             return ResponseEntity.ok(response);
@@ -211,6 +227,15 @@ public class DiscordController {
                         MESSAGE, "Header X-Summoner-Name é obrigatório"));
             }
 
+            // ✅ CRÍTICO: Validar ownership ANTES de mostrar espectadores
+            if (!redisPlayerMatch.validateOwnership(summonerName, matchId)) {
+                log.warn("🚫 [SEGURANÇA] Jogador {} tentou ver espectadores de match {} sem ownership!", summonerName,
+                        matchId);
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                        SUCCESS, false,
+                        MESSAGE, "Jogador não pertence a esta partida"));
+            }
+
             // Buscar espectadores
             List<DiscordService.SpectatorDTO> spectators = discordService.getMatchSpectators(matchId);
 
@@ -252,16 +277,30 @@ public class DiscordController {
                         MESSAGE, "Header X-Summoner-Name é obrigatório"));
             }
 
+            // ✅ CRÍTICO: Validar ownership ANTES de mutar espectador
+            if (!redisPlayerMatch.validateOwnership(summonerName, matchId)) {
+                log.warn("🚫 [SEGURANÇA] Jogador {} tentou mutar espectador de match {} sem ownership!", summonerName,
+                        matchId);
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                        SUCCESS, false,
+                        MESSAGE, "Jogador não pertence a esta partida"));
+            }
+
             // Mutar espectador
             boolean success = discordService.muteSpectator(matchId, discordId);
 
+            // ✅ CORREÇÃO: Buscar estado atualizado após mutar
+            boolean currentMuteState = discordService.isSpectatorMuted(matchId, discordId);
+
             Map<String, Object> response = new HashMap<>();
             response.put(SUCCESS, success);
+            response.put("isMuted", currentMuteState); // ✅ Estado atualizado
+            response.put("discordId", discordId);
             response.put(MESSAGE, success ? "Espectador mutado com sucesso" : "Erro ao mutar espectador");
             response.put(TIMESTAMP, System.currentTimeMillis());
 
-            log.info("🔇 [DiscordController] Espectador {} mutado na partida {} por {}",
-                    discordId, matchId, summonerName);
+            log.info("🔇 [DiscordController] Espectador {} mutado na partida {} por {} (estado: {})",
+                    discordId, matchId, summonerName, currentMuteState);
 
             return ResponseEntity.ok(response);
 
@@ -292,16 +331,30 @@ public class DiscordController {
                         MESSAGE, "Header X-Summoner-Name é obrigatório"));
             }
 
+            // ✅ CRÍTICO: Validar ownership ANTES de desmutar espectador
+            if (!redisPlayerMatch.validateOwnership(summonerName, matchId)) {
+                log.warn("🚫 [SEGURANÇA] Jogador {} tentou desmutar espectador de match {} sem ownership!",
+                        summonerName, matchId);
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                        SUCCESS, false,
+                        MESSAGE, "Jogador não pertence a esta partida"));
+            }
+
             // Desmutar espectador
             boolean success = discordService.unmuteSpectator(matchId, discordId);
 
+            // ✅ CORREÇÃO: Buscar estado atualizado após desmutar
+            boolean currentMuteState = discordService.isSpectatorMuted(matchId, discordId);
+
             Map<String, Object> response = new HashMap<>();
             response.put(SUCCESS, success);
+            response.put("isMuted", currentMuteState); // ✅ Estado atualizado
+            response.put("discordId", discordId);
             response.put(MESSAGE, success ? "Espectador desmutado com sucesso" : "Erro ao desmutar espectador");
             response.put(TIMESTAMP, System.currentTimeMillis());
 
-            log.info("🔊 [DiscordController] Espectador {} desmutado na partida {} por {}",
-                    discordId, matchId, summonerName);
+            log.info("🔊 [DiscordController] Espectador {} desmutado na partida {} por {} (estado: {})",
+                    discordId, matchId, summonerName, currentMuteState);
 
             return ResponseEntity.ok(response);
 

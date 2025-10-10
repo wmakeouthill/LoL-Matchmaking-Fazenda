@@ -7,7 +7,6 @@ import br.com.lolmatchmaking.backend.dto.QueuePlayerInfoDTO;
 import br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -28,18 +27,23 @@ public class QueueManagementService {
     private final CustomMatchRepository customMatchRepository;
     private final MatchmakingWebSocketService webSocketService;
     private final DiscordService discordService;
+
+    // ✅ NOVO: Redis cache para performance de listagem
+    private final br.com.lolmatchmaking.backend.service.redis.RedisQueueCacheService redisQueueCache;
     private final LCUService lcuService;
     private final LCUConnectionRegistry lcuConnectionRegistry;
     private final ObjectMapper objectMapper;
     private final MatchFoundService matchFoundService;
     private final PlayerService playerService;
 
+    // ✅ Construtor com injeção de dependências
     public QueueManagementService(
             QueuePlayerRepository queuePlayerRepository,
             PlayerRepository playerRepository,
             CustomMatchRepository customMatchRepository,
             MatchmakingWebSocketService webSocketService,
             DiscordService discordService,
+            br.com.lolmatchmaking.backend.service.redis.RedisQueueCacheService redisQueueCache,
             LCUService lcuService,
             LCUConnectionRegistry lcuConnectionRegistry,
             ObjectMapper objectMapper,
@@ -50,6 +54,7 @@ public class QueueManagementService {
         this.customMatchRepository = customMatchRepository;
         this.webSocketService = webSocketService;
         this.discordService = discordService;
+        this.redisQueueCache = redisQueueCache;
         this.lcuService = lcuService;
         this.lcuConnectionRegistry = lcuConnectionRegistry;
         this.objectMapper = objectMapper;
@@ -229,7 +234,27 @@ public class QueueManagementService {
      * ✅ SQL ONLY: Obtém status da fila do banco
      */
     public QueueStatusDTO getQueueStatus(String currentPlayerDisplayName) {
-        // ✅ SQL ONLY: Buscar do banco
+        // ✅ NOVO: Tentar buscar do cache Redis primeiro (performance)
+        QueueStatusDTO cachedStatus = redisQueueCache.getCachedQueueStatus();
+
+        if (cachedStatus != null) {
+            log.debug("⚡ [QueueManagementService] Status retornado do cache Redis (rápido)");
+
+            // Marcar jogador atual se fornecido
+            if (currentPlayerDisplayName != null) {
+                cachedStatus.getPlayersInQueueList().forEach(player -> {
+                    if (player.getSummonerName().equals(currentPlayerDisplayName) ||
+                            player.getSummonerName().contains(currentPlayerDisplayName)) {
+                        player.setIsCurrentPlayer(true);
+                    }
+                });
+            }
+
+            return cachedStatus;
+        }
+
+        // Cache miss: Buscar do SQL e cachear
+        log.info("🔄 [QueueManagementService] Cache miss - buscando do SQL");
         List<QueuePlayer> activePlayers = queuePlayerRepository.findByActiveTrueOrderByJoinTimeAsc();
 
         log.info("📊 [QueueManagementService] getQueueStatus - {} jogadores no SQL", activePlayers.size());
@@ -259,6 +284,10 @@ public class QueueManagementService {
                 .estimatedMatchTime(calculateEstimatedMatchTime(activePlayers.size()))
                 .isActive(true)
                 .build();
+
+        // ✅ NOVO: Cachear no Redis para próximas requisições
+        redisQueueCache.cacheQueueStatus(status);
+        log.info("✅ [QueueManagementService] Status cacheado no Redis");
 
         log.info("📊 [QueueManagementService] Status retornado: {} jogadores", status.getPlayersInQueue());
         return status;

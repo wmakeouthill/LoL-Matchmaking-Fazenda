@@ -32,6 +32,9 @@ public class MatchVoteService {
 
     // ✅ NOVO: Redis para votação distribuída
     private final RedisMatchVoteService redisMatchVote;
+    
+    // ✅ NOVO: Redis para validação de ownership
+    private final br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch;
 
     private static final int VOTES_REQUIRED_FOR_AUTO_LINK = 5;
 
@@ -55,6 +58,16 @@ public class MatchVoteService {
 
         Player player = playerRepository.findById(playerId)
                 .orElseThrow(() -> new IllegalArgumentException("Jogador nao encontrado"));
+
+        // ✅ CRÍTICO: Validar ownership antes de registrar voto
+        if (!redisPlayerMatch.validateOwnership(player.getSummonerName(), matchId)) {
+            log.warn("🚫 [SEGURANÇA] Jogador {} (ID: {}) tentou votar em match {} sem ownership!", 
+                    player.getSummonerName(), playerId, matchId);
+            Map<String, Object> errorResult = new HashMap<>();
+            errorResult.put("success", false);
+            errorResult.put("error", "Jogador não pertence a esta partida");
+            return errorResult;
+        }
 
         // ✅ REDIS ONLY: Registrar voto no Redis (fonte única da verdade, com
         // distributed lock)

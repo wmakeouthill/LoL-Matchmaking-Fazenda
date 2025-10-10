@@ -40,6 +40,9 @@ public class DiscordService extends ListenerAdapter {
     private final MatchmakingWebSocketService webSocketService;
     private final DiscordLoLLinkService discordLoLLinkService;
 
+    // ✅ NOVO: Redis cache service
+    private final br.com.lolmatchmaking.backend.service.redis.RedisDiscordCacheService redisDiscordCache;
+
     private JDA jda;
     private String discordToken;
     private String discordChannelName; // Mudança: usar nome do canal em vez de ID
@@ -63,7 +66,9 @@ public class DiscordService extends ListenerAdapter {
         if (discordToken != null && !discordToken.trim().isEmpty()) {
             connectToDiscord();
 
-            // ✅ NOVO: Timer para atualizações periódicas do estado do Discord
+            // ✅ OTIMIZADO: Timer para atualizações periódicas como fallback (reduzido de
+            // 120s para 5 minutos)
+            // Nota: Eventos em tempo real (onGuildVoiceUpdate) são a fonte primária
             scheduler.scheduleAtFixedRate(() -> {
                 try {
                     if (isConnected && monitoredChannel != null) {
@@ -73,7 +78,7 @@ public class DiscordService extends ListenerAdapter {
                 } catch (Exception e) {
                     log.warn("⚠️ [DiscordService] Erro na atualização periódica: {}", e.getMessage());
                 }
-            }, 120, 120, TimeUnit.SECONDS); // A cada 2 minutos - menos agressivo
+            }, 300, 300, TimeUnit.SECONDS); // A cada 5 minutos - apenas fallback de segurança
         } else {
             log.warn("⚠️ [DiscordService] Token do Discord não configurado");
         }
@@ -292,15 +297,20 @@ public class DiscordService extends ListenerAdapter {
         return user;
     }
 
+    /**
+     * ✅ OTIMIZADO: Polling reduzido para fallback apenas
+     * Eventos em tempo real (onGuildVoiceUpdate) são a fonte primária
+     */
     private void startPeriodicMonitoring() {
+        // ✅ OTIMIZAÇÃO: Reduzido de 30s para 2 minutos (apenas fallback de segurança)
         scheduler.scheduleAtFixedRate(() -> {
             if (isConnected && monitoredChannel != null) {
                 loadCurrentUsersInChannel();
             }
-        }, 30, 30, TimeUnit.SECONDS);
+        }, 120, 120, TimeUnit.SECONDS); // A cada 2 minutos - apenas fallback
     }
 
-    // Event listeners
+    // ✅ Event listeners - FONTE PRIMÁRIA de atualizações em tempo real
     @Override
     public void onGuildVoiceUpdate(GuildVoiceUpdateEvent event) {
         String leftChannelName = event.getChannelLeft() != null ? event.getChannelLeft().getName() : null;
@@ -309,12 +319,12 @@ public class DiscordService extends ListenerAdapter {
         if (leftChannelName != null && leftChannelName.equals(discordChannelName)) {
             log.info("👋 [DiscordService] Usuário saiu do canal: {}", event.getMember().getEffectiveName());
             usersInChannel.remove(event.getMember().getId());
-            notifyUsersUpdate();
+            notifyUsersUpdate(); // ✅ Atualiza cache Redis + WebSocket broadcast
         } else if (joinedChannelName != null && joinedChannelName.equals(discordChannelName)) {
             log.info("👋 [DiscordService] Usuário entrou no canal: {}", event.getMember().getEffectiveName());
             DiscordUser user = createDiscordUser(event.getMember());
             usersInChannel.put(user.getId(), user);
-            notifyUsersUpdate();
+            notifyUsersUpdate(); // ✅ Atualiza cache Redis + WebSocket broadcast
         }
     }
 
@@ -346,6 +356,9 @@ public class DiscordService extends ListenerAdapter {
         }
     }
 
+    /**
+     * ✅ OTIMIZADO: Notifica status do Discord com cache Redis
+     */
     private void notifyDiscordStatus() {
         Map<String, Object> status = new HashMap<>();
         status.put("isConnected", isConnected);
@@ -353,17 +366,42 @@ public class DiscordService extends ListenerAdapter {
         status.put("channelName", channelName);
         status.put("usersCount", usersInChannel.size());
 
+        // ✅ NOVO: Cachear status no Redis
+        try {
+            redisDiscordCache.cacheStatus(status);
+        } catch (Exception e) {
+            log.debug("⚠️ [DiscordService] Erro ao cachear status (não crítico): {}", e.getMessage());
+        }
+
         webSocketService.broadcastMessage("discord_status", status);
         log.info("📡 [DiscordService] Status enviado via WebSocket: {}", status);
     }
 
+    /**
+     * ✅ OTIMIZADO: Notifica atualização de usuários com cache Redis
+     * Atualiza cache antes do broadcast para garantir consistência
+     */
     private void notifyUsersUpdate() {
         List<DiscordUser> users = new ArrayList<>(usersInChannel.values());
+
+        // ✅ NOVO: Cachear usuários no Redis ANTES do broadcast
+        // Isso garante que outros backends/instâncias vejam os dados atualizados
+        try {
+            redisDiscordCache.cacheUsers(users);
+            log.debug("✅ [DiscordService] {} usuários cacheados no Redis", users.size());
+        } catch (Exception e) {
+            log.debug("⚠️ [DiscordService] Erro ao cachear usuários (não crítico): {}", e.getMessage());
+        }
+
+        // Broadcast para todos os clientes WebSocket
         webSocketService.broadcastMessage("discord_users", Map.of("users", users));
         log.info("📡 [DiscordService] {} usuários enviados via WebSocket", users.size());
     }
 
-    // ✅ NOVO: Método para atualizar usuários do Discord
+    /**
+     * ✅ OTIMIZADO: Atualiza usuários do Discord (usado como fallback de segurança)
+     * Eventos em tempo real (onGuildVoiceUpdate) são a fonte primária
+     */
     private void updateDiscordUsers() {
         if (monitoredChannel == null) {
             log.debug("🔍 [DiscordService] Nenhum canal monitorado para atualizar usuários");
@@ -381,8 +419,7 @@ public class DiscordService extends ListenerAdapter {
                 }
             }
 
-            // ✅ CORREÇÃO CRITICAL: NÃO enviar lista vazia - causa reconexões falsas no
-            // frontend
+            // ✅ PROTEÇÃO: NÃO enviar lista vazia - causa reconexões falsas no frontend
             if (currentUsers.isEmpty() && !usersInChannel.isEmpty()) {
                 log.debug(
                         "⚠️ [DiscordService] Lista vazia recebida mas cache tem {} usuários - ignorando atualização vazia",
@@ -390,7 +427,7 @@ public class DiscordService extends ListenerAdapter {
                 return;
             }
 
-            // ✅ CORREÇÃO: Atualizar incrementalmente sem limpar todos os usuários
+            // ✅ OTIMIZAÇÃO: Atualizar incrementalmente sem limpar todos os usuários
             final boolean[] hasChanges = { false };
 
             // Adicionar novos usuários
@@ -398,14 +435,14 @@ public class DiscordService extends ListenerAdapter {
                 if (!usersInChannel.containsKey(entry.getKey())) {
                     usersInChannel.put(entry.getKey(), entry.getValue());
                     hasChanges[0] = true;
-                    log.debug("➕ [DiscordService] Usuário adicionado: {}", entry.getValue().getUsername());
+                    log.debug("➕ [DiscordService] Usuário adicionado (fallback): {}", entry.getValue().getUsername());
                 }
             }
 
             // Remover usuários que saíram
             usersInChannel.entrySet().removeIf(entry -> {
                 if (!currentUsers.containsKey(entry.getKey())) {
-                    log.debug("➖ [DiscordService] Usuário removido: {}", entry.getValue().getUsername());
+                    log.debug("➖ [DiscordService] Usuário removido (fallback): {}", entry.getValue().getUsername());
                     hasChanges[0] = true;
                     return true;
                 }
@@ -414,20 +451,29 @@ public class DiscordService extends ListenerAdapter {
 
             if (hasChanges[0]) {
                 notifyUsersUpdate();
-                log.debug("🔄 [DiscordService] Usuários do Discord atualizados: {} usuários", usersInChannel.size());
+                log.info("🔄 [DiscordService] Usuários atualizados via fallback: {} usuários", usersInChannel.size());
             }
         } catch (Exception e) {
             log.warn("⚠️ [DiscordService] Erro ao atualizar usuários do Discord: {}", e.getMessage());
         }
     }
 
-    // ✅ NOVO: Método para enviar status do Discord
+    /**
+     * ✅ OTIMIZADO: Envia status do Discord (usado como fallback de segurança)
+     */
     private void sendDiscordStatus() {
         Map<String, Object> status = new HashMap<>();
         status.put("botUsername", botUsername);
         status.put("isConnected", isConnected);
         status.put("channelName", channelName);
         status.put("usersCount", usersInChannel.size());
+
+        // ✅ NOVO: Cachear status no Redis
+        try {
+            redisDiscordCache.cacheStatus(status);
+        } catch (Exception e) {
+            log.debug("⚠️ [DiscordService] Erro ao cachear status (não crítico): {}", e.getMessage());
+        }
 
         webSocketService.broadcastMessage("discord_status", status);
         log.debug("📡 [DiscordService] Status periódico enviado via WebSocket: {}", status);
@@ -446,7 +492,32 @@ public class DiscordService extends ListenerAdapter {
         return channelName;
     }
 
+    /**
+     * ✅ OTIMIZADO: Retorna usuários do canal (usa cache Redis se disponível)
+     */
     public List<DiscordUser> getUsersInChannel() {
+        // ✅ NOVO: Tentar buscar do cache Redis primeiro (melhor performance
+        // multi-instância)
+        try {
+            List<Object> cachedUsers = redisDiscordCache.getCachedUsers();
+            if (cachedUsers != null && !cachedUsers.isEmpty()) {
+                log.debug("⚡ [DiscordService] Usuários retornados do cache Redis");
+                // Converter List<Object> para List<DiscordUser>
+                List<DiscordUser> users = new ArrayList<>();
+                for (Object obj : cachedUsers) {
+                    if (obj instanceof DiscordUser) {
+                        users.add((DiscordUser) obj);
+                    }
+                }
+                if (!users.isEmpty()) {
+                    return users;
+                }
+            }
+        } catch (Exception e) {
+            log.debug("⚠️ [DiscordService] Cache miss ou erro (usando memória local): {}", e.getMessage());
+        }
+
+        // Fallback: retornar da memória local
         return new ArrayList<>(usersInChannel.values());
     }
 
@@ -1314,7 +1385,51 @@ public class DiscordService extends ListenerAdapter {
             return true;
 
         } catch (Exception e) {
-            log.error("❌ [unmuteSpectator] Erro ao desmutar espectador", e);
+            log.error("❌ [unmuteSpectator] Erro", e);
+            return false;
+        }
+    }
+
+    /**
+     * ✅ NOVO: Verifica se um espectador está mutado
+     * 
+     * @param matchId   ID da partida
+     * @param discordId Discord ID do espectador
+     * @return true se está mutado, false caso contrário
+     */
+    public boolean isSpectatorMuted(Long matchId, String discordId) {
+        DiscordMatch match = activeMatches.get(matchId);
+        if (match == null) {
+            log.warn("⚠️ [isSpectatorMuted] Match {} não encontrado", matchId);
+            return false;
+        }
+
+        if (!isConnected || jda == null) {
+            log.warn("⚠️ [isSpectatorMuted] Discord não conectado");
+            return false;
+        }
+
+        try {
+            Guild guild = jda.getGuilds().stream().findFirst().orElse(null);
+            if (guild == null) {
+                log.warn("⚠️ [isSpectatorMuted] Guild não encontrada");
+                return false;
+            }
+
+            Member member = guild.getMemberById(discordId);
+            if (member == null) {
+                log.warn("⚠️ [isSpectatorMuted] Membro {} não encontrado", discordId);
+                return false;
+            }
+
+            // Verificar estado de mute via VoiceState
+            boolean isMuted = member.getVoiceState() != null && member.getVoiceState().isMuted();
+
+            log.debug("🔍 [isSpectatorMuted] Espectador {} está mutado: {}", member.getEffectiveName(), isMuted);
+            return isMuted;
+
+        } catch (Exception e) {
+            log.error("❌ [isSpectatorMuted] Erro ao verificar estado de mute", e);
             return false;
         }
     }

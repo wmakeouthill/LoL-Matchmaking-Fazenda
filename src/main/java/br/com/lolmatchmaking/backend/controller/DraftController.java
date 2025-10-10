@@ -21,6 +21,10 @@ public class DraftController {
     private final DraftService draftService;
 
     private final br.com.lolmatchmaking.backend.service.DraftFlowService draftFlowService;
+
+    // ✅ NOVO: Redis para validação de ownership
+    private final br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch;
+
     private static final String KEY_ERROR = "error";
     private static final String KEY_SUCCESS = "success";
 
@@ -162,6 +166,14 @@ public class DraftController {
                         .body(Map.of(KEY_ERROR, "matchId, playerId e championId são obrigatórios"));
             }
 
+            // ✅ CRÍTICO: Validar ownership do matchId via Redis
+            if (!redisPlayerMatch.validateOwnership(authenticatedSummoner, req.matchId())) {
+                log.warn("🚫 [SEGURANÇA] Jogador {} tentou alterar pick em match {} sem ownership!",
+                        authenticatedSummoner, req.matchId());
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(Map.of(KEY_ERROR, "Jogador não pertence a esta partida"));
+            }
+
             // ✅ MIGRADO: Chama DraftFlowService diretamente (não mais DraftService)
             draftFlowService.changePick(req.matchId(), req.playerId(), req.championId());
             return ResponseEntity.ok(Map.of(KEY_SUCCESS, true));
@@ -204,6 +216,14 @@ public class DraftController {
                 log.warn("⚠️ [{}] Requisição inválida - campos obrigatórios faltando", authenticatedSummoner);
                 return ResponseEntity.badRequest()
                         .body(Map.of(KEY_ERROR, "playerId e championId são obrigatórios"));
+            }
+
+            // ✅ CRÍTICO: Validar ownership do matchId via Redis
+            if (!redisPlayerMatch.validateOwnership(authenticatedSummoner, matchId)) {
+                log.warn("🚫 [SEGURANÇA] Jogador {} tentou alterar pick em match {} sem ownership!",
+                        authenticatedSummoner, matchId);
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(Map.of(KEY_ERROR, "Jogador não pertence a esta partida"));
             }
 
             // ✅ MIGRADO: Chama DraftFlowService diretamente (não mais DraftService)
@@ -320,6 +340,14 @@ public class DraftController {
                         authenticatedSummoner, req.summonerName());
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                         .body(Map.of(KEY_ERROR, "Nome do invocador não corresponde ao jogador autenticado"));
+            }
+
+            // ✅ CRÍTICO: Validar ownership do matchId via Redis
+            if (!redisPlayerMatch.validateOwnership(authenticatedSummoner, matchId)) {
+                log.warn("🚫 [SEGURANÇA] Jogador {} tentou confirmar draft de match {} sem ownership!",
+                        authenticatedSummoner, matchId);
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(Map.of(KEY_ERROR, "Jogador não pertence a esta partida"));
             }
 
             log.info("📥 [{}] POST /match/{}/confirm-final-draft", authenticatedSummoner, matchId);

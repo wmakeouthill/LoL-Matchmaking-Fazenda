@@ -454,11 +454,24 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
 
     private void handleAcceptDecline(WebSocketSession session, JsonNode root, boolean accept) throws IOException {
         long queuePlayerId = root.path("data").path("queuePlayerId").asLong(-1);
+        long matchId = root.path("data").path("matchId").asLong(-1);
+        String summonerName = root.path("data").path("summonerName").asText(null);
+        
         if (queuePlayerId <= 0) {
             session.sendMessage(new TextMessage(
                     "{\"type\":\"accept_match_result\",\"success\":false,\"error\":\"queuePlayerId invalid\"}"));
             return;
         }
+
+        // ✅ CRÍTICO: Validar ownership antes de aceitar/recusar
+        if (matchId > 0 && summonerName != null && !summonerName.isEmpty()) {
+            if (!redisPlayerMatch.validateOwnership(summonerName, matchId)) {
+                log.warn("🚫 [SEGURANÇA] Jogador {} tentou aceitar/recusar match {} sem ownership!", summonerName, matchId);
+                session.sendMessage(new TextMessage("{\"type\":\"accept_match_result\",\"success\":false,\"error\":\"unauthorized\"}"));
+                return;
+            }
+        }
+
         if (accept)
             acceptanceService.accept(queuePlayerId);
         else

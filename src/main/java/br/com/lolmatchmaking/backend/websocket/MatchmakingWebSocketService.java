@@ -855,41 +855,39 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     }
 
     /**
-     * Broadcast de atualização da fila - ENVIA APENAS PARA JOGADORES NA FILA
+     * ✅ CORRIGIDO: Broadcast de atualização da fila - ENVIA PARA TODAS AS SESSÕES
+     * 
+     * Mudança: Anteriormente só enviava para quem estava NA FILA.
+     * Agora envia para TODOS os clientes conectados, permitindo:
+     * - Jogadores que saíram da fila verem a atualização imediata
+     * - Jogadores visualizando a fila (mas não participando) verem mudanças em
+     * tempo real
+     * - Componente queue se manter sempre sincronizado com o backend
      */
     public void broadcastQueueUpdate(List<QueuePlayerInfoDTO> queueStatus) {
         try {
             Map<String, Object> message = Map.of(
                     "type", "queue_update",
-                    "data", queueStatus,
+                    "data", queueStatus != null ? queueStatus : List.of(),
                     "timestamp", System.currentTimeMillis());
 
             String jsonMessage = objectMapper.writeValueAsString(message);
 
-            // ✅ CORREÇÃO: Enviar apenas para jogadores que ESTÃO NA FILA
+            // ✅ CORREÇÃO: Enviar para TODAS as sessões conectadas (não apenas quem está na
+            // fila)
+            int totalSessions = sessions.size();
+            log.info("📤 [Queue Update] Enviando atualização da fila para {} sessões (jogadores na fila: {})",
+                    totalSessions, queueStatus != null ? queueStatus.size() : 0);
+
             if (queueStatus != null && !queueStatus.isEmpty()) {
-                Set<String> playersInQueue = queueStatus.stream()
-                        .map(QueuePlayerInfoDTO::getSummonerName)
-                        .filter(name -> name != null && !name.isEmpty())
-                        .collect(Collectors.toSet());
-
-                log.info("🔍 [Queue Update] Jogadores na fila: {}", playersInQueue);
-
-                Collection<WebSocketSession> queueSessions = sessionRegistry.getByPlayers(playersInQueue);
-
-                log.info("📤 [Queue Update] Enviando para {} sessões (de {} jogadores na fila)",
-                        queueSessions.size(), playersInQueue.size());
-
-                if (queueSessions.size() != playersInQueue.size()) {
-                    log.warn("⚠️ [Queue Update] ATENÇÃO: {} jogadores na fila mas apenas {} sessões encontradas!",
-                            playersInQueue.size(), queueSessions.size());
-                }
-
-                sendToMultipleSessions(queueSessions, jsonMessage);
-            } else {
-                // Se a fila está vazia, não precisa enviar para ninguém
-                log.debug("📭 [Queue Update] Fila vazia, nenhuma mensagem enviada");
+                log.debug("📊 [Queue Update] Jogadores na fila: {}",
+                        queueStatus.stream()
+                                .map(QueuePlayerInfoDTO::getSummonerName)
+                                .collect(Collectors.joining(", ")));
             }
+
+            // Enviar para TODOS os clientes conectados
+            broadcastToAll(jsonMessage);
 
         } catch (Exception e) {
             log.error("❌ Erro ao fazer broadcast da fila", e);
