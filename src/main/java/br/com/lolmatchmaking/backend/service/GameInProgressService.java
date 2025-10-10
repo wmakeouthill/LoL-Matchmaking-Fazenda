@@ -593,10 +593,20 @@ public class GameInProgressService {
 
             String json = objectMapper.writeValueAsString(payload);
 
-            // ✅ CRÍTICO: Enviar para TODOS os jogadores via WebSocket usando
-            // SessionRegistry
+            // ✅ CRÍTICO: Enviar APENAS para os 10 jogadores da partida
+            List<String> allPlayerNames = new ArrayList<>();
+            allPlayerNames.addAll(gameData.getTeam1().stream().map(GamePlayer::getSummonerName).toList());
+            allPlayerNames.addAll(gameData.getTeam2().stream().map(GamePlayer::getSummonerName).toList());
+
+            log.info("🎯 [ENVIO INDIVIDUALIZADO] Enviando game_started APENAS para {} jogadores específicos:", allPlayerNames.size());
+            for (String playerName : allPlayerNames) {
+                log.info("  ✅ {}", playerName);
+            }
+
+            Collection<org.springframework.web.socket.WebSocketSession> playerSessions = sessionRegistry.getByPlayers(allPlayerNames);
+            
             int sentCount = 0;
-            for (org.springframework.web.socket.WebSocketSession ws : sessionRegistry.all()) {
+            for (org.springframework.web.socket.WebSocketSession ws : playerSessions) {
                 try {
                     if (ws.isOpen()) {
                         ws.sendMessage(new org.springframework.web.socket.TextMessage(json));
@@ -608,9 +618,9 @@ public class GameInProgressService {
             }
 
             log.info("╔════════════════════════════════════════════════════════════════╗");
-            log.info("║  📡 [GameInProgress] BROADCAST game_started                   ║");
+            log.info("║  📡 [GameInProgress] game_started ENVIADO APENAS PARA 10 JOGADORES║");
             log.info("╚════════════════════════════════════════════════════════════════╝");
-            log.info("✅ Evento enviado para {} sessões WebSocket", sentCount);
+            log.info("✅ Evento enviado para {} jogadores (de {} esperados)", sentCount, allPlayerNames.size());
 
         } catch (Exception e) {
             log.error("❌ [GameInProgress] Erro ao broadcast game_started", e);

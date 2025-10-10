@@ -569,10 +569,20 @@ public class MatchFoundService {
                 log.info("  - currentPlayer: {}", currentPlayer);
                 log.info("  - timeRemaining: 30s (inicial)");
 
-                webSocketService.broadcastToAll("draft_starting", draftData);
+                // ✅ CRÍTICO: Enviar APENAS para os 10 jogadores da partida
+                List<String> allPlayerNames = new ArrayList<>();
+                allPlayerNames.addAll(team1Names);
+                allPlayerNames.addAll(team2Names);
 
-                log.info("✅ [MatchFound] Draft starting enviado com {} ações, {} jogadores no time 1 e {} no time 2",
-                        actions.size(), team1Data.size(), team2Data.size());
+                log.info("🎯 [ENVIO INDIVIDUALIZADO] Enviando draft_starting APENAS para {} jogadores específicos:", allPlayerNames.size());
+                for (String playerName : allPlayerNames) {
+                    log.info("  ✅ {}", playerName);
+                }
+
+                webSocketService.sendToPlayers("draft_starting", draftData, allPlayerNames);
+
+                log.info("✅ [MatchFound] Draft starting enviado APENAS para {} jogadores específicos ({} ações, {} team1, {} team2)",
+                        allPlayerNames.size(), actions.size(), team1Data.size(), team2Data.size());
 
             } catch (Exception e) {
                 log.error("❌ [MatchFound] Erro ao parsear pick_ban_data", e);
@@ -741,10 +751,20 @@ public class MatchFoundService {
                         i, dto.getSummonerName(), dto.getAssignedLane(), dto.getMmr());
             }
 
-            webSocketService.broadcastToAll("match_found", data);
+            // ✅ CRÍTICO: Enviar APENAS para os 10 jogadores da partida
+            List<String> allPlayerNames = new ArrayList<>();
+            allPlayerNames.addAll(team1.stream().map(QueuePlayer::getSummonerName).toList());
+            allPlayerNames.addAll(team2.stream().map(QueuePlayer::getSummonerName).toList());
+
+            log.info("🎯 [ENVIO INDIVIDUALIZADO] Enviando match_found APENAS para {} jogadores específicos:", allPlayerNames.size());
+            for (String playerName : allPlayerNames) {
+                log.info("  ✅ {}", playerName);
+            }
+
+            webSocketService.sendToPlayers("match_found", data, allPlayerNames);
 
             log.info("╔════════════════════════════════════════════════════════════════╗");
-            log.info("║  ✅ [SUCESSO] MATCH_FOUND ENVIADO PARA 10 JOGADORES           ║");
+            log.info("║  ✅ [SUCESSO] MATCH_FOUND ENVIADO PARA 10 JOGADORES ESPECÍFICOS║");
             log.info("╚════════════════════════════════════════════════════════════════╝");
 
         } catch (Exception e) {
@@ -863,12 +883,18 @@ public class MatchFoundService {
 
     private void notifyTimerUpdate(Long matchId, int secondsRemaining) {
         try {
-            // ✅ CORREÇÃO: NÃO incluir "type", o broadcastToAll já adiciona
+            // ✅ REDIS ONLY: Buscar jogadores do Redis
+            List<String> allPlayers = redisAcceptance.getAllPlayers(matchId);
+            if (allPlayers == null || allPlayers.isEmpty()) {
+                return;
+            }
+
             Map<String, Object> data = new HashMap<>();
             data.put("matchId", matchId);
             data.put("secondsRemaining", secondsRemaining);
 
-            webSocketService.broadcastToAll("acceptance_timer", data);
+            // ✅ CRÍTICO: Enviar APENAS para os jogadores desta partida
+            webSocketService.sendToPlayers("acceptance_timer", data, allPlayers);
 
         } catch (Exception e) {
             // Log silencioso para não poluir
