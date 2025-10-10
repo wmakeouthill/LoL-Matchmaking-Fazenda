@@ -19,6 +19,14 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
     username: ${MYSQL_USER:${DB_USER:root}}
     password: ${MYSQL_PASSWORD:${DB_PASSWORD:password}}
+
+  # ✅ NOVO: Configuração Redis (Upstash)
+  redis:
+    host: robust-chow-5628.upstash.io
+    port: 6379
+    password: ARX8AAImcDI1MGM4MjYxZTBiZjY0MWRiODQ5ZGZkZGZjY2FlZjVhM3AyNTYyOA
+    ssl: true
+    timeout: 2000ms
   jpa:
     database-platform: org.hibernate.dialect.MySQLDialect
     hibernate:
