@@ -66,8 +66,7 @@ public class DraftFlowService {
             // LinkedHashSet mantém a ordem de inserção (Top, Jungle, Mid, ADC, Support)
             this.team1Players = team1 == null ? Set.of() : new LinkedHashSet<>(team1);
             this.team2Players = team2 == null ? Set.of() : new LinkedHashSet<>(team2);
-            // ✅ CORREÇÃO: Inicializar NO PASSADO para permitir ação imediata (bots pickam após 2s)
-            this.lastActionStartMs = System.currentTimeMillis() - 3000; // 3s no passado
+            this.lastActionStartMs = System.currentTimeMillis();
         }
 
         public long getMatchId() {
@@ -459,6 +458,14 @@ public class DraftFlowService {
                 st.advance();
             }
 
+            // ✅ CRÍTICO: Restaurar lastActionStartMs do Redis (senão perde o ajuste de
+            // bots!)
+            Object lastActionMs = map.get("lastActionStartMs");
+            if (lastActionMs instanceof Number) {
+                st.lastActionStartMs = ((Number) lastActionMs).longValue();
+                log.debug("✅ [DraftFlow] lastActionStartMs restaurado do Redis: {}", st.lastActionStartMs);
+            }
+
             return st;
 
         } catch (Exception e) {
@@ -473,6 +480,16 @@ public class DraftFlowService {
     public DraftState startDraft(long matchId, List<String> team1Players, List<String> team2Players) {
         List<DraftAction> actions = buildDefaultActionSequence();
         DraftState st = new DraftState(matchId, actions, team1Players, team2Players);
+
+        // ✅ CORREÇÃO BOTS: Se primeiro jogador é bot, iniciar com tempo no passado
+        if (!actions.isEmpty()) {
+            DraftAction firstAction = actions.get(0);
+            String firstPlayer = getPlayerForTeamAndIndex(st, firstAction.team(), 0);
+            if (isBot(firstPlayer)) {
+                log.info("🤖 [DraftFlow] Primeira ação é de bot {}, ajustando timer para auto-pick", firstPlayer);
+                st.lastActionStartMs = System.currentTimeMillis() - 3000; // 3s no passado
+            }
+        }
 
         // ✅ Salvar no Redis (fonte ÚNICA)
         saveDraftStateToRedis(matchId, st);
@@ -673,7 +690,21 @@ public class DraftFlowService {
                 byPlayer);
         st.getActions().set(actionIndex, updated);
         st.advance();
-        st.markActionStart();
+
+        // ✅ CORREÇÃO BOTS: Se próximo jogador é bot, ajustar timer para auto-pick
+        // rápido
+        if (st.getCurrentIndex() < st.getActions().size()) {
+            DraftAction nextAction = st.getActions().get(st.getCurrentIndex());
+            String nextPlayer = getPlayerForTeamAndIndex(st, nextAction.team(), st.getCurrentIndex());
+            if (isBot(nextPlayer)) {
+                log.info("🤖 [DraftFlow] Próxima ação é de bot {}, ajustando timer para auto-pick", nextPlayer);
+                st.lastActionStartMs = System.currentTimeMillis() - 3000; // Permitir pick imediato
+            } else {
+                st.markActionStart(); // Player real: timer normal
+            }
+        } else {
+            st.markActionStart(); // Última ação: resetar normalmente
+        }
 
         // ⚡ REDIS: Resetar timer para 30 quando ação acontece
         redisDraftFlow.resetTimer(matchId);

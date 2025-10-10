@@ -40,7 +40,7 @@ public class GameInProgressService {
 
     // ✅ NOVO: Redis para monitoramento distribuído de jogos
     private final RedisGameMonitoringService redisGameMonitoring;
-    
+
     // ✅ NOVO: Redis para ownership (limpar quando jogo termina)
     private final br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch;
 
@@ -293,8 +293,8 @@ public class GameInProgressService {
                 log.info("👥 [finishGame] Movendo espectadores de volta ao lobby - match {}", matchId);
                 discordService.moveSpectatorsBackToLobby(matchId);
 
-                // Aguardar 1 segundo antes de deletar canais
-                Thread.sleep(1000);
+                // ✅ REDIS: 150ms (apenas garantir que moveSpectators terminou)
+                Thread.sleep(150);
 
                 log.info("🧹 [finishGame] Limpando canais Discord do match {}", matchId);
                 discordService.deleteMatchChannels(matchId, true); // true = mover jogadores de volta
@@ -598,13 +598,15 @@ public class GameInProgressService {
             allPlayerNames.addAll(gameData.getTeam1().stream().map(GamePlayer::getSummonerName).toList());
             allPlayerNames.addAll(gameData.getTeam2().stream().map(GamePlayer::getSummonerName).toList());
 
-            log.info("🎯 [ENVIO INDIVIDUALIZADO] Enviando game_started APENAS para {} jogadores específicos:", allPlayerNames.size());
+            log.info("🎯 [ENVIO INDIVIDUALIZADO] Enviando game_started APENAS para {} jogadores específicos:",
+                    allPlayerNames.size());
             for (String playerName : allPlayerNames) {
                 log.info("  ✅ {}", playerName);
             }
 
-            Collection<org.springframework.web.socket.WebSocketSession> playerSessions = sessionRegistry.getByPlayers(allPlayerNames);
-            
+            Collection<org.springframework.web.socket.WebSocketSession> playerSessions = sessionRegistry
+                    .getByPlayers(allPlayerNames);
+
             int sentCount = 0;
             for (org.springframework.web.socket.WebSocketSession ws : playerSessions) {
                 try {

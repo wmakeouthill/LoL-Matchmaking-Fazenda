@@ -21,14 +21,17 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Slf4j
-@Service
 @RequiredArgsConstructor
+// ❌ DESABILITADO: QueueManagementService com Redis 100% substituiu este service
+// Este service tinha HashMap cache local e dependia de MultiBackendSyncService
+// (removido)
+// @Service
 public class PersistentQueueService {
 
     private final QueuePlayerRepository queuePlayerRepository;
     private final PlayerRepository playerRepository;
     private final MatchmakingWebSocketService webSocketService;
-    private final MultiBackendSyncService syncService;
+    // private final MultiBackendSyncService syncService; // Removido
 
     @Value("${app.queue.max-wait-time:1800}") // 30 minutos
     private long maxWaitTimeSeconds;
@@ -112,11 +115,8 @@ public class PersistentQueueService {
             // Adicionar ao cache
             queueCache.put(summonerName, savedPlayer);
 
-            // Registrar evento de sincronização
-            syncService.registerEvent("player_joined_queue", Map.of(
-                    "summonerName", summonerName,
-                    "primaryLane", primaryLane,
-                    "secondaryLane", secondaryLane), null);
+            // ❌ REMOVIDO: syncService não existe mais (Redis 100%)
+            // syncService.registerEvent("player_joined_queue", ...);
 
             // Broadcast da atualização
             broadcastQueueUpdate();
@@ -147,9 +147,8 @@ public class PersistentQueueService {
             queuePlayer.setAcceptanceStatus(0);
             queuePlayerRepository.save(queuePlayer);
 
-            // Registrar evento de sincronização
-            syncService.registerEvent("player_left_queue", Map.of(
-                    "summonerName", summonerName), null);
+            // ❌ REMOVIDO: syncService não existe mais (Redis 100%)
+            // syncService.registerEvent("player_left_queue", ...);
 
             // Recalcular posições
             recalculateQueuePositions();
