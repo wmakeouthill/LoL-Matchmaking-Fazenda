@@ -96,6 +96,33 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       this.gameData?.originalMatchId;
   }
 
+  // ✅ NOVO: Getter para obter summoner name do currentPlayer
+  get summonerName(): string {
+    if (!this.currentPlayer) return '';
+
+    // Prioridade 1: displayName
+    if (this.currentPlayer.displayName) {
+      return this.currentPlayer.displayName;
+    }
+
+    // Prioridade 2: gameName#tagLine
+    if (this.currentPlayer.gameName && this.currentPlayer.tagLine) {
+      return `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`;
+    }
+
+    // Prioridade 3: summonerName
+    if (this.currentPlayer.summonerName) {
+      return this.currentPlayer.summonerName;
+    }
+
+    // Prioridade 4: name
+    if (this.currentPlayer.name) {
+      return this.currentPlayer.name;
+    }
+
+    return '';
+  }
+
   // Timers
   private gameTimer: Subscription | null = null;
   private lcuDetectionTimer: Subscription | null = null;
