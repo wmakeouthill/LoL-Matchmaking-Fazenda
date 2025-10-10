@@ -930,14 +930,14 @@ public class PlayerService {
             player.setPlayerStatsDraft(convertToJson(draftChampions));
             log.info("✅ Top 5 custom champions para {}: {}", summonerName, draftChampions.size());
 
-            // 2. Verificar se precisa atualizar dados da Riot API (cache de 2 dias)
+            // 2. Verificar se precisa atualizar dados da Riot API (cache de 5 dias)
             boolean needsRiotApiUpdate = forceUpdate; // Se forçado, sempre atualiza
 
             if (!forceUpdate && player.getStatsLastUpdated() != null) {
                 java.time.Instant lastUpdate = player.getStatsLastUpdated();
-                java.time.Instant twoDaysAgo = java.time.Instant.now().minus(2, java.time.temporal.ChronoUnit.DAYS);
+                java.time.Instant fiveDaysAgo = java.time.Instant.now().minus(5, java.time.temporal.ChronoUnit.DAYS);
 
-                if (lastUpdate.isAfter(twoDaysAgo)) {
+                if (lastUpdate.isAfter(fiveDaysAgo)) {
                     needsRiotApiUpdate = false;
                     log.info(
                             "⏭️ Dados da Riot API ainda válidos para {} (última atualização: {}). Pulando atualização.",
@@ -1028,6 +1028,133 @@ public class PlayerService {
     @Transactional
     public void updatePlayerChampionStats(String summonerName) {
         updatePlayerChampionStats(summonerName, false);
+    }
+
+    /**
+     * Atualiza estatísticas de campeões no login do jogador
+     * - Sempre atualiza player_stats_draft (dados locais, rápido)
+     * - Só atualiza ranked_champions e mastery_champions se:
+     * 1. Não tiver dados (null ou vazio)
+     * 2. Dados tiverem mais de 10 dias
+     * - Prioriza preencher dados que o jogador não tem
+     * 
+     * @param summonerName Nome do jogador
+     */
+    @Transactional
+    public void updatePlayerChampionStatsOnLogin(String summonerName) {
+        log.info("🔄 [Login] Verificando estatísticas de campeões para: {}", summonerName);
+
+        Optional<Player> playerOpt = playerRepository.findBySummonerNameIgnoreCase(summonerName);
+        if (playerOpt.isEmpty()) {
+            log.warn("⚠️ [Login] Jogador não encontrado: {}", summonerName);
+            return;
+        }
+
+        Player player = playerOpt.get();
+
+        try {
+            // 1. SEMPRE atualiza player_stats_draft (dados locais das custom matches)
+            List<Map<String, Object>> draftChampions = extractTop5CustomChampions(summonerName);
+            player.setPlayerStatsDraft(convertToJson(draftChampions));
+            log.info("✅ [Login] Top 5 custom champions para {}: {}", summonerName, draftChampions.size());
+
+            // 2. Verificar se precisa atualizar dados da Riot API (cache de 10 dias)
+            boolean needsRiotApiUpdate = false;
+            boolean hasMissingData = false;
+
+            // Verificar se tem dados faltando (priorizar)
+            if (player.getRankedChampions() == null || player.getRankedChampions().isEmpty() ||
+                    player.getMasteryChampions() == null || player.getMasteryChampions().isEmpty()) {
+                hasMissingData = true;
+                needsRiotApiUpdate = true;
+                log.info("🔍 [Login] Jogador {} tem dados faltando - priorizando atualização", summonerName);
+            }
+
+            // Se tem todos os dados, verificar idade (10 dias)
+            if (!hasMissingData && player.getStatsLastUpdated() != null) {
+                java.time.Instant lastUpdate = player.getStatsLastUpdated();
+                java.time.Instant tenDaysAgo = java.time.Instant.now().minus(10, java.time.temporal.ChronoUnit.DAYS);
+
+                if (lastUpdate.isBefore(tenDaysAgo)) {
+                    needsRiotApiUpdate = true;
+                    log.info("🔍 [Login] Dados da Riot API expirados para {} (última atualização: {})",
+                            summonerName, lastUpdate);
+                } else {
+                    log.info("⏭️ [Login] Dados da Riot API ainda válidos para {} (última atualização: {}). Pulando.",
+                            summonerName, lastUpdate);
+                }
+            }
+
+            // Se não precisa atualizar Riot API, apenas salva os dados das custom matches
+            if (!needsRiotApiUpdate) {
+                playerRepository.save(player);
+                log.info("✅ [Login] Estatísticas de custom matches atualizadas para: {} (Riot API em cache)",
+                        summonerName);
+                return;
+            }
+
+            log.info("🔄 [Login] Atualizando dados da Riot API para {}...", summonerName);
+
+            // 3. Verificar/Buscar PUUID correto da Riot API
+            String puuid = player.getPuuid();
+
+            if (puuid == null || puuid.isEmpty() || puuid.contains("-")) {
+                log.info("🔄 [Login] PUUID inválido ou vazio, buscando da Riot API...");
+                String riotPuuid = riotChampionStatsService.getRiotPuuid(summonerName);
+
+                if (riotPuuid != null) {
+                    player.setPuuid(riotPuuid);
+                    puuid = riotPuuid;
+                    playerRepository.save(player);
+                    log.info("✅ [Login] PUUID atualizado para {}: {}...", summonerName,
+                            puuid.substring(0, Math.min(20, puuid.length())));
+                } else {
+                    log.warn("⚠️ [Login] Não foi possível buscar PUUID da Riot API para {}", summonerName);
+                }
+            }
+
+            // 4. Top 3 campeões de maestria (Riot API) - se tiver PUUID válido
+            if (puuid != null && !puuid.isEmpty()) {
+                // Priorizar se não tem dados
+                if (player.getMasteryChampions() == null || player.getMasteryChampions().isEmpty()) {
+                    log.info("🎯 [Login] PRIORIZANDO maestria (sem dados) para {}", summonerName);
+                }
+
+                try {
+                    List<PlayerChampionStatsDTO.ChampionMasteryStats> masteryChampions = riotChampionStatsService
+                            .getTopMasteryChampions(puuid);
+                    player.setMasteryChampions(convertToJson(masteryChampions));
+                    log.info("✅ [Login] Top 3 maestria para {}: {}", summonerName, masteryChampions.size());
+                } catch (Exception e) {
+                    log.error("⚠️ [Login] Erro ao buscar maestria para {}: {}", summonerName, e.getMessage());
+                }
+            }
+
+            // 5. Top 5 campeões ranked (Riot API) - se tiver PUUID válido
+            if (puuid != null && !puuid.isEmpty()) {
+                // Priorizar se não tem dados
+                if (player.getRankedChampions() == null || player.getRankedChampions().isEmpty()) {
+                    log.info("🎯 [Login] PRIORIZANDO ranked (sem dados) para {}", summonerName);
+                }
+
+                try {
+                    List<PlayerChampionStatsDTO.ChampionRankedStats> rankedChampions = riotChampionStatsService
+                            .getTopRankedChampions(puuid);
+                    player.setRankedChampions(convertToJson(rankedChampions));
+                    log.info("✅ [Login] Top 5 ranked para {}: {}", summonerName, rankedChampions.size());
+                } catch (Exception e) {
+                    log.error("⚠️ [Login] Erro ao buscar stats ranked para {}: {}", summonerName, e.getMessage());
+                }
+            }
+
+            player.setStatsLastUpdated(java.time.Instant.now());
+            playerRepository.save(player);
+            log.info("✅ [Login] Estatísticas atualizadas para: {}", summonerName);
+
+        } catch (Exception e) {
+            log.error("❌ [Login] Erro ao atualizar estatísticas de campeões para {}: {}", summonerName,
+                    e.getMessage(), e);
+        }
     }
 
     /**

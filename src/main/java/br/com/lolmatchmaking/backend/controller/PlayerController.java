@@ -302,6 +302,16 @@ public class PlayerController {
                                 log.info("  - custom_mmr: {}", savedPlayer.getCustomMmr());
                                 log.info("  - summonerId: {}", savedPlayer.getSummonerId());
                                 log.info("  - puuid: {}", savedPlayer.getPuuid());
+
+                                // ✅ NOVO: Atualizar estatísticas de campeões do jogador após login
+                                // Apenas se não tiver dados ou dados tiverem mais de 10 dias
+                                try {
+                                    playerService.updatePlayerChampionStatsOnLogin(fullSummonerName);
+                                } catch (Exception e) {
+                                    log.warn(
+                                            "⚠️ [PlayerController] Erro ao atualizar stats de campeões no login para {}: {}",
+                                            fullSummonerName, e.getMessage());
+                                }
                             } catch (Exception e) {
                                 log.error("❌ [PlayerController] Erro ao criar/atualizar player: {}", e.getMessage(), e);
                                 log.error("❌ [PlayerController] Stack trace:", e);
