@@ -60,7 +60,7 @@ const electronAPI = {
     // Para testes locais: 'http://localhost:8080'
     // Para rede local: 'http://192.168.1.5:8080' (seu IP)
     // Para cloud: 'https://seu-app.run.app'
-    const HARDCODED_BACKEND_URL = 'https://lol-matchmaking-368951732227.southamerica-east1.run.app/';
+    const HARDCODED_BACKEND_URL = 'http://localhost:8080/';
     
     // If BACKEND_URL is provided in the environment, normalize it and return
     const raw = (process.env && process.env['BACKEND_URL']) ? String(process.env['BACKEND_URL']).replace(/\/+$/, '') : null;
@@ -180,6 +180,25 @@ electronAPI.storage = {
   }
 };
 
+// ✅ Calcular currentMMR baseado em tier, division e LP
+function calculateCurrentMMR(tier, division, lp) {
+  const tierValues = {
+    'IRON': 800, 'BRONZE': 1000, 'SILVER': 1200, 'GOLD': 1400,
+    'PLATINUM': 1700, 'EMERALD': 2000, 'DIAMOND': 2300,
+    'MASTER': 2600, 'GRANDMASTER': 2900, 'CHALLENGER': 3200
+  };
+  
+  const divisionBonus = {
+    'IV': 0, 'III': 50, 'II': 100, 'I': 150
+  };
+  
+  const base = tierValues[tier] || 1200;
+  const bonus = divisionBonus[division] || 0;
+  const lpPoints = Math.round((lp || 0) * 0.8);
+  
+  return base + bonus + lpPoints;
+}
+
 electronAPI.lcu.getCurrentSummoner = async () => {
   const result = await electronAPI.lcu.request('/lol-summoner/v1/current-summoner', 'GET');
   // ✅ CRÍTICO: Construir displayName e summonerName se vierem vazios do LCU
@@ -194,7 +213,22 @@ electronAPI.lcu.getCurrentSummoner = async () => {
   }
   return result;
 };
-electronAPI.lcu.getCurrentRanked = async () => electronAPI.lcu.request('/lol-ranked/v1/current-ranked-stats', 'GET');
+
+electronAPI.lcu.getCurrentRanked = async () => {
+  const result = await electronAPI.lcu.request('/lol-ranked/v1/current-ranked-stats', 'GET');
+  
+  // ✅ CALCULAR currentMMR e incluir no resultado
+  if (result && result.queues && Array.isArray(result.queues)) {
+    const solo = result.queues.find(q => q.queueType === 'RANKED_SOLO_5x5');
+    if (solo) {
+      const mmr = calculateCurrentMMR(solo.tier, solo.division, solo.leaguePoints);
+      result.currentMMR = mmr;
+      console.log(`[preload] currentMMR calculado: ${mmr} (${solo.tier} ${solo.division} ${solo.leaguePoints}LP)`);
+    }
+  }
+  
+  return result;
+};
 electronAPI.lcu.getGameflowPhase = async () => electronAPI.lcu.request('/lol-gameflow/v1/gameflow-phase', 'GET');
 electronAPI.lcu.getSession = async () => electronAPI.lcu.request('/lol-gameflow/v1/session', 'GET');
 electronAPI.lcu.getMatchHistory = async () => {
@@ -233,7 +267,7 @@ try {
     if (!info) return;
     
     // CONFIGURAÇÃO DE REDE: Use a mesma URL configurada acima
-    const HARDCODED_BACKEND_URL = 'https://lol-matchmaking-368951732227.southamerica-east1.run.app/';
+    const HARDCODED_BACKEND_URL = 'http://localhost:8080/';
     
     const backend = (process.env && process.env['BACKEND_URL']) ? String(process.env['BACKEND_URL']).replace(/\/+$/, '') : HARDCODED_BACKEND_URL;
     const url = backend.endsWith('/api') ? `${backend}/lcu/configure` : `${backend}/api/lcu/configure`;

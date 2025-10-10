@@ -153,7 +153,7 @@ export class PlayerSearchService {
     const tierValues: { [key: string]: number } = {
       'IRON': 800, 'BRONZE': 1000, 'SILVER': 1200, 'GOLD': 1400,
       'PLATINUM': 1700, 'EMERALD': 2000, 'DIAMOND': 2300,
-      'MASTER': 2600, 'GRANDMASTER': 2800, 'CHALLENGER': 3000
+      'MASTER': 2600, 'GRANDMASTER': 2900, 'CHALLENGER': 3200
     };
 
     const rankValues: { [key: string]: number } = {

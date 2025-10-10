@@ -497,8 +497,45 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
   }
 
   refresh() {
-    console.log('🔄 Iniciando atualização do leaderboard...');
+    console.log('🔄 Iniciando atualização do leaderboard (Riot API)...');
     this.updateLeaderboardStats();
+  }
+
+  refreshTotal() {
+    console.log('🔄 Iniciando refresh total (recalcular tudo das custom matches)...');
+    this.refreshTotalStats();
+  }
+
+  async refreshTotalStats() {
+    console.log('🔄 Recalculando todas as estatísticas baseado em custom matches...');
+    this.isLoading = true;
+    this.error = null;
+    this.cdr.markForCheck();
+
+    try {
+      // Chamar endpoint que recalcula tudo baseado em custom_matches
+      const response = await firstValueFrom(
+        this.http.post<any>(`${this.baseUrl}/stats/update-leaderboard`, {})
+      );
+
+      if (response.success) {
+        console.log(`✅ Refresh Total: ${response.updatedPlayers} jogadores atualizados`);
+        console.log(`✅ LP, W/L, KDA, Campeão favorito recalculados!`);
+
+        // Recarregar o leaderboard após atualizar
+        await this.loadLeaderboard(false);
+      } else {
+        this.error = 'Erro ao recalcular estatísticas';
+        this.cdr.markForCheck();
+      }
+    } catch (error) {
+      console.error('❌ Erro ao recalcular estatísticas:', error);
+      this.error = 'Erro ao conectar com o servidor';
+      this.cdr.markForCheck();
+    } finally {
+      this.isLoading = false;
+      this.cdr.markForCheck();
+    }
   }
 
   async updateLeaderboardStats() {

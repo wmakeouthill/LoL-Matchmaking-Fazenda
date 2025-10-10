@@ -439,8 +439,7 @@
                     font-size: 1.1rem;
                   "
                 >
-                  {{ currentPlayer.summonerName }}{{ currentPlayer.tagLine ? '#'
-                  + currentPlayer.tagLine : '' }}
+                  {{ currentPlayer.displayName || currentPlayer.summonerName }}
                 </h4>
                 <p
                   style="
