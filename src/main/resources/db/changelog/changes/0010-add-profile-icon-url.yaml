@@ -1,0 +1,20 @@
+databaseChangeLog:
+  - changeSet:
+      id: 0010-add-profile-icon-url
+      author: system
+      comment: Adiciona coluna profile_icon_url na tabela players para armazenar URL do ícone de perfil
+      changes:
+        - addColumn:
+            tableName: players
+            columns:
+              - column:
+                  name: profile_icon_url
+                  type: VARCHAR(255)
+                  remarks: URL do ícone de perfil do Data Dragon
+        - createIndex:
+            indexName: idx_profile_icon_url
+            tableName: players
+            columns:
+              - column:
+                  name: profile_icon_url
+

@@ -9,13 +9,6 @@
     "package.json",
     "!electron/assets/**/*"
   ],
-  "extraResources": [
-    {
-      "from": "frontend/dist",
-      "to": "frontend-dist",
-      "filter": ["**/*"]
-    }
-  ],
   "win": { 
     "icon": "build/icon.ico",
     "target": [

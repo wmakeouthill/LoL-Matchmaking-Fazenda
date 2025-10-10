@@ -13,6 +13,7 @@ interface LeaderboardPlayer {
   riot_id_game_name?: string;
   riot_id_tagline?: string;
   profileIconId?: number;
+  profileIconUrl?: string; // ✅ NOVO: URL do backend
   games_played: number;
   wins: number;
   win_rate: number;
@@ -188,6 +189,7 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
           riot_id_game_name: player.gameName ?? undefined,
           riot_id_tagline: player.tagLine ?? undefined,
           profileIconId: undefined,
+          profileIconUrl: player.profileIconUrl ?? undefined, // ✅ NOVO: Usar URL do backend
           calculated_mmr: player.customLp ?? 0,
           custom_mmr: player.customMmr ?? 0,
           lp: player.customLp ?? 0,
@@ -198,11 +200,12 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
           avg_assists: player.avgAssists ?? 0,
           kda_ratio: player.kdaRatio ?? 0,
           favorite_champion: player.favoriteChampion ? this.processFavoriteChampion(player.favoriteChampion, player.favoriteChampionGames) : null,
-          // Pré-processar profileIconUrl$ para evitar chamadas repetidas
+          // ✅ CORREÇÃO: Usar URL do backend se disponível, senão buscar do serviço
           profileIconUrl$: this.getPlayerProfileIconUrl({
             summoner_name: player.summonerName,
             riot_id_game_name: player.gameName,
-            riot_id_tagline: player.tagLine
+            riot_id_tagline: player.tagLine,
+            profileIconUrl: player.profileIconUrl
           } as LeaderboardPlayer),
           // Manter outros campos do player original se existirem
           avg_gold: player.avg_gold ?? 0,
@@ -370,6 +373,15 @@ export class LeaderboardComponent implements OnInit, OnDestroy {
   }
 
   getPlayerProfileIconUrl(player: LeaderboardPlayer): Observable<string> {
+    // ✅ CORREÇÃO: Se a URL já está disponível do backend, usá-la diretamente
+    if (player.profileIconUrl) {
+      return new Observable(observer => {
+        observer.next(player.profileIconUrl!);
+        observer.complete();
+      });
+    }
+
+    // Senão, buscar do serviço (fallback)
     const identifier = player.riot_id_game_name && player.riot_id_tagline
       ? `${player.riot_id_game_name}#${player.riot_id_tagline}`
       : player.summoner_name;

@@ -287,17 +287,29 @@ public class PlayerController {
                                 log.info("  - summonerId: {}", summonerId);
                                 log.info("  - puuid: {}", puuid);
 
+                                // ✅ NOVO: Extrair profileIconId do LCU
+                                Integer profileIconId = playerData.get("profileIconId") != null
+                                        ? (Integer) playerData.get("profileIconId")
+                                        : null;
+                                log.info("  - profileIconId: {}", profileIconId);
+
+                                // ✅ CORREÇÃO: Usar fullSummonerName para salvar (garantindo sessão individual)
+                                log.info("🔐 [PlayerController] Salvando dados para sessão individual: {}",
+                                        fullSummonerName);
+
                                 Player savedPlayer = playerService.createOrUpdatePlayerOnLogin(
                                         fullSummonerName,
                                         region,
                                         currentMmrFromLoL,
                                         summonerId,
-                                        puuid);
+                                        puuid,
+                                        profileIconId);
 
                                 // ✅ LOG DETALHADO: Ver player salvo
                                 log.info("✅ [PlayerController] Player salvo no banco:");
                                 log.info("  - ID: {}", savedPlayer.getId());
                                 log.info("  - summonerName: {}", savedPlayer.getSummonerName());
+                                log.info("  - profileIconUrl: {}", savedPlayer.getProfileIconUrl());
                                 log.info("  - current_mmr: {}", savedPlayer.getCurrentMmr());
                                 log.info("  - custom_lp: {}", savedPlayer.getCustomLp());
                                 log.info("  - custom_mmr: {}", savedPlayer.getCustomMmr());
@@ -311,7 +323,7 @@ public class PlayerController {
                                 playerDTO.setWins(savedPlayer.getWins());
                                 playerDTO.setLosses(savedPlayer.getLosses());
                                 response.put("player", playerDTO);
-                                
+
                                 // ✅ Também atualizar playerData para compatibilidade
                                 playerData.put("currentMMR", savedPlayer.getCurrentMmr());
                                 playerData.put("customLp", savedPlayer.getCustomMmr()); // Exibir custom_mmr

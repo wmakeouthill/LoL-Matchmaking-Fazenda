@@ -28,6 +28,9 @@ public class PlayerDTO {
     @PositiveOrZero(message = "Ícone de perfil deve ser positivo")
     private Integer profileIconId;
 
+    // ✅ NOVO: URL do ícone de perfil (Data Dragon)
+    private String profileIconUrl;
+
     private String tier;
     private String rank;
 
