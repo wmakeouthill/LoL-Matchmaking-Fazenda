@@ -289,12 +289,13 @@ public class MatchFoundService {
                 public void run() {
                     startDraft(matchId);
                 }
-            }, 3000);
+            }, 500); // ✅ REDIS: Reduzido de 3000ms → 500ms (apenas para garantir que broadcasts
+                     // foram enviados)
 
             // ✅ REDIS ONLY: Limpar dados do Redis após processar
             redisAcceptance.clearMatch(matchId);
 
-            log.info("✅ [MatchFound] Partida {} aceita por todos - iniciando draft em 3s", matchId);
+            log.info("✅ [MatchFound] Partida {} aceita por todos - iniciando draft em 0.5s", matchId);
 
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao processar aceitação completa", e);
@@ -503,8 +504,8 @@ public class MatchFoundService {
                     if (discordMatch != null) {
                         log.info("✅ [MatchFound] Canais Discord criados com sucesso");
 
-                        // Aguardar 2 segundos antes de mover os jogadores
-                        CompletableFuture.delayedExecutor(2, TimeUnit.SECONDS).execute(() -> {
+                        // ✅ REDIS: 250ms (canais Discord já criados, mover é rápido)
+                        CompletableFuture.delayedExecutor(250, TimeUnit.MILLISECONDS).execute(() -> {
                             try {
                                 log.info("🚚 [MatchFound] Movendo jogadores para canais de time...");
                                 discordService.movePlayersToTeamChannels(matchId);
@@ -574,14 +575,16 @@ public class MatchFoundService {
                 allPlayerNames.addAll(team1Names);
                 allPlayerNames.addAll(team2Names);
 
-                log.info("🎯 [ENVIO INDIVIDUALIZADO] Enviando draft_starting APENAS para {} jogadores específicos:", allPlayerNames.size());
+                log.info("🎯 [ENVIO INDIVIDUALIZADO] Enviando draft_starting APENAS para {} jogadores específicos:",
+                        allPlayerNames.size());
                 for (String playerName : allPlayerNames) {
                     log.info("  ✅ {}", playerName);
                 }
 
                 webSocketService.sendToPlayers("draft_starting", draftData, allPlayerNames);
 
-                log.info("✅ [MatchFound] Draft starting enviado APENAS para {} jogadores específicos ({} ações, {} team1, {} team2)",
+                log.info(
+                        "✅ [MatchFound] Draft starting enviado APENAS para {} jogadores específicos ({} ações, {} team1, {} team2)",
                         allPlayerNames.size(), actions.size(), team1Data.size(), team2Data.size());
 
             } catch (Exception e) {
@@ -756,7 +759,8 @@ public class MatchFoundService {
             allPlayerNames.addAll(team1.stream().map(QueuePlayer::getSummonerName).toList());
             allPlayerNames.addAll(team2.stream().map(QueuePlayer::getSummonerName).toList());
 
-            log.info("🎯 [ENVIO INDIVIDUALIZADO] Enviando match_found APENAS para {} jogadores específicos:", allPlayerNames.size());
+            log.info("🎯 [ENVIO INDIVIDUALIZADO] Enviando match_found APENAS para {} jogadores específicos:",
+                    allPlayerNames.size());
             for (String playerName : allPlayerNames) {
                 log.info("  ✅ {}", playerName);
             }

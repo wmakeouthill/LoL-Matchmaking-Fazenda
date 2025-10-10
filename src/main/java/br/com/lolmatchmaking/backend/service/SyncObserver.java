@@ -18,7 +18,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
-@Service
+// ❌ DESABILITADO: event_inbox removido - Redis 100% gerencia sincronização
+// @Service
 @RequiredArgsConstructor
 public class SyncObserver {
 

@@ -11,7 +11,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
 
-@RestController
+// ❌ DESABILITADO: event_inbox removido - Redis 100% gerencia sincronização
+// @RestController
 @RequestMapping("/api/internal/sync")
 @RequiredArgsConstructor
 public class SyncObserverController {
@@ -37,7 +38,8 @@ public class SyncObserverController {
     }
 
     /**
-     * Limpa eventos processados (apaga processed events e caches internos do observer).
+     * Limpa eventos processados (apaga processed events e caches internos do
+     * observer).
      */
     @PostMapping("/clear")
     public ResponseEntity<String> clearProcessed() {
