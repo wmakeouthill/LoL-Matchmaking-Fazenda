@@ -83,6 +83,10 @@
 
 /* ✅ NOVO: Auto-refresh Control */
 .auto-refresh-control {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
   padding: 12px 24px;
   background: rgba(255, 255, 255, 0.03);
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
@@ -107,6 +111,37 @@
 
 .checkbox-label:hover span {
   color: #0ac8b9;
+}
+
+/* ✅ NOVO: Botão de Atualização Manual */
+.manual-refresh-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: linear-gradient(135deg, #0ac8b9 0%, #08a497 100%);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.85rem;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.manual-refresh-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #08a497 0%, #06887c 100%);
+  transform: scale(1.05);
+}
+
+.manual-refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.manual-refresh-btn:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 /* Loading State */

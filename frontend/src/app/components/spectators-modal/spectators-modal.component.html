@@ -6,7 +6,7 @@
       <button class="close-btn" (click)="closeModal()">✕</button>
     </div>
 
-    <!-- ✅ NOVO: Auto-refresh Toggle -->
+    <!-- ✅ NOVO: Auto-refresh Toggle e Botão Manual -->
     <div class="auto-refresh-control">
       <label class="checkbox-label">
         <input
@@ -16,6 +16,15 @@
         />
         <span>🔄 Atualizar automaticamente (5s)</span>
       </label>
+      <button
+        class="manual-refresh-btn"
+        (click)="loadSpectators()"
+        [disabled]="loading"
+        title="Atualizar agora"
+      >
+        <span>🔄</span>
+        <span>Atualizar</span>
+      </button>
     </div>
 
     <!-- Loading State -->
@@ -27,19 +36,31 @@
     <!-- Error State -->
     <div *ngIf="error" class="error-state">
       <p>⚠️ {{ error }}</p>
-      <button class="retry-btn" (click)="loadSpectators()">Tentar novamente</button>
+      <button class="retry-btn" (click)="loadSpectators()">
+        Tentar novamente
+      </button>
     </div>
 
     <!-- Empty State -->
-    <div *ngIf="!loading && !error && spectators.length === 0" class="empty-state">
+    <div
+      *ngIf="!loading && !error && spectators.length === 0"
+      class="empty-state"
+    >
       <p>👻 Nenhum espectador assistindo</p>
       <small>Quando alguém entrar nos canais da partida, aparecerá aqui</small>
     </div>
 
     <!-- Spectators List -->
-    <div *ngIf="!loading && !error && spectators.length > 0" class="spectators-list">
+    <div
+      *ngIf="!loading && !error && spectators.length > 0"
+      class="spectators-list"
+    >
       <div class="spectators-count">
-        <span>{{ spectators.length }} espectador{{ spectators.length !== 1 ? 'es' : '' }}</span>
+        <span
+          >{{ spectators.length }} espectador{{
+            spectators.length !== 1 ? "es" : ""
+          }}</span
+        >
       </div>
 
       <div class="spectator-item" *ngFor="let spectator of spectators">
@@ -50,7 +71,10 @@
           <div class="spectator-details">
             <div class="spectator-name">{{ spectator.discordUsername }}</div>
             <div class="spectator-channel">
-              <span class="channel-badge" [ngClass]="getChannelBadgeClass(spectator.channelName)">
+              <span
+                class="channel-badge"
+                [ngClass]="getChannelBadgeClass(spectator.channelName)"
+              >
                 {{ spectator.channelName }}
               </span>
             </div>
@@ -62,7 +86,8 @@
             class="mute-btn"
             [class.muted]="spectator.isMuted"
             (click)="toggleMute(spectator)"
-            [title]="getMuteText(spectator.isMuted)">
+            [title]="getMuteText(spectator.isMuted)"
+          >
             <span class="icon">{{ getMuteIcon(spectator.isMuted) }}</span>
             <span class="text">{{ getMuteText(spectator.isMuted) }}</span>
           </button>

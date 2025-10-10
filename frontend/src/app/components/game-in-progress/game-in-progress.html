@@ -25,8 +25,12 @@
       <div class="team-header">
         <h3 [style.color]="getTeamColor('blue')">{{ getTeamName('blue') }}</h3>
         <div class="team-status" *ngIf="selectedWinner">
-          <span class="winner-badge" *ngIf="selectedWinner === 'blue'">🏆 VITÓRIA</span>
-          <span class="loser-badge" *ngIf="selectedWinner === 'red'">💀 DERROTA</span>
+          <span class="winner-badge" *ngIf="selectedWinner === 'blue'"
+            >🏆 VITÓRIA</span
+          >
+          <span class="loser-badge" *ngIf="selectedWinner === 'red'"
+            >💀 DERROTA</span
+          >
         </div>
       </div>
 
@@ -37,21 +41,33 @@
         </div>
         <div class="bans-list">
           <div class="ban-item" *ngFor="let ban of getTeamBans('blue')">
-            <span class="ban-champion" *ngIf="ban.champion">{{ ban.champion.name || ban.championName || 'Campeão'
-              }}</span>
-            <span class="ban-champion" *ngIf="!ban.champion && ban.championId">ID: {{ ban.championId }}</span>
+            <span class="ban-champion" *ngIf="ban.champion"
+              >{{ ban.champion.name || ban.championName || 'Campeão' }}</span
+            >
+            <span class="ban-champion" *ngIf="!ban.champion && ban.championId"
+              >ID: {{ ban.championId }}</span
+            >
           </div>
         </div>
       </div>
 
-  <!-- Picks removidos da área superior: exibidos apenas nos cards dos jogadores -->
+      <!-- Picks removidos da área superior: exibidos apenas nos cards dos jogadores -->
 
       <div class="team-players">
-        <div class="player" *ngFor="let player of getTeamPlayers('blue')"
-          [class.current-player]="currentPlayer && player.id === currentPlayer.id">
+        <div
+          class="player"
+          *ngFor="let player of getTeamPlayers('blue')"
+          [class.current-player]="currentPlayer && player.id === currentPlayer.id"
+        >
           <div class="player-lane">
-            <span class="lane-icon">{{ getLaneIcon(player.assignedLane || player.lane || player.role) }}</span>
-            <span class="lane-name">{{ getLaneName(player.assignedLane || player.lane || player.role) }}</span>
+            <span class="lane-icon"
+              >{{ getLaneIcon(player.assignedLane || player.lane || player.role)
+              }}</span
+            >
+            <span class="lane-name"
+              >{{ getLaneName(player.assignedLane || player.lane || player.role)
+              }}</span
+            >
             <span
               class="lane-badge"
               [ngClass]="{
@@ -66,19 +82,49 @@
           </div>
           <div class="player-info">
             <ng-container *ngIf="!isPlayerBot(player); else botIcon">
-              <img *ngIf="getProfileIconUrlIfHuman(player) | async as iconUrl" [src]="iconUrl" width="24" height="24"
-                style="border-radius:50%;margin-right:6px;vertical-align:middle;" alt="Ícone de perfil" />
+              <img
+                *ngIf="getProfileIconUrlIfHuman(player) | async as iconUrl"
+                [src]="iconUrl"
+                width="24"
+                height="24"
+                style="
+                  border-radius: 50%;
+                  margin-right: 6px;
+                  vertical-align: middle;
+                "
+                alt="Ícone de perfil"
+              />
             </ng-container>
             <ng-template #botIcon>
-              <img src="/assets/images/champion-placeholder.svg" width="24" height="24"
-                style="border-radius:50%;margin-right:6px;vertical-align:middle;opacity:0.5;" alt="Bot" />
+              <img
+                src="/assets/images/champion-placeholder.svg"
+                width="24"
+                height="24"
+                style="
+                  border-radius: 50%;
+                  margin-right: 6px;
+                  vertical-align: middle;
+                  opacity: 0.5;
+                "
+                alt="Bot"
+              />
             </ng-template>
-            <span class="player-name">{{ player.summonerName || player.name }}</span>
+            <span class="player-name"
+              >{{ player.summonerName || player.name }}</span
+            >
           </div>
-          <div class="player-champion" *ngIf="player.championName || player.champion">
-            <span class="champion-name">🏆 {{ player.championName || player.champion?.name }}</span>
+          <div
+            class="player-champion"
+            *ngIf="player.championName || player.champion"
+          >
+            <span class="champion-name"
+              >🏆 {{ player.championName || player.champion?.name }}</span
+            >
           </div>
-          <div class="player-champion" *ngIf="!player.championName && !player.champion">
+          <div
+            class="player-champion"
+            *ngIf="!player.championName && !player.champion"
+          >
             <span class="champion-placeholder">⚔️ Campeão não selecionado</span>
           </div>
         </div>
@@ -87,17 +133,19 @@
 
     <div class="vs-divider">
       <span class="vs-text">VS</span>
-      <div class="game-duration-display">
-        {{ getGameDurationFormatted() }}
-      </div>
+      <div class="game-duration-display">{{ getGameDurationFormatted() }}</div>
     </div>
 
     <div class="team team-red" [style.border-color]="getTeamColor('red')">
       <div class="team-header">
         <h3 [style.color]="getTeamColor('red')">{{ getTeamName('red') }}</h3>
         <div class="team-status" *ngIf="selectedWinner">
-          <span class="winner-badge" *ngIf="selectedWinner === 'red'">🏆 VITÓRIA</span>
-          <span class="loser-badge" *ngIf="selectedWinner === 'blue'">💀 DERROTA</span>
+          <span class="winner-badge" *ngIf="selectedWinner === 'red'"
+            >🏆 VITÓRIA</span
+          >
+          <span class="loser-badge" *ngIf="selectedWinner === 'blue'"
+            >💀 DERROTA</span
+          >
         </div>
       </div>
 
@@ -108,21 +156,33 @@
         </div>
         <div class="bans-list">
           <div class="ban-item" *ngFor="let ban of getTeamBans('red')">
-            <span class="ban-champion" *ngIf="ban.champion">{{ ban.champion.name || ban.championName || 'Campeão'
-              }}</span>
-            <span class="ban-champion" *ngIf="!ban.champion && ban.championId">ID: {{ ban.championId }}</span>
+            <span class="ban-champion" *ngIf="ban.champion"
+              >{{ ban.champion.name || ban.championName || 'Campeão' }}</span
+            >
+            <span class="ban-champion" *ngIf="!ban.champion && ban.championId"
+              >ID: {{ ban.championId }}</span
+            >
           </div>
         </div>
       </div>
 
-  <!-- Picks removidos da área superior: exibidos apenas nos cards dos jogadores -->
+      <!-- Picks removidos da área superior: exibidos apenas nos cards dos jogadores -->
 
       <div class="team-players">
-        <div class="player" *ngFor="let player of getTeamPlayers('red')"
-          [class.current-player]="currentPlayer && player.id === currentPlayer.id">
+        <div
+          class="player"
+          *ngFor="let player of getTeamPlayers('red')"
+          [class.current-player]="currentPlayer && player.id === currentPlayer.id"
+        >
           <div class="player-lane">
-            <span class="lane-icon">{{ getLaneIcon(player.assignedLane || player.lane || player.role) }}</span>
-            <span class="lane-name">{{ getLaneName(player.assignedLane || player.lane || player.role) }}</span>
+            <span class="lane-icon"
+              >{{ getLaneIcon(player.assignedLane || player.lane || player.role)
+              }}</span
+            >
+            <span class="lane-name"
+              >{{ getLaneName(player.assignedLane || player.lane || player.role)
+              }}</span
+            >
             <span
               class="lane-badge"
               [ngClass]="{
@@ -137,19 +197,49 @@
           </div>
           <div class="player-info">
             <ng-container *ngIf="!isPlayerBot(player); else botIconRed">
-              <img *ngIf="getProfileIconUrlIfHuman(player) | async as iconUrl" [src]="iconUrl" width="24" height="24"
-                style="border-radius:50%;margin-right:6px;vertical-align:middle;" alt="Ícone de perfil" />
+              <img
+                *ngIf="getProfileIconUrlIfHuman(player) | async as iconUrl"
+                [src]="iconUrl"
+                width="24"
+                height="24"
+                style="
+                  border-radius: 50%;
+                  margin-right: 6px;
+                  vertical-align: middle;
+                "
+                alt="Ícone de perfil"
+              />
             </ng-container>
             <ng-template #botIconRed>
-              <img src="/assets/images/champion-placeholder.svg" width="24" height="24"
-                style="border-radius:50%;margin-right:6px;vertical-align:middle;opacity:0.5;" alt="Bot" />
+              <img
+                src="/assets/images/champion-placeholder.svg"
+                width="24"
+                height="24"
+                style="
+                  border-radius: 50%;
+                  margin-right: 6px;
+                  vertical-align: middle;
+                  opacity: 0.5;
+                "
+                alt="Bot"
+              />
             </ng-template>
-            <span class="player-name">{{ player.summonerName || player.name }}</span>
+            <span class="player-name"
+              >{{ player.summonerName || player.name }}</span
+            >
           </div>
-          <div class="player-champion" *ngIf="player.championName || player.champion">
-            <span class="champion-name">🏆 {{ player.championName || player.champion?.name }}</span>
+          <div
+            class="player-champion"
+            *ngIf="player.championName || player.champion"
+          >
+            <span class="champion-name"
+              >🏆 {{ player.championName || player.champion?.name }}</span
+            >
           </div>
-          <div class="player-champion" *ngIf="!player.championName && !player.champion">
+          <div
+            class="player-champion"
+            *ngIf="!player.championName && !player.champion"
+          >
             <span class="champion-placeholder">⚔️ Campeão não selecionado</span>
           </div>
         </div>
@@ -161,7 +251,9 @@
     <div class="status-card">
       <div class="status-item">
         <span class="status-label">Status:</span>
-        <span class="status-value" [class]="gameStatus">{{ getGameStatusText() }}</span>
+        <span class="status-value" [class]="gameStatus"
+          >{{ getGameStatusText() }}</span
+        >
       </div>
 
       <div class="status-item" *ngIf="gameStartTime">
@@ -190,23 +282,28 @@
     </div>
   </div>
 
-
   <!-- Settings Section -->
   <div class="settings-section">
     <div class="settings-card">
       <h4>Vincular Partida do League of Legends</h4>
       <div class="setting-item">
         <div class="detection-buttons">
-          <button class="btn btn-outline retry-detection-btn" (click)="retryAutoDetection()"
-            [disabled]="isAutoDetecting">
+          <button
+            class="btn btn-outline retry-detection-btn"
+            (click)="retryAutoDetection()"
+            [disabled]="isAutoDetecting"
+          >
             <span class="btn-icon" *ngIf="!isAutoDetecting">🔍</span>
             <span class="btn-icon spinning" *ngIf="isAutoDetecting">⏳</span>
-            <span *ngIf="!isAutoDetecting">Vincular Partida do Discord à Partida do League of Legends</span>
+            <span *ngIf="!isAutoDetecting"
+              >Vincular Partida do Discord à Partida do League of Legends</span
+            >
             <span *ngIf="isAutoDetecting">Carregando partidas...</span>
           </button>
         </div>
         <p class="setting-description">
-          Busca as últimas 3 partidas personalizadas do histórico e permite selecionar qual corresponde a esta partida.
+          Busca as últimas 3 partidas personalizadas do histórico e permite
+          selecionar qual corresponde a esta partida.
         </p>
       </div>
     </div>
@@ -229,13 +326,15 @@
   <!-- Debug Info (only in development) -->
   <div class="debug-section" *ngIf="false">
     <h4>Debug Info</h4>
-    <pre>{{ {
+    <pre>
+{{ {
       gameStatus: gameStatus,
       lcuDetected: lcuGameDetected,
       selectedWinner: selectedWinner,
       gameDuration: gameDuration,
       lcuEnabled: lcuDetectionEnabled
-    } | json }}</pre>
+    } | json }}</pre
+    >
   </div>
 
   <!-- ❌ REMOVIDO: Match Confirmation Modal (detecção automática) -->
@@ -246,12 +345,16 @@
         <button class="close-btn">×</button>
       </div>
 
-      <div class="modal-content"> <!-- Match Information -->
+      <div class="modal-content">
+        <!-- Match Information -->
         <div class="match-info-section">
           <div class="confidence-indicator">
-            <div class="confidence-badge" [class.high-confidence]="matchComparisonResult.confidence >= 80"
+            <div
+              class="confidence-badge"
+              [class.high-confidence]="matchComparisonResult.confidence >= 80"
               [class.medium-confidence]="matchComparisonResult.confidence >= 50 && matchComparisonResult.confidence < 80"
-              [class.low-confidence]="matchComparisonResult.confidence < 50">
+              [class.low-confidence]="matchComparisonResult.confidence < 50"
+            >
               {{ matchComparisonResult.confidence }}% de similaridade
             </div>
             <p class="confidence-reason">{{ matchComparisonResult.reason }}</p>
@@ -259,7 +362,10 @@
             <!-- Live linking status -->
             <div class="live-linking-status" *ngIf="currentLiveMatchId">
               <span class="live-indicator">🔗 VINCULADA AUTOMATICAMENTE</span>
-              <p class="live-description">Esta partida foi detectada e vinculada automaticamente durante o jogo.</p>
+              <p class="live-description">
+                Esta partida foi detectada e vinculada automaticamente durante o
+                jogo.
+              </p>
             </div>
           </div>
 
@@ -267,21 +373,31 @@
             <h4>Detalhes da Partida do LoL:</h4>
             <div class="match-detail-row">
               <span class="label">Data/Hora:</span>
-              <span class="value">{{ formatLCUMatchDate(detectedLCUMatch.gameCreation) }}</span>
+              <span class="value"
+                >{{ formatLCUMatchDate(detectedLCUMatch.gameCreation) }}</span
+              >
             </div>
             <div class="match-detail-row">
               <span class="label">Duração:</span>
-              <span class="value">{{ formatGameDuration(detectedLCUMatch.gameDuration) }}</span>
+              <span class="value"
+                >{{ formatGameDuration(detectedLCUMatch.gameDuration) }}</span
+              >
             </div>
             <div class="match-detail-row">
               <span class="label">ID da Partida:</span>
               <span class="value">{{ detectedLCUMatch.gameId }}</span>
             </div>
-            <div class="match-detail-row" *ngIf="getLCUMatchWinner(detectedLCUMatch)">
+            <div
+              class="match-detail-row"
+              *ngIf="getLCUMatchWinner(detectedLCUMatch)"
+            >
               <span class="label">Vencedor:</span>
-              <span class="value winner"
-                [style.color]="getLCUMatchWinner(detectedLCUMatch) === 'blue' ? '#4FC3F7' : '#F44336'">
-                Time {{ getLCUMatchWinner(detectedLCUMatch) === 'blue' ? 'Azul' : 'Vermelho' }} 🏆
+              <span
+                class="value winner"
+                [style.color]="getLCUMatchWinner(detectedLCUMatch) === 'blue' ? '#4FC3F7' : '#F44336'"
+              >
+                Time {{ getLCUMatchWinner(detectedLCUMatch) === 'blue' ? 'Azul'
+                : 'Vermelho' }} 🏆
               </span>
             </div>
           </div>
@@ -320,18 +436,30 @@
               <h5>Partida Detectada do LoL:</h5>
               <div class="team-comparison-row">
                 <div class="team-comp team-blue">
-                  <strong>Time {{ detectedLCUMatch.teams?.[0]?.teamId === 100 ? 'Azul' : 'Vermelho' }}:</strong>
+                  <strong
+                    >Time {{ detectedLCUMatch.teams?.[0]?.teamId === 100 ?
+                    'Azul' : 'Vermelho' }}:</strong
+                  >
                   <ul class="champion-list">
-                    <li *ngFor="let participant of getLCUTeamParticipants(detectedLCUMatch, 100)">
-                      {{ getChampionNameById(participant.championId) || 'Champion ' + participant.championId }}
+                    <li
+                      *ngFor="let participant of getLCUTeamParticipants(detectedLCUMatch, 100)"
+                    >
+                      {{ getChampionNameById(participant.championId) ||
+                      'Champion ' + participant.championId }}
                     </li>
                   </ul>
                 </div>
                 <div class="team-comp team-red">
-                  <strong>Time {{ detectedLCUMatch.teams?.[1]?.teamId === 200 ? 'Vermelho' : 'Azul' }}:</strong>
+                  <strong
+                    >Time {{ detectedLCUMatch.teams?.[1]?.teamId === 200 ?
+                    'Vermelho' : 'Azul' }}:</strong
+                  >
                   <ul class="champion-list">
-                    <li *ngFor="let participant of getLCUTeamParticipants(detectedLCUMatch, 200)">
-                      {{ getChampionNameById(participant.championId) || 'Champion ' + participant.championId }}
+                    <li
+                      *ngFor="let participant of getLCUTeamParticipants(detectedLCUMatch, 200)"
+                    >
+                      {{ getChampionNameById(participant.championId) ||
+                      'Champion ' + participant.championId }}
                     </li>
                   </ul>
                 </div>
@@ -346,15 +474,24 @@
             <strong>Esta é a partida que você acabou de jogar?</strong>
           </p>
           <p class="confirmation-subtitle">
-            Se confirmar, o resultado desta partida será aplicado ao seu jogo no aplicativo.
+            Se confirmar, o resultado desta partida será aplicado ao seu jogo no
+            aplicativo.
           </p>
         </div>
       </div>
       <div class="modal-actions">
-        <button class="btn btn-primary" (click)="confirmDetectedMatch()" [disabled]="!detectedLCUMatch">
+        <button
+          class="btn btn-primary"
+          (click)="confirmDetectedMatch()"
+          [disabled]="!detectedLCUMatch"
+        >
           <span class="btn-icon">✅</span>
-          <span *ngIf="getLCUMatchWinner(detectedLCUMatch)">Sim, Esta é a Partida</span>
-          <span *ngIf="!getLCUMatchWinner(detectedLCUMatch)">Confirmar (Declarar Vencedor Manualmente)</span>
+          <span *ngIf="getLCUMatchWinner(detectedLCUMatch)"
+            >Sim, Esta é a Partida</span
+          >
+          <span *ngIf="!getLCUMatchWinner(detectedLCUMatch)"
+            >Confirmar (Declarar Vencedor Manualmente)</span
+          >
         </button>
         <button class="btn btn-secondary" (click)="rejectDetectedMatch()">
           <span class="btn-icon">❌</span>
@@ -371,20 +508,21 @@
   <!-- ✅ NOVO: Modal de Confirmação de Vencedor Manual -->
   <app-winner-confirmation-modal
     *ngIf="showWinnerConfirmationModal"
-    [matchId]="gameData?.matchId || null"
+    [matchId]="matchId || null"
     [customMatches]="customMatchesForConfirmation"
     [currentPlayers]="getAllPlayers()"
     [currentPlayer]="currentPlayer"
     (onConfirm)="onWinnerConfirmed($event)"
-    (onCancel)="onWinnerConfirmationCancelled()">
+    (onCancel)="onWinnerConfirmationCancelled()"
+  >
   </app-winner-confirmation-modal>
 
   <!-- ✅ NOVO: Modal de Espectadores -->
   <app-spectators-modal
     *ngIf="showSpectatorsModal"
-    [matchId]="gameData?.id"
+    [matchId]="matchId"
     [summonerName]="summonerName"
-    (closed)="closeSpectatorsModal()">
+    (closed)="closeSpectatorsModal()"
+  >
   </app-spectators-modal>
 </div>
-
