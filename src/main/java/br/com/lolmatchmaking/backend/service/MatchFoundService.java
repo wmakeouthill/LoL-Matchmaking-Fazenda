@@ -35,6 +35,9 @@ public class MatchFoundService {
     // ✅ NOVO: Redis para aceitação distribuída
     private final RedisMatchAcceptanceService redisAcceptance;
 
+    // ✅ NOVO: Redis para mapear jogadores → partidas ativas (OWNERSHIP)
+    private final br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch;
+
     // Constructor manual para @Lazy
     public MatchFoundService(
             QueuePlayerRepository queuePlayerRepository,
@@ -43,7 +46,8 @@ public class MatchFoundService {
             @Lazy QueueManagementService queueManagementService,
             DraftFlowService draftFlowService,
             DiscordService discordService,
-            RedisMatchAcceptanceService redisAcceptance) {
+            RedisMatchAcceptanceService redisAcceptance,
+            br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch) {
         this.queuePlayerRepository = queuePlayerRepository;
         this.customMatchRepository = customMatchRepository;
         this.webSocketService = webSocketService;
@@ -51,6 +55,7 @@ public class MatchFoundService {
         this.draftFlowService = draftFlowService;
         this.discordService = discordService;
         this.redisAcceptance = redisAcceptance;
+        this.redisPlayerMatch = redisPlayerMatch;
     }
 
     // ✅ REMOVIDO: HashMap local removido - Redis é fonte única da verdade
@@ -114,6 +119,13 @@ public class MatchFoundService {
                 log.info("✅ [VALIDAÇÃO REDIS] Dados salvos corretamente:");
                 log.info("  ✅ AllPlayers: 10 | Team1: 5 | Team2: 5");
             }
+
+            // ✅ NOVO: Registrar players → matchId (OWNERSHIP)
+            log.info("📝 [OWNERSHIP] Registrando {} jogadores na partida {}", allPlayers.size(), match.getId());
+            for (QueuePlayer player : allPlayers) {
+                redisPlayerMatch.registerPlayerMatch(player.getSummonerName(), match.getId());
+            }
+            log.info("✅ [OWNERSHIP] Todos os jogadores registrados com sucesso");
 
             // Notificar match found
             notifyMatchFound(match, team1, team2);

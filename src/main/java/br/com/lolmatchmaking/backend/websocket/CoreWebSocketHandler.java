@@ -69,6 +69,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
     // ✅ NOVO: Redis services
     private final RedisWebSocketSessionService redisWSSession;
     private final RedisLCUConnectionService redisLCUConnection;
+    private final br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch;
 
     // ✅ DEPRECIADO: Migrado para Redis (backward compatibility)
     // ✅ REMOVIDO: identifiedPlayers e lastLcuStatus - Redis é fonte única da
@@ -520,6 +521,14 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             session.sendMessage(new TextMessage("{\"type\":\"draft_action_result\",\"success\":false}"));
             return;
         }
+
+        // ✅ CRÍTICO: Validar ownership antes de processar ação
+        if (!redisPlayerMatch.validateOwnership(byPlayer, matchId)) {
+            log.warn("🚫 [SEGURANÇA] Jogador {} tentou acessar draft de match {} sem ownership!", byPlayer, matchId);
+            session.sendMessage(new TextMessage("{\"type\":\"draft_action_result\",\"success\":false,\"error\":\"unauthorized\"}"));
+            return;
+        }
+
         boolean ok = draftFlowService.processAction(matchId, actionIndex, championId, byPlayer);
         session.sendMessage(new TextMessage("{\"type\":\"draft_action_result\",\"success\":" + ok + "}"));
     }
@@ -532,16 +541,36 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             session.sendMessage(new TextMessage("{\"type\":\"draft_confirm_result\",\"success\":false}"));
             return;
         }
+
+        // ✅ CRÍTICO: Validar ownership antes de confirmar
+        if (!redisPlayerMatch.validateOwnership(playerId, matchId)) {
+            log.warn("🚫 [SEGURANÇA] Jogador {} tentou confirmar draft de match {} sem ownership!", playerId, matchId);
+            session.sendMessage(new TextMessage("{\"type\":\"draft_confirm_result\",\"success\":false,\"error\":\"unauthorized\"}"));
+            return;
+        }
+
         draftFlowService.confirmDraft(matchId, playerId);
         session.sendMessage(new TextMessage("{\"type\":\"draft_confirm_result\",\"success\":true}"));
     }
 
     private void handleDraftSnapshot(WebSocketSession session, JsonNode root) throws IOException {
         long matchId = root.path("data").path(FIELD_MATCH_ID).asLong(-1);
+        String playerId = root.path("data").path(FIELD_PLAYER_ID).asText(null);
+        
         if (matchId <= 0) {
             session.sendMessage(new TextMessage("{\"type\":\"draft_snapshot\",\"success\":false}"));
             return;
         }
+
+        // ✅ CRÍTICO: Validar ownership se playerId fornecido
+        if (playerId != null && !playerId.isEmpty()) {
+            if (!redisPlayerMatch.validateOwnership(playerId, matchId)) {
+                log.warn("🚫 [SEGURANÇA] Jogador {} tentou acessar snapshot de match {} sem ownership!", playerId, matchId);
+                session.sendMessage(new TextMessage("{\"type\":\"draft_snapshot\",\"success\":false,\"error\":\"unauthorized\"}"));
+                return;
+            }
+        }
+
         var snap = draftFlowService.snapshot(matchId);
         session.sendMessage(new TextMessage(mapper.writeValueAsString(Map.of(
                 "type", "draft_snapshot",
