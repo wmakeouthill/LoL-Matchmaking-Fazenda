@@ -31,14 +31,9 @@ function sanitizeForLog(value) {
 }
 
 function appendLogLine(line) {
-  // ✅ LOGS EM ARQUIVO TEMPORARIAMENTE REATIVADOS PARA DEBUG
-  try {
-    const LOG_FILE = path.join(__dirname, '..', 'electron-console.log');
-    const ts = new Date().toISOString();
-    fs.appendFileSync(LOG_FILE, ts + ' ' + line + '\n', { encoding: 'utf8' });
-  } catch (e) {
-    // ignore file errors
-  }
+  // ⚠️ LOGS DESABILITADOS - Não criar arquivos .log na raiz
+  // Os logs continuam no console, mas não são salvos em arquivo
+  return; // Desabilitado
 }
 
 function safeLog(...args) {
@@ -95,7 +90,7 @@ async function pickBackendUrl() {
   // Para rede local: 'http://192.168.1.5:8080/' (seu IP)
   // Para cloud: 'https://seu-app.run.app/'
   // ✅ CORREÇÃO: URL correta do Cloud Run (nome do serviço é 'lol-matchmaking')
-  const HARDCODED_BACKEND_URL = 'http://localhost:8080/';
+  const HARDCODED_BACKEND_URL = 'https://lol-matchmaking-368951732227.southamerica-east1.run.app/';
   
   const env = process.env.BACKEND_URL || '';
   const defaultBase = env || HARDCODED_BACKEND_URL;

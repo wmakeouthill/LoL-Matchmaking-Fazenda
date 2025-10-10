@@ -2,15 +2,11 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const fs = require('fs');
 const path = require('path');
-const LOG_FILE = path.join(__dirname, '..', 'electron.log');
 
+// ⚠️ LOGS DESABILITADOS - Não criar arquivos .log na raiz
 function appendLogLinePre(line) {
-  try {
-    const ts = new Date().toISOString();
-    fs.appendFileSync(LOG_FILE, ts + ' ' + line + '\n', { encoding: 'utf8' });
-  } catch (e) {
-    // best effort
-  }
+  // Os logs continuam no console, mas não são salvos em arquivo
+  return; // Desabilitado
 }
 
 function sanitizeBody(b) {
@@ -64,7 +60,7 @@ const electronAPI = {
     // Para testes locais: 'http://localhost:8080'
     // Para rede local: 'http://192.168.1.5:8080' (seu IP)
     // Para cloud: 'https://seu-app.run.app'
-    const HARDCODED_BACKEND_URL = 'http://localhost:8080/';
+    const HARDCODED_BACKEND_URL = 'https://lol-matchmaking-368951732227.southamerica-east1.run.app/';
     
     // If BACKEND_URL is provided in the environment, normalize it and return
     const raw = (process.env && process.env['BACKEND_URL']) ? String(process.env['BACKEND_URL']).replace(/\/+$/, '') : null;
@@ -237,7 +233,7 @@ try {
     if (!info) return;
     
     // CONFIGURAÇÃO DE REDE: Use a mesma URL configurada acima
-    const HARDCODED_BACKEND_URL = 'http://localhost:8080/';
+    const HARDCODED_BACKEND_URL = 'https://lol-matchmaking-368951732227.southamerica-east1.run.app/';
     
     const backend = (process.env && process.env['BACKEND_URL']) ? String(process.env['BACKEND_URL']).replace(/\/+$/, '') : HARDCODED_BACKEND_URL;
     const url = backend.endsWith('/api') ? `${backend}/lcu/configure` : `${backend}/api/lcu/configure`;

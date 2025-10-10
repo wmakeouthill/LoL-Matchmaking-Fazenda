@@ -17,6 +17,7 @@
     }
   ],
   "win": { 
+    "icon": "build/icon.ico",
     "target": [
       {
         "target": "portable",
@@ -25,12 +26,16 @@
     ]
   },
   "linux": { 
+    "icon": "build/icon.png",
     "target": "AppImage"
   },
   "mac": { 
+    "icon": "build/icon.png",
     "target": "dmg"
   },
   "portable": {
-    "artifactName": "LOL-Matchmaking-Portable.exe"
+    "artifactName": "LOL-Matchmaking-Portable.exe",
+    "unpackDirName": "LOL-Matchmaking",
+    "compression": "store"
   }
 }
