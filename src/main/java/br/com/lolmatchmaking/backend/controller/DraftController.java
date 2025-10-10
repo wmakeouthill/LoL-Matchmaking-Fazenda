@@ -16,7 +16,10 @@ import java.util.Map;
 @RequestMapping("/api")
 @RequiredArgsConstructor
 public class DraftController {
+    // ⚠️ LEGADO: DraftService está sendo substituído por DraftFlowService
+    @Deprecated(forRemoval = true)
     private final DraftService draftService;
+
     private final br.com.lolmatchmaking.backend.service.DraftFlowService draftFlowService;
     private static final String KEY_ERROR = "error";
     private static final String KEY_SUCCESS = "success";
@@ -24,6 +27,12 @@ public class DraftController {
     record ConfirmSyncRequest(Long matchId, String playerId, Integer actionIndex, String summonerName) {
     }
 
+    /**
+     * ⚠️ LEGADO - Endpoint antigo, use /match/draft-action ao invés
+     * 
+     * @deprecated Use /match/draft-action
+     */
+    @Deprecated(forRemoval = true)
     @PostMapping("/draft/sync-confirm")
     public ResponseEntity<Map<String, Object>> confirmSync(
             @RequestBody ConfirmSyncRequest req,
@@ -61,6 +70,13 @@ public class DraftController {
     record ConfirmDraftRequest(Long matchId, String playerId, String summonerName) {
     }
 
+    /**
+     * ⚠️ LEGADO - Endpoint antigo, use /match/{matchId}/confirm-final-draft ao
+     * invés
+     * 
+     * @deprecated Use /match/{matchId}/confirm-final-draft
+     */
+    @Deprecated(forRemoval = true)
     @PostMapping("/match/confirm-draft")
     public ResponseEntity<Map<String, Object>> confirmDraft(
             @RequestBody ConfirmDraftRequest req,
@@ -104,6 +120,12 @@ public class DraftController {
         return ResponseEntity.ok(snapshot);
     }
 
+    /**
+     * ⚠️ LEGADO - Endpoint antigo
+     * 
+     * @deprecated Status de confirmação agora via WebSocket
+     */
+    @Deprecated(forRemoval = true)
     @GetMapping("/match/{matchId}/confirmation-status")
     public ResponseEntity<Map<String, Object>> confirmationStatus(@PathVariable Long matchId) {
         return ResponseEntity.ok(Map.of("confirmationData", draftService.confirmationStatus(matchId)));
@@ -112,6 +134,9 @@ public class DraftController {
     record ChangePickRequest(Long matchId, String playerId, String championId, String summonerName) {
     }
 
+    /**
+     * ✅ ATUALIZADO: Chama DraftFlowService diretamente
+     */
     @PostMapping("/match/change-pick")
     public ResponseEntity<Map<String, Object>> changePick(
             @RequestBody ChangePickRequest req,
@@ -137,7 +162,8 @@ public class DraftController {
                         .body(Map.of(KEY_ERROR, "matchId, playerId e championId são obrigatórios"));
             }
 
-            draftService.changePick(req.matchId(), req.playerId(), req.championId());
+            // ✅ MIGRADO: Chama DraftFlowService diretamente (não mais DraftService)
+            draftFlowService.changePick(req.matchId(), req.playerId(), req.championId());
             return ResponseEntity.ok(Map.of(KEY_SUCCESS, true));
 
         } catch (Exception e) {
@@ -147,10 +173,13 @@ public class DraftController {
         }
     }
 
-    // ✅ NOVO: Endpoint para editar picks no modal de confirmação
+    // ✅ ATUALIZADO: Endpoint para editar picks no modal de confirmação
     record ChangePickPathRequest(String playerId, Integer championId, Boolean confirmed, String summonerName) {
     }
 
+    /**
+     * ✅ ATUALIZADO: Chama DraftFlowService diretamente
+     */
     @PostMapping("/draft/{matchId}/changePick")
     public ResponseEntity<Map<String, Object>> changePickPath(
             @PathVariable Long matchId,
@@ -177,7 +206,8 @@ public class DraftController {
                         .body(Map.of(KEY_ERROR, "playerId e championId são obrigatórios"));
             }
 
-            draftService.changePick(matchId, req.playerId(), String.valueOf(req.championId()));
+            // ✅ MIGRADO: Chama DraftFlowService diretamente (não mais DraftService)
+            draftFlowService.changePick(matchId, req.playerId(), String.valueOf(req.championId()));
             return ResponseEntity.ok(Map.of(KEY_SUCCESS, true));
 
         } catch (Exception e) {

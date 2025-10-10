@@ -17,6 +17,29 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+/**
+ * ⚠️ ORQUESTRADOR LEGADO - SUBSTITUÍDO
+ * 
+ * Este orquestrador foi substituído pelo fluxo:
+ * QueueManagementService → MatchFoundService → DraftFlowService →
+ * GameInProgressService
+ * 
+ * PROBLEMA:
+ * - Usa AcceptanceService (legado)
+ * - Usa MatchmakingService (legado)
+ * - Usa QueueService (legado)
+ * 
+ * FLUXO NOVO (ATIVO):
+ * 1. QueueManagementService.processQueue() - processa fila do SQL
+ * 2. MatchFoundService.createMatchForAcceptance() - cria no Redis
+ * 3. DraftFlowService.startDraft() - inicia draft
+ * 4. GameInProgressService.startGame() - inicia jogo
+ * 
+ * STATUS: Mantido por compatibilidade, mas NÃO é usado no fluxo principal
+ * 
+ * @deprecated Use QueueManagementService + MatchFoundService ao invés
+ */
+@Deprecated(forRemoval = true)
 @Component
 @RequiredArgsConstructor
 @Slf4j

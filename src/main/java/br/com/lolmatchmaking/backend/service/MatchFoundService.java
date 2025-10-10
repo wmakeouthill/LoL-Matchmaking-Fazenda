@@ -18,7 +18,6 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -33,6 +32,9 @@ public class MatchFoundService {
     private final DraftFlowService draftFlowService;
     private final DiscordService discordService;
 
+    // ✅ NOVO: Redis para aceitação distribuída
+    private final RedisMatchAcceptanceService redisAcceptance;
+
     // Constructor manual para @Lazy
     public MatchFoundService(
             QueuePlayerRepository queuePlayerRepository,
@@ -40,17 +42,19 @@ public class MatchFoundService {
             MatchmakingWebSocketService webSocketService,
             @Lazy QueueManagementService queueManagementService,
             DraftFlowService draftFlowService,
-            DiscordService discordService) {
+            DiscordService discordService,
+            RedisMatchAcceptanceService redisAcceptance) {
         this.queuePlayerRepository = queuePlayerRepository;
         this.customMatchRepository = customMatchRepository;
         this.webSocketService = webSocketService;
         this.queueManagementService = queueManagementService;
         this.draftFlowService = draftFlowService;
         this.discordService = discordService;
+        this.redisAcceptance = redisAcceptance;
     }
 
-    // Tracking de partidas pendentes de aceitação
-    private final Map<Long, MatchAcceptanceStatus> pendingMatches = new ConcurrentHashMap<>();
+    // ✅ REMOVIDO: HashMap local removido - Redis é fonte única da verdade
+    // Use redisAcceptance para todas as operações de aceitação
 
     // Configurações
     private static final int ACCEPTANCE_TIMEOUT_SECONDS = 30;
@@ -77,17 +81,39 @@ public class MatchFoundService {
                 // O flush acontecerá automaticamente no final da transação
             }
 
-            // Criar tracking local
-            MatchAcceptanceStatus status = new MatchAcceptanceStatus();
-            status.setMatchId(match.getId());
-            status.setPlayers(allPlayers.stream().map(QueuePlayer::getSummonerName).collect(Collectors.toList()));
-            status.setAcceptedPlayers(new HashSet<>());
-            status.setDeclinedPlayers(new HashSet<>());
-            status.setCreatedAt(Instant.now());
-            status.setTeam1(team1.stream().map(QueuePlayer::getSummonerName).collect(Collectors.toList()));
-            status.setTeam2(team2.stream().map(QueuePlayer::getSummonerName).collect(Collectors.toList()));
+            // ✅ NOVO: Criar tracking no Redis (fonte da verdade)
+            List<String> playerNames = allPlayers.stream()
+                    .map(QueuePlayer::getSummonerName)
+                    .toList();
 
-            pendingMatches.put(match.getId(), status);
+            List<String> team1Names = team1.stream()
+                    .map(QueuePlayer::getSummonerName)
+                    .toList();
+
+            List<String> team2Names = team2.stream()
+                    .map(QueuePlayer::getSummonerName)
+                    .toList();
+
+            redisAcceptance.createPendingMatch(match.getId(), playerNames, team1Names, team2Names);
+            log.info("✅ [MatchFound] Partida {} criada no Redis para aceitação (team1: {}, team2: {})",
+                    match.getId(), team1Names.size(), team2Names.size());
+
+            // ✅ REDIS ONLY: Não criar tracking HashMap, Redis é fonte única da verdade
+
+            // ✅ VALIDAÇÃO: Verificar se dados foram salvos corretamente no Redis
+            List<String> redisAllPlayers = redisAcceptance.getAllPlayers(match.getId());
+            List<String> redisTeam1 = redisAcceptance.getTeam1Players(match.getId());
+            List<String> redisTeam2 = redisAcceptance.getTeam2Players(match.getId());
+
+            if (redisAllPlayers.size() != 10 || redisTeam1.size() != 5 || redisTeam2.size() != 5) {
+                log.error("❌ [CRÍTICO] DADOS INCORRETOS NO REDIS!");
+                log.error("  - AllPlayers: {} (esperado: 10)", redisAllPlayers.size());
+                log.error("  - Team1: {} (esperado: 5)", redisTeam1.size());
+                log.error("  - Team2: {} (esperado: 5)", redisTeam2.size());
+            } else {
+                log.info("✅ [VALIDAÇÃO REDIS] Dados salvos corretamente:");
+                log.info("  ✅ AllPlayers: 10 | Team1: 5 | Team2: 5");
+            }
 
             // Notificar match found
             notifyMatchFound(match, team1, team2);
@@ -111,30 +137,36 @@ public class MatchFoundService {
         try {
             log.info("✅ [MatchFound] Jogador {} aceitou partida {}", summonerName, matchId);
 
+            // ✅ NOVO: Aceitar no Redis primeiro (fonte da verdade, com distributed lock)
+            boolean redisSuccess = redisAcceptance.acceptMatch(matchId, summonerName);
+
+            if (!redisSuccess) {
+                log.warn("⚠️ [MatchFound] Falha ao aceitar match {} no Redis para {}", matchId, summonerName);
+                return;
+            }
+
             // Atualizar no banco
             queuePlayerRepository.findBySummonerName(summonerName).ifPresent(player -> {
                 player.setAcceptanceStatus(1); // 1 = accepted
                 queuePlayerRepository.save(player);
             });
 
-            // Atualizar tracking local
-            MatchAcceptanceStatus status = pendingMatches.get(matchId);
-            if (status != null) {
-                status.getAcceptedPlayers().add(summonerName);
+            // ✅ REDIS ONLY: Buscar dados do Redis para notificação
+            Set<String> acceptedPlayers = redisAcceptance.getAcceptedPlayers(matchId);
+            List<String> allPlayers = redisAcceptance.getAllPlayers(matchId);
 
-                log.info("✅ [MatchFound] Match {} - {}/{} jogadores aceitaram",
-                        matchId, status.getAcceptedPlayers().size(), status.getPlayers().size());
+            if (acceptedPlayers != null && allPlayers != null) {
+                log.info("✅ [MatchFound] Match {} - {}/{} jogadores aceitaram (Redis)",
+                        matchId, acceptedPlayers.size(), allPlayers.size());
 
                 // Notificar progresso
-                notifyAcceptanceProgress(matchId, status);
+                notifyAcceptanceProgress(matchId, acceptedPlayers, allPlayers);
+            }
 
-                // Verificar se todos aceitaram
-                if (status.getAcceptedPlayers().size() == status.getPlayers().size()) {
-                    log.info("🎉 [MatchFound] TODOS OS JOGADORES ACEITARAM! Match {}", matchId);
-                    handleAllPlayersAccepted(matchId);
-                }
-            } else {
-                log.warn("⚠️ [MatchFound] Match {} não encontrado no tracking", matchId);
+            // ✅ NOVO: Verificar no Redis se todos aceitaram (fonte da verdade)
+            if (redisAcceptance.checkAllAccepted(matchId)) {
+                log.info("🎉 [MatchFound] TODOS OS JOGADORES ACEITARAM! Match {}", matchId);
+                handleAllPlayersAccepted(matchId);
             }
 
         } catch (Exception e) {
@@ -149,6 +181,14 @@ public class MatchFoundService {
     public void declineMatch(Long matchId, String summonerName) {
         try {
             log.warn("❌ [MatchFound] Jogador {} recusou partida {}", summonerName, matchId);
+
+            // ✅ NOVO: Recusar no Redis primeiro (fonte da verdade, com distributed lock)
+            boolean redisSuccess = redisAcceptance.declineMatch(matchId, summonerName);
+
+            if (!redisSuccess) {
+                log.warn("⚠️ [MatchFound] Falha ao recusar match {} no Redis para {}", matchId, summonerName);
+                return;
+            }
 
             // Atualizar no banco
             queuePlayerRepository.findBySummonerName(summonerName).ifPresent(player -> {
@@ -170,9 +210,14 @@ public class MatchFoundService {
     @Transactional
     private void handleAllPlayersAccepted(Long matchId) {
         try {
-            MatchAcceptanceStatus status = pendingMatches.get(matchId);
-            if (status == null)
+            // ✅ REDIS ONLY: Buscar dados do Redis (fonte da verdade)
+            List<String> team1Names = redisAcceptance.getTeam1Players(matchId);
+            List<String> team2Names = redisAcceptance.getTeam2Players(matchId);
+
+            if (team1Names == null || team2Names == null || team1Names.isEmpty() || team2Names.isEmpty()) {
+                log.error("❌ [MatchFound] Dados de times vazios no Redis para match {}", matchId);
                 return;
+            }
 
             // Atualizar status da partida
             customMatchRepository.findById(matchId).ifPresent(match -> {
@@ -187,15 +232,15 @@ public class MatchFoundService {
             List<QueuePlayer> team1Players = new ArrayList<>();
             List<QueuePlayer> team2Players = new ArrayList<>();
 
-            for (String playerName : status.getTeam1()) {
+            for (String playerName : team1Names) {
                 queuePlayerRepository.findBySummonerName(playerName).ifPresent(team1Players::add);
             }
 
-            for (String playerName : status.getTeam2()) {
+            for (String playerName : team2Names) {
                 queuePlayerRepository.findBySummonerName(playerName).ifPresent(team2Players::add);
             }
 
-            log.info("✅ [MatchFound] Jogadores recuperados: team1={}, team2={}",
+            log.info("✅ [MatchFound] Jogadores recuperados (Redis): team1={}, team2={}",
                     team1Players.size(), team2Players.size());
 
             // Mapeamento de lanes por posição
@@ -216,7 +261,8 @@ public class MatchFoundService {
             saveTeamsDataToPickBan(matchId, team1DTOs, team2DTOs);
 
             // ✅ AGORA remover todos os jogadores da fila (agora vão para o draft)
-            for (String playerName : status.getPlayers()) {
+            List<String> allPlayers = redisAcceptance.getAllPlayers(matchId);
+            for (String playerName : allPlayers) {
                 queueManagementService.removeFromQueue(playerName);
                 log.info("🗑️ [MatchFound] Jogador {} removido da fila - indo para draft", playerName);
             }
@@ -233,8 +279,8 @@ public class MatchFoundService {
                 }
             }, 3000);
 
-            // Remover do tracking
-            pendingMatches.remove(matchId);
+            // ✅ REDIS ONLY: Limpar dados do Redis após processar
+            redisAcceptance.clearMatch(matchId);
 
             log.info("✅ [MatchFound] Partida {} aceita por todos - iniciando draft em 3s", matchId);
 
@@ -249,9 +295,12 @@ public class MatchFoundService {
     @Transactional
     private void handleMatchDeclined(Long matchId, String declinedPlayer) {
         try {
-            MatchAcceptanceStatus status = pendingMatches.get(matchId);
-            if (status == null)
+            // ✅ REDIS ONLY: Buscar jogadores do Redis
+            List<String> allPlayers = redisAcceptance.getAllPlayers(matchId);
+            if (allPlayers == null || allPlayers.isEmpty()) {
+                log.warn("⚠️ [MatchFound] Sem dados no Redis para match {}", matchId);
                 return;
+            }
 
             // Atualizar status da partida
             customMatchRepository.findById(matchId).ifPresent(match -> {
@@ -264,7 +313,7 @@ public class MatchFoundService {
             log.info("🗑️ [MatchFound] Jogador {} removido da fila por recusar", declinedPlayer);
 
             // ✅ Resetar status de aceitação dos outros jogadores (voltam ao normal na fila)
-            for (String playerName : status.getPlayers()) {
+            for (String playerName : allPlayers) {
                 if (!playerName.equals(declinedPlayer)) {
                     queuePlayerRepository.findBySummonerName(playerName).ifPresent(player -> {
                         player.setAcceptanceStatus(0); // Resetar status
@@ -277,8 +326,8 @@ public class MatchFoundService {
             // Notificar cancelamento
             notifyMatchCancelled(matchId, declinedPlayer);
 
-            // Remover do tracking
-            pendingMatches.remove(matchId);
+            // ✅ REDIS ONLY: Limpar dados do Redis
+            redisAcceptance.clearMatch(matchId);
 
             log.info("❌ [MatchFound] Partida {} cancelada - {} recusou", matchId, declinedPlayer);
 
@@ -293,19 +342,29 @@ public class MatchFoundService {
     @Scheduled(fixedRate = 1000) // Verifica a cada 1 segundo
     public void checkAcceptanceTimeouts() {
         try {
+            // ✅ REDIS ONLY: Buscar matches pendentes do Redis
+            List<Long> pendingMatchIds = redisAcceptance.getPendingMatches();
+
+            if (pendingMatchIds.isEmpty()) {
+                return;
+            }
+
             Instant now = Instant.now();
 
-            for (Map.Entry<Long, MatchAcceptanceStatus> entry : pendingMatches.entrySet()) {
-                MatchAcceptanceStatus status = entry.getValue();
-                long secondsElapsed = ChronoUnit.SECONDS.between(status.getCreatedAt(), now);
+            for (Long matchId : pendingMatchIds) {
+                Instant createdAt = redisAcceptance.getMatchCreationTime(matchId);
+                if (createdAt == null)
+                    continue;
+
+                long secondsElapsed = ChronoUnit.SECONDS.between(createdAt, now);
 
                 if (secondsElapsed >= ACCEPTANCE_TIMEOUT_SECONDS) {
-                    log.warn("⏰ [MatchFound] Timeout na partida {}", entry.getKey());
-                    handleAcceptanceTimeout(entry.getKey());
+                    log.warn("⏰ [MatchFound] Timeout na partida {}", matchId);
+                    handleAcceptanceTimeout(matchId);
                 } else {
                     // Atualizar timer
                     int secondsRemaining = ACCEPTANCE_TIMEOUT_SECONDS - (int) secondsElapsed;
-                    notifyTimerUpdate(entry.getKey(), secondsRemaining);
+                    notifyTimerUpdate(matchId, secondsRemaining);
                 }
             }
 
@@ -320,13 +379,17 @@ public class MatchFoundService {
     @Transactional
     private void handleAcceptanceTimeout(Long matchId) {
         try {
-            MatchAcceptanceStatus status = pendingMatches.get(matchId);
-            if (status == null)
+            // ✅ REDIS ONLY: Buscar dados do Redis
+            List<String> allPlayers = redisAcceptance.getAllPlayers(matchId);
+            Set<String> acceptedPlayers = redisAcceptance.getAcceptedPlayers(matchId);
+
+            if (allPlayers == null || allPlayers.isEmpty()) {
                 return;
+            }
 
             // Encontrar jogadores que não aceitaram
-            List<String> notAcceptedPlayers = status.getPlayers().stream()
-                    .filter(p -> !status.getAcceptedPlayers().contains(p))
+            List<String> notAcceptedPlayers = allPlayers.stream()
+                    .filter(p -> acceptedPlayers == null || !acceptedPlayers.contains(p))
                     .collect(Collectors.toList());
 
             if (!notAcceptedPlayers.isEmpty()) {
@@ -606,7 +669,21 @@ public class MatchFoundService {
 
     private void notifyMatchFound(CustomMatch match, List<QueuePlayer> team1, List<QueuePlayer> team2) {
         try {
-            // ✅ Mapeamento de lanes por posição (os jogadores já vêm ordenados por posição
+            log.info("╔════════════════════════════════════════════════════════════════╗");
+            log.info("║  📡 [NOTIFICAÇÃO] ENVIANDO MATCH_FOUND                        ║");
+            log.info("╚════════════════════════════════════════════════════════════════╝");
+
+            // ✅ VALIDAÇÃO CRÍTICA: Verificar times
+            if (team1 == null || team2 == null || team1.size() != 5 || team2.size() != 5) {
+                log.error("❌ [CRÍTICO] Times inválidos! team1={}, team2={}",
+                        team1 != null ? team1.size() : "null",
+                        team2 != null ? team2.size() : "null");
+                return;
+            }
+
+            log.info("✅ [Validação] Team1: {} jogadores | Team2: {} jogadores", team1.size(), team2.size());
+
+            // Mapeamento de lanes por posição (os jogadores já vêm ordenados por posição
             // do balanceamento)
             String[] lanes = { "top", "jungle", "mid", "bot", "support" };
 
@@ -637,9 +714,26 @@ public class MatchFoundService {
             data.put("averageMmrTeam2", match.getAverageMmrTeam2());
             data.put("timeoutSeconds", ACCEPTANCE_TIMEOUT_SECONDS);
 
+            // ✅ LOG DETALHADO: Mostrar EXATAMENTE quais jogadores vão receber a notificação
+            log.info("📡 [Notificação] Enviando match_found para:");
+            log.info("  🔵 TEAM 1 ({} jogadores):", team1.size());
+            for (int i = 0; i < team1DTOs.size(); i++) {
+                QueuePlayerInfoDTO dto = team1DTOs.get(i);
+                log.info("    [{}] {} - {} - MMR: {}",
+                        i, dto.getSummonerName(), dto.getAssignedLane(), dto.getMmr());
+            }
+            log.info("  🔴 TEAM 2 ({} jogadores):", team2.size());
+            for (int i = 0; i < team2DTOs.size(); i++) {
+                QueuePlayerInfoDTO dto = team2DTOs.get(i);
+                log.info("    [{}] {} - {} - MMR: {}",
+                        i, dto.getSummonerName(), dto.getAssignedLane(), dto.getMmr());
+            }
+
             webSocketService.broadcastToAll("match_found", data);
 
-            log.info("📢 [MatchFound] Match found notificado para {} jogadores", team1.size() + team2.size());
+            log.info("╔════════════════════════════════════════════════════════════════╗");
+            log.info("║  ✅ [SUCESSO] MATCH_FOUND ENVIADO PARA 10 JOGADORES           ║");
+            log.info("╚════════════════════════════════════════════════════════════════╝");
 
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao notificar match found", e);
@@ -687,21 +781,21 @@ public class MatchFoundService {
         return "fill";
     }
 
-    private void notifyAcceptanceProgress(Long matchId, MatchAcceptanceStatus status) {
+    private void notifyAcceptanceProgress(Long matchId, Set<String> acceptedPlayers, List<String> allPlayers) {
         try {
             // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida
             Map<String, Object> data = new HashMap<>();
             data.put("matchId", matchId);
-            data.put("acceptedCount", status.getAcceptedPlayers().size());
-            data.put("totalPlayers", status.getPlayers().size());
-            data.put("acceptedPlayers", new ArrayList<>(status.getAcceptedPlayers()));
+            data.put("acceptedCount", acceptedPlayers.size());
+            data.put("totalPlayers", allPlayers.size());
+            data.put("acceptedPlayers", new ArrayList<>(acceptedPlayers));
 
             // Enviar apenas para os jogadores desta partida
-            webSocketService.sendToPlayers("acceptance_progress", data, status.getPlayers());
+            webSocketService.sendToPlayers("acceptance_progress", data, allPlayers);
 
-            log.debug("📊 [MatchFound] Progresso enviado para {} jogadores da partida {}: {}/{}",
-                    status.getPlayers().size(), matchId,
-                    status.getAcceptedPlayers().size(), status.getPlayers().size());
+            log.debug("📊 [MatchFound] Progresso enviado para {} jogadores da partida {} (Redis): {}/{}",
+                    allPlayers.size(), matchId,
+                    acceptedPlayers.size(), allPlayers.size());
 
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao notificar progresso", e);
@@ -710,8 +804,9 @@ public class MatchFoundService {
 
     private void notifyAllPlayersAccepted(Long matchId) {
         try {
-            MatchAcceptanceStatus status = pendingMatches.get(matchId);
-            if (status == null)
+            // ✅ REDIS ONLY: Buscar jogadores do Redis
+            List<String> allPlayers = redisAcceptance.getAllPlayers(matchId);
+            if (allPlayers == null || allPlayers.isEmpty())
                 return;
 
             // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida
@@ -719,10 +814,11 @@ public class MatchFoundService {
             data.put("matchId", matchId);
 
             // Enviar apenas para os jogadores desta partida
-            webSocketService.sendToPlayers("all_players_accepted", data, status.getPlayers());
+            webSocketService.sendToPlayers("all_players_accepted", data, allPlayers);
 
-            log.info("🎉 [MatchFound] Notificação de aceitação completa enviada para {} jogadores da partida {}",
-                    status.getPlayers().size(), matchId);
+            log.info(
+                    "🎉 [MatchFound] Notificação de aceitação completa enviada para {} jogadores da partida {} (Redis)",
+                    allPlayers.size(), matchId);
 
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao notificar aceitação completa", e);
@@ -731,8 +827,9 @@ public class MatchFoundService {
 
     private void notifyMatchCancelled(Long matchId, String declinedPlayer) {
         try {
-            MatchAcceptanceStatus status = pendingMatches.get(matchId);
-            if (status == null)
+            // ✅ REDIS ONLY: Buscar jogadores do Redis
+            List<String> allPlayers = redisAcceptance.getAllPlayers(matchId);
+            if (allPlayers == null || allPlayers.isEmpty())
                 return;
 
             // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida
@@ -742,10 +839,10 @@ public class MatchFoundService {
             data.put("declinedPlayer", declinedPlayer);
 
             // Enviar apenas para os jogadores desta partida
-            webSocketService.sendToPlayers("match_cancelled", data, status.getPlayers());
+            webSocketService.sendToPlayers("match_cancelled", data, allPlayers);
 
-            log.warn("⚠️ [MatchFound] Cancelamento enviado para {} jogadores da partida {} (recusado por: {})",
-                    status.getPlayers().size(), matchId, declinedPlayer);
+            log.warn("⚠️ [MatchFound] Cancelamento enviado para {} jogadores da partida {} (recusado por: {}) - Redis",
+                    allPlayers.size(), matchId, declinedPlayer);
 
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao notificar cancelamento", e);
@@ -788,73 +885,8 @@ public class MatchFoundService {
                 .build();
     }
 
-    // Classe interna para tracking
-    private static class MatchAcceptanceStatus {
-        private Long matchId;
-        private List<String> players;
-        private Set<String> acceptedPlayers;
-        private Set<String> declinedPlayers;
-        private Instant createdAt;
-        private List<String> team1;
-        private List<String> team2;
-
-        // Getters e Setters
-        public Long getMatchId() {
-            return matchId;
-        }
-
-        public void setMatchId(Long matchId) {
-            this.matchId = matchId;
-        }
-
-        public List<String> getPlayers() {
-            return players;
-        }
-
-        public void setPlayers(List<String> players) {
-            this.players = players;
-        }
-
-        public Set<String> getAcceptedPlayers() {
-            return acceptedPlayers;
-        }
-
-        public void setAcceptedPlayers(Set<String> acceptedPlayers) {
-            this.acceptedPlayers = acceptedPlayers;
-        }
-
-        public Set<String> getDeclinedPlayers() {
-            return declinedPlayers;
-        }
-
-        public void setDeclinedPlayers(Set<String> declinedPlayers) {
-            this.declinedPlayers = declinedPlayers;
-        }
-
-        public Instant getCreatedAt() {
-            return createdAt;
-        }
-
-        public void setCreatedAt(Instant createdAt) {
-            this.createdAt = createdAt;
-        }
-
-        public List<String> getTeam1() {
-            return team1;
-        }
-
-        public void setTeam1(List<String> team1) {
-            this.team1 = team1;
-        }
-
-        public List<String> getTeam2() {
-            return team2;
-        }
-
-        public void setTeam2(List<String> team2) {
-            this.team2 = team2;
-        }
-    }
+    // ✅ REMOVIDO: Classe MatchAcceptanceStatus - Redis é fonte única da verdade
+    // Use redisAcceptance para todas as operações de aceitação
 
     /**
      * ✅ NOVO: Calcula o tipo de badge de lane para um jogador

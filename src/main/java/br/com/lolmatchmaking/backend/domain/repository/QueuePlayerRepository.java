@@ -12,4 +12,7 @@ public interface QueuePlayerRepository extends JpaRepository<QueuePlayer, Long> 
     List<QueuePlayer> findByActiveTrueOrderByJoinTimeAsc();
 
     List<QueuePlayer> findByActiveTrue();
+
+    // ✅ NOVO: Conta jogadores ativos
+    long countByActiveTrue();
 }

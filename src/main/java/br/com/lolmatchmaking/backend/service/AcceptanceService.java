@@ -12,6 +12,27 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * ⚠️ SERVIÇO LEGADO - SUBSTITUÍDO POR MatchFoundService
+ * 
+ * Este serviço foi substituído pelo MatchFoundService que usa
+ * RedisMatchAcceptanceService.
+ * O MatchFoundService oferece:
+ * - Persistência em Redis (sobrevive a reinícios)
+ * - Performance superior (operações O(1))
+ * - TTL automático (auto-limpeza)
+ * - Thread-safety garantido
+ * 
+ * MOTIVO: Este serviço usa ConcurrentHashMaps que perdem dados em reinícios do
+ * backend.
+ * STATUS: Mantido temporariamente por compatibilidade com
+ * MatchmakingOrchestrator.
+ * TODO: Migrar MatchmakingOrchestrator para usar MatchFoundService diretamente.
+ * 
+ * @deprecated Desde migração Redis. Use {@link MatchFoundService} e
+ *             {@link RedisMatchAcceptanceService}.
+ */
+@Deprecated(forRemoval = true)
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -32,8 +53,19 @@ public class AcceptanceService {
     }
 
     // matchTempId -> session
+    /**
+     * @deprecated Substituído por RedisMatchAcceptanceService (chave:
+     *             match:{matchId}:acceptances)
+     */
+    @Deprecated(forRemoval = true)
     private final Map<Long, AcceptanceSession> sessions = new ConcurrentHashMap<>();
+
     // queuePlayerIds que recusaram manualmente (para distinguir timeout)
+    /**
+     * @deprecated Substituído por RedisMatchAcceptanceService (chave:
+     *             match:{matchId}:metadata)
+     */
+    @Deprecated(forRemoval = true)
     private final Set<Long> manualDeclines = ConcurrentHashMap.newKeySet();
 
     public AcceptanceSession createSession(List<QueuePlayer> players, long timeoutMillis) {

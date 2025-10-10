@@ -2,6 +2,8 @@ package br.com.lolmatchmaking.backend.websocket;
 
 import br.com.lolmatchmaking.backend.dto.MatchInfoDTO;
 import br.com.lolmatchmaking.backend.dto.QueuePlayerInfoDTO;
+import br.com.lolmatchmaking.backend.service.redis.RedisWebSocketEventService;
+import br.com.lolmatchmaking.backend.service.redis.RedisWebSocketSessionService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,6 +21,27 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
+/**
+ * ⚠️ MIGRAÇÃO PARCIAL PARA REDIS - EM PROGRESSO
+ * 
+ * ANTES: 7 ConcurrentHashMaps perdiam dados em reinícios
+ * STATUS: Tem Redis mas ainda usa 4 HashMaps @Deprecated ativamente
+ * 
+ * MIGRAÇÃO REDIS (PARCIAL):
+ * - ✅ Sessions → RedisWebSocketSessionService (OK)
+ * - ⚠️ clientInfo → RedisWebSocketSessionService (AINDA USA HashMap - 20 usos)
+ * - ⚠️ lastHeartbeat → RedisWebSocketSessionService (AINDA USA HashMap - 2
+ * usos)
+ * - ⚠️ pendingEvents → RedisWebSocketEventService (AINDA USA HashMap - 2 usos)
+ * - ⚠️ pendingLcuRequests → RedisWebSocketEventService (AINDA USA HashMap - 5
+ * usos)
+ * - ⚠️ lcuRequestSession → RedisWebSocketEventService (AINDA USA HashMap - 2
+ * usos)
+ * - ✅ heartbeatTasks → Local (ScheduledFuture não serializável - OK manter)
+ * 
+ * TODO: Completar migração removendo os 4 HashMaps @Deprecated que ainda são
+ * usados
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -26,20 +49,53 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
 
     private final ObjectMapper objectMapper;
     private final ApplicationContext applicationContext;
-    private final SessionRegistry sessionRegistry; // ✅ NOVO: Para registrar summonerName → sessionId
+    private final SessionRegistry sessionRegistry;
+
+    // ✅ NOVO: Redis services
+    private final RedisWebSocketSessionService redisWSSession;
+    private final RedisWebSocketEventService redisWSEvent;
+
+    // Cache local (WebSocketSession não é serializável)
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
+
+    // ✅ DEPRECIADO: Migrado para Redis
+    /**
+     * @deprecated Substituído por RedisWebSocketSessionService (chave:
+     *             ws:client:{sessionId})
+     */
+    @Deprecated(forRemoval = true)
     private final Map<String, ClientInfo> clientInfo = new ConcurrentHashMap<>();
+
+    /**
+     * @deprecated Substituído por RedisWebSocketSessionService.updateHeartbeat()
+     */
+    @Deprecated(forRemoval = true)
     private final Map<String, Instant> lastHeartbeat = new ConcurrentHashMap<>();
-    // Track scheduled heartbeat monitor tasks so they can be cancelled when session
-    // closes
+
+    // Heartbeat tasks (não precisam persistir)
     private final Map<String, ScheduledFuture<?>> heartbeatTasks = new ConcurrentHashMap<>();
+
+    /**
+     * @deprecated Substituído por RedisWebSocketEventService (chave:
+     *             ws:pending:{sessionId})
+     */
+    @Deprecated(forRemoval = true)
     private final Map<String, List<String>> pendingEvents = new ConcurrentHashMap<>();
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
 
-    // New: pending LCU requests by requestId
+    /**
+     * @deprecated Substituído por RedisWebSocketEventService (chave:
+     *             ws:lcu_request:{requestId})
+     */
+    @Deprecated(forRemoval = true)
     private final Map<String, CompletableFuture<JsonNode>> pendingLcuRequests = new ConcurrentHashMap<>();
-    // Map requestId -> sessionId so we can identify which client answered
+
+    /**
+     * @deprecated Substituído por RedisWebSocketEventService (chave:
+     *             ws:lcu_request:{requestId})
+     */
+    @Deprecated(forRemoval = true)
     private final Map<String, String> lcuRequestSession = new ConcurrentHashMap<>();
 
     /**
@@ -74,20 +130,42 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     private static final int MAX_PENDING_EVENTS = 100;
     private static final long LCU_RPC_TIMEOUT_MS = 5000; // timeout padrão para RPC LCU
 
+    /**
+     * ✅ MIGRADO PARA REDIS: Conexão WebSocket estabelecida
+     * 
+     * CRÍTICO: Envia eventos pendentes do Redis após reconexão.
+     * Garante que eventos como "match_found" não sejam perdidos.
+     */
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         String sessionId = session.getId();
         sessions.put(sessionId, session);
 
-        // Inicializar informações do cliente
-        clientInfo.put(sessionId, new ClientInfo(sessionId, Instant.now()));
-        lastHeartbeat.put(sessionId, Instant.now());
-        pendingEvents.put(sessionId, new ArrayList<>());
+        // ✅ REDIS ONLY: Inicializar heartbeat no Redis (sem HashMap local!)
+        redisWSSession.updateHeartbeat(sessionId);
 
         log.info("🔌 Cliente conectado: {} (Total: {})", sessionId, sessions.size());
 
-        // Enviar eventos pendentes
-        sendPendingEvents(sessionId);
+        // ✅ REDIS ONLY: Enviar eventos pendentes (reconexão)
+        // Single source of truth - sem fallback HashMap!
+        List<RedisWebSocketEventService.PendingEvent> pendingFromRedis = redisWSEvent.getPendingEvents(sessionId);
+
+        if (!pendingFromRedis.isEmpty()) {
+            log.info("📬 [REDIS] {} eventos pendentes encontrados para sessão: {}",
+                    pendingFromRedis.size(), sessionId);
+
+            for (RedisWebSocketEventService.PendingEvent event : pendingFromRedis) {
+                try {
+                    sendMessage(sessionId, event.getEventType(), event.getPayload());
+                    log.info("✅ [REDIS] Evento pendente enviado: {} → {}", sessionId, event.getEventType());
+                } catch (Exception e) {
+                    log.error("❌ [REDIS] Erro ao enviar evento pendente: {}", event.getEventType(), e);
+                }
+            }
+
+            // Limpar eventos após envio bem-sucedido
+            redisWSEvent.clearPendingEvents(sessionId);
+        }
 
         // Iniciar monitoramento de heartbeat
         startHeartbeatMonitoring(sessionId);
@@ -97,9 +175,8 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
         String sessionId = session.getId();
         sessions.remove(sessionId);
-        clientInfo.remove(sessionId);
-        lastHeartbeat.remove(sessionId);
-        pendingEvents.remove(sessionId);
+
+        // ✅ REDIS: Limpeza automática por TTL (não precisa remover manualmente)
         // Cancel heartbeat monitoring task if present
         try {
             ScheduledFuture<?> f = heartbeatTasks.remove(sessionId);
@@ -469,10 +546,13 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     }
 
     /**
-     * Processa heartbeat
+     * ✅ MIGRADO PARA REDIS: Processa heartbeat
+     * Atualiza timestamp no Redis e extende TTL da sessão.
      */
     private void handleHeartbeat(String sessionId) {
-        lastHeartbeat.put(sessionId, Instant.now());
+        // ✅ REDIS ONLY: Atualizar heartbeat e extender TTL (sem HashMap!)
+        redisWSSession.updateHeartbeat(sessionId);
+
         sendMessage(sessionId, "heartbeat_ack", Map.of("timestamp", System.currentTimeMillis()));
     }
 
@@ -695,10 +775,14 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     }
 
     /**
-     * Envia mensagem para um cliente específico
+     * ✅ MIGRADO PARA REDIS: Envia mensagem para um cliente específico
+     * 
+     * CRÍTICO: Se envio falhar (desconectado), enfileira evento no Redis.
+     * Garante que eventos não sejam perdidos durante desconexões.
      */
     public void sendMessage(String sessionId, String type, Object data) {
         WebSocketSession session = sessions.get(sessionId);
+
         if (session != null && session.isOpen()) {
             try {
                 Map<String, Object> message = new HashMap<>();
@@ -710,11 +794,36 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
 
                 String jsonMessage = objectMapper.writeValueAsString(message);
                 session.sendMessage(new TextMessage(jsonMessage));
+
+                log.debug("📤 Evento enviado: {} → {}", sessionId, type);
+
             } catch (Exception e) {
-                log.error("❌ Erro ao enviar mensagem para {}", sessionId, e);
-                // Adicionar como evento pendente
+                log.error("❌ Erro ao enviar mensagem para {}. Enfileirando no Redis...", sessionId, e);
+
+                // ✅ REDIS: Enfileirar evento para envio posterior
+                Map<String, Object> payload = new HashMap<>();
+                if (data != null) {
+                    payload.put("data", data);
+                }
+                redisWSEvent.queueEvent(sessionId, type, payload);
+
+                // Backward compatibility: cache local
                 addPendingEvent(sessionId, type);
             }
+        } else {
+            // Sessão fechada ou inexistente
+            log.warn("⚠️ Sessão WebSocket fechada ou inexistente: {}. Enfileirando evento no Redis: {}",
+                    sessionId, type);
+
+            // ✅ REDIS: Enfileirar evento para envio quando reconectar
+            Map<String, Object> payload = new HashMap<>();
+            if (data != null) {
+                payload.put("data", data);
+            }
+            redisWSEvent.queueEvent(sessionId, type, payload);
+
+            // Backward compatibility: cache local
+            addPendingEvent(sessionId, type);
         }
     }
 
@@ -894,21 +1003,42 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     }
 
     /**
-     * Atualiza informações LCU de uma sessão (para integração com
-     * CoreWebSocketHandler)
+     * ✅ MIGRADO PARA REDIS: Atualiza informações LCU de uma sessão
+     * (para integração com CoreWebSocketHandler)
      */
     public void updateLcuInfo(String sessionId, String host, int port, String summonerName) {
-        ClientInfo info = clientInfo.get(sessionId);
-        if (info == null) {
-            info = new ClientInfo(sessionId, Instant.now());
-            clientInfo.put(sessionId, info);
+        // ✅ REDIS ONLY: Armazenar informações do jogador (sem HashMap!)
+        WebSocketSession session = sessions.get(sessionId);
+        String ipAddress = "unknown";
+        String userAgent = "unknown";
+
+        if (session != null && session.getRemoteAddress() != null) {
+            ipAddress = session.getRemoteAddress().getAddress().getHostAddress();
+            if (session.getHandshakeHeaders() != null) {
+                userAgent = session.getHandshakeHeaders().getFirst("User-Agent");
+                if (userAgent == null)
+                    userAgent = "unknown";
+            }
         }
-        info.setLcuHost(host);
-        info.setLcuPort(port);
-        info.setSummonerName(summonerName);
-        info.setIdentified(true);
-        log.info("🔧 [MatchmakingWebSocketService] LCU info atualizada: session={}, host={}, port={}, summoner={}",
-                sessionId, host, port, summonerName);
+
+        // Criar JSON com os dados do jogador
+        try {
+            Map<String, Object> playerInfo = new HashMap<>();
+            playerInfo.put("summonerName", summonerName);
+            playerInfo.put("ipAddress", ipAddress);
+            playerInfo.put("userAgent", userAgent);
+            playerInfo.put("host", host);
+            playerInfo.put("port", port);
+
+            String playerInfoJson = objectMapper.writeValueAsString(playerInfo);
+            redisWSSession.storePlayerInfo(sessionId, playerInfoJson);
+
+            log.info(
+                    "🔧 [MatchmakingWebSocketService] LCU info atualizada no Redis: session={}, host={}, port={}, summoner={}",
+                    sessionId, host, port, summonerName);
+        } catch (Exception e) {
+            log.error("❌ [MatchmakingWebSocketService] Erro ao serializar playerInfo: {}", e.getMessage());
+        }
     }
 
     /**

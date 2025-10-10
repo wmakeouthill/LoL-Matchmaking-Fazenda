@@ -14,7 +14,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -31,12 +30,18 @@ public class MatchVoteService {
     private final LPCalculationService lpCalculationService;
     private final DiscordService discordService;
 
+    // ✅ NOVO: Redis para votação distribuída
+    private final RedisMatchVoteService redisMatchVote;
+
     private static final int VOTES_REQUIRED_FOR_AUTO_LINK = 5;
-    private final Map<Long, Map<Long, Long>> temporaryVotes = new ConcurrentHashMap<>();
+
+    // ✅ REMOVIDO: HashMap local removido - Redis é fonte única da verdade
+    // Use redisMatchVote para todas as operações de votação
 
     @Transactional
     public Map<String, Object> processVote(Long matchId, Long playerId, Long lcuGameId) {
-        log.info("Voto recebido: matchId={}, playerId={}, lcuGameId={}", matchId, playerId, lcuGameId);
+        log.info("🗳️ [MatchVoteService] Voto recebido: matchId={}, playerId={}, lcuGameId={}",
+                matchId, playerId, lcuGameId);
 
         Match match = matchRepository.findById(matchId)
                 .orElseThrow(() -> new IllegalArgumentException("Partida nao encontrada"));
@@ -44,15 +49,24 @@ public class MatchVoteService {
         String status = match.getStatus();
         boolean validStatus = "in_progress".equals(status) || "game_in_progress".equals(status)
                 || "ended".equals(status);
-        if (validStatus == false) {
+        if (!validStatus) {
             throw new IllegalStateException("Partida nao disponivel para votacao");
         }
 
         Player player = playerRepository.findById(playerId)
                 .orElseThrow(() -> new IllegalArgumentException("Jogador nao encontrado"));
 
-        temporaryVotes.putIfAbsent(matchId, new ConcurrentHashMap<>());
-        temporaryVotes.get(matchId).put(playerId, lcuGameId);
+        // ✅ REDIS ONLY: Registrar voto no Redis (fonte única da verdade, com
+        // distributed lock)
+        boolean redisSuccess = redisMatchVote.registerVote(matchId, playerId, lcuGameId);
+
+        if (!redisSuccess) {
+            log.warn("⚠️ [MatchVoteService] Falha ao registrar voto no Redis");
+            Map<String, Object> errorResult = new HashMap<>();
+            errorResult.put("success", false);
+            errorResult.put("error", "Falha ao registrar voto");
+            return errorResult;
+        }
 
         boolean isSpecialUser = specialUserService.isSpecialUser(player.getSummonerName());
 
@@ -68,13 +82,12 @@ public class MatchVoteService {
             return result;
         }
 
-        Map<Long, Long> voteCountMap = countVotesByLcuGameId(matchId);
-        log.info("📊 Contagem atual de votos: {}", voteCountMap);
+        // ✅ NOVO: Buscar contagem do Redis (fonte da verdade)
+        Map<Long, Long> voteCountMap = redisMatchVote.getVoteCounts(matchId);
+        log.info("📊 [MatchVoteService] Contagem atual de votos (Redis): {}", voteCountMap);
 
-        Optional<Long> winningLcuGameId = voteCountMap.entrySet().stream()
-                .filter(entry -> entry.getValue() >= VOTES_REQUIRED_FOR_AUTO_LINK)
-                .map(Map.Entry::getKey)
-                .findFirst();
+        // ✅ NOVO: Verificar se algum lcuGameId atingiu votos necessários
+        Optional<Long> winningLcuGameId = redisMatchVote.getWinningLcuGameId(matchId, VOTES_REQUIRED_FOR_AUTO_LINK);
 
         int currentVoteCount = voteCountMap.getOrDefault(lcuGameId, 0L).intValue();
 
@@ -85,28 +98,41 @@ public class MatchVoteService {
         result.put("specialUserVote", false);
         result.put("voteCount", currentVoteCount);
         result.put("playerVote", lcuGameId);
+        result.put("totalVoters", redisMatchVote.getTotalVoters(matchId));
 
         if (winningLcuGameId.isPresent()) {
-            log.info("🎯 5 votos atingidos para lcuGameId={}", winningLcuGameId.get());
+            log.info("🎯 [MatchVoteService] {} votos atingidos para lcuGameId={}",
+                    VOTES_REQUIRED_FOR_AUTO_LINK, winningLcuGameId.get());
         }
 
         return result;
     }
 
+    /**
+     * ✅ REDIS ONLY: Busca contagem de votos do Redis (fonte única da verdade)
+     */
     public Map<Long, Long> countVotesByLcuGameId(Long matchId) {
-        Map<Long, Long> playerVotes = temporaryVotes.get(matchId);
-        if (playerVotes == null || playerVotes.isEmpty()) {
-            return new HashMap<>();
-        }
-        return playerVotes.values().stream()
-                .collect(Collectors.groupingBy(lcuGameId -> lcuGameId, Collectors.counting()));
+        // ✅ REDIS ONLY: Buscar do Redis (fonte única da verdade)
+        Map<Long, Long> redisVotes = redisMatchVote.getVoteCounts(matchId);
+
+        log.debug("📊 [MatchVoteService] Contagem de votos (Redis): {}", redisVotes);
+
+        return redisVotes;
     }
 
+    /**
+     * ✅ REDIS ONLY: Remove voto do Redis (fonte única da verdade)
+     */
     public void removeVote(Long matchId, Long playerId) {
-        Map<Long, Long> matchVotes = temporaryVotes.get(matchId);
-        if (matchVotes != null) {
-            matchVotes.remove(playerId);
-            log.info("Voto removido: matchId={}, playerId={}", matchId, playerId);
+        log.info("🗑️ [MatchVoteService] Removendo voto: matchId={}, playerId={}", matchId, playerId);
+
+        // ✅ REDIS ONLY: Remover do Redis (fonte única da verdade)
+        boolean redisSuccess = redisMatchVote.removeVote(matchId, playerId);
+
+        if (!redisSuccess) {
+            log.warn("⚠️ [MatchVoteService] Falha ao remover voto do Redis");
+        } else {
+            log.info("✅ [MatchVoteService] Voto removido do Redis");
         }
     }
 
@@ -338,9 +364,11 @@ public class MatchVoteService {
             match.setCompletedAt(Instant.now());
 
             matchRepository.save(match);
-            temporaryVotes.remove(matchId);
 
-            log.info("🎉 Partida {} vinculada com sucesso! LCU Game ID: {}", matchId, lcuGameId);
+            // ✅ REDIS ONLY: Limpar votos do Redis após vincular
+            redisMatchVote.clearVotes(matchId);
+
+            log.info("🎉 Partida {} vinculada com sucesso! LCU Game ID: {} (votos Redis limpos)", matchId, lcuGameId);
 
             // ✅ NOVO: Limpar canais Discord e mover jogadores de volta após vinculação
             try {

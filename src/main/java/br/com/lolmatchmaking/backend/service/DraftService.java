@@ -19,6 +19,24 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * ⚠️ SERVIÇO LEGADO - EM USO MAS DEVE SER MIGRADO
+ * 
+ * Este serviço ainda é usado pelo DraftController mas mantém HashMaps em
+ * paralelo com Redis.
+ * 
+ * STATUS ATUAL:
+ * - Usado por: DraftController (confirmSync, confirmDraft, changePick)
+ * - Tem Redis: RedisDraftService
+ * - Problema: activeDrafts e draftTimers em paralelo com Redis
+ * 
+ * MIGRAÇÃO RECOMENDADA:
+ * - Migrar DraftController para usar DraftFlowService
+ * - Remover DraftService completamente
+ * 
+ * @deprecated Use DraftFlowService ao invés
+ */
+@Deprecated(forRemoval = true)
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -31,11 +49,15 @@ public class DraftService {
     private final ObjectMapper objectMapper;
     private final DraftFlowService draftFlowService; // ✅ NOVO: Para delegar changePick
 
+    // ✅ NOVO: Redis para draft distribuído
+    private final RedisDraftService redisDraft;
+
     // Configurações do draft
     private static final int DRAFT_TIMEOUT_SECONDS = 30;
     private static final int MONITORING_INTERVAL_MS = 1000;
 
-    // Cache de drafts ativos
+    // Cache de drafts ativos (DEPRECIADO - mantido para compatibilidade, mas Redis
+    // é fonte da verdade)
     private final Map<Long, DraftData> activeDrafts = new ConcurrentHashMap<>();
     private final Map<Long, DraftTimer> draftTimers = new ConcurrentHashMap<>();
 
@@ -181,20 +203,31 @@ public class DraftService {
     }
 
     /**
-     * ✅ ATUALIZADO: Muda pick de um jogador usando DraftFlowService
-     * Delega para o DraftFlowService que gerencia o estado real do draft
+     * ✅ ATUALIZADO: Muda pick de um jogador usando Redis distribuído
+     * Primeiro tenta no Redis, depois delega para DraftFlowService
      */
     public boolean changePick(Long matchId, String playerId, String championId) {
-        log.info("🔄 [DraftService.changePick] Delegando para DraftFlowService");
+        log.info("🔄 [DraftService.changePick] Usando Redis distribuído");
         log.info("   - matchId: {}", matchId);
         log.info("   - playerId: {}", playerId);
         log.info("   - championId: {}", championId);
 
         try {
+            // ✅ NOVO: Primeiro tentar pickar no Redis (fonte da verdade)
+            Long championIdLong = Long.parseLong(championId);
+            boolean redisSuccess = redisDraft.pickChampion(matchId, playerId, championIdLong);
+
+            if (!redisSuccess) {
+                log.warn("⚠️ [DraftService.changePick] Campeão {} já foi pickado ou está banido", championId);
+                return false;
+            }
+
+            log.info("✅ [DraftService.changePick] Pick registrado no Redis");
+
             // ✅ Delegar para DraftFlowService (gerencia o estado real)
             draftFlowService.changePick(matchId, playerId, championId);
 
-            // ✅ Também atualizar cache local (legacy - compatibilidade)
+            // ✅ Atualizar cache local (legacy - compatibilidade)
             DraftData draft = activeDrafts.get(matchId);
             if (draft != null) {
                 draft.getPicks().put(playerId, championId);
@@ -202,6 +235,9 @@ public class DraftService {
 
             log.info("✅ [DraftService.changePick] Pick alterado com sucesso");
             return true;
+        } catch (NumberFormatException e) {
+            log.error("❌ [DraftService.changePick] ID de campeão inválido: {}", championId, e);
+            return false;
         } catch (Exception e) {
             log.error("❌ [DraftService.changePick] Erro ao alterar pick", e);
             return false;
@@ -216,6 +252,26 @@ public class DraftService {
             Integer averageMmrTeam1, Integer averageMmrTeam2) {
         try {
             log.info("🎯 Iniciando draft para partida: {}", matchId);
+
+            // ✅ NOVO: Inicializar draft no Redis (fonte da verdade)
+            List<br.com.lolmatchmaking.backend.domain.entity.QueuePlayer> team1QueuePlayers = new ArrayList<>();
+            List<br.com.lolmatchmaking.backend.domain.entity.QueuePlayer> team2QueuePlayers = new ArrayList<>();
+
+            // Converter DraftPlayer para QueuePlayer para Redis
+            team1.forEach(p -> {
+                br.com.lolmatchmaking.backend.domain.entity.QueuePlayer qp = new br.com.lolmatchmaking.backend.domain.entity.QueuePlayer();
+                qp.setSummonerName(p.getSummonerName());
+                team1QueuePlayers.add(qp);
+            });
+
+            team2.forEach(p -> {
+                br.com.lolmatchmaking.backend.domain.entity.QueuePlayer qp = new br.com.lolmatchmaking.backend.domain.entity.QueuePlayer();
+                qp.setSummonerName(p.getSummonerName());
+                team2QueuePlayers.add(qp);
+            });
+
+            redisDraft.startDraft(matchId, team1QueuePlayers, team2QueuePlayers);
+            log.info("✅ Draft inicializado no Redis para partida {}", matchId);
 
             DraftData draftData = new DraftData();
             draftData.setMatchId(matchId);
@@ -339,22 +395,37 @@ public class DraftService {
     }
 
     /**
-     * Confirma draft por um jogador
+     * ✅ ATUALIZADO: Confirma draft por um jogador usando Redis distribuído
      */
     public boolean confirmDraft(Long matchId, String playerId) {
         try {
-            DraftData draftData = activeDrafts.get(matchId);
-            if (draftData == null) {
+            log.info("✅ [DraftService.confirmDraft] Confirmando draft no Redis");
+            log.info("   - matchId: {}", matchId);
+            log.info("   - playerId: {}", playerId);
+
+            // ✅ NOVO: Confirmar no Redis primeiro (fonte da verdade)
+            boolean redisSuccess = redisDraft.confirmDraft(matchId, playerId);
+
+            if (!redisSuccess) {
+                log.warn("⚠️ [DraftService.confirmDraft] Falha ao confirmar no Redis");
                 return false;
             }
 
-            draftData.getDraftConfirmations().put(playerId, true);
+            // ✅ Atualizar cache local (backward compatibility)
+            DraftData draftData = activeDrafts.get(matchId);
+            if (draftData != null) {
+                draftData.getDraftConfirmations().put(playerId, true);
 
-            if (draftData.getDraftConfirmations().size() == 10) {
-                completeDraft(matchId);
+                // Verificar se todos confirmaram no Redis (fonte da verdade)
+                if (redisDraft.allPlayersConfirmed(matchId)) {
+                    log.info("🎉 [DraftService.confirmDraft] TODOS os jogadores confirmaram!");
+                    completeDraft(matchId);
+                }
+
+                broadcastDraftUpdate(matchId, draftData);
             }
 
-            broadcastDraftUpdate(matchId, draftData);
+            log.info("✅ [DraftService.confirmDraft] Draft confirmado com sucesso");
             return true;
 
         } catch (Exception e) {
@@ -364,14 +435,39 @@ public class DraftService {
     }
 
     /**
-     * Obtém sessão de draft
+     * ✅ ATUALIZADO: Obtém sessão de draft do Redis (fonte da verdade)
      */
     public Map<String, Object> getDraftSession(Long matchId) {
         try {
+            log.info("📊 [DraftService.getDraftSession] Buscando sessão do Redis para match {}", matchId);
+
+            // ✅ NOVO: Buscar dados do Redis (fonte da verdade)
+            Map<String, Long> picks = redisDraft.getAllPicks(matchId);
+            Set<Long> bans = redisDraft.getAllBans(matchId);
+            Map<String, Object> draftStatus = redisDraft.getDraftStatus(matchId);
+
+            // Buscar confirmações do Redis
+            @SuppressWarnings("unchecked")
+            Set<String> confirmations = (Set<String>) draftStatus.getOrDefault("confirmations", new HashSet<>());
+
+            Map<String, Boolean> confirmationsMap = new HashMap<>();
+            confirmations.forEach(player -> confirmationsMap.put(player, true));
+
+            // Buscar do cache local para dados complementares (team1, team2, etc)
             DraftData draftData = activeDrafts.get(matchId);
             if (draftData == null) {
-                return null;
+                log.warn("⚠️ [DraftService.getDraftSession] Draft não encontrado no cache local para match {}",
+                        matchId);
+                return Map.of(
+                        "matchId", matchId,
+                        "picks", picks,
+                        "bans", bans,
+                        "confirmations", confirmationsMap,
+                        "timeRemaining", getTimeRemaining(matchId));
             }
+
+            log.info("✅ [DraftService.getDraftSession] Sessão encontrada - {} picks, {} bans, {} confirmações",
+                    picks.size(), bans.size(), confirmationsMap.size());
 
             return Map.of(
                     "matchId", matchId,
@@ -379,9 +475,10 @@ public class DraftService {
                     "team2", draftData.getTeam2(),
                     "currentAction", draftData.getCurrentAction(),
                     "phase", draftData.getPhase(),
-                    "picks", draftData.getPicks(),
+                    "picks", picks, // ✅ Do Redis
+                    "bans", bans, // ✅ Do Redis
                     "actions", draftData.getActions(),
-                    "confirmations", draftData.getDraftConfirmations(),
+                    "confirmations", confirmationsMap, // ✅ Do Redis
                     "timeRemaining", getTimeRemaining(matchId));
 
         } catch (Exception e) {
@@ -733,17 +830,57 @@ public class DraftService {
     }
 
     /**
-     * Obtém dados do draft
+     * ✅ ATUALIZADO: Obtém dados do draft sincronizado com Redis
      */
     public DraftData getDraftData(Long matchId) {
-        return activeDrafts.get(matchId);
+        DraftData draftData = activeDrafts.get(matchId);
+
+        if (draftData != null) {
+            // ✅ NOVO: Sincronizar picks e confirmações do Redis (fonte da verdade)
+            try {
+                Map<String, Long> redisPicks = redisDraft.getAllPicks(matchId);
+                Map<String, Object> picksMap = new HashMap<>();
+                redisPicks.forEach((player, championId) -> picksMap.put(player, championId.toString()));
+                draftData.setPicks(picksMap);
+
+                // Sincronizar confirmações
+                Map<String, Object> draftStatus = redisDraft.getDraftStatus(matchId);
+                @SuppressWarnings("unchecked")
+                Set<String> confirmations = (Set<String>) draftStatus.getOrDefault("confirmations", new HashSet<>());
+
+                Map<String, Boolean> confirmationsMap = new HashMap<>();
+                confirmations.forEach(player -> confirmationsMap.put(player, true));
+                draftData.setDraftConfirmations(confirmationsMap);
+
+                log.debug("✅ [DraftService.getDraftData] Dados sincronizados com Redis - {} picks, {} confirmações",
+                        redisPicks.size(), confirmationsMap.size());
+            } catch (Exception e) {
+                log.error("❌ [DraftService.getDraftData] Erro ao sincronizar com Redis", e);
+            }
+        }
+
+        return draftData;
     }
 
     /**
-     * Obtém todos os drafts ativos
+     * ✅ ATUALIZADO: Obtém todos os drafts ativos (sincroniza com Redis)
      */
     public Map<Long, DraftData> getActiveDrafts() {
-        return new HashMap<>(activeDrafts);
+        Map<Long, DraftData> drafts = new HashMap<>(activeDrafts);
+
+        // ✅ NOVO: Sincronizar cada draft com Redis
+        drafts.forEach((matchId, draftData) -> {
+            try {
+                Map<String, Long> redisPicks = redisDraft.getAllPicks(matchId);
+                Map<String, Object> picksMap = new HashMap<>();
+                redisPicks.forEach((player, championId) -> picksMap.put(player, championId.toString()));
+                draftData.setPicks(picksMap);
+            } catch (Exception e) {
+                log.error("❌ Erro ao sincronizar draft {} com Redis", matchId, e);
+            }
+        });
+
+        return drafts;
     }
 
     private void updateTimers() {
