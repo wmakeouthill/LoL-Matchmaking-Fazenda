@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, OnChanges, SimpleChanges, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, OnChanges, SimpleChanges, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ChampionService } from '../../services/champion.service';
@@ -33,8 +33,10 @@ interface CustomPickBanSession {
   standalone: true,
   imports: [CommonModule, FormsModule],
   templateUrl: './draft-champion-modal.html',
-  styleUrl: './draft-champion-modal.scss',
-  changeDetection: ChangeDetectionStrategy.OnPush
+  styleUrl: './draft-champion-modal.scss'
+  // ✅ CORREÇÃO: OnPush REMOVIDO - o componente acessa window.appComponent.draftTimer
+  // que é atualizado externamente via WebSocket, então precisa da estratégia Default
+  // changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
   @Input() session: CustomPickBanSession | null = null;

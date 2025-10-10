@@ -103,6 +103,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   private lastMatchDataHash: string = '';
   private updateInProgress: boolean = false;
 
+  // ✅ CORREÇÃO: Timer para forçar atualização do UI do timer
+  private timerUpdateInterval: any = null;
+
   // ✅ NOVO: Controle do modal de ajuda do jogador
   showPlayerHelpModal: boolean = false;
   selectedPlayerForHelp: string = '';
@@ -159,6 +162,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
     // ✅ Configurar listener para mensagens do backend
     this.setupBackendListeners();
+
+    // ✅ CORREÇÃO: Iniciar interval para atualizar o timer na UI a cada segundo
+    this.startTimerUpdateInterval();
 
     // ✅ NOVO: Aguardar ngOnChanges processar primeiro se matchData existir
     if (this.matchData) {
@@ -249,6 +255,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       clearTimeout(this.ngOnChangesDebounceTimer);
       this.ngOnChangesDebounceTimer = null;
     }
+
+    // ✅ CORREÇÃO: Parar interval de atualização do timer
+    this.stopTimerUpdateInterval();
 
     this.stopSessionSync();
     saveLogToRoot(`✅ [ngOnDestroy] Componente destruído com sucesso`);
@@ -2900,6 +2909,33 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     this.showSpectatorsModal = false;
     saveLogToRoot(`👥 [closeSpectatorsModal] Modal de espectadores fechado`);
     this.cdr.detectChanges();
+  }
+
+  /**
+   * ✅ CORREÇÃO: Iniciar interval para forçar atualização do timer a cada segundo
+   */
+  private startTimerUpdateInterval(): void {
+    // Limpar interval existente se houver
+    this.stopTimerUpdateInterval();
+
+    // Criar novo interval que força detecção de mudanças a cada 1 segundo
+    this.timerUpdateInterval = setInterval(() => {
+      // Forçar Angular a detectar mudanças no timer
+      this.cdr.detectChanges();
+    }, 1000); // A cada 1 segundo
+
+    console.log('⏰ [startTimerUpdateInterval] Interval do timer iniciado');
+  }
+
+  /**
+   * ✅ CORREÇÃO: Parar interval de atualização do timer
+   */
+  private stopTimerUpdateInterval(): void {
+    if (this.timerUpdateInterval) {
+      clearInterval(this.timerUpdateInterval);
+      this.timerUpdateInterval = null;
+      console.log('⏰ [stopTimerUpdateInterval] Interval do timer parado');
+    }
   }
 
   /**
