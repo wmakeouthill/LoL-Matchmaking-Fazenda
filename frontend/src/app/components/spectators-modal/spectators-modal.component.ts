@@ -186,14 +186,27 @@ export class SpectatorsModalComponent implements OnInit, OnDestroy {
    * Muta ou desmuta um espectador
    */
   toggleMute(spectator: SpectatorDTO): void {
+    // ✅ CORREÇÃO: Obter summoner name com fallback
+    let summonerName = this.summonerName;
+    if (!summonerName) {
+      summonerName = this.currentSummonerService.getSummonerNameForHeader() || '';
+      console.warn('⚠️ [SpectatorsModal] summonerName não passado via @Input para toggleMute, usando CurrentSummonerService:', summonerName);
+    }
+
     const headers = new HttpHeaders({
-      'X-Summoner-Name': this.summonerName
+      'X-Summoner-Name': summonerName
     });
 
     const action = spectator.isMuted ? 'unmute' : 'mute';
     const url = `${this.baseUrl}/discord/match/${this.matchId}/spectator/${spectator.discordId}/${action}`;
 
-    console.log(`🔇 [SpectatorsModal] ${action} espectador ${spectator.discordUsername}`);
+    console.log(`🔇 [SpectatorsModal] === TOGGLE MUTE ===`);
+    console.log(`🔇 [SpectatorsModal] Action: ${action}`);
+    console.log(`🔇 [SpectatorsModal] Espectador: ${spectator.discordUsername}`);
+    console.log(`🔇 [SpectatorsModal] URL: ${url}`);
+    console.log(`🔇 [SpectatorsModal] matchId: ${this.matchId}`);
+    console.log(`🔇 [SpectatorsModal] summonerName: ${summonerName}`);
+    console.log(`🔇 [SpectatorsModal] discordId: ${spectator.discordId}`);
 
     this.http.post<MuteResponse>(url, {}, { headers }).subscribe({
       next: (response: MuteResponse) => {
