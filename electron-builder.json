@@ -36,6 +36,7 @@
   "portable": {
     "artifactName": "LOL-Matchmaking-Portable.exe",
     "unpackDirName": "LOL-Matchmaking",
-    "compression": "store"
-  }
+    "useZip": false
+  },
+  "compression": "store"
 }

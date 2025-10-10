@@ -6,14 +6,30 @@
       <div class="loading-progress" *ngIf="isAnyLoading()">
         <div class="progress-text">{{ getLoadingStatus() }}</div>
         <div class="progress-bar" *ngIf="getLoadingProgress() > 0">
-          <div class="progress-fill" [style.width.%]="getLoadingProgress()"></div>
+          <div
+            class="progress-fill"
+            [style.width.%]="getLoadingProgress()"
+          ></div>
         </div>
       </div>
 
       <div class="last-updated">
         <span>Última atualização: {{ formatUpdateTime(lastUpdated) }}</span>
       </div>
-      <button class="refresh-btn" (click)="refresh()" [disabled]="isAnyLoading()">
+      <button
+        class="refresh-total-btn"
+        (click)="refreshTotal()"
+        [disabled]="isAnyLoading()"
+        title="Recalcula todas as estatísticas baseado nas partidas customizadas (LP, W/L, KDA, etc)"
+      >
+        🔄 Refresh Total
+      </button>
+      <button
+        class="refresh-btn"
+        (click)="refresh()"
+        [disabled]="isAnyLoading()"
+        title="Atualiza dados da Riot API (ranked champions, mastery)"
+      >
         Atualizar
         <i class="icon-refresh" [class.spinning]="isAnyLoading()"></i>
       </button>
@@ -36,48 +52,82 @@
       </div>
 
       <div class="table-body">
-        <div class="player-row" *ngFor="let player of leaderboardData; trackBy: trackByPlayerId">
+        <div
+          class="player-row"
+          *ngFor="let player of leaderboardData; trackBy: trackByPlayerId"
+        >
           <!-- Posição -->
           <div class="rank-col">
-            <div class="rank-indicator" [ngStyle]="{'color': getRankColor(player.rank)}">
+            <div
+              class="rank-indicator"
+              [ngStyle]="{'color': getRankColor(player.rank)}"
+            >
               <span class="rank-icon">{{ getRankIcon(player.rank) }}</span>
             </div>
-          </div> <!-- Jogador -->
+          </div>
+          <!-- Jogador -->
           <div class="player-col">
-            <div class="player-info"> <img [src]="player.profileIconUrl$ | async" alt="Profile Icon"
-                class="profile-icon" (error)="onProfileIconError($event, player.profileIconId)">
+            <div class="player-info">
+              <img
+                [src]="player.profileIconUrl$ | async"
+                alt="Profile Icon"
+                class="profile-icon"
+                (error)="onProfileIconError($event, player.profileIconId)"
+              />
               <div class="player-details">
                 <span class="summoner-name">{{ player.summoner_name }}</span>
-                <span class="player-games">{{ player.games_played }} partidas</span>
+                <span class="player-games"
+                  >{{ player.games_played }} partidas</span
+                >
               </div>
             </div>
-          </div><!-- Campeão Favorito -->
+          </div>
+          <!-- Campeão Favorito -->
           <div class="champion-col">
-            <div class="champion-info" *ngIf="player.favorite_champion; else noChampion">
-              <img [src]="player.favorite_champion.iconUrl" [alt]="player.favorite_champion.displayName"
-                class="champion-icon" (error)="onImageError($event, 'assets/images/champion-placeholder.svg')">
+            <div
+              class="champion-info"
+              *ngIf="player.favorite_champion; else noChampion"
+            >
+              <img
+                [src]="player.favorite_champion.iconUrl"
+                [alt]="player.favorite_champion.displayName"
+                class="champion-icon"
+                (error)="onImageError($event, 'assets/images/champion-placeholder.svg')"
+              />
               <div class="champion-details">
-                <span class="champion-name">{{ player.favorite_champion.displayName }}</span>
-                <span class="champion-games">{{ player.favorite_champion.games }} partidas</span>
+                <span class="champion-name"
+                  >{{ player.favorite_champion.displayName }}</span
+                >
+                <span class="champion-games"
+                  >{{ player.favorite_champion.games }} partidas</span
+                >
               </div>
             </div>
             <ng-template #noChampion>
               <div class="no-champion">
-                <img src="assets/images/champion-placeholder.svg" alt="No champion" class="champion-icon">
+                <img
+                  src="assets/images/champion-placeholder.svg"
+                  alt="No champion"
+                  class="champion-icon"
+                />
                 <span>Nenhum</span>
               </div>
             </ng-template>
           </div>
 
           <!-- Custom LP -->
-          <div class="lp-col"
-            [ngStyle]="{'color': player.lp > 0 ? '#3fc380' : (player.lp < 0 ? '#e74c3c' : '#cdbe91'), 'font-weight': 'bold'}">
+          <div
+            class="lp-col"
+            [ngStyle]="{'color': player.lp > 0 ? '#3fc380' : (player.lp < 0 ? '#e74c3c' : '#cdbe91'), 'font-weight': 'bold'}"
+          >
             {{ player.lp > 0 ? '+' : '' }}{{ player.lp }} LP
           </div>
 
           <!-- Custom MMR -->
-          <div class="mmr-col"
-            [ngStyle]="{'color': player.custom_mmr >= 1200 ? '#3fc380' : (player.custom_mmr <= 800 ? '#e74c3c' : '#cdbe91'), 'font-weight': 'bold'}">
+          <div
+            class="mmr-col"
+            [ngStyle]="{'color': player.custom_mmr >= 1200 ? '#3fc380' : (player.custom_mmr <= 800 ? '#e74c3c' : '#cdbe91'), 'font-weight': 'bold'}"
+          >
             {{ player.custom_mmr }} MMR
           </div>
 
@@ -87,14 +137,19 @@
               <div class="games-total">{{ player.games_played }} jogos</div>
               <div class="games-breakdown">
                 <span class="wins">{{ player.wins }}V</span>
-                <span class="losses">{{ player.games_played - player.wins }}D</span>
+                <span class="losses"
+                  >{{ player.games_played - player.wins }}D</span
+                >
               </div>
             </div>
           </div>
 
           <!-- Taxa de Vitória -->
           <div class="winrate-col">
-            <div class="winrate-value" [ngStyle]="{'color': getWinRateColor(player.win_rate)}">
+            <div
+              class="winrate-value"
+              [ngStyle]="{'color': getWinRateColor(player.win_rate)}"
+            >
               {{ player.win_rate }}%
             </div>
           </div>
@@ -102,12 +157,19 @@
           <!-- KDA -->
           <div class="kda-col">
             <div class="kda-stats">
-              <div class="kda-values">{{ formatKDANew(player.avg_kills, player.avg_deaths, player.avg_assists) }}</div>
-              <div class="kda-ratio" [ngStyle]="{'color': getKDAColor(player.kda_ratio)}">
+              <div class="kda-values">
+                {{ formatKDANew(player.avg_kills, player.avg_deaths,
+                player.avg_assists) }}
+              </div>
+              <div
+                class="kda-ratio"
+                [ngStyle]="{'color': getKDAColor(player.kda_ratio)}"
+              >
                 {{ formatKDARatio(player.kda_ratio) }} KDA
               </div>
             </div>
-          </div> <!-- Gold Médio -->
+          </div>
+          <!-- Gold Médio -->
           <div class="gold-col">
             <div class="gold-value">{{ formatGold(player.avg_gold) }}</div>
           </div>
@@ -117,7 +179,9 @@
             <div class="extra-stats">
               <div class="stat-item">
                 <span class="stat-label">Damage:</span>
-                <span class="stat-value">{{ formatDamage(player.avg_damage) }}</span>
+                <span class="stat-value"
+                  >{{ formatDamage(player.avg_damage) }}</span
+                >
               </div>
               <div class="stat-item">
                 <span class="stat-label">CS:</span>
@@ -145,7 +209,10 @@
   </div>
 
   <!-- Estado vazio -->
-  <div class="empty-state" *ngIf="!isLoading && !error && leaderboardData.length === 0">
+  <div
+    class="empty-state"
+    *ngIf="!isLoading && !error && leaderboardData.length === 0"
+  >
     <div class="empty-icon">🏆</div>
     <h3>Nenhum jogador encontrado</h3>
     <p>Ainda não há dados de partidas customizadas para exibir.</p>

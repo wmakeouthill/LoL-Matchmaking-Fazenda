@@ -16,6 +16,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -114,6 +115,7 @@ public class MatchVoteController {
             int voteCount = (int) voteResult.getOrDefault("voteCount", 0);
             Long votedGameId = (Long) voteResult.get("lcuGameId");
             boolean isSpecialUserVote = (boolean) voteResult.getOrDefault("specialUserVote", false);
+            String voterName = player.getSummonerName();
 
             if (isSpecialUserVote) {
                 log.info("🌟 Voto de SPECIAL USER detectado! Finalizando partida imediatamente...");
@@ -130,17 +132,60 @@ public class MatchVoteController {
                 }
 
                 try {
-                    // Buscar histórico de partidas do LCU
-                    JsonNode matchHistoryResponse = lcuService.getMatchHistory().join();
+                    // ✅ Buscar histórico de partidas do LCU usando o summoner do votante
+                    log.info("🔍 Tentando buscar histórico LCU via jogador: {}", voterName);
+                    JsonNode matchHistoryResponse = lcuService.getMatchHistory(voterName).join();
 
+                    // Se falhou com o votante, tentar com outros jogadores da partida
                     if (matchHistoryResponse == null) {
-                        log.warn("⚠️ Histórico LCU não disponível");
-                        return ResponseEntity.ok(Map.of(
-                                KEY_SUCCESS, true,
-                                "message", "Voto registrado mas histórico LCU não disponível",
-                                "voteCount", voteCount,
-                                "linked", false,
-                                KEY_ERROR, "LCU history not available"));
+                        log.warn("⚠️ Histórico LCU não disponível para votante: {}", voterName);
+                        log.info("🔄 Tentando buscar histórico LCU de outros jogadores da partida...");
+
+                        // Pegar jogadores da partida
+                        List<String> allPlayers = new ArrayList<>();
+                        String team1Json = match.getTeam1PlayersJson();
+                        String team2Json = match.getTeam2PlayersJson();
+
+                        if (team1Json != null && !team1Json.isEmpty()) {
+                            allPlayers.addAll(List.of(team1Json.split(",")));
+                        }
+                        if (team2Json != null && !team2Json.isEmpty()) {
+                            allPlayers.addAll(List.of(team2Json.split(",")));
+                        }
+
+                        log.info("🔍 Total de jogadores na partida: {}", allPlayers.size());
+
+                        // Tentar com cada jogador até conseguir
+                        for (String playerName : allPlayers) {
+                            String cleanPlayerName = playerName.trim();
+                            if (cleanPlayerName.equals(voterName)) {
+                                continue; // Já tentamos com o votante
+                            }
+
+                            log.info("🔍 Tentando buscar histórico via: {}", cleanPlayerName);
+                            try {
+                                matchHistoryResponse = lcuService.getMatchHistory(cleanPlayerName).join();
+                                if (matchHistoryResponse != null) {
+                                    log.info("✅ Histórico LCU encontrado via: {}", cleanPlayerName);
+                                    break;
+                                }
+                            } catch (Exception fallbackError) {
+                                log.debug("❌ Falha ao buscar via {}: {}", cleanPlayerName, fallbackError.getMessage());
+                            }
+                        }
+
+                        // Se ainda não conseguiu, retornar erro
+                        if (matchHistoryResponse == null) {
+                            log.error("❌ Nenhum jogador da partida tem conexão LCU ativa");
+                            return ResponseEntity.ok(Map.of(
+                                    KEY_SUCCESS, true,
+                                    "message", "Voto registrado mas nenhum jogador com LCU conectado",
+                                    "voteCount", voteCount,
+                                    "linked", false,
+                                    "specialUserVote", isSpecialUserVote,
+                                    "voterName", voterName,
+                                    KEY_ERROR, "No player with active LCU connection found"));
+                        }
                     }
 
                     // DEBUG: Mostrar estrutura do JSON retornado
@@ -186,7 +231,7 @@ public class MatchVoteController {
 
                     // Buscar pela lcuGameId votada
                     JsonNode lcuMatchData = null;
-                    if (gamesArray.isArray()) {
+                    if (gamesArray != null && gamesArray.isArray()) {
                         log.info("🔍 [DEBUG] Procurando gameId={} em {} partidas", votedGameId, gamesArray.size());
                         for (JsonNode game : gamesArray) {
                             long gameId = game.has("gameId") ? game.get("gameId").asLong() : -1;
@@ -204,12 +249,18 @@ public class MatchVoteController {
                         matchVoteService.linkMatch(matchId, votedGameId, lcuMatchData);
                         log.info("🎉 Partida vinculada automaticamente com sucesso!");
 
-                        return ResponseEntity.ok(Map.of(
-                                KEY_SUCCESS, true,
-                                "message", "Voto registrado e partida vinculada automaticamente",
-                                "voteCount", voteCount,
-                                "linked", true,
-                                "lcuGameId", votedGameId));
+                        // ✅ Incluir specialUserVote, voterName e shouldLink na resposta
+                        Map<String, Object> response = new HashMap<>();
+                        response.put(KEY_SUCCESS, true);
+                        response.put("message", "Voto registrado e partida vinculada automaticamente");
+                        response.put("voteCount", voteCount);
+                        response.put("linked", true);
+                        response.put("lcuGameId", votedGameId);
+                        response.put("specialUserVote", isSpecialUserVote);
+                        response.put("shouldLink", true);
+                        response.put("voterName", voterName);
+
+                        return ResponseEntity.ok(response);
                     } else {
                         log.warn("⚠️ Partida LCU não encontrada no histórico: {}", votedGameId);
                         return ResponseEntity.ok(Map.of(
@@ -231,11 +282,16 @@ public class MatchVoteController {
             }
 
             // Resposta normal (sem vinculação ainda)
-            return ResponseEntity.ok(Map.of(
-                    KEY_SUCCESS, true,
-                    "message", "Voto registrado com sucesso",
-                    "voteCount", voteCount,
-                    "linked", false));
+            Map<String, Object> response = new HashMap<>();
+            response.put(KEY_SUCCESS, true);
+            response.put("message", "Voto registrado com sucesso");
+            response.put("voteCount", voteCount);
+            response.put("linked", false);
+            response.put("specialUserVote", isSpecialUserVote);
+            response.put("shouldLink", shouldLink);
+            response.put("voterName", voterName);
+
+            return ResponseEntity.ok(response);
 
         } catch (IllegalArgumentException e) {
             log.warn("⚠️ Validação falhou: {}", e.getMessage());

@@ -1149,7 +1149,7 @@ export class ApiService {
     // Em Electron, usar o conector local (preload) e não o backend central
     if (this.isElectron() && (window as any).electronAPI?.lcu?.getCurrentSummoner) {
       console.log('🔍 [ApiService] Buscando summoner + ranked do LCU...');
-      
+
       // ✅ CRÍTICO: Buscar AMBOS summoner e ranked em PARALELO
       const summoner$ = new Observable(observer => {
         (window as any).electronAPI.lcu.getCurrentSummoner()
@@ -1201,6 +1201,13 @@ export class ApiService {
               
               console.log('✅ [ApiService] Rank encontrado:', merged.rank);
             }
+          }
+          
+          // ✅ CRÍTICO: Se ranked tem currentMMR pré-calculado, copiar para merged
+          if (ranked && ranked.currentMMR) {
+            merged.currentMMR = ranked.currentMMR;
+            merged.customLp = ranked.currentMMR; // Exibir current_mmr até backend atualizar
+            console.log('✅ [ApiService] currentMMR do preload:', ranked.currentMMR);
           }
 
           return merged;
@@ -1907,13 +1914,14 @@ export class ApiService {
     return 1200; // Default MMR
   }
 
-  private calculateMMRFromRankData(rankData: any): number {
+  // ✅ PUBLIC: Permite que outros componentes calculem MMR baseado em rank
+  calculateMMRFromRankData(rankData: any): number {
     if (!rankData?.tier) return 1200;
 
     const tierValues: { [key: string]: number } = {
       'IRON': 800, 'BRONZE': 1000, 'SILVER': 1200, 'GOLD': 1400,
       'PLATINUM': 1700, 'EMERALD': 2000, 'DIAMOND': 2300,
-      'MASTER': 2600, 'GRANDMASTER': 2800, 'CHALLENGER': 3000
+      'MASTER': 2600, 'GRANDMASTER': 2900, 'CHALLENGER': 3200
     };
 
     const rankValues: { [key: string]: number } = {

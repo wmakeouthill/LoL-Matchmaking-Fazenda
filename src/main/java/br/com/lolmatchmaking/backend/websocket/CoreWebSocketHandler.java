@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,6 +44,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
     private final DraftFlowService draftFlowService;
     private final MatchmakingWebSocketService webSocketService;
     private final LCUConnectionRegistry lcuConnectionRegistry;
+    private final br.com.lolmatchmaking.backend.service.PlayerService playerService;
 
     // sessionId -> player info (JSON raw)
     private final Map<String, JsonNode> identifiedPlayers = new ConcurrentHashMap<>();
@@ -130,6 +132,87 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         log.info("✅ [WS] Conexão LCU registrada: '{}' (session: {}, {}:{})",
                 summonerName, session.getId(), host, port);
 
+        // ✅ NOVO: Buscar dados de ranked e salvar MMR no banco IMEDIATAMENTE
+        CompletableFuture.runAsync(() -> {
+            try {
+                log.info("📊 [WS] Buscando dados de ranked para inicializar MMR: {}", summonerName);
+
+                // Buscar ranked stats via RPC gateway
+                JsonNode rankedData = webSocketService.requestLcu(
+                        session.getId(),
+                        "GET",
+                        "/lol-ranked/v1/current-ranked-stats",
+                        null,
+                        5000);
+
+                log.info("🔍 [WS] rankedData recebido: tipo={}",
+                        rankedData != null ? rankedData.getNodeType() : "NULL");
+
+                // ✅ CRÍTICO: rankedData vem em formato diferente do esperado
+                // Pode vir como: { status: 200, body: { queues: [...] } } (wrapper)
+                // Ou como: { queues: [...] } (direto)
+                // Ou como: { highestRankedEntry: {...} } (formato alternativo)
+
+                JsonNode actualData = rankedData;
+
+                // Se vier wrapped em { status, body }, extrair body
+                if (rankedData != null && rankedData.has("body")) {
+                    actualData = rankedData.get("body");
+                    log.info("🔍 [WS] Extraído 'body' do rankedData");
+                }
+
+                JsonNode soloQueueData = null;
+
+                // Tentar formato 1: queues array
+                if (actualData != null && actualData.has("queues") && actualData.get("queues").isArray()) {
+                    log.info("🔍 [WS] Formato 'queues' detectado");
+                    for (JsonNode queue : actualData.get("queues")) {
+                        if (queue.has("queueType") && queue.get("queueType").asText().equals("RANKED_SOLO_5x5")) {
+                            soloQueueData = queue;
+                            break;
+                        }
+                    }
+                }
+                // Tentar formato 2: highestRankedEntry
+                else if (actualData != null && actualData.has("highestRankedEntry")) {
+                    log.info("🔍 [WS] Formato 'highestRankedEntry' detectado");
+                    JsonNode entry = actualData.get("highestRankedEntry");
+                    if (entry.has("queueType") && entry.get("queueType").asText().equals("RANKED_SOLO_5x5")) {
+                        soloQueueData = entry;
+                    }
+                }
+
+                if (soloQueueData != null) {
+                    String tier = soloQueueData.get("tier").asText("UNRANKED");
+                    String division = soloQueueData.get("division").asText("");
+                    int lp = soloQueueData.get("leaguePoints").asInt(0);
+                    int wins = soloQueueData.get("wins").asInt(0);
+                    int losses = soloQueueData.get("losses").asInt(0);
+
+                    log.info("🎯 [WS] Rank detectado: {} {} ({}LP, {}W/{}L)",
+                            tier, division, lp, wins, losses);
+
+                    // Calcular MMR (mesma fórmula do PlayerController)
+                    int currentMmr = calculateMMRFromRank(tier, division, lp);
+                    log.info("🔢 [WS] MMR calculado: {}", currentMmr);
+
+                    // Salvar no banco via PlayerService
+                    playerService.createOrUpdatePlayerOnLogin(
+                            summonerName,
+                            "br1",
+                            currentMmr,
+                            null,
+                            null);
+
+                    log.info("✅ [WS] Player atualizado no banco com MMR calculado: {}", currentMmr);
+                } else {
+                    log.warn("⚠️ [WS] Não foi possível extrair dados de ranked solo");
+                }
+            } catch (Exception e) {
+                log.warn("⚠️ [WS] Erro ao buscar ranked/salvar MMR (não crítico): {}", e.getMessage());
+            }
+        });
+
         // ✅ CORREÇÃO: Enviar confirmação de registro para TODAS as sessões do jogador
         // (não apenas para a sessão gateway, mas também para a sessão do frontend)
         String confirmationMessage = "{\"type\":\"lcu_connection_registered\",\"success\":true,\"summonerName\":\""
@@ -148,6 +231,37 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         } catch (Exception e) {
             log.warn("⚠️ [WS] Erro ao enviar broadcast de lcu_connection_registered: {}", e.getMessage());
         }
+    }
+
+    /**
+     * Calcula MMR baseado em tier, division e LP
+     */
+    private int calculateMMRFromRank(String tier, String division, int lp) {
+        int baseMmr = switch (tier.toUpperCase()) {
+            case "IRON" -> 800;
+            case "BRONZE" -> 1000;
+            case "SILVER" -> 1200;
+            case "GOLD" -> 1400;
+            case "PLATINUM" -> 1700;
+            case "EMERALD" -> 2000;
+            case "DIAMOND" -> 2300;
+            case "MASTER" -> 2600;
+            case "GRANDMASTER" -> 2900;
+            case "CHALLENGER" -> 3200;
+            default -> 1200;
+        };
+
+        int rankBonus = switch (division.toUpperCase()) {
+            case "IV" -> 0;
+            case "III" -> 50;
+            case "II" -> 100;
+            case "I" -> 150;
+            default -> 0;
+        };
+
+        int lpBonus = (int) Math.round(lp * 0.8);
+
+        return baseMmr + rankBonus + lpBonus;
     }
 
     private void handleLcuStatus(WebSocketSession session, JsonNode root) throws IOException {

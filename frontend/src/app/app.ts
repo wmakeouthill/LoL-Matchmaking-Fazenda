@@ -1185,71 +1185,12 @@ export class App implements OnInit, OnDestroy {
     this.currentView = view;
     // Ao entrar em Configurações, sempre sincronizar os dados via gateway Electron (como no dashboard)
     if (view === 'settings') {
-      // 1) Priorizar gateway Electron (LCU local) para resposta imediata
-      this.apiService.getCurrentSummonerFromLCU().subscribe({
-        next: (lcuData: any) => {
-          if (lcuData) {
-            const displayName = (lcuData.gameName && lcuData.tagLine)
-              ? `${lcuData.gameName}#${lcuData.tagLine}`
-              : (lcuData.displayName || undefined);
-
-            // ✅ CORREÇÃO: summonerName deve ser gameName#tagLine completo
-            const summonerName = (lcuData.gameName && lcuData.tagLine)
-              ? `${lcuData.gameName}#${lcuData.tagLine}`
-              : (lcuData.gameName || lcuData.displayName || 'Unknown');
-
-            const player: Player = {
-              id: lcuData.summonerId || 0,
-              summonerName,
-              displayName,
-              gameName: lcuData.gameName || null,
-              tagLine: lcuData.tagLine || null,
-              summonerId: (lcuData.summonerId || '0').toString(),
-              puuid: lcuData.puuid || '',
-              profileIconId: lcuData.profileIconId || 29,
-              summonerLevel: lcuData.summonerLevel || 30,
-              region: 'br1',
-              currentMMR: 1200,
-              rank: undefined,
-              wins: undefined,
-              losses: undefined
-            };
-            this.currentPlayer = player;
-            this.savePlayerData(player).catch(err => console.error('Erro ao salvar dados:', err));
-            this.updateSettingsForm();
-
-            // ✅ OTIMIZAÇÃO: Reiniciar intervalos com polling mais lento após identificar jogador
-            this.startLCUStatusCheck(); // Ajusta para intervalo de 20s
-            this.startLcuTelemetry(); // Ajusta para intervalo de 15s
-
-            this.cdr.detectChanges();
-          }
-        },
-        error: () => { },
-        complete: () => {
-          // 2) Em seguida, sincronizar com backend (mesmo fluxo do dashboard)
-          this.apiService.getPlayerFromLCU().subscribe({
-            next: (player: Player) => {
-              this.currentPlayer = player;
-              this.savePlayerData(player).catch(err => console.error('Erro ao salvar dados:', err));
-              this.updateSettingsForm();
-
-              // ✅ OTIMIZAÇÃO: Reiniciar intervalos com polling mais lento após identificar jogador
-              this.startLCUStatusCheck(); // Ajusta para intervalo de 20s
-              this.startLcuTelemetry(); // Ajusta para intervalo de 15s
-
-              this.cdr.detectChanges();
-            },
-            error: () => {
-              // ✅ REMOVIDO: Agora aguardamos o evento lcu_connection_registered no setupBackendCommunication()
-              // antes de chamar tryGetCurrentPlayerDetails(), para garantir que o header X-Summoner-Name
-              // esteja presente desde a primeira chamada HTTP, evitando flash de dados errados em multi-PC.
-              // this.tryGetCurrentPlayerDetails();
-              console.log('⏳ [App] Aguardando evento lcu_connection_registered para carregar dados do jogador...');
-            }
-          });
-        }
-      });
+      // ✅ CORREÇÃO: NÃO sobrescrever currentPlayer ao entrar em configurações
+      // Apenas atualizar o formulário com os dados que já temos
+      if (this.currentPlayer) {
+        console.log('⚙️ [App] Entrando em configurações - preservando dados do player');
+        this.updateSettingsForm();
+      }
 
       // Carregar lista de special users do backend para habilitar ferramentas
       this.loadSpecialUsersFromSettings();
@@ -2024,6 +1965,10 @@ export class App implements OnInit, OnDestroy {
       }
       console.log('📊 [DEBUG] rankedData final:', JSON.stringify(rankedData, null, 2));
 
+      // ✅ PRIORIDADE: custom_mmr do backend > currentMMR do LCU > padrão 1200
+      let calculatedMMR = playerData.customMmr || lcuData.currentMMR || 1200;
+      console.log(`🔢 [App] MMR exibido: ${calculatedMMR} (backend: ${playerData.customMmr}, lcu: ${lcuData.currentMMR})`);
+
       // ✅ CRÍTICO: gameName e tagLine separados NÃO servem para identificação
       // SEMPRE usar displayName (gameName#tagLine) como identificador único
       const player: Player = {
@@ -2037,8 +1982,8 @@ export class App implements OnInit, OnDestroy {
         profileIconId: lcuData.profileIconId || 29,
         summonerLevel: lcuData.summonerLevel || 30,
         region: 'br1',
-        currentMMR: 1200,
-        customLp: 1200,
+        currentMMR: calculatedMMR,
+        customLp: calculatedMMR,
         // ✅ ADICIONADO: Incluir dados do ranked
         wins: wins,
         losses: losses,
@@ -2079,8 +2024,10 @@ export class App implements OnInit, OnDestroy {
       // ✅ NOVO: Identificar jogador no WebSocket após carregar dados
       this.identifyCurrentPlayerOnConnect();
 
-      // ✅ CRÍTICO: Iniciar sincronização em SEGUNDO PLANO (não bloqueia UI)
-      this.syncPlayerDataInBackground(displayName);
+      // ✅ Sincronizar maestria/picks em background (NÃO sobrescreve MMR)
+      setTimeout(() => {
+        this.syncPlayerDataInBackground(displayName);
+      }, 2000); // Aguardar 2s para backend salvar MMR primeiro
     }
   }
 
@@ -2098,14 +2045,25 @@ export class App implements OnInit, OnDestroy {
         console.log('✅ [App] Sincronização em background concluída:', result);
         // Se o backend retornou dados atualizados, atualizar currentPlayer
         if (result?.player && this.currentPlayer) {
-          // Atualizar apenas campos que vieram do backend
-          if (result.player.customMmr !== undefined) {
-            this.currentPlayer.currentMMR = result.player.customMmr;
-            this.currentPlayer.customLp = result.player.customMmr; // customLp reflete customMmr
+          const p = result.player;
+
+          // ✅ CRÍTICO: Só atualizar MMR se backend retornou valor MAIOR que o atual
+          // (evita sobrescrever 2101 com 1200 padrão do banco)
+          if (p.customMmr !== undefined && p.customMmr > (this.currentPlayer.customLp || 0)) {
+            this.currentPlayer.customLp = p.customMmr;
+            this.currentPlayer.currentMMR = p.customMmr;
+            console.log('✅ [App] custom_mmr atualizado:', p.customMmr);
+          } else {
+            console.log('⚠️ [App] custom_mmr do backend ignorado (menor ou igual ao atual):', p.customMmr, 'vs', this.currentPlayer.customLp);
           }
-          // Atualizar localStorage com dados mais recentes
+
+          // Atualizar wins/losses sempre
+          if (p.wins !== undefined) this.currentPlayer.wins = p.wins;
+          if (p.losses !== undefined) this.currentPlayer.losses = p.losses;
+
+          // Atualizar localStorage
           localStorage.setItem('currentPlayer', JSON.stringify(this.currentPlayer));
-          console.log('✅ [App] Dados do jogador atualizados após sincronização');
+          this.cdr.detectChanges();
         }
       },
       error: (err) => {

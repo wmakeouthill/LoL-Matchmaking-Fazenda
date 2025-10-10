@@ -323,19 +323,36 @@ public class PlayerService {
 
     /**
      * Atualiza as estatísticas de custom matches de um jogador específico
+     * Se não houver partidas, ZERA todas as estatísticas
      */
     private void updateSinglePlayerStats(Player player) {
         String summonerName = player.getSummonerName();
         List<Object[]> matches = playerRepository.findCustomMatchesForPlayer(summonerName);
 
+        CustomStatsAccumulator stats;
+
         if (matches.isEmpty()) {
-            log.debug("Nenhuma partida customizada encontrada para {}", summonerName);
-            return;
+            log.info("⚠️ Nenhuma partida customizada encontrada para {} - ZERANDO estatísticas", summonerName);
+            // ✅ CORREÇÃO: Se não há partidas, criar stats zeradas
+            stats = new CustomStatsAccumulator();
+        } else {
+            // Calcular stats normalmente
+            stats = calculateCustomStats(summonerName, matches);
         }
 
-        CustomStatsAccumulator stats = calculateCustomStats(summonerName, matches);
+        // Aplicar stats (zeradas ou calculadas) ao jogador
         applyStatsToPlayer(player, stats);
 
+        // ✅ Atualizar player_stats_draft com top 5 campeões das custom matches
+        try {
+            List<Map<String, Object>> draftChampions = extractTop5CustomChampions(summonerName);
+            player.setPlayerStatsDraft(convertToJson(draftChampions));
+            log.debug("✅ Top 5 draft champions para {}: {}", summonerName, draftChampions.size());
+        } catch (Exception e) {
+            log.warn("⚠️ Erro ao atualizar player_stats_draft para {}: {}", summonerName, e.getMessage());
+        }
+
+        // ✅ SEMPRE salva, seja com stats zeradas ou calculadas
         playerRepository.save(player);
 
         log.info("✅ Stats atualizadas para {}: LP={}, Games={}, W/L={}/{}, Streak={}",

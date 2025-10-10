@@ -29,6 +29,7 @@ public class PlayerController {
     private final PlayerService playerService;
     private final RiotAPIService riotAPIService;
     private final LCUService lcuService;
+    private final br.com.lolmatchmaking.backend.mapper.PlayerMapper playerMapper;
 
     /**
      * GET /api/player/current-details
@@ -302,6 +303,20 @@ public class PlayerController {
                                 log.info("  - custom_mmr: {}", savedPlayer.getCustomMmr());
                                 log.info("  - summonerId: {}", savedPlayer.getSummonerId());
                                 log.info("  - puuid: {}", savedPlayer.getPuuid());
+
+                                // ✅ CRÍTICO: Incluir PlayerDTO completo com custom_mmr do banco
+                                PlayerDTO playerDTO = playerMapper.toDTO(savedPlayer);
+                                playerDTO.setCustomMmr(savedPlayer.getCustomMmr());
+                                playerDTO.setCustomLp(savedPlayer.getCustomLp());
+                                playerDTO.setWins(savedPlayer.getWins());
+                                playerDTO.setLosses(savedPlayer.getLosses());
+                                response.put("player", playerDTO);
+                                
+                                // ✅ Também atualizar playerData para compatibilidade
+                                playerData.put("currentMMR", savedPlayer.getCurrentMmr());
+                                playerData.put("customLp", savedPlayer.getCustomMmr()); // Exibir custom_mmr
+                                playerData.put("customMmr", savedPlayer.getCustomMmr());
+                                playerData.put("id", savedPlayer.getId());
 
                                 // ✅ NOVO: Atualizar estatísticas de campeões do jogador após login
                                 // Apenas se não tiver dados ou dados tiverem mais de 10 dias
@@ -731,7 +746,7 @@ public class PlayerController {
             }
         }
 
-        // ✅ MMR base por tier (MESMA tabela do frontend)
+        // ✅ MMR base por tier (TABELA CORRETA: EMERALD II 1LP = 2101)
         int baseMmr = switch (tier.toUpperCase()) {
             case "IRON" -> 800;
             case "BRONZE" -> 1000;
@@ -741,12 +756,12 @@ public class PlayerController {
             case "EMERALD" -> 2000;
             case "DIAMOND" -> 2300;
             case "MASTER" -> 2600;
-            case "GRANDMASTER" -> 2800;
-            case "CHALLENGER" -> 3000;
+            case "GRANDMASTER" -> 2900;
+            case "CHALLENGER" -> 3200;
             default -> 1200; // UNRANKED
         };
 
-        // ✅ Ajuste por divisão (MESMA tabela do frontend)
+        // ✅ Ajuste por divisão (TABELA CORRETA)
         int rankBonus = switch (rank.toUpperCase()) {
             case "IV" -> 0;
             case "III" -> 50;
