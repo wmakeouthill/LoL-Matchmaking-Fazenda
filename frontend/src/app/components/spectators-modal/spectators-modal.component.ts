@@ -43,6 +43,9 @@ export class SpectatorsModalComponent implements OnInit, OnDestroy {
   private refreshInterval: any = null; // ✅ NOVO: Referência ao interval
   private readonly baseUrl: string;
 
+  // ✅ CORREÇÃO FALLBACK: Manter matchId fixo durante toda a vida do modal
+  private cachedMatchId: number | null = null;
+
   constructor(
     private readonly http: HttpClient,
     private readonly apiService: ApiService,
@@ -70,6 +73,11 @@ export class SpectatorsModalComponent implements OnInit, OnDestroy {
       this.loading = false;
       return;
     }
+
+    // ✅ CORREÇÃO FALLBACK: Cachear o matchId no momento da abertura do modal
+    // Isso garante que o matchId não será perdido durante operações (mute/unmute)
+    this.cachedMatchId = this.matchId;
+    console.log('💾 [SpectatorsModal] matchId cacheado:', this.cachedMatchId);
 
     this.loadSpectators();
     // ✅ NOVO: Auto-refresh condicional
@@ -122,6 +130,16 @@ export class SpectatorsModalComponent implements OnInit, OnDestroy {
   loadSpectators(): void {
     if (this.loading) return;
 
+    // ✅ CORREÇÃO FALLBACK: Usar o matchId cacheado, ou o @Input se o cache não existir
+    const effectiveMatchId = this.cachedMatchId || this.matchId;
+
+    if (!effectiveMatchId) {
+      console.error('❌ [SpectatorsModal] matchId não disponível (nem cached nem input)');
+      this.error = 'ID da partida não disponível';
+      this.loading = false;
+      return;
+    }
+
     this.loading = true;
     this.error = null;
 
@@ -136,11 +154,13 @@ export class SpectatorsModalComponent implements OnInit, OnDestroy {
       'X-Summoner-Name': summonerName
     });
 
-    const url = `${this.baseUrl}/discord/match/${this.matchId}/spectators`;
+    const url = `${this.baseUrl}/discord/match/${effectiveMatchId}/spectators`;
 
     console.log('📡 [SpectatorsModal] ========== INICIANDO REQUISIÇÃO ==========');
     console.log('📡 [SpectatorsModal] URL completa:', url);
-    console.log('📡 [SpectatorsModal] matchId:', this.matchId);
+    console.log('📡 [SpectatorsModal] matchId (@Input):', this.matchId);
+    console.log('📡 [SpectatorsModal] cachedMatchId:', this.cachedMatchId);
+    console.log('📡 [SpectatorsModal] effectiveMatchId:', effectiveMatchId);
     console.log('📡 [SpectatorsModal] summonerName:', summonerName);
     console.log('📡 [SpectatorsModal] Headers:', {
       'X-Summoner-Name': summonerName
@@ -186,6 +206,15 @@ export class SpectatorsModalComponent implements OnInit, OnDestroy {
    * Muta ou desmuta um espectador
    */
   toggleMute(spectator: SpectatorDTO): void {
+    // ✅ CORREÇÃO FALLBACK: Usar o matchId cacheado, ou o @Input se o cache não existir
+    const effectiveMatchId = this.cachedMatchId || this.matchId;
+
+    if (!effectiveMatchId) {
+      console.error('❌ [SpectatorsModal] matchId não disponível para toggleMute');
+      this.error = 'ID da partida não disponível';
+      return;
+    }
+
     // ✅ CORREÇÃO: Obter summoner name com fallback
     let summonerName = this.summonerName;
     if (!summonerName) {
@@ -198,13 +227,15 @@ export class SpectatorsModalComponent implements OnInit, OnDestroy {
     });
 
     const action = spectator.isMuted ? 'unmute' : 'mute';
-    const url = `${this.baseUrl}/discord/match/${this.matchId}/spectator/${spectator.discordId}/${action}`;
+    const url = `${this.baseUrl}/discord/match/${effectiveMatchId}/spectator/${spectator.discordId}/${action}`;
 
     console.log(`🔇 [SpectatorsModal] === TOGGLE MUTE ===`);
     console.log(`🔇 [SpectatorsModal] Action: ${action}`);
     console.log(`🔇 [SpectatorsModal] Espectador: ${spectator.discordUsername}`);
     console.log(`🔇 [SpectatorsModal] URL: ${url}`);
-    console.log(`🔇 [SpectatorsModal] matchId: ${this.matchId}`);
+    console.log(`🔇 [SpectatorsModal] matchId (@Input): ${this.matchId}`);
+    console.log(`🔇 [SpectatorsModal] cachedMatchId: ${this.cachedMatchId}`);
+    console.log(`🔇 [SpectatorsModal] effectiveMatchId: ${effectiveMatchId}`);
     console.log(`🔇 [SpectatorsModal] summonerName: ${summonerName}`);
     console.log(`🔇 [SpectatorsModal] discordId: ${spectator.discordId}`);
 
