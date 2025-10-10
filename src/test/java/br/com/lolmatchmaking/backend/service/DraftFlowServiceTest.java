@@ -21,6 +21,7 @@ class DraftFlowServiceTest {
     private DataDragonService dataDragonService;
     private GameInProgressService gameInProgressService;
     private DiscordService discordService;
+    private RedisDraftFlowService redisDraftFlowService;
     private DraftFlowService draftFlowService;
 
     @BeforeEach
@@ -30,6 +31,7 @@ class DraftFlowServiceTest {
         dataDragonService = mock(DataDragonService.class);
         gameInProgressService = mock(GameInProgressService.class);
         discordService = mock(DiscordService.class);
+        redisDraftFlowService = mock(RedisDraftFlowService.class);
 
         // Mock para retornar lista vazia de campeões (evita NPE nos testes)
         when(dataDragonService.getAllChampions()).thenReturn(List.of());
@@ -57,7 +59,7 @@ class DraftFlowServiceTest {
         });
 
         draftFlowService = new DraftFlowService(customMatchRepository, sessionRegistry, dataDragonService,
-                gameInProgressService, discordService);
+                gameInProgressService, discordService, redisDraftFlowService);
     }
 
     @Test

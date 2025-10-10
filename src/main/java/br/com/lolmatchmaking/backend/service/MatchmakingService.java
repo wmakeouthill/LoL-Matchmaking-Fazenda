@@ -26,6 +26,25 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
+/**
+ * ⚠️ SERVIÇO LEGADO - EM USO MAS DEVE SER MIGRADO
+ * 
+ * Este serviço ainda é usado por vários controllers mas mantém queueCache em
+ * paralelo.
+ * 
+ * STATUS ATUAL:
+ * - Usado por: AdminController, DebugController, SyncController,
+ * MatchmakingOrchestrator
+ * - Tem Redis: RedisQueueService
+ * - Problema: queueCache em paralelo (22 usos)
+ * 
+ * MIGRAÇÃO RECOMENDADA:
+ * - Migrar para QueueManagementService + RedisQueueService
+ * - Remover MatchmakingService completamente
+ * 
+ * @deprecated Use QueueManagementService ao invés
+ */
+@Deprecated(forRemoval = true)
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -43,6 +62,16 @@ public class MatchmakingService {
     private final RedisQueueService redisQueue;
 
     // Cache local da fila para performance (DEPRECIADO - usar Redis)
+    /**
+     * @deprecated Substituído por RedisQueueService (chave: queue:matchmaking)
+     *             MOTIVO: ConcurrentHashMap perde dados em reinícios. Redis oferece
+     *             persistência,
+     *             performance superior (ZADD/ZRANGE O(log N)) e auto-limpeza com
+     *             TTL.
+     *             TODO: Remover após validar que todas as operações usam
+     *             RedisQueueService.
+     */
+    @Deprecated(forRemoval = true)
     private final Map<Long, QueuePlayer> queueCache = new ConcurrentHashMap<>();
     private final AtomicLong nextMatchId = new AtomicLong(1);
 

@@ -27,14 +27,15 @@ public class DraftFlowService {
     private final GameInProgressService gameInProgressService;
     private final DiscordService discordService;
 
+    // ✅ NOVO: Redis para performance e resiliência
+    private final RedisDraftFlowService redisDraftFlow;
+
     @Value("${app.draft.action-timeout-ms:30000}")
     private long configuredActionTimeoutMs;
 
-    // ✅ NOVO: Tracking de confirmações finais (TODOS os 10 jogadores)
-    private final Map<Long, Set<String>> finalConfirmations = new ConcurrentHashMap<>();
+    // ✅ REMOVIDO: finalConfirmations e matchTimers - Redis é fonte única da verdade
+    // Use redisDraftFlow.confirmFinalDraft() e redisDraftFlow.getTimer() ao invés
 
-    // ✅ TIMER SIMPLES: Apenas guardar segundos restantes por match
-    private final Map<Long, Integer> matchTimers = new ConcurrentHashMap<>();
     private Thread timerThread;
     private volatile boolean timerRunning = false;
 
@@ -113,6 +114,15 @@ public class DraftFlowService {
         }
     }
 
+    // ✅ MANTIDO: DraftState é cache de trabalho em tempo real (atualizado a cada
+    // pick/ban)
+    // Diferente dos outros HashMaps que eram duplicação de dados:
+    // - Usado em scheduled tasks (@Scheduled fixedDelay=1000ms) para timer/timeouts
+    // - Atualizado em tempo real a cada ação (processAction chamado pelo frontend)
+    // - Persistido no Redis via redisDraftFlow.saveDraftState() após cada mudança
+    // - Restaurado do banco no @PostConstruct (restoreDraftStates)
+    // Redis continua sendo fonte da verdade (persist() salva lá), mas states é
+    // cache quente
     private final Map<Long, DraftState> states = new ConcurrentHashMap<>();
 
     @PostConstruct
@@ -158,19 +168,10 @@ public class DraftFlowService {
                             continue;
                         }
 
-                        // Pegar timer atual (se não existe, iniciar em 30)
-                        int currentTimer = matchTimers.getOrDefault(matchId, 30);
+                        // ⚡ REDIS: Decrementar timer atomicamente
+                        int currentTimer = redisDraftFlow.decrementTimer(matchId);
 
-                        // Decrementar
-                        currentTimer--;
-
-                        if (currentTimer <= 0) {
-                            // Timer zerou - não fazer nada, o monitorActionTimeouts vai cuidar
-                            currentTimer = 0;
-                        }
-
-                        // Atualizar e enviar
-                        matchTimers.put(matchId, currentTimer);
+                        // Enviar atualização
                         sendTimerOnly(matchId, st, currentTimer);
                     }
 
@@ -289,6 +290,9 @@ public class DraftFlowService {
 
         log.info("🎬 [DraftFlow] startDraft - matchId={}, actions={}, currentIndex={}, team1={}, team2={}",
                 matchId, actions.size(), st.getCurrentIndex(), team1Players, team2Players);
+
+        // ⚡ REDIS: Inicializar timer (30 segundos)
+        redisDraftFlow.initTimer(matchId);
 
         // ✅ Persistir o estado inicial no banco
         persist(matchId, st);
@@ -450,8 +454,8 @@ public class DraftFlowService {
         st.advance();
         st.markActionStart();
 
-        // ✅ TIMER: Resetar para 30 quando ação acontece
-        matchTimers.put(matchId, 30);
+        // ⚡ REDIS: Resetar timer para 30 quando ação acontece
+        redisDraftFlow.resetTimer(matchId);
 
         // ✅ LOGS ANTES DE PERSISTIR
         log.info("💾 Salvando ação no banco de dados...");
@@ -1720,11 +1724,17 @@ public class DraftFlowService {
     /**
      * ✅ NOVO: Confirma draft final - TODOS os 10 jogadores devem confirmar
      * Quando todos confirmarem, inicia o jogo automaticamente
+     * 
+     * ⚡ AGORA USA REDIS para performance e resiliência:
+     * - Operações atômicas (SADD, SCARD)
+     * - Dados persistentes (sobrevive a reinícios)
+     * - Distributed locks (zero race conditions)
+     * - TTL automático (1 hora)
      */
     @Transactional
     public Map<String, Object> confirmFinalDraft(Long matchId, String playerId) {
         log.info("╔════════════════════════════════════════════════════════════════╗");
-        log.info("║  ✅ [DraftFlow] CONFIRMAÇÃO FINAL                             ║");
+        log.info("║  ✅ [DraftFlow] CONFIRMAÇÃO FINAL (REDIS)                     ║");
         log.info("╚════════════════════════════════════════════════════════════════╝");
         log.info("🎯 Match ID: {}", matchId);
         log.info("👤 Player ID: {}", playerId);
@@ -1743,45 +1753,49 @@ public class DraftFlowService {
             throw new RuntimeException("Draft ainda não está completo");
         }
 
-        // 3. Obter ou criar set de confirmações para este match
-        Set<String> confirmations = finalConfirmations.computeIfAbsent(matchId, k -> ConcurrentHashMap.newKeySet());
+        // 3. ⚡ REGISTRAR CONFIRMAÇÃO NO REDIS (com distributed lock)
+        boolean confirmed = redisDraftFlow.confirmFinalDraft(matchId, playerId);
 
-        // 4. Adicionar confirmação do jogador
-        boolean wasNewConfirmation = confirmations.add(playerId);
-
-        if (wasNewConfirmation) {
-            log.info("✅ [DraftFlow] Confirmação registrada para: {}", playerId);
-        } else {
-            log.info("ℹ️ [DraftFlow] Jogador {} já havia confirmado", playerId);
+        if (!confirmed) {
+            log.error("❌ [DraftFlow] Falha ao registrar confirmação no Redis");
+            throw new RuntimeException("Erro ao registrar confirmação");
         }
 
-        // 5. Contar total de jogadores
+        log.info("✅ [DraftFlow] Confirmação registrada no REDIS: {}", playerId);
+
+        // 4. Contar total de jogadores
         int totalPlayers = state.getTeam1Players().size() + state.getTeam2Players().size();
+
+        // 5. ⚡ BUSCAR CONFIRMADOS DO REDIS (operação O(1))
+        Set<String> confirmations = redisDraftFlow.getConfirmedPlayers(matchId);
         int confirmedCount = confirmations.size();
 
-        log.info("📊 [DraftFlow] Confirmações: {}/{} jogadores", confirmedCount, totalPlayers);
+        log.info("📊 [DraftFlow] Confirmações (REDIS): {}/{} jogadores", confirmedCount, totalPlayers);
         log.info("📋 [DraftFlow] Jogadores confirmados: {}", confirmations);
 
         // 6. Broadcast atualização de confirmações para todos
         broadcastConfirmationUpdate(matchId, confirmations, totalPlayers);
 
-        // 7. Verificar se TODOS confirmaram
-        boolean allConfirmed = confirmedCount >= totalPlayers;
+        // 7. ⚡ VERIFICAR NO REDIS SE TODOS CONFIRMARAM
+        boolean allConfirmed = redisDraftFlow.allPlayersConfirmedFinal(matchId, totalPlayers);
 
         if (allConfirmed) {
             log.info("╔════════════════════════════════════════════════════════════════╗");
-            log.info("║  🎮 [DraftFlow] TODOS OS 10 JOGADORES CONFIRMARAM!            ║");
+            log.info("║  🎮 [DraftFlow] TODOS OS 10 JOGADORES CONFIRMARAM! (REDIS)   ║");
             log.info("╚════════════════════════════════════════════════════════════════╝");
 
             // 8. Finalizar draft e iniciar jogo
             finalizeDraftAndStartGame(matchId, state);
 
-            // 9. Limpar confirmações da memória
-            finalConfirmations.remove(matchId);
+            // 9. ⚡ LIMPAR DADOS DO REDIS
+            redisDraftFlow.clearAllDraftData(matchId);
+
+            // 10. Limpar states local (estados ainda são mantidos em memória para
+            // compatibilidade)
             states.remove(matchId);
         }
 
-        // 10. Retornar resultado
+        // 11. Retornar resultado
         return Map.of(
                 "success", true,
                 "allConfirmed", allConfirmed,
@@ -1902,15 +1916,16 @@ public class DraftFlowService {
             customMatchRepository.deleteById(matchId);
             log.info("🗑️ [DraftFlow] Partida deletada do banco de dados");
 
-            // 4. Limpar confirmações da memória
-            finalConfirmations.remove(matchId);
+            // 4. ✅ REDIS ONLY: Limpar dados do Redis
+            redisDraftFlow.clearAllDraftData(matchId);
+            log.info("🧹 [DraftFlow] Dados limpos do Redis");
 
             // 5. Broadcast evento de cancelamento ANTES de remover do states
             broadcastMatchCancelled(matchId);
 
             // 6. Remover do states DEPOIS do broadcast (precisa dos jogadores)
             states.remove(matchId);
-            log.info("🧹 [DraftFlow] Cache de confirmações limpo");
+            log.info("🧹 [DraftFlow] Cache local limpo");
 
             log.info("✅ [DraftFlow] Partida cancelada com sucesso!");
 

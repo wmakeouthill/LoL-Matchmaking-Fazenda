@@ -17,7 +17,10 @@ import jakarta.annotation.PreDestroy;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -35,6 +38,9 @@ public class GameInProgressService {
     private final br.com.lolmatchmaking.backend.websocket.SessionRegistry sessionRegistry;
     private final LPCalculationService lpCalculationService;
 
+    // ✅ NOVO: Redis para monitoramento distribuído de jogos
+    private final RedisGameMonitoringService redisGameMonitoring;
+
     // scheduler for monitoring
     private ScheduledExecutorService scheduler;
 
@@ -42,8 +48,8 @@ public class GameInProgressService {
     private static final long MONITORING_INTERVAL_MS = 5000; // 5 segundos
     private static final long GAME_TIMEOUT_MS = 3600000; // 1 hora
 
-    // Cache de jogos ativos
-    private final Map<Long, GameData> activeGames = new ConcurrentHashMap<>();
+    // ✅ REMOVIDO: HashMap local removido - Redis é fonte única da verdade
+    // Use redisGameMonitoring para todas as operações de jogos em progresso
 
     @Data
     @RequiredArgsConstructor
@@ -168,6 +174,11 @@ public class GameInProgressService {
                 team2 = createGamePlayers(draftResults, "team2", 2);
             }
 
+            // ✅ REDIS ONLY: Iniciar monitoramento no Redis (fonte única da verdade)
+            redisGameMonitoring.startMonitoring(matchId);
+            log.info("✅ [GameInProgress] Monitoramento iniciado no Redis para match {}", matchId);
+
+            // Criar dados do jogo (apenas para broadcast, não mais armazenado localmente)
             GameData gameData = new GameData(
                     matchId,
                     "in_progress",
@@ -176,12 +187,17 @@ public class GameInProgressService {
                     team2,
                     draftResults);
 
-            activeGames.put(matchId, gameData);
-
-            // Atualizar status da partida
+            // Atualizar status da partida no banco
             match.setStatus("in_progress");
             match.setUpdatedAt(Instant.now());
             customMatchRepository.save(match);
+
+            // ✅ Atualizar estatísticas no Redis
+            Map<String, Object> gameStats = new HashMap<>();
+            gameStats.put("team1Size", team1.size());
+            gameStats.put("team2Size", team2.size());
+            gameStats.put("startedAt", System.currentTimeMillis());
+            redisGameMonitoring.updateGameStats(matchId, gameStats);
 
             // ✅ NOVO: Broadcast game_started
             broadcastGameStarted(matchId, gameData);
@@ -204,13 +220,18 @@ public class GameInProgressService {
         try {
             log.info("🏁 Finalizando jogo para partida {} - motivo: {}", matchId, endReason);
 
-            GameData gameData = activeGames.get(matchId);
-            if (gameData == null) {
-                log.warn("⚠️ Jogo não encontrado para finalização: {}", matchId);
+            // ✅ REDIS ONLY: Buscar dados do Redis
+            Map<String, Object> gameStats = redisGameMonitoring.getGameStats(matchId);
+            if (gameStats == null || gameStats.isEmpty()) {
+                log.warn("⚠️ Jogo não encontrado no Redis para finalização: {}", matchId);
                 return;
             }
 
-            int duration = (int) java.time.Duration.between(gameData.getStartedAt(), LocalDateTime.now()).getSeconds();
+            // Calcular duração baseado no Redis
+            Long startedAtMillis = (Long) gameStats.get("startedAt");
+            int duration = startedAtMillis != null
+                    ? (int) ((System.currentTimeMillis() - startedAtMillis) / 1000)
+                    : 0;
 
             CustomMatch match = customMatchRepository.findById(matchId).orElse(null);
             if (match != null) {
@@ -254,7 +275,10 @@ public class GameInProgressService {
                 customMatchRepository.save(match);
             }
 
-            activeGames.remove(matchId);
+            // ✅ REDIS ONLY: Finalizar no Redis (fonte única da verdade)
+            String winningTeam = winnerTeam != null ? "team" + winnerTeam : "draw";
+            redisGameMonitoring.finishGame(matchId, winningTeam);
+            log.info("✅ [finishGame] Jogo finalizado no Redis para match {}", matchId);
 
             // ✅ NOVO: Mover espectadores e jogadores de volta, depois limpar canais Discord
             try {
@@ -294,7 +318,9 @@ public class GameInProgressService {
         try {
             log.info("❌ Cancelando jogo para partida {}: {}", matchId, reason);
 
-            activeGames.remove(matchId);
+            // ✅ REDIS ONLY: Cancelar no Redis
+            redisGameMonitoring.cancelGame(matchId);
+            log.info("✅ [cancelGame] Jogo cancelado no Redis para match {}", matchId);
 
             // ✅ NOVO: Limpar canais Discord e mover jogadores de volta
             try {
@@ -379,20 +405,24 @@ public class GameInProgressService {
     }
 
     /**
-     * Verifica jogos expirados
+     * ✅ REDIS ONLY: Verifica jogos expirados
      */
     private void checkExpiredGames() {
         try {
-            LocalDateTime cutoff = LocalDateTime.now().minusSeconds(GAME_TIMEOUT_MS / 1000);
+            long cutoffMillis = System.currentTimeMillis() - GAME_TIMEOUT_MS;
 
-            // iterate and collect expired keys to avoid concurrent modification in complex
-            // logic
+            // ✅ REDIS ONLY: Buscar jogos ativos do Redis
+            List<Long> activeGameIds = redisGameMonitoring.getActiveGames();
+
             List<Long> expired = new ArrayList<>();
-            for (Map.Entry<Long, GameData> entry : activeGames.entrySet()) {
-                GameData gameData = entry.getValue();
-                if (gameData.getStartedAt().isBefore(cutoff)) {
-                    log.warn("⏰ Jogo expirado: {}", entry.getKey());
-                    expired.add(entry.getKey());
+            for (Long matchId : activeGameIds) {
+                Map<String, Object> gameStats = redisGameMonitoring.getGameStats(matchId);
+                if (gameStats != null) {
+                    Long startedAt = (Long) gameStats.get("startedAt");
+                    if (startedAt != null && startedAt < cutoffMillis) {
+                        log.warn("⏰ Jogo expirado (Redis): {}", matchId);
+                        expired.add(matchId);
+                    }
                 }
             }
 
@@ -416,11 +446,18 @@ public class GameInProgressService {
     }
 
     /**
-     * Obtém número de jogos ativos
+     * ✅ REDIS ONLY: Busca contagem de jogos ativos do Redis (fonte única da
+     * verdade)
      */
     @SuppressWarnings("unused")
     public int getActiveGamesCount() {
-        return activeGames.size();
+        // ✅ REDIS ONLY: Buscar do Redis (fonte única da verdade)
+        List<Long> activeGameIds = redisGameMonitoring.getActiveGames();
+        int redisCount = activeGameIds.size();
+
+        log.debug("📊 [GameInProgress] Jogos ativos (Redis): {}", redisCount);
+
+        return redisCount;
     }
 
     /**

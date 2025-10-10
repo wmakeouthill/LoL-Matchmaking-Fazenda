@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 
 import org.slf4j.Logger;
@@ -22,9 +21,30 @@ import br.com.lolmatchmaking.backend.service.AcceptanceService;
 import br.com.lolmatchmaking.backend.service.MatchmakingOrchestrator;
 import br.com.lolmatchmaking.backend.service.DraftFlowService;
 import br.com.lolmatchmaking.backend.service.LCUConnectionRegistry;
+import br.com.lolmatchmaking.backend.service.RedisLCUConnectionService;
+import br.com.lolmatchmaking.backend.service.redis.RedisWebSocketSessionService;
 import org.springframework.lang.NonNull;
 import lombok.RequiredArgsConstructor;
 
+/**
+ * ✅ MIGRADO PARA REDIS: Handler principal para WebSocket
+ * 
+ * MIGRAÇÃO REDIS:
+ * - identifiedPlayers → RedisWebSocketSessionService.storePlayerInfo()
+ * - lastLcuStatus → RedisLCUConnectionService.storeLcuStatus()
+ * 
+ * PROBLEMA RESOLVIDO:
+ * - Backend restart → Electrons precisavam reenviar identify_player e
+ * lcu_status
+ * - Agora: Informações restauradas do Redis automaticamente
+ * 
+ * BACKWARD COMPATIBILITY:
+ * - ConcurrentHashMaps mantidos como cache local
+ * - Redis é a fonte da verdade
+ * 
+ * @see RedisWebSocketSessionService
+ * @see RedisLCUConnectionService
+ */
 @Component
 @RequiredArgsConstructor
 public class CoreWebSocketHandler extends TextWebSocketHandler {
@@ -46,10 +66,14 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
     private final LCUConnectionRegistry lcuConnectionRegistry;
     private final br.com.lolmatchmaking.backend.service.PlayerService playerService;
 
-    // sessionId -> player info (JSON raw)
-    private final Map<String, JsonNode> identifiedPlayers = new ConcurrentHashMap<>();
-    // sessionId -> last LCU status
-    private final Map<String, JsonNode> lastLcuStatus = new ConcurrentHashMap<>();
+    // ✅ NOVO: Redis services
+    private final RedisWebSocketSessionService redisWSSession;
+    private final RedisLCUConnectionService redisLCUConnection;
+
+    // ✅ DEPRECIADO: Migrado para Redis (backward compatibility)
+    // ✅ REMOVIDO: identifiedPlayers e lastLcuStatus - Redis é fonte única da
+    // verdade
+    // Use redisWSSession.storePlayerInfo() e redisLCUConnection.storeLcuStatus()
 
     @Override
     public void afterConnectionEstablished(@NonNull WebSocketSession session) {
@@ -294,9 +318,23 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                     new TextMessage("{\"type\":\"lcu_status_ack\",\"success\":false,\"error\":\"data required\"}"));
             return;
         }
-        lastLcuStatus.put(session.getId(), data);
+
+        // ✅ REDIS FIRST: Armazena status LCU no Redis
+        // Busca summonerName da sessão para usar como chave
+        String summonerName = sessionRegistry.getSummonerBySession(session.getId());
+        if (summonerName != null && !summonerName.isEmpty()) {
+            try {
+                String lcuStatusJson = mapper.writeValueAsString(data);
+                redisLCUConnection.storeLcuStatus(summonerName, lcuStatusJson);
+                log.debug("✅ [CoreWS] LCU status armazenado no Redis: summonerName={}", summonerName);
+            } catch (Exception e) {
+                log.error("❌ [CoreWS] Erro ao armazenar LCU status no Redis: summonerName={}", summonerName, e);
+            }
+        }
+
+        // ✅ REDIS ONLY - backward compatibility removido
         if (log.isDebugEnabled()) {
-            log.debug("[WS] LCU status from {}: {}", session.getId(), data.toString());
+            log.debug("[WS] LCU status from {}: {}", session.getId(), data);
         }
         session.sendMessage(new TextMessage("{\"type\":\"lcu_status_ack\",\"success\":true}"));
     }
@@ -328,7 +366,16 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                     new TextMessage("{\"type\":\"player_identified\",\"success\":false,\"error\":\"Dados ausentes\"}"));
             return;
         }
-        identifiedPlayers.put(session.getId(), playerData);
+
+        // ✅ REDIS ONLY: Armazena identificação completa no Redis (fonte única da
+        // verdade)
+        try {
+            String playerInfoJson = mapper.writeValueAsString(playerData);
+            redisWSSession.storePlayerInfo(session.getId(), playerInfoJson);
+            log.debug("✅ [CoreWS] Player info armazenado no Redis: sessionId={}", session.getId());
+        } catch (Exception e) {
+            log.error("❌ [CoreWS] Erro ao armazenar player info no Redis: sessionId={}", session.getId(), e);
+        }
 
         // ✅ CRÍTICO: Registrar jogador no SessionRegistry para que receba broadcasts
         String summonerName = playerData.path(FIELD_SUMMONER_NAME).asText(null);
@@ -351,13 +398,26 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(@NonNull WebSocketSession session, @NonNull CloseStatus status) {
-        identifiedPlayers.remove(session.getId());
-        lastLcuStatus.remove(session.getId());
-        sessionRegistry.remove(session.getId());
-        webSocketService.removeSession(session.getId());
+        String sessionId = session.getId();
+
+        // ✅ REDIS FIRST: Remove dados do Redis
+        // Busca summonerName antes de remover
+        String summonerName = sessionRegistry.getSummonerBySession(sessionId);
+
+        // Remove player info do Redis
+        redisWSSession.removePlayerInfo(sessionId);
+
+        // ✅ REDIS ONLY: Remove LCU status do Redis (fonte única da verdade)
+        if (summonerName != null && !summonerName.isEmpty()) {
+            redisLCUConnection.removeLastLcuStatus(summonerName);
+            log.debug("✅ [CoreWS] Dados Redis removidos: sessionId={}, summonerName={}", sessionId, summonerName);
+        }
+
+        sessionRegistry.remove(sessionId);
+        webSocketService.removeSession(sessionId);
 
         // 🗑️ Remover conexão LCU do registry
-        lcuConnectionRegistry.unregisterBySession(session.getId());
+        lcuConnectionRegistry.unregisterBySession(sessionId);
 
         log.info("Cliente desconectado: {} - status {}", session.getId(), status);
         // NÃO remover da fila aqui (mesma regra do Node)

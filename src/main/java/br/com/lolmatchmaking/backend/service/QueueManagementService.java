@@ -17,7 +17,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -58,9 +57,8 @@ public class QueueManagementService {
         this.playerService = playerService;
     }
 
-    // Cache local da fila para performance
-    private final Map<String, QueuePlayer> queueCache = new ConcurrentHashMap<>();
-    private final Map<String, Instant> lastSync = new ConcurrentHashMap<>();
+    // ✅ REMOVIDO: HashMaps locais removidos - SQL é fonte da verdade
+    // Use queuePlayerRepository para todas as operações de fila
 
     // Configurações
     private static final int MAX_QUEUE_SIZE = 20;
@@ -89,27 +87,26 @@ public class QueueManagementService {
         try {
             List<QueuePlayer> activePlayers = queuePlayerRepository.findByActiveTrueOrderByJoinTimeAsc();
 
-            log.info("🔄 [QueueManagementService] Sincronizando cache com banco...");
-            log.info("📊 [QueueManagementService] Banco: {} jogadores | Cache: {} jogadores",
-                    activePlayers.size(), queueCache.size());
+            log.info("🔄 [QueueManagementService] Carregando fila do banco...");
+            log.info("📊 [QueueManagementService] Banco: {} jogadores ativos",
+                    activePlayers.size());
 
-            queueCache.clear();
+            // ✅ SQL ONLY: Resetar acceptanceStatus para 0 (disponível) ao carregar do banco
             for (QueuePlayer player : activePlayers) {
-                // ✅ CORREÇÃO: Resetar acceptanceStatus para 0 (disponível) ao carregar do banco
                 // Isso garante que jogadores salvos com status pendente voltem disponíveis
                 player.setAcceptanceStatus(0);
+                queuePlayerRepository.save(player);
 
-                queueCache.put(player.getSummonerName(), player);
-                log.debug("📥 Sincronizado: {} (status: {}, LP: {})",
+                log.debug("📥 Carregado: {} (status: {}, LP: {})",
                         player.getSummonerName(), player.getAcceptanceStatus(), player.getCustomLp());
             }
 
-            log.info("✅ [QueueManagementService] Cache sincronizado: {} jogadores", queueCache.size());
+            log.info("✅ [QueueManagementService] Fila carregada do SQL: {} jogadores", activePlayers.size());
 
             // ✅ Notificar todos os clientes sobre a atualização
             broadcastQueueUpdate();
         } catch (Exception e) {
-            log.error("❌ Erro ao sincronizar cache com banco", e);
+            log.error("❌ Erro ao carregar fila do banco", e);
         }
     }
 
@@ -120,17 +117,23 @@ public class QueueManagementService {
     public boolean addToQueue(String summonerName, String region, Long playerId,
             Integer customLp, String primaryLane, String secondaryLane) {
         try {
-            log.info("➕ [addToQueue] Adicionando jogador à fila: {} (cache size antes: {})",
-                    summonerName, queueCache.size());
+            // ✅ SQL ONLY: Buscar fila do banco
+            List<QueuePlayer> currentQueue = queuePlayerRepository.findByActiveTrueOrderByJoinTimeAsc();
+
+            log.info("➕ [addToQueue] Adicionando jogador à fila: {} (fila atual: {} jogadores)",
+                    summonerName, currentQueue.size());
 
             // Verificar se já está na fila
-            if (queueCache.containsKey(summonerName)) {
+            boolean alreadyInQueue = currentQueue.stream()
+                    .anyMatch(p -> p.getSummonerName().equals(summonerName));
+
+            if (alreadyInQueue) {
                 log.warn("⚠️ Jogador {} já está na fila", summonerName);
                 return false;
             }
 
             // Verificar limite da fila
-            if (queueCache.size() >= MAX_QUEUE_SIZE) {
+            if (currentQueue.size() >= MAX_QUEUE_SIZE) {
                 log.warn("⚠️ Fila cheia ({} jogadores)", MAX_QUEUE_SIZE);
                 return false;
             }
@@ -138,7 +141,6 @@ public class QueueManagementService {
             // Remover entrada anterior se existir
             queuePlayerRepository.findBySummonerName(summonerName).ifPresent(qp -> {
                 queuePlayerRepository.delete(qp);
-                queueCache.remove(summonerName);
             });
 
             // ✅ NOVO: Buscar Player da tabela para pegar custom_mmr (current_mmr +
@@ -174,10 +176,7 @@ public class QueueManagementService {
 
             // Salvar no banco
             queuePlayer = queuePlayerRepository.save(queuePlayer);
-
-            // Adicionar ao cache
-            queueCache.put(summonerName, queuePlayer);
-            log.info("✅ [addToQueue] Jogador adicionado ao cache (cache size agora: {})", queueCache.size());
+            log.info("✅ [addToQueue] Jogador salvo no SQL");
 
             // Atualizar posições
             updateQueuePositions();
@@ -200,7 +199,8 @@ public class QueueManagementService {
     @Transactional
     public boolean removeFromQueue(String summonerName) {
         try {
-            QueuePlayer queuePlayer = queueCache.get(summonerName);
+            // ✅ SQL ONLY: Buscar do banco
+            QueuePlayer queuePlayer = queuePlayerRepository.findBySummonerName(summonerName).orElse(null);
             if (queuePlayer == null) {
                 log.warn("⚠️ Jogador {} não encontrado na fila", summonerName);
                 return false;
@@ -208,9 +208,7 @@ public class QueueManagementService {
 
             // Remover do banco
             queuePlayerRepository.delete(queuePlayer);
-
-            // Remover do cache
-            queueCache.remove(summonerName);
+            log.info("✅ [removeFromQueue] Jogador removido do SQL: {}", summonerName);
 
             // Atualizar posições
             updateQueuePositions();
@@ -228,13 +226,13 @@ public class QueueManagementService {
     }
 
     /**
-     * Obtém status da fila
+     * ✅ SQL ONLY: Obtém status da fila do banco
      */
     public QueueStatusDTO getQueueStatus(String currentPlayerDisplayName) {
-        List<QueuePlayer> activePlayers = new ArrayList<>(queueCache.values());
-        activePlayers.sort(Comparator.comparing(QueuePlayer::getJoinTime));
+        // ✅ SQL ONLY: Buscar do banco
+        List<QueuePlayer> activePlayers = queuePlayerRepository.findByActiveTrueOrderByJoinTimeAsc();
 
-        log.info("📊 [QueueManagementService] getQueueStatus - {} jogadores no cache", activePlayers.size());
+        log.info("📊 [QueueManagementService] getQueueStatus - {} jogadores no SQL", activePlayers.size());
         log.info("📊 [QueueManagementService] Jogadores: {}",
                 activePlayers.stream().map(p -> p.getSummonerName()).collect(Collectors.toList()));
 
@@ -272,28 +270,31 @@ public class QueueManagementService {
     @Scheduled(fixedRate = 5000) // Executa a cada 5 segundos
     public void processQueue() {
         try {
-            log.debug("🔍 [Scheduled] Verificando fila... Cache: {} jogadores, MATCH_SIZE: {}",
-                    queueCache.size(), MATCH_SIZE);
+            // ✅ SQL ONLY: Buscar fila do banco
+            List<QueuePlayer> allPlayers = queuePlayerRepository.findByActiveTrueOrderByJoinTimeAsc();
 
-            if (queueCache.size() < MATCH_SIZE) {
+            log.debug("🔍 [Scheduled] Verificando fila... SQL: {} jogadores, MATCH_SIZE: {}",
+                    allPlayers.size(), MATCH_SIZE);
+
+            if (allPlayers.size() < MATCH_SIZE) {
                 log.debug("⏭️ [Scheduled] Fila insuficiente ({} < {}), aguardando mais jogadores",
-                        queueCache.size(), MATCH_SIZE);
+                        allPlayers.size(), MATCH_SIZE);
                 return;
             }
 
-            log.info("🎯 Processando fila para encontrar partida ({} jogadores)", queueCache.size());
+            log.info("🎯 Processando fila para encontrar partida ({} jogadores)", allPlayers.size());
 
             // ✅ Log dos status de aceitação
-            queueCache.values().forEach(
+            allPlayers.forEach(
                     p -> log.debug("  - {}: acceptanceStatus = {}", p.getSummonerName(), p.getAcceptanceStatus()));
 
             // ✅ Obter APENAS jogadores disponíveis (não estão em partida pendente)
-            List<QueuePlayer> activePlayers = new ArrayList<>(queueCache.values()).stream()
+            List<QueuePlayer> activePlayers = allPlayers.stream()
                     .filter(p -> p.getAcceptanceStatus() == 0) // 0 = disponível, -1 = aguardando aceitação
                     .sorted(Comparator.comparing(QueuePlayer::getJoinTime))
                     .collect(Collectors.toList());
 
-            log.info("📊 Jogadores disponíveis para matchmaking: {}/{}", activePlayers.size(), queueCache.size());
+            log.info("📊 Jogadores disponíveis para matchmaking: {}/{}", activePlayers.size(), allPlayers.size());
 
             if (activePlayers.size() < MATCH_SIZE) {
                 log.warn("⏳ Apenas {} jogadores disponíveis (outros aguardando aceitação)", activePlayers.size());
@@ -484,14 +485,40 @@ public class QueueManagementService {
             }
 
             // ✅ Log da atribuição
-            String status = assignedLane.equals(primaryLane) ? "1ª LANE"
-                    : assignedLane.equals(secondaryLane) ? "2ª LANE" : "AUTO-FILL";
+            String status = assignedLane != null && assignedLane.equals(primaryLane) ? "1ª LANE"
+                    : assignedLane != null && assignedLane.equals(secondaryLane) ? "2ª LANE" : "AUTO-FILL";
             log.info("  ✅ {} → {} / {} → {}", player.getSummonerName(), assignedTeam, assignedLane, status);
         }
 
-        return balancedTeams.stream()
+        // ✅ CRÍTICO: Verificar se todos os 10 slots foram preenchidos
+        List<QueuePlayer> result = balancedTeams.stream()
                 .filter(Objects::nonNull)
                 .collect(Collectors.toList());
+
+        if (result.size() != MATCH_SIZE) {
+            log.error("❌ [CRÍTICO] Balanceamento FALHOU! Apenas {} jogadores de {} foram atribuídos!",
+                    result.size(), MATCH_SIZE);
+            log.error("❌ Posições vazias detectadas no balanceamento!");
+
+            // Log quais posições ficaram vazias
+            for (int i = 0; i < balancedTeams.size(); i++) {
+                if (balancedTeams.get(i) == null) {
+                    String lane = i == 0 || i == 5 ? "top"
+                            : i == 1 || i == 6 ? "jungle"
+                                    : i == 2 || i == 7 ? "mid"
+                                            : i == 3 || i == 8 ? "bot"
+                                                    : "support";
+                    String team = i < 5 ? "team1" : "team2";
+                    log.error("  ❌ Posição {} vazia: {} / {}", i, team, lane);
+                }
+            }
+
+            // ⛔ NÃO retornar lista incompleta - retornar vazio para cancelar criação
+            return new ArrayList<>();
+        }
+
+        log.info("✅ [Balanceamento] Sucesso! {} jogadores balanceados corretamente", result.size());
+        return result;
     }
 
     /**
@@ -500,14 +527,45 @@ public class QueueManagementService {
     @Transactional
     public void createMatch(List<QueuePlayer> players) {
         try {
+            log.info("╔════════════════════════════════════════════════════════════════╗");
+            log.info("║  🎯 [CRIAÇÃO DE PARTIDA] INICIANDO                            ║");
+            log.info("╚════════════════════════════════════════════════════════════════╝");
+
+            // ✅ VALIDAÇÃO CRÍTICA: DEVE TER EXATAMENTE 10 JOGADORES
             if (players.size() != MATCH_SIZE) {
-                log.warn("⚠️ Número incorreto de jogadores para criar partida: {}", players.size());
+                log.error("❌ [CRÍTICO] Número INCORRETO de jogadores: {} (esperado: {})",
+                        players.size(), MATCH_SIZE);
+                log.error("❌ [CRÍTICO] PARTIDA NÃO CRIADA - ABORTANDO!");
                 return;
+            }
+
+            log.info("✅ [Validação] {} jogadores confirmados", players.size());
+
+            // ✅ LOG DETALHADO: Mostrar TODOS os 10 jogadores antes de separar
+            log.info("📋 [Formação] Lista completa de jogadores balanceados:");
+            for (int i = 0; i < players.size(); i++) {
+                QueuePlayer p = players.get(i);
+                String lane = i % 5 == 0 ? "TOP"
+                        : i % 5 == 1 ? "JUNGLE"
+                                : i % 5 == 2 ? "MID"
+                                        : i % 5 == 3 ? "BOT"
+                                                : "SUPPORT";
+                String team = i < 5 ? "TEAM1" : "TEAM2";
+                log.info("  [{}] {} - {} / {} - MMR: {}",
+                        i, p.getSummonerName(), team, lane, p.getCustomLp());
             }
 
             // Separar em dois times
             List<QueuePlayer> team1 = players.subList(0, 5);
             List<QueuePlayer> team2 = players.subList(5, 10);
+
+            // ✅ VALIDAÇÃO: Garantir que ambos os times têm 5 jogadores
+            if (team1.size() != 5 || team2.size() != 5) {
+                log.error("❌ [CRÍTICO] Times mal formados! team1={}, team2={}", team1.size(), team2.size());
+                return;
+            }
+
+            log.info("✅ [Times] Team1: {} jogadores | Team2: {} jogadores", team1.size(), team2.size());
 
             // Criar partida no banco
             CustomMatch match = CustomMatch.builder()
@@ -603,13 +661,14 @@ public class QueueManagementService {
     // Métodos auxiliares
 
     private int calculateNextPosition() {
-        return queueCache.size() + 1;
+        // ✅ SQL ONLY: Buscar tamanho da fila do banco
+        long queueSize = queuePlayerRepository.countByActiveTrue();
+        return (int) queueSize + 1;
     }
 
     private void updateQueuePositions() {
-        List<QueuePlayer> sortedPlayers = queueCache.values().stream()
-                .sorted(Comparator.comparing(QueuePlayer::getJoinTime))
-                .collect(Collectors.toList());
+        // ✅ SQL ONLY: Buscar fila do banco e atualizar posições
+        List<QueuePlayer> sortedPlayers = queuePlayerRepository.findByActiveTrueOrderByJoinTimeAsc();
 
         for (int i = 0; i < sortedPlayers.size(); i++) {
             QueuePlayer player = sortedPlayers.get(i);
@@ -710,7 +769,6 @@ public class QueueManagementService {
             // Remover bot anterior se existir (com flush para garantir que foi deletado)
             queuePlayerRepository.findBySummonerName(botName).ifPresent(qp -> {
                 log.info("🗑️ Removendo bot anterior: {}", botName);
-                queueCache.remove(botName);
                 queuePlayerRepository.delete(qp);
                 queuePlayerRepository.flush(); // ✅ Forçar delete antes de criar novo
             });
@@ -731,9 +789,7 @@ public class QueueManagementService {
 
             // Salvar no banco
             botPlayer = queuePlayerRepository.save(botPlayer);
-
-            // Adicionar ao cache
-            queueCache.put(botName, botPlayer);
+            log.info("✅ [addBotToQueue] Bot salvo no SQL: {}", botName);
 
             // Atualizar posições
             updateQueuePositions();

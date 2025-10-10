@@ -3,9 +3,9 @@ package br.com.lolmatchmaking.backend.service;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Registry para gerenciar múltiplas conexões LCU simultâneas.
@@ -20,10 +20,19 @@ import java.util.concurrent.ConcurrentHashMap;
  * 1. Extrai summonerName do header X-Summoner-Name
  * 2. Busca a conexão LCU registrada para esse summonerName
  * 3. Usa essa conexão para fazer a requisição
+ * 
+ * ⚡ AGORA USA REDIS para performance e resiliência:
+ * - Conexões persistem mesmo com reinício do backend
+ * - Lookup instantâneo (O(1))
+ * - TTL automático (2 horas)
  */
 @Slf4j
 @Service
+@lombok.RequiredArgsConstructor
 public class LCUConnectionRegistry {
+
+    // ⚡ NOVO: Redis para persistence e performance
+    private final RedisLCUConnectionService redisLCUConnection;
 
     /**
      * Estrutura que armazena informações de uma conexão LCU
@@ -86,14 +95,13 @@ public class LCUConnectionRegistry {
         }
     }
 
-    // Mapeia summonerName → LCUConnectionInfo
-    private final Map<String, LCUConnectionInfo> connectionsBySummoner = new ConcurrentHashMap<>();
-
-    // Mapeia sessionId → summonerName (para lookup reverso)
-    private final Map<String, String> summonerBySession = new ConcurrentHashMap<>();
+    // ✅ REMOVIDO: HashMaps locais removidos - Redis é fonte única da verdade
+    // Use redisLCUConnection para todas as operações de conexões LCU
 
     /**
      * Registra uma nova conexão LCU para um jogador
+     * 
+     * ⚡ AGORA USA REDIS para persistência e performance
      * 
      * @param summonerName Nome do invocador (normalizado em lowercase)
      * @param sessionId    ID da sessão WebSocket do Electron
@@ -108,25 +116,25 @@ public class LCUConnectionRegistry {
         }
 
         String normalizedName = summonerName.toLowerCase().trim();
-        LCUConnectionInfo connection = new LCUConnectionInfo(normalizedName, sessionId, host, port, authToken);
 
-        // Remover conexão antiga se existir
-        LCUConnectionInfo oldConnection = connectionsBySummoner.put(normalizedName, connection);
-        summonerBySession.put(sessionId, normalizedName);
+        // ⚡ REDIS ONLY: Registrar conexão (persistente, fonte única da verdade)
+        boolean registered = redisLCUConnection.registerConnection(normalizedName, sessionId, host, port, authToken);
 
-        if (oldConnection != null) {
-            log.info("🔄 [LCURegistry] Substituindo conexão antiga de '{}' (session: {} → {})",
-                    normalizedName, oldConnection.getSessionId(), sessionId);
-        } else {
-            log.info("✅ [LCURegistry] Nova conexão LCU registrada: '{}' (session: {}, {}:{})",
-                    normalizedName, sessionId, host, port);
+        if (!registered) {
+            log.error("❌ [LCURegistry] Falha ao registrar conexão no Redis: '{}'", normalizedName);
+            return;
         }
 
-        log.info("📊 [LCURegistry] Total de conexões ativas: {}", connectionsBySummoner.size());
+        log.info("✅ [LCURegistry] Conexão LCU registrada (REDIS): '{}' (session: {}, {}:{})",
+                normalizedName, sessionId, host, port);
+        log.info("📊 [LCURegistry] Total de conexões ativas (Redis): {}",
+                redisLCUConnection.getActiveConnectionCount());
     }
 
     /**
      * Busca a conexão LCU de um jogador específico
+     * 
+     * ⚡ AGORA USA REDIS como fonte primária de dados
      * 
      * @param summonerName Nome do invocador
      * @return Optional com a conexão se encontrada
@@ -137,21 +145,33 @@ public class LCUConnectionRegistry {
         }
 
         String normalizedName = summonerName.toLowerCase().trim();
-        LCUConnectionInfo connection = connectionsBySummoner.get(normalizedName);
 
-        if (connection != null) {
-            connection.updateActivity();
-            log.debug("🔍 [LCURegistry] Conexão LCU encontrada para '{}'", normalizedName);
+        // ⚡ REDIS: Buscar primeiro no Redis (fonte da verdade)
+        Optional<RedisLCUConnectionService.LCUConnectionInfo> redisInfo = redisLCUConnection
+                .getConnection(normalizedName);
+
+        if (redisInfo.isPresent()) {
+            // Converter RedisLCUConnectionInfo para LCUConnectionInfo
+            RedisLCUConnectionService.LCUConnectionInfo redis = redisInfo.get();
+            LCUConnectionInfo connection = new LCUConnectionInfo(
+                    redis.getSummonerName(),
+                    redis.getSessionId(),
+                    redis.getHost(),
+                    redis.getPort(),
+                    redis.getAuthToken());
+
+            log.debug("🔍 [LCURegistry] Conexão LCU encontrada (REDIS): '{}'", normalizedName);
+            return Optional.of(connection);
         } else {
             log.warn("⚠️ [LCURegistry] Nenhuma conexão LCU encontrada para '{}'", normalizedName);
-            log.warn("📋 [LCURegistry] Conexões disponíveis: {}", connectionsBySummoner.keySet());
+            List<String> available = redisLCUConnection.getAllActiveSummoners();
+            log.warn("📋 [LCURegistry] Conexões disponíveis (REDIS): {}", available);
+            return Optional.empty();
         }
-
-        return Optional.ofNullable(connection);
     }
 
     /**
-     * Remove a conexão LCU de um jogador
+     * ⚡ REDIS ONLY: Remove a conexão LCU de um jogador
      * 
      * @param summonerName Nome do invocador
      */
@@ -161,30 +181,36 @@ public class LCUConnectionRegistry {
         }
 
         String normalizedName = summonerName.toLowerCase().trim();
-        LCUConnectionInfo removed = connectionsBySummoner.remove(normalizedName);
 
-        if (removed != null) {
-            summonerBySession.remove(removed.getSessionId());
-            log.info("🗑️ [LCURegistry] Conexão LCU removida: '{}' (session: {})",
-                    normalizedName, removed.getSessionId());
-            log.info("📊 [LCURegistry] Total de conexões ativas: {}", connectionsBySummoner.size());
+        // ⚡ REDIS ONLY: Remover do Redis (fonte única da verdade)
+        boolean removed = redisLCUConnection.unregisterConnection(normalizedName);
+
+        if (removed) {
+            log.info("🗑️ [LCURegistry] Conexão LCU removida (Redis): '{}'", normalizedName);
+            log.info("📊 [LCURegistry] Total de conexões ativas (Redis): {}",
+                    redisLCUConnection.getActiveConnectionCount());
+        } else {
+            log.warn("⚠️ [LCURegistry] Conexão não encontrada no Redis: '{}'", normalizedName);
         }
     }
 
     /**
-     * Remove conexão por sessionId (quando WebSocket desconecta)
+     * ⚡ REDIS ONLY: Remove conexão por sessionId (quando WebSocket desconecta)
      * 
      * @param sessionId ID da sessão WebSocket
      */
     public void unregisterBySession(String sessionId) {
-        String summonerName = summonerBySession.get(sessionId);
-        if (summonerName != null) {
-            unregisterConnection(summonerName);
+        // ⚡ REDIS ONLY: Buscar summonerName do Redis
+        Optional<String> summonerNameOpt = redisLCUConnection.getSummonerBySession(sessionId);
+        if (summonerNameOpt.isPresent()) {
+            unregisterConnection(summonerNameOpt.get());
+        } else {
+            log.warn("⚠️ [LCURegistry] Nenhum summoner encontrado para sessionId: {}", sessionId);
         }
     }
 
     /**
-     * Verifica se existe uma conexão LCU para um jogador
+     * ⚡ REDIS ONLY: Verifica se existe uma conexão LCU para um jogador
      * 
      * @param summonerName Nome do invocador
      * @return true se existe conexão ativa
@@ -193,30 +219,45 @@ public class LCUConnectionRegistry {
         if (summonerName == null || summonerName.trim().isEmpty()) {
             return false;
         }
-        return connectionsBySummoner.containsKey(summonerName.toLowerCase().trim());
+        return redisLCUConnection.hasConnection(summonerName.toLowerCase().trim());
     }
 
     /**
-     * Retorna o número total de conexões ativas
+     * ⚡ REDIS ONLY: Retorna o número total de conexões ativas
      */
     public int getConnectionCount() {
-        return connectionsBySummoner.size();
+        return redisLCUConnection.getActiveConnectionCount();
     }
 
     /**
-     * Lista todas as conexões ativas (para debug/admin)
+     * ⚡ REDIS ONLY: Lista todas as conexões ativas (para debug/admin)
      */
     public Map<String, LCUConnectionInfo> getAllConnections() {
-        return Map.copyOf(connectionsBySummoner);
+        // Converter de Redis para formato local
+        Map<String, LCUConnectionInfo> result = new java.util.HashMap<>();
+        List<String> activeSummoners = redisLCUConnection.getAllActiveSummoners();
+
+        for (String summonerName : activeSummoners) {
+            redisLCUConnection.getConnection(summonerName).ifPresent(redisInfo -> {
+                LCUConnectionInfo localInfo = new LCUConnectionInfo(
+                        redisInfo.getSummonerName(),
+                        redisInfo.getSessionId(),
+                        redisInfo.getHost(),
+                        redisInfo.getPort(),
+                        redisInfo.getAuthToken());
+                result.put(summonerName, localInfo);
+            });
+        }
+
+        return result;
     }
 
     /**
-     * Remove todas as conexões (para testes/reset)
+     * ⚡ REDIS ONLY: Remove todas as conexões (para testes/reset)
      */
     public void clearAll() {
-        int count = connectionsBySummoner.size();
-        connectionsBySummoner.clear();
-        summonerBySession.clear();
-        log.warn("🗑️ [LCURegistry] Todas as {} conexões foram removidas", count);
+        int count = redisLCUConnection.getActiveConnectionCount();
+        redisLCUConnection.clearAll();
+        log.warn("🗑️ [LCURegistry] Todas as {} conexões foram removidas do Redis", count);
     }
 }
