@@ -39,7 +39,10 @@ public class MatchmakingService {
     private final DraftService draftService;
     private final GameInProgressService gameInProgressService;
 
-    // Cache local da fila para performance
+    // ✅ NOVO: Redis para cache distribuído
+    private final RedisQueueService redisQueue;
+
+    // Cache local da fila para performance (DEPRECIADO - usar Redis)
     private final Map<Long, QueuePlayer> queueCache = new ConcurrentHashMap<>();
     private final AtomicLong nextMatchId = new AtomicLong(1);
 
@@ -142,7 +145,8 @@ public class MatchmakingService {
             }
 
             // Verificar limite da fila
-            if (queueCache.size() >= MAX_QUEUE_SIZE) {
+            long currentSize = redisQueue.getQueueSize();
+            if (currentSize >= MAX_QUEUE_SIZE) {
                 log.warn("⚠️ Fila cheia ({} jogadores)", MAX_QUEUE_SIZE);
                 return false;
             }
@@ -156,14 +160,17 @@ public class MatchmakingService {
             queuePlayer.setPrimaryLane(primaryLane);
             queuePlayer.setSecondaryLane(secondaryLane);
             queuePlayer.setJoinTime(Instant.now());
-            queuePlayer.setQueuePosition(queueCache.size() + 1);
+            queuePlayer.setQueuePosition((int) currentSize + 1);
             queuePlayer.setActive(true);
             queuePlayer.setAcceptanceStatus(0);
 
             // Salvar no banco
             queuePlayer = queuePlayerRepository.save(queuePlayer);
 
-            // Adicionar ao cache
+            // ✅ NOVO: Adicionar ao Redis
+            redisQueue.add(queuePlayer);
+
+            // Adicionar ao cache local (backward compatibility)
             queueCache.put(queuePlayer.getId(), queuePlayer);
 
             // Atualizar posições
@@ -195,7 +202,7 @@ public class MatchmakingService {
 
             QueuePlayer player = null;
 
-            // Buscar por ID primeiro
+            // Buscar por ID primeiro no cache local
             if (playerId != null) {
                 player = queueCache.get(playerId);
             }
@@ -216,7 +223,10 @@ public class MatchmakingService {
             // Remover do banco
             queuePlayerRepository.deleteById(player.getId());
 
-            // Remover do cache
+            // ✅ NOVO: Remover do Redis
+            redisQueue.remove(player.getId());
+
+            // Remover do cache local
             queueCache.remove(player.getId());
 
             // Atualizar posições
@@ -297,28 +307,39 @@ public class MatchmakingService {
     }
 
     /**
-     * Tenta formar uma partida
+     * Tenta formar uma partida usando Redis com distributed lock
      */
     public Optional<List<QueuePlayer>> tryFormMatch() {
-        List<QueuePlayer> activePlayers = new ArrayList<>(queueCache.values());
+        // ✅ NOVO: Executar com distributed lock para evitar race conditions
+        boolean executed = redisQueue.lockWithDistributedLock(() -> {
+            // Buscar jogadores elegíveis do Redis
+            List<QueuePlayer> activePlayers = redisQueue.getEligible(MIN_PLAYERS_FOR_MATCH);
 
-        if (activePlayers.size() < MIN_PLAYERS_FOR_MATCH) {
-            return Optional.empty();
+            if (activePlayers.size() < MIN_PLAYERS_FOR_MATCH) {
+                log.debug("Aguardando jogadores: {}/10", activePlayers.size());
+                return;
+            }
+
+            log.info("🎯 {} jogadores encontrados!", activePlayers.size());
+
+            // Aplicar algoritmo de balanceamento avançado
+            List<QueuePlayer> selected = findBalancedMatch(activePlayers);
+
+            if (selected == null || selected.size() < MIN_PLAYERS_FOR_MATCH) {
+                return;
+            }
+
+            log.info("🎮 Formando partida balanceada com {} jogadores", selected.size());
+
+            // Criar partida no banco
+            createMatch(selected);
+        });
+
+        if (!executed) {
+            log.debug("⏭️ Outra instância está processando matchmaking, pulando...");
         }
 
-        // Aplicar algoritmo de balanceamento avançado
-        List<QueuePlayer> selected = findBalancedMatch(activePlayers);
-
-        if (selected == null || selected.size() < MIN_PLAYERS_FOR_MATCH) {
-            return Optional.empty();
-        }
-
-        log.info("🎮 Formando partida balanceada com {} jogadores", selected.size());
-
-        // Criar partida no banco
-        createMatch(selected);
-
-        return Optional.of(selected);
+        return Optional.empty(); // Retorno mantido para compatibilidade
     }
 
     /**
