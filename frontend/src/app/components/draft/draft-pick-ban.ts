@@ -114,6 +114,14 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   // ✅ NOVO: Controle do modal de espectadores
   showSpectatorsModal: boolean = false;
 
+  // ✅ NOVO: Getter para obter o matchId com fallback robusto
+  get draftMatchId(): number | undefined {
+    // Tentar todas as propriedades possíveis onde o backend pode enviar o ID
+    return this.session?.matchId || 
+           (this.session as any)?.id || 
+           this.matchId;
+  }
+
   // ✅ NOVO: Getter para obter summoner name do currentPlayer
   get summonerName(): string {
     if (!this.currentPlayer) return '';

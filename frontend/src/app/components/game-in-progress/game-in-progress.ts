@@ -20,7 +20,8 @@ interface GameData {
   startTime: Date;
   pickBanData: any;
   isCustomGame: boolean;
-  matchId?: number; // ✅ ID da partida (enviado pelo backend)
+  id?: number; // ✅ ID da partida (pode vir como 'id')
+  matchId?: number; // ✅ ID da partida (pode vir como 'matchId')
   originalMatchId?: any;
   originalMatchData?: any;
   riotId?: string | null;
@@ -86,6 +87,14 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
 
   // ✅ NOVO: Controle do modal de espectadores
   showSpectatorsModal: boolean = false;
+
+  // ✅ NOVO: Getter para obter o matchId com fallback robusto
+  get matchId(): number | undefined {
+    // Tentar todas as propriedades possíveis onde o backend pode enviar o ID
+    return this.gameData?.matchId ||
+      this.gameData?.id ||
+      this.gameData?.originalMatchId;
+  }
 
   // Timers
   private gameTimer: Subscription | null = null;
@@ -206,7 +215,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
           this.hydratePlayersFromPickBanData();
         }, 100);
       },
-      error: (err) => {
+      error: (err: any) => {
         logGameInProgress('⚠️ Erro ao carregar cache de campeões:', err);
         // Tentar hidratar mesmo assim
         this.hydratePlayersFromPickBanData();
@@ -746,10 +755,11 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       fullGameData: this.gameData
     });
 
-    const matchId = this.gameData?.originalMatchId || this.gameData?.matchId;
+    // ✅ CORREÇÃO: Usar getter com fallback robusto
+    const matchIdValue = this.matchId;
 
-    if (!matchId) {
-      logGameInProgress('⚠️ [GameInProgress] Nenhum ID de partida encontrado (originalMatchId e matchId ausentes)');
+    if (!matchIdValue) {
+      logGameInProgress('⚠️ [GameInProgress] Nenhum ID de partida encontrado (id, matchId e originalMatchId ausentes)');
       alert('Erro: ID da partida não encontrado');
       return;
     }
@@ -762,11 +772,11 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     }
 
     try {
-      logGameInProgress('📡 [GameInProgress] Enviando requisição de cancelamento para matchId:', matchId);
+      logGameInProgress('📡 [GameInProgress] Enviando requisição de cancelamento para matchId:', matchIdValue);
 
       // Chamar endpoint DELETE /api/match/{matchId}/cancel
       const response: any = await firstValueFrom(
-        this.apiService.cancelMatchInProgress(matchId)
+        this.apiService.cancelMatchInProgress(matchIdValue)
       );
 
       if (response?.success) {
