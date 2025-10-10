@@ -95,7 +95,7 @@ async function pickBackendUrl() {
   // Para rede local: 'http://192.168.1.5:8080/' (seu IP)
   // Para cloud: 'https://seu-app.run.app/'
   // ✅ CORREÇÃO: URL correta do Cloud Run (nome do serviço é 'lol-matchmaking')
-  const HARDCODED_BACKEND_URL = 'https://lol-matchmaking-368951732227.southamerica-east1.run.app/';
+  const HARDCODED_BACKEND_URL = 'http://localhost:8080/';
   
   const env = process.env.BACKEND_URL || '';
   const defaultBase = env || HARDCODED_BACKEND_URL;
@@ -343,11 +343,23 @@ function startWebSocketGateway(backendBase) {
             if (info) {
               try {
                 const result = await performLcuRequest('GET', '/lol-summoner/v1/current-summoner');
+                
+                // ✅ CRÍTICO: Construir displayName e summonerName se vierem vazios do LCU
+                if (result && typeof result === 'object' && result.gameName && result.tagLine) {
+                  const fullName = `${result.gameName}#${result.tagLine}`;
+                  if (!result.displayName || result.displayName === '') {
+                    result.displayName = fullName;
+                  }
+                  if (!result.summonerName || result.summonerName === '') {
+                    result.summonerName = fullName;
+                  }
+                }
+                
                 safeLog('proactive lcu current-summoner ->', result);
                 
                 // ✅ NOVO: Enviar identify com summonerName para configurar LCU no banco
                 if (result && typeof result === 'object' && result.gameName && result.tagLine) {
-                  const summonerName = `${result.gameName}#${result.tagLine}`;
+                  const summonerName = result.displayName || `${result.gameName}#${result.tagLine}`;
                   const identifyWithSummoner = {
                     type: 'identify',
                     playerId: process.env.ELECTRON_CLIENT_ID || 'electron-client',

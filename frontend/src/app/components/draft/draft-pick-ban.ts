@@ -2901,4 +2901,11 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     saveLogToRoot(`👥 [closeSpectatorsModal] Modal de espectadores fechado`);
     this.cdr.detectChanges();
   }
+
+  /**
+   * ✅ TIMER: Pega timer do app.ts (variável separada)
+   */
+  getDraftTimer(): number {
+    return (window as any).appComponent?.draftTimer || 30;
+  }
 }

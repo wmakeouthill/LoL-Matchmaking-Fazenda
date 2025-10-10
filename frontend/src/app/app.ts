@@ -74,6 +74,7 @@ export class App implements OnInit, OnDestroy {
   showMatchFound = false;
   inDraftPhase = false;
   draftData: any = null;
+  draftTimer: number = 30; // ✅ TIMER SEPARADO
 
   // ✅ DEBUG: Propriedade com setter para rastrear mudanças
   private _inGamePhase = false;
@@ -168,6 +169,9 @@ export class App implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
+    // ✅ EXPOR appComponent no window para componentes filhos acessarem
+    (window as any).appComponent = this;
+
     // ✅ NOVO: Teste inicial da função logApp
     logApp('🚀 [App] === INICIALIZAÇÃO DO APP ===');
     logApp('🚀 [App] Verificando se logApp está funcionando...');
@@ -286,41 +290,32 @@ export class App implements OnInit, OnDestroy {
       }
     });
 
-    // ✅ NOVO: Aguardar evento de registro do LCU antes de carregar dados do jogador
+    // ✅ OTIMIZADO: Carregar dados IMEDIATAMENTE sem esperar eventos
+    // Removi o timeout de 10 segundos que estava bloqueando a UI
+    console.log('⚡ [App] Carregando dados do LCU imediatamente (sem espera)...');
+
+    // ✅ CRÍTICO: Carregar dados imediatamente, não esperar eventos
+    this.tryGetCurrentPlayerDetails();
+
+    // ✅ OPCIONAL: Escutar evento LCU em paralelo para atualizar se necessário
     this.apiService.onLcuRegistered().pipe(
       take(1), // Apenas o primeiro evento
-      timeout(10000), // Timeout de 10 segundos
-      catchError(err => {
-        console.warn('⚠️ [App] Timeout aguardando evento LCU, carregando dados mesmo assim...');
-        return of('timeout'); // Emite valor para continuar o fluxo
-      }),
       takeUntil(this.destroy$)
     ).subscribe({
       next: async (summonerName: string) => {
-        if (summonerName !== 'timeout') {
-          console.log('✅ [App] LCU registrado para:', summonerName);
-          console.log('🔄 [App] Carregando dados do jogador com summonerName já conhecido...');
+        console.log('✅ [App] LCU registrado para:', summonerName);
+        // Armazenar summonerName no ApiService ANTES de qualquer chamada HTTP
+        this.apiService.setCurrentSummonerName(summonerName);
+        console.log(`✅ [App] SummonerName configurado: ${summonerName}`);
 
-          // Armazenar summonerName no ApiService ANTES de qualquer chamada HTTP
-          this.apiService.setCurrentSummonerName(summonerName);
-          console.log(`✅ [App] SummonerName configurado: ${summonerName}`);
-
-          // ✅ NOVO: Tentar carregar dados salvos deste jogador específico
+        // Se ainda não carregou dados, carregar agora
+        if (!this.currentPlayer) {
+          console.log('🔄 [App] Carregando dados do jogador após evento LCU...');
           await this.tryLoadPlayerData(summonerName);
-        } else {
-          console.log('⏳ [App] Carregando dados sem summonerName (fallback)...');
-          // Fallback: carregar sem summonerName específico (usará localStorage)
-          await this.tryLoadPlayerData();
         }
-
-        // Agora que temos o summonerName, carregar dados do jogador via HTTP
-        // tryGetCurrentPlayerDetails() chamará identifyCurrentPlayerOnConnect() automaticamente
-        this.tryGetCurrentPlayerDetails();
       },
       error: (error: any) => {
-        console.error('❌ [App] Erro ao receber evento LCU:', error);
-        // Tentar carregar mesmo assim como fallback
-        this.tryGetCurrentPlayerDetails();
+        console.warn('⚠️ [App] Erro ao receber evento LCU:', error);
       }
     });
 
@@ -607,11 +602,13 @@ export class App implements OnInit, OnDestroy {
     // ✅ LOG DETALHADO: Mostrar TODOS os eventos que chegam
     console.log(`📡 [App] ========================================`);
     console.log(`📡 [App] WebSocket Event: ${message.type}`);
+    console.log(`📡 [App] Message completo:`, JSON.stringify(message, null, 2));
     console.log(`📡 [App] Estado atual antes do evento:`, {
       inGamePhase: this.inGamePhase,
       inDraftPhase: this.inDraftPhase,
       isRestoredMatch: this.isRestoredMatch,
-      showMatchFound: this.showMatchFound
+      showMatchFound: this.showMatchFound,
+      draftDataMatchId: this.draftData?.matchId
     });
     console.log(`📡 [App] ========================================`);
 
@@ -675,11 +672,43 @@ export class App implements OnInit, OnDestroy {
 
         this.cdr.detectChanges();
         break;
-      case 'draft_updated':
-        console.log('📋 [App] Draft updated recebido:', message);
+      case 'draft_update': // ✅ APENAS Timer (leve, a cada 1s)
+        console.log('⏰ [App] draft_update (TIMER) recebido:', message);
+
+        // ✅ PROCESSAR APENAS TIMER - SEPARADO de draftData!
+        if (this.inDraftPhase && this.draftData) {
+          const timerData = message.data || message;
+          this.draftTimer = timerData.timeRemaining !== undefined
+            ? timerData.timeRemaining
+            : 30;
+
+          console.log(`⏰ [App] Timer atualizado: ${this.draftTimer}s`);
+          this.cdr.detectChanges();
+        }
+        break;
+
+      case 'draft_updated': // ✅ Picks/Bans/Ações (JSON completo)
+        console.log('📋 [App] draft_updated (AÇÕES) recebido:', message);
+        console.log('📋 [App] Estado atual:', {
+          inDraftPhase: this.inDraftPhase,
+          hasDraftData: !!this.draftData,
+          draftDataMatchId: this.draftData?.matchId,
+          messageMatchId: message.matchId || message.data?.matchId
+        });
+
         // ✅ Atualizar draftData com as informações recebidas
         if (this.inDraftPhase && this.draftData) {
           const updateData = message.data || message;
+
+          console.log('📋📋📋 [App] ESTRUTURA DA MENSAGEM:', {
+            'message.type': message.type,
+            'message.data exists': !!message.data,
+            'message.data.timeRemaining': message.data?.timeRemaining,
+            'message.data.matchId': message.data?.matchId,
+            'message.timeRemaining (direto)': message.timeRemaining,
+            'message.matchId (direto)': message.matchId,
+            'updateData (usado)': updateData
+          });
 
           console.log('📋 [App] updateData extraído:', {
             hasPhases: !!updateData.phases,
@@ -689,6 +718,9 @@ export class App implements OnInit, OnDestroy {
             currentAction: updateData.currentAction,
             currentIndex: updateData.currentIndex,
             currentPlayer: updateData.currentPlayer,
+            timeRemaining: updateData.timeRemaining, // ✅ LOG CRÍTICO
+            matchId: updateData.matchId,
+            id: updateData.id,
             remainingMs: updateData.remainingMs,
             timeRemainingMs: updateData.timeRemainingMs
           });
@@ -704,17 +736,14 @@ export class App implements OnInit, OnDestroy {
 
           const newCurrentPlayer = updateData.currentPlayer !== undefined ? updateData.currentPlayer : this.draftData.currentPlayer;
 
-          // ✅ CORREÇÃO CRÍTICA: Backend JÁ envia timeRemaining em SEGUNDOS!
-          const newTimeRemaining = updateData.timeRemaining !== undefined
-            ? updateData.timeRemaining // ✅ Já vem em segundos do backend
-            : (updateData.remainingMs !== undefined
-              ? Math.ceil(updateData.remainingMs / 1000) // Fallback: converter ms para segundos
-              : 30); // Fallback final
+          // ❌ REMOVIDO: Timer NÃO vem mais no draft_updated!
+          // O timer agora vem SEPARADO via draft_update
+          // const newTimeRemaining = ...
 
-          console.log('📋 [App] Timer extraído do backend:', {
-            timeRemaining: updateData.timeRemaining,
-            remainingMs: updateData.remainingMs,
-            finalSeconds: newTimeRemaining
+          console.log('📋 [App] Dados extraídos do draft_updated (SEM TIMER):', {
+            currentPlayer: newCurrentPlayer,
+            currentAction: newCurrentAction,
+            phasesLength: newPhases?.length || 0
           });
 
           // ✅ NOVA ESTRUTURA HIERÁRQUICA: Processar teams.blue/red
@@ -728,17 +757,21 @@ export class App implements OnInit, OnDestroy {
             currentTeam: updateData.currentTeam
           });
 
+          // ✅ CRÍTICO: MatchId pode vir como "id" ou "matchId"
+          const effectiveMatchId = updateData.matchId || updateData.id || this.draftData.matchId;
+
           // ✅ CRÍTICO: Criar NOVO objeto SEMPRE (para OnPush detectar)
           const oldDraftData = this.draftData;
           this.draftData = {
             ...this.draftData,
-            matchId: this.draftData.matchId, // ✅ CRÍTICO: Preservar matchId explicitamente
+            matchId: effectiveMatchId, // ✅ CRÍTICO: Usar fallback consistente
             phases: newPhases,
             actions: newPhases,
             currentAction: newCurrentAction,
             currentIndex: newCurrentAction,
             currentPlayer: newCurrentPlayer,
-            timeRemaining: newTimeRemaining, // ✅ Timer via @Input (OnPush)
+            // ❌ REMOVIDO: timeRemaining NÃO vem mais no draft_updated!
+            // timeRemaining: newTimeRemaining,
 
             // ✅ NOVA ESTRUTURA HIERÁRQUICA
             teams: updateData.teams || this.draftData.teams, // teams.blue/red com players e actions
@@ -749,7 +782,7 @@ export class App implements OnInit, OnDestroy {
             _updateTimestamp: Date.now() // ✅ FORÇA mudança de referência
           };
 
-          console.log(`✅ [App] Draft atualizado: currentAction=${this.draftData.currentAction}, currentPlayer=${this.draftData.currentPlayer}, phases=${this.draftData.phases?.length}, timer=${newTimeRemaining}s, teams=${!!this.draftData.teams}`);
+          console.log(`✅ [App] Draft atualizado (AÇÕES): currentAction=${this.draftData.currentAction}, currentPlayer=${this.draftData.currentPlayer}, phases=${this.draftData.phases?.length}, teams=${!!this.draftData.teams}`);
           console.log(`🔍 [App] Referência mudou:`, {
             old: oldDraftData,
             new: this.draftData,
@@ -765,30 +798,19 @@ export class App implements OnInit, OnDestroy {
             'message.matchId': message.matchId
           });
 
-          // ✅ NOVO: Despachar evento de timer para o componente
-          console.log('📤 [App] Disparando draftTimerUpdate:', {
+          // ✅ Despachar evento customizado para o DraftPickBanComponent (AÇÕES, SEM TIMER)
+          console.log('📤📤📤 [App] Disparando draftUpdate (APENAS AÇÕES):', {
             matchId: this.draftData.matchId,
-            timeRemaining: newTimeRemaining
-          });
-          document.dispatchEvent(new CustomEvent('draftTimerUpdate', {
-            detail: {
-              matchId: this.draftData.matchId,
-              timeRemaining: newTimeRemaining
-            }
-          }));
-
-          // ✅ Despachar evento customizado para o DraftPickBanComponent
-          console.log('📤 [App] Disparando draftUpdate:', {
-            matchId: this.draftData.matchId,
+            matchIdType: typeof this.draftData.matchId,
             currentPlayer: updateData.currentPlayer,
             currentAction: newCurrentAction,
-            timeRemaining: newTimeRemaining
+            timestamp: Date.now()
           });
           document.dispatchEvent(new CustomEvent('draftUpdate', {
             detail: {
               matchId: this.draftData.matchId,
-              ...updateData,
-              timeRemaining: newTimeRemaining // ✅ Incluir no detail também
+              ...updateData
+              // ❌ REMOVIDO: timeRemaining não vem mais no draft_updated!
             }
           }));
 
@@ -826,9 +848,23 @@ export class App implements OnInit, OnDestroy {
           currentAction: currentAction
         });
 
+        // ✅ CRÍTICO: Verificar se backend enviou timer
+        if (!draftData.timeRemaining && draftData.timeRemaining !== 0) {
+          console.warn('⚠️ [App] Backend NÃO enviou timeRemaining no draft_started! Usando fallback.');
+        }
+
+        // ✅ CRÍTICO: Usar fallback consistente (matchId || id)
+        const effectiveMatchId = draftData.matchId || draftData.id || this.matchFoundData?.matchId;
+        console.log('🔑 [App] MatchId para draft:', {
+          'draftData.matchId': draftData.matchId,
+          'draftData.id': draftData.id,
+          'matchFoundData.matchId': this.matchFoundData?.matchId,
+          'effectiveMatchId': effectiveMatchId
+        });
+
         // ✅ Preparar dados do draft com informações completas dos times
         this.draftData = {
-          matchId: draftData.matchId || this.matchFoundData?.matchId,
+          matchId: effectiveMatchId,
           team1: draftData.team1 || this.matchFoundData?.teammates || [],
           team2: draftData.team2 || this.matchFoundData?.enemies || [],
           phases: phases,  // ✅ Usar o array extraído corretamente
@@ -836,7 +872,7 @@ export class App implements OnInit, OnDestroy {
           currentAction: currentAction,  // ✅ Passar currentAction explicitamente
           currentIndex: currentAction,  // ✅ Adicionar também como "currentIndex" para compatibilidade
           currentPlayer: draftData.currentPlayer,  // ✅ CRÍTICO: Jogador da VEZ (do backend), não jogador logado
-          timeRemaining: draftData.timeRemaining || 30,  // ✅ CORREÇÃO: Timer inicial do backend (30s padrão)
+          timeRemaining: draftData.timeRemaining !== undefined ? draftData.timeRemaining : 30,  // ✅ CORREÇÃO: Usar undefined check
           averageMMR: draftData.averageMMR || this.matchFoundData?.averageMMR,
           balanceQuality: draftData.balanceQuality,
           autofillCount: draftData.autofillCount
@@ -849,11 +885,14 @@ export class App implements OnInit, OnDestroy {
           phasesLength: this.draftData.phases?.length || 0,
           currentAction: this.draftData.currentAction,
           currentPlayer: this.draftData.currentPlayer,
-          timeRemaining: this.draftData.timeRemaining
+          timeRemaining: this.draftData.timeRemaining,
+          timeRemainingFromBackend: draftData.timeRemaining,
+          usedFallback: draftData.timeRemaining === undefined
         });
 
         // Entrar no draft
         this.inDraftPhase = true;
+        this.draftTimer = 30; // ✅ RESETAR timer ao iniciar draft
         this.matchFoundData = null; // Agora sim limpar
         this.cdr.detectChanges();
         break;
@@ -1023,6 +1062,48 @@ export class App implements OnInit, OnDestroy {
       try { localStorage.setItem('currentPlayer', JSON.stringify(player)); } catch { }
       console.log('💾 [Web] Dados salvos no localStorage');
     }
+  }
+
+  /**
+   * ✅ NOVO: Aguarda o LCU estar realmente pronto fazendo retry até conseguir dados válidos
+   */
+  private async waitForLCUReady(maxAttempts: number = 10, delayMs: number = 750): Promise<void> {
+    console.log('🔄 [App] Verificando se LCU está pronto (até 7.5s de retry)...');
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        console.log(`🔄 [App] Tentativa ${attempt}/${maxAttempts} de verificar LCU...`);
+
+        // Tentar obter dados básicos do summoner
+        const result = await firstValueFrom(
+          this.apiService.getCurrentSummonerFromLCU().pipe(
+            timeout(3000) // 3 segundos de timeout por tentativa
+          )
+        );
+
+        // Verificar se recebemos dados válidos
+        if (result && result.gameName && result.summonerId) {
+          console.log('✅ [App] LCU está pronto! Dados válidos recebidos:', {
+            gameName: result.gameName,
+            tagLine: result.tagLine,
+            summonerId: result.summonerId
+          });
+          return; // Sucesso!
+        }
+
+        console.log(`⚠️ [App] Tentativa ${attempt}: Dados incompletos, tentando novamente...`);
+      } catch (error) {
+        console.log(`⚠️ [App] Tentativa ${attempt}: Erro ao verificar LCU:`, error);
+      }
+
+      // Aguardar antes da próxima tentativa (exceto na última)
+      if (attempt < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+    }
+
+    // Se chegou aqui, esgotou as tentativas
+    throw new Error(`LCU não respondeu após ${maxAttempts} tentativas`);
   }
 
   private identifyCurrentPlayerOnConnect(): void {
@@ -1813,115 +1894,223 @@ export class App implements OnInit, OnDestroy {
     });
   }
 
-  private tryGetCurrentPlayerDetails(): void {
+  private async tryGetCurrentPlayerDetails(): Promise<void> {
     console.log('🔄 [App] Tentando carregar dados via getCurrentPlayerDetails...');
 
-    this.apiService.getCurrentPlayerDetails().subscribe({
-      next: (response) => {
+    // ✅ CRÍTICO: Fazer retry até conseguir dados válidos
+    const maxRetries = 3; // ✅ REDUZIDO: 3 tentativas são suficientes
+    const retryDelay = 500; // ✅ REDUZIDO: 500ms entre tentativas
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`🔄 [App] Tentativa ${attempt}/${maxRetries} de carregar getCurrentPlayerDetails...`);
+
+        const response = await firstValueFrom(this.apiService.getCurrentPlayerDetails().pipe(timeout(5000)));
+
         console.log('✅ [App] Resposta getCurrentPlayerDetails:', response);
+        console.log('📊 [DEBUG] response.data:', JSON.stringify(response.data, null, 2));
 
-        if (response.success && response.data) {
-          const data = response.data;
+        // ✅ CORRIGIDO: Verificar response.data.lcu (Electron) OU response.player (backend)
+        const lcuData = response.data?.lcu;
+        const playerData = response.player;
 
-          // Mapear dados do LCU para Player
-          const lcuData = data.lcu || {};
-          const riotAccount = data.riotAccount || {};
+        if (lcuData && lcuData.summonerId) {
+          console.log('✅ [App] Dados LCU VÁLIDOS! Processando...');
+          await this.processPlayerData(response);
+          return; // Sucesso!
+        } else if (playerData && Object.keys(playerData).length > 0 && playerData.summonerId) {
+          console.log('✅ [App] response.player VÁLIDO! Processando...');
+          await this.processPlayerData(response);
+          return; // Sucesso!
+        }
 
-          const gameName = riotAccount.gameName || lcuData.gameName;
-          const tagLine = riotAccount.tagLine || lcuData.tagLine;
+        console.log(`⚠️ [App] Tentativa ${attempt}: dados inválidos ou vazios, tentando novamente...`);
 
-          // ✅ CORRIGIDO: Usar displayName do backend se disponível
-          let displayName = '';
+        // Aguardar antes da próxima tentativa
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+        }
+      } catch (error) {
+        console.log(`⚠️ [App] Tentativa ${attempt}: Erro:`, error);
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+        }
+      }
+    }
 
-          // Verificar se o backend já forneceu displayName
-          if (lcuData.displayName) {
-            displayName = lcuData.displayName;
-            console.log('✅ [App] Usando displayName do backend:', displayName);
-          } else if (gameName && tagLine) {
-            displayName = `${gameName}#${tagLine}`;
-            console.log('✅ [App] DisplayName construído como fallback:', displayName);
-          } else {
-            console.warn('⚠️ [App] Dados incompletos via getCurrentPlayerDetails:', {
-              gameName, tagLine, lcuDisplayName: lcuData.displayName
-            });
-            this.addNotification('warning', 'Dados Incompletos', 'Não foi possível obter gameName#tagLine');
-            return;
+    // ✅ CORREÇÃO: Se chegou aqui MAS já temos currentPlayer (do localStorage), não mostrar erro
+    if (this.currentPlayer && this.currentPlayer.summonerId) {
+      console.log('✅ [App] Dados do localStorage já disponíveis, ignorando erro de retry');
+      return;
+    }
+
+    // Se chegou aqui sem dados, mostrar erro
+    console.error('❌ [App] Esgotadas as tentativas de getCurrentPlayerDetails');
+    this.addNotification('error', 'Erro', 'Não foi possível carregar dados do jogador');
+    this.tryLoadFromLocalStorage();
+  }
+
+  /**
+   * ✅ NOVO: Processa os dados do jogador após validação
+   */
+  private async processPlayerData(response: any): Promise<void> {
+    if (response.success && response.data) {
+      const data = response.data;
+
+      // ✅ CRÍTICO: player vem no ROOT do response, NÃO dentro de data!
+      const playerData = response.player || {};
+
+      // Mapear dados do LCU para Player
+      const lcuData = data.lcu || {};
+      const riotAccount = data.riotAccount || {};
+
+      const gameName = riotAccount.gameName || lcuData.gameName;
+      const tagLine = riotAccount.tagLine || lcuData.tagLine;
+
+      // ✅ CORRIGIDO: Usar displayName do backend se disponível
+      let displayName = '';
+
+      // Verificar se o backend já forneceu displayName
+      if (playerData.displayName) {
+        displayName = playerData.displayName;
+        console.log('✅ [App] Usando displayName do playerData:', displayName);
+      } else if (lcuData.displayName) {
+        displayName = lcuData.displayName;
+        console.log('✅ [App] Usando displayName do lcuData:', displayName);
+      } else if (gameName && tagLine) {
+        displayName = `${gameName}#${tagLine}`;
+        console.log('✅ [App] DisplayName construído como fallback:', displayName);
+      } else {
+        console.warn('⚠️ [App] Dados incompletos via getCurrentPlayerDetails:', {
+          gameName, tagLine, lcuDisplayName: lcuData.displayName
+        });
+        this.addNotification('warning', 'Dados Incompletos', 'Não foi possível obter gameName#tagLine');
+        return;
+      }
+
+      // Garantir que displayName não seja vazio
+      if (!displayName) {
+        this.addNotification('warning', 'Dados Incompletos', 'Não foi possível obter displayName');
+        return;
+      }
+
+      // ✅ CORREÇÃO: Extrair wins/losses e dados ranqueados do playerData (root) e lcuData (fallback)
+      const wins = playerData.wins || lcuData.wins || 0;
+      const losses = playerData.losses || lcuData.losses || 0;
+      const rankData = playerData.rank || lcuData.rank || null;
+
+      // ✅ NOVO: Estruturar rankedData para o frontend
+      console.log('🔥 BUILD TIMESTAMP:', new Date().toISOString(), 'VERSÃO: 5.0 - DASHBOARD COM RETRY');
+      console.log('📊 [DEBUG] response.player (root):', JSON.stringify(playerData, null, 2));
+      console.log('📊 [DEBUG] data.lcu:', JSON.stringify(lcuData, null, 2));
+      console.log('📊 [DEBUG] Valores extraídos:', {
+        wins,
+        losses,
+        rankData,
+        displayName
+      });
+
+      let rankedData: { soloQueue?: any; flexQueue?: any; } | undefined = undefined;
+      if (rankData && rankData.tier && rankData.tier !== 'UNRANKED') {
+        rankedData = {
+          soloQueue: {
+            tier: rankData.tier || 'UNRANKED',
+            rank: rankData.rank || '',
+            leaguePoints: rankData.lp || 0,
+            wins: rankData.wins || wins || 0,
+            losses: rankData.losses || losses || 0
           }
+        };
+      }
+      console.log('📊 [DEBUG] rankedData final:', JSON.stringify(rankedData, null, 2));
 
-          // Garantir que displayName não seja vazio
-          if (!displayName) {
-            this.addNotification('warning', 'Dados Incompletos', 'Não foi possível obter displayName');
-            return;
+      // ✅ CRÍTICO: gameName e tagLine separados NÃO servem para identificação
+      // SEMPRE usar displayName (gameName#tagLine) como identificador único
+      const player: Player = {
+        id: lcuData.summonerId || 0,
+        summonerName: displayName, // ✅ SEMPRE gameName#tagLine
+        displayName: displayName,   // ✅ SEMPRE gameName#tagLine
+        gameName: gameName,         // ⚠️ Apenas para exibição separada (se necessário)
+        tagLine: tagLine,           // ⚠️ Apenas para exibição separada (se necessário)
+        summonerId: (lcuData.summonerId || 0).toString(),
+        puuid: riotAccount.puuid || lcuData.puuid || '',
+        profileIconId: lcuData.profileIconId || 29,
+        summonerLevel: lcuData.summonerLevel || 30,
+        region: 'br1',
+        currentMMR: 1200,
+        customLp: 1200,
+        // ✅ ADICIONADO: Incluir dados do ranked
+        wins: wins,
+        losses: losses,
+        rankedData: rankedData,
+        rank: rankData ? {
+          tier: rankData.tier || 'UNRANKED',
+          rank: rankData.rank || '',
+          display: rankData.tier && rankData.rank ? `${rankData.tier} ${rankData.rank}` : 'Unranked',
+          lp: rankData.lp || 0
+        } : undefined
+      };
+
+      console.log('📊 [DEBUG] Player object final:', JSON.stringify(player, null, 2));
+
+      this.currentPlayer = player;
+
+      // ✅ CRÍTICO: Armazenar summonerName no ApiService ANTES de qualquer API call
+      if (displayName) {
+        this.apiService.setCurrentSummonerName(displayName);
+        console.log(`✅ [App] SummonerName configurado no ApiService (getCurrentPlayerDetails): ${displayName}`);
+      }
+
+      localStorage.setItem('currentPlayer', JSON.stringify(player));
+
+      // ✅ ADICIONADO: Atualizar formulário de configurações
+      this.updateSettingsForm();
+
+      console.log('✅ [App] Dados do jogador mapeados com sucesso:', player.summonerName, 'displayName:', player.displayName);
+      console.log('📊 [DEBUG] currentPlayer after assignment:', JSON.stringify(this.currentPlayer, null, 2));
+
+      // ✅ CRÍTICO: Forçar detecção de mudanças para Dashboard atualizar
+      this.cdr.markForCheck();
+      this.cdr.detectChanges();
+      console.log('🔄 [App] Change detection forçado - Dashboard deve atualizar agora');
+
+      this.addNotification('success', 'Jogador Detectado', `Logado como: ${player.summonerName}`);
+
+      // ✅ NOVO: Identificar jogador no WebSocket após carregar dados
+      this.identifyCurrentPlayerOnConnect();
+
+      // ✅ CRÍTICO: Iniciar sincronização em SEGUNDO PLANO (não bloqueia UI)
+      this.syncPlayerDataInBackground(displayName);
+    }
+  }
+
+  /**
+   * ✅ NOVO: Sincroniza dados do jogador com backend em segundo plano
+   * Atualiza MMR customizado, maestria e picks mais utilizados
+   * NÃO BLOQUEIA A UI - executa de forma assíncrona
+   */
+  private syncPlayerDataInBackground(summonerName: string): void {
+    console.log('🔄 [App] Iniciando sincronização em background para:', summonerName);
+
+    // Fire-and-forget: não espera resposta, não bloqueia UI
+    this.apiService.syncPlayerWithBackend(summonerName).subscribe({
+      next: (result) => {
+        console.log('✅ [App] Sincronização em background concluída:', result);
+        // Se o backend retornou dados atualizados, atualizar currentPlayer
+        if (result?.player && this.currentPlayer) {
+          // Atualizar apenas campos que vieram do backend
+          if (result.player.customMmr !== undefined) {
+            this.currentPlayer.currentMMR = result.player.customMmr;
+            this.currentPlayer.customLp = result.player.customMmr; // customLp reflete customMmr
           }
-
-          // ✅ CORREÇÃO: Extrair wins/losses e dados ranqueados do LCU
-          const wins = data.player?.wins || lcuData.wins || 0;
-          const losses = data.player?.losses || lcuData.losses || 0;
-          const rankData = data.player?.rank || lcuData.rank || null;
-
-          // ✅ NOVO: Estruturar rankedData para o frontend
-          let rankedData: { soloQueue?: any; flexQueue?: any; } | undefined = undefined;
-          if (rankData && rankData.tier && rankData.tier !== 'UNRANKED') {
-            rankedData = {
-              soloQueue: {
-                tier: rankData.tier || 'UNRANKED',
-                rank: rankData.rank || '',
-                leaguePoints: rankData.lp || 0,
-                wins: rankData.wins || wins || 0,
-                losses: rankData.losses || losses || 0
-              }
-            };
-          }
-
-          const player: Player = {
-            id: lcuData.summonerId || 0,
-            summonerName: displayName, // Use displayName as summonerName
-            displayName: displayName, // ✅ ADICIONADO: Definir displayName corretamente (já verificado acima)
-            gameName: gameName,
-            tagLine: tagLine,
-            summonerId: (lcuData.summonerId || 0).toString(),
-            puuid: riotAccount.puuid || lcuData.puuid || '',
-            profileIconId: lcuData.profileIconId || 29,
-            summonerLevel: lcuData.summonerLevel || 30,
-            region: 'br1',
-            currentMMR: 1200,
-            customLp: 1200,
-            // ✅ ADICIONADO: Incluir dados do ranked
-            wins: wins,
-            losses: losses,
-            rankedData: rankedData,
-            rank: rankData ? {
-              tier: rankData.tier || 'UNRANKED',
-              rank: rankData.rank || '',
-              display: rankData.tier && rankData.rank ? `${rankData.tier} ${rankData.rank}` : 'Unranked',
-              lp: rankData.lp || 0
-            } : undefined
-          };
-
-          this.currentPlayer = player;
-
-          // ✅ CRÍTICO: Armazenar summonerName no ApiService ANTES de qualquer API call
-          if (displayName) {
-            this.apiService.setCurrentSummonerName(displayName);
-            console.log(`✅ [App] SummonerName configurado no ApiService (getCurrentPlayerDetails): ${displayName}`);
-          }
-
-          localStorage.setItem('currentPlayer', JSON.stringify(player));
-
-          // ✅ ADICIONADO: Atualizar formulário de configurações
-          this.updateSettingsForm();
-
-          console.log('✅ [App] Dados do jogador mapeados com sucesso:', player.summonerName, 'displayName:', player.displayName);
-          this.addNotification('success', 'Jogador Detectado', `Logado como: ${player.summonerName}`);
-
-          // ✅ NOVO: Identificar jogador no WebSocket após carregar dados
-          this.identifyCurrentPlayerOnConnect();
+          // Atualizar localStorage com dados mais recentes
+          localStorage.setItem('currentPlayer', JSON.stringify(this.currentPlayer));
+          console.log('✅ [App] Dados do jogador atualizados após sincronização');
         }
       },
-      error: (error) => {
-        console.error('❌ [App] Erro ao carregar getCurrentPlayerDetails:', error);
-        this.addNotification('error', 'Erro API', 'Falha ao carregar dados do jogador');
-        this.tryLoadFromLocalStorage();
+      error: (err) => {
+        console.warn('⚠️ [App] Erro na sincronização em background (não crítico):', err);
+        // Não mostrar erro para o usuário - é um processo em background
       }
     });
   }

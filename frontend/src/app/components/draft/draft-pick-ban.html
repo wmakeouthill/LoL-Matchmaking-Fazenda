@@ -17,8 +17,8 @@
       </div>
 
       <div class="timer-section">
-        <span class="timer" [class.warning]="timeRemaining <= 10"
-          >{{ timeRemaining }}s</span
+        <span class="timer" [class.warning]="getDraftTimer() <= 10"
+          >{{ getDraftTimer() }}s</span
         >
         <div class="status-section">
           <div class="current-player-info">
@@ -89,12 +89,15 @@
                     class="help-btn"
                     (click)="openPlayerHelpModal(player)"
                     title="Ver estatísticas do jogador"
-                    aria-label="Ver estatísticas do jogador">
+                    aria-label="Ver estatísticas do jogador"
+                  >
                     🐄
                   </button>
                 </div>
                 <div class="lane-info">
-                  <span class="player-lane">{{ getLaneDisplayWithAutofill(player) }}</span>
+                  <span class="player-lane"
+                    >{{ getLaneDisplayWithAutofill(player) }}</span
+                  >
                   <span
                     class="lane-badge"
                     [ngClass]="{
@@ -121,12 +124,15 @@
                     class="help-btn"
                     (click)="openPlayerHelpModal(player)"
                     title="Ver estatísticas do jogador"
-                    aria-label="Ver estatísticas do jogador">
+                    aria-label="Ver estatísticas do jogador"
+                  >
                     🐄
                   </button>
                 </div>
                 <div class="lane-info">
-                  <span class="player-lane">{{ getLaneDisplayWithAutofill(player) }}</span>
+                  <span class="player-lane"
+                    >{{ getLaneDisplayWithAutofill(player) }}</span
+                  >
                   <span
                     class="lane-badge"
                     [ngClass]="{
@@ -202,12 +208,15 @@
                     class="help-btn"
                     (click)="openPlayerHelpModal(player)"
                     title="Ver estatísticas do jogador"
-                    aria-label="Ver estatísticas do jogador">
+                    aria-label="Ver estatísticas do jogador"
+                  >
                     🐄
                   </button>
                 </div>
                 <div class="lane-info">
-                  <span class="player-lane">{{ getLaneDisplayWithAutofill(player) }}</span>
+                  <span class="player-lane"
+                    >{{ getLaneDisplayWithAutofill(player) }}</span
+                  >
                   <span
                     class="lane-badge"
                     [ngClass]="{
@@ -234,12 +243,15 @@
                     class="help-btn"
                     (click)="openPlayerHelpModal(player)"
                     title="Ver estatísticas do jogador"
-                    aria-label="Ver estatísticas do jogador">
+                    aria-label="Ver estatísticas do jogador"
+                  >
                     🐄
                   </button>
                 </div>
                 <div class="lane-info">
-                  <span class="player-lane">{{ getLaneDisplayWithAutofill(player) }}</span>
+                  <span class="player-lane"
+                    >{{ getLaneDisplayWithAutofill(player) }}</span
+                  >
                   <span
                     class="lane-badge"
                     [ngClass]="{
@@ -322,7 +334,8 @@
     [isVisible]="showPlayerHelpModal"
     [playerName]="selectedPlayerNameForHelp"
     [playerSummonerName]="selectedPlayerForHelp"
-    (closed)="closePlayerHelpModal()">
+    (closed)="closePlayerHelpModal()"
+  >
   </app-draft-player-help-modal>
 
   <!-- ✅ NOVO: Modal de Espectadores -->
@@ -330,7 +343,8 @@
     *ngIf="showSpectatorsModal"
     [matchId]="session?.id"
     [summonerName]="summonerName"
-    (closed)="closeSpectatorsModal()">
+    (closed)="closeSpectatorsModal()"
+  >
   </app-spectators-modal>
 </div>
 

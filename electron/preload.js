@@ -64,7 +64,7 @@ const electronAPI = {
     // Para testes locais: 'http://localhost:8080'
     // Para rede local: 'http://192.168.1.5:8080' (seu IP)
     // Para cloud: 'https://seu-app.run.app'
-    const HARDCODED_BACKEND_URL = 'https://lol-matchmaking-368951732227.southamerica-east1.run.app/';
+    const HARDCODED_BACKEND_URL = 'http://localhost:8080/';
     
     // If BACKEND_URL is provided in the environment, normalize it and return
     const raw = (process.env && process.env['BACKEND_URL']) ? String(process.env['BACKEND_URL']).replace(/\/+$/, '') : null;
@@ -184,7 +184,21 @@ electronAPI.storage = {
   }
 };
 
-electronAPI.lcu.getCurrentSummoner = async () => electronAPI.lcu.request('/lol-summoner/v1/current-summoner', 'GET');
+electronAPI.lcu.getCurrentSummoner = async () => {
+  const result = await electronAPI.lcu.request('/lol-summoner/v1/current-summoner', 'GET');
+  // ✅ CRÍTICO: Construir displayName e summonerName se vierem vazios do LCU
+  if (result && typeof result === 'object' && result.gameName && result.tagLine) {
+    const fullName = `${result.gameName}#${result.tagLine}`;
+    if (!result.displayName || result.displayName === '') {
+      result.displayName = fullName;
+    }
+    if (!result.summonerName || result.summonerName === '') {
+      result.summonerName = fullName;
+    }
+  }
+  return result;
+};
+electronAPI.lcu.getCurrentRanked = async () => electronAPI.lcu.request('/lol-ranked/v1/current-ranked-stats', 'GET');
 electronAPI.lcu.getGameflowPhase = async () => electronAPI.lcu.request('/lol-gameflow/v1/gameflow-phase', 'GET');
 electronAPI.lcu.getSession = async () => electronAPI.lcu.request('/lol-gameflow/v1/session', 'GET');
 electronAPI.lcu.getMatchHistory = async () => {
@@ -223,7 +237,7 @@ try {
     if (!info) return;
     
     // CONFIGURAÇÃO DE REDE: Use a mesma URL configurada acima
-    const HARDCODED_BACKEND_URL = 'https://lol-matchmaking-368951732227.southamerica-east1.run.app/';
+    const HARDCODED_BACKEND_URL = 'http://localhost:8080/';
     
     const backend = (process.env && process.env['BACKEND_URL']) ? String(process.env['BACKEND_URL']).replace(/\/+$/, '') : HARDCODED_BACKEND_URL;
     const url = backend.endsWith('/api') ? `${backend}/lcu/configure` : `${backend}/api/lcu/configure`;

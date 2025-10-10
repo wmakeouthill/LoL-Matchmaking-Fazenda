@@ -41,7 +41,8 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
   @Input() currentPlayer: any = null;
   @Input() isVisible: boolean = false;
   @Input() isEditingMode: boolean = false; // ✅ NOVO: Receber modo de edição
-  @Input() timeRemaining: number = 30; // ✅ NOVO: Receber timer do componente principal
+  // ✅ REMOVIDO: Timer não é mais @Input, vem do window.appComponent
+  // @Input() timeRemaining: number = 30;
   @Output() onClose = new EventEmitter<void>();
   @Output() onanySelected = new EventEmitter<any>();
 
@@ -109,23 +110,8 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
       this.invalidateCache();
     }
 
-    // ✅ CORREÇÃO CRÍTICA: Detectar mudanças no timer e forçar atualização
-    if (changes['timeRemaining']) {
-      console.log('⏰ [DraftanyModal] Timer atualizado:', changes['timeRemaining'].currentValue);
-      console.log('⏰ [DraftanyModal] Timer anterior:', changes['timeRemaining'].previousValue);
-      this.changeDetectorRef.markForCheck();
-
-      // ✅ CORREÇÃO: Forçar atualização adicional para garantir que o timer seja exibido
-      setTimeout(() => {
-        this.changeDetectorRef.detectChanges();
-        console.log('⏰ [DraftanyModal] Timer após timeout no ngOnChanges:', this.timeRemaining);
-      }, 0);
-
-      // ✅ CORREÇÃO: Verificar status do timer após mudança
-      setTimeout(() => {
-        this.checkTimerStatus();
-      }, 50);
-    }
+    // ✅ REMOVIDO: Timer não é mais @Input, não precisa detectar mudanças aqui
+    // O timer vem direto do window.appComponent.draftTimer
   }
 
   private async loadanys() {
@@ -807,7 +793,7 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
   onModalShow(): void {
     if (this.isVisible) {
       console.log('🔄 [DraftanyModal] Modal aberto - recarregando campeões...');
-      console.log('⏰ [DraftanyModal] Timer atual no modal:', this.timeRemaining);
+      console.log('⏰ [DraftanyModal] Timer atual no modal:', this.getDraftTimer());
       this.invalidateCache();
       this.loadanys(); // ✅ CORREÇÃO: Recarregar campeões quando modal abrir
       this.changeDetectorRef.markForCheck();
@@ -815,7 +801,7 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
       // ✅ CORREÇÃO: Forçar atualização adicional para garantir que o timer seja exibido
       setTimeout(() => {
         this.changeDetectorRef.detectChanges();
-        console.log('⏰ [DraftanyModal] Timer após timeout:', this.timeRemaining);
+        console.log('⏰ [DraftanyModal] Timer após timeout:', this.getDraftTimer());
       }, 100);
 
       // ✅ CORREÇÃO: Verificar status do timer
@@ -827,7 +813,7 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
 
   // ✅ NOVO: Método para forçar atualização do timer
   forceTimerUpdate(): void {
-    console.log('⏰ [DraftanyModal] Forçando atualização do timer:', this.timeRemaining);
+    console.log('⏰ [DraftanyModal] Forçando atualização do timer:', this.getDraftTimer());
     this.changeDetectorRef.markForCheck();
     this.changeDetectorRef.detectChanges();
   }
@@ -835,10 +821,17 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
   // ✅ NOVO: Método para verificar se o timer está funcionando
   checkTimerStatus(): void {
     console.log('⏰ [DraftanyModal] Status do timer:', {
-      timeRemaining: this.timeRemaining,
+      timeRemaining: this.getDraftTimer(),
       isVisible: this.isVisible,
       session: !!this.session,
       currentAction: this.session?.currentAction
     });
+  }
+
+  /**
+   * ✅ TIMER: Pega timer do app.ts (variável separada)
+   */
+  getDraftTimer(): number {
+    return (window as any).appComponent?.draftTimer || 30;
   }
 }

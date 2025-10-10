@@ -1,29 +1,22 @@
-# Multi-stage Dockerfile: build frontend + backend, run with Temurin JRE
-FROM node:22-alpine AS frontend-build
-WORKDIR /workspace/frontend
-# Copiar arquivos do frontend
-COPY frontend/package*.json ./
-RUN npm install
-COPY frontend/ ./
-# Build do frontend Angular
-RUN npm run build:prod
-
-FROM maven:3.9.4-eclipse-temurin-21 AS backend-build
+# Build único com Maven (usa frontend-maven-plugin para buildar Angular)
+FROM maven:3.9.4-eclipse-temurin-21 AS build
 WORKDIR /workspace
-# Copiar arquivos do backend
-COPY pom.xml ./
-COPY src ./src
-# Copiar frontend buildado diretamente para resources/static
-COPY --from=frontend-build /workspace/frontend/dist/browser ./src/main/resources/static
-# Build do pacote Spring Boot (pula o frontend plugin com -Dfrontend.skip)
-RUN mvn -B -DskipTests package -Dfrontend.skip=true
+
+# Copiar TUDO do projeto
+COPY . .
+
+# ✅ Build COMPLETO: Maven vai buildar frontend via plugin + backend
+# -U: Força atualização de dependências
+# clean: Limpa target antes
+# package: Builda o JAR
+RUN mvn -B -U clean package -DskipTests
 
 # Runtime menor
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 
 # Copiar o jar gerado (já contém os arquivos estáticos do frontend)
-COPY --from=backend-build /workspace/target/*.jar app.jar
+COPY --from=build /workspace/target/*.jar app.jar
 
 # Porta padrão (Cloud Run fornece PORT env var)
 EXPOSE 8080
