@@ -40,6 +40,9 @@ public class GameInProgressService {
 
     // ✅ NOVO: Redis para monitoramento distribuído de jogos
     private final RedisGameMonitoringService redisGameMonitoring;
+    
+    // ✅ NOVO: Redis para ownership (limpar quando jogo termina)
+    private final br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch;
 
     // scheduler for monitoring
     private ScheduledExecutorService scheduler;
@@ -278,6 +281,11 @@ public class GameInProgressService {
             // ✅ REDIS ONLY: Finalizar no Redis (fonte única da verdade)
             String winningTeam = winnerTeam != null ? "team" + winnerTeam : "draw";
             redisGameMonitoring.finishGame(matchId, winningTeam);
+
+            // ✅ CRÍTICO: Limpar ownership de todos os jogadores
+            log.info("🗑️ [OWNERSHIP] Limpando ownership de match {}", matchId);
+            redisPlayerMatch.clearMatchPlayers(matchId);
+            log.info("✅ [OWNERSHIP] Ownership limpo com sucesso");
             log.info("✅ [finishGame] Jogo finalizado no Redis para match {}", matchId);
 
             // ✅ NOVO: Mover espectadores e jogadores de volta, depois limpar canais Discord
