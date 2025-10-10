@@ -66,7 +66,8 @@ public class DraftFlowService {
             // LinkedHashSet mantém a ordem de inserção (Top, Jungle, Mid, ADC, Support)
             this.team1Players = team1 == null ? Set.of() : new LinkedHashSet<>(team1);
             this.team2Players = team2 == null ? Set.of() : new LinkedHashSet<>(team2);
-            this.lastActionStartMs = System.currentTimeMillis();
+            // ✅ CORREÇÃO: Inicializar NO PASSADO para permitir ação imediata (bots pickam após 2s)
+            this.lastActionStartMs = System.currentTimeMillis() - 3000; // 3s no passado
         }
 
         public long getMatchId() {
@@ -1701,12 +1702,22 @@ public class DraftFlowService {
         List<br.com.lolmatchmaking.backend.domain.entity.CustomMatch> drafts = customMatchRepository
                 .findByStatus("draft");
 
+        if (drafts.isEmpty()) {
+            return; // Sem drafts ativos
+        }
+
+        log.info("⏰ [DraftFlow] Monitorando {} drafts ativos", drafts.size());
+
         for (br.com.lolmatchmaking.backend.domain.entity.CustomMatch match : drafts) {
             DraftState st = getDraftStateFromRedis(match.getId());
-            if (st == null)
+            if (st == null) {
+                log.warn("⚠️ [DraftFlow] Estado null para match {}", match.getId());
                 continue;
-            if (st.getCurrentIndex() >= st.getActions().size())
-                return; // completo
+            }
+            if (st.getCurrentIndex() >= st.getActions().size()) {
+                log.info("✅ [DraftFlow] Draft {} completo", match.getId());
+                continue; // ✅ CORREÇÃO: continue ao invés de return!
+            }
 
             long elapsed = now - st.getLastActionStartMs();
 
@@ -1716,9 +1727,9 @@ public class DraftFlowService {
             DraftAction currentAction = st.getActions().get(currentIdx);
             String currentPlayer = getPlayerForTeamAndIndex(st, currentAction.team(), currentIdx);
 
-            log.info("🔍 [DraftFlow] Match {} - Ação {}/{}: team={}, type={}, player={}, elapsed={}ms",
+            log.info("🔍 [DraftFlow] Match {} - Ação {}/{}: team={}, type={}, player={}, elapsed={}ms, isBot={}",
                     st.getMatchId(), currentIdx, st.getActions().size(),
-                    currentAction.team(), currentAction.type(), currentPlayer, elapsed);
+                    currentAction.team(), currentAction.type(), currentPlayer, elapsed, isBot(currentPlayer));
 
             if (currentPlayer == null) {
                 log.error("❌ [DraftFlow] Match {} - Jogador NULL para ação {} (team {})",
@@ -1740,10 +1751,12 @@ public class DraftFlowService {
             }
 
             if (isBot(currentPlayer) && elapsed >= 2000) { // 2 segundos para bots
-                log.info("🤖 [DraftFlow] Match {} - Bot {} fazendo ação automática (ação {}, {})",
-                        st.getMatchId(), currentPlayer, currentIdx, currentAction.type());
+                log.info("🤖 [DraftFlow] Match {} - Bot {} fazendo ação automática (ação {}, {}) - elapsed={}ms",
+                        st.getMatchId(), currentPlayer, currentIdx, currentAction.type(), elapsed);
                 handleBotAutoAction(st, currentPlayer);
                 return;
+            } else if (isBot(currentPlayer)) {
+                log.debug("⏳ [DraftFlow] Bot {} aguardando... elapsed={}ms (precisa 2000ms)", currentPlayer, elapsed);
             }
 
             // ✅ Para jogadores reais, usar timeout configurado
