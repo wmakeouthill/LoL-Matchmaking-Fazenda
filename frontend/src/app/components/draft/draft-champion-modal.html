@@ -27,8 +27,8 @@
 
       <!-- Timer do Modal -->
       <div class="modal-timer-section">
-        <div class="modal-timer" [class.warning]="timeRemaining <= 10">
-          ⏱️ {{ timeRemaining }}s
+        <div class="modal-timer" [class.warning]="getDraftTimer() <= 10">
+          ⏱️ {{ getDraftTimer() }}s
         </div>
       </div>
 

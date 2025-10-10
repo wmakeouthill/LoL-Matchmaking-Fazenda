@@ -599,12 +599,16 @@ export class ApiService {
   getCurrentPlayerDetails(): Observable<any> {
     // Se está no Electron, usar apenas LCU (não tentar Riot API)
     if (this.isElectron()) {
+      console.log('🔍 [ApiService] Obtendo dados do LCU via Electron...');
       return this.getCurrentSummonerFromLCU().pipe(
         map((lcuData: any) => {
           if (!lcuData) {
             throw new Error('Dados do LCU não disponíveis');
           }
 
+          console.log('✅ [ApiService] Dados LCU obtidos:', lcuData);
+
+          // ✅ CRÍTICO: Retornar formato consistente para processamento rápido
           return {
             success: true,
             data: {
@@ -619,7 +623,6 @@ export class ApiService {
             }
           };
         }),
-        retry(1),
         catchError(this.handleError)
       );
     }
@@ -1145,20 +1148,65 @@ export class ApiService {
   getCurrentSummonerFromLCU(): Observable<any> {
     // Em Electron, usar o conector local (preload) e não o backend central
     if (this.isElectron() && (window as any).electronAPI?.lcu?.getCurrentSummoner) {
-      return new Observable(observer => {
+      console.log('🔍 [ApiService] Buscando summoner + ranked do LCU...');
+      
+      // ✅ CRÍTICO: Buscar AMBOS summoner e ranked em PARALELO
+      const summoner$ = new Observable(observer => {
         (window as any).electronAPI.lcu.getCurrentSummoner()
-          .then((data: any) => {
-            // ✅ NOVO: Armazenar summonerName para headers HTTP
-            if (data?.displayName) {
-              this.setCurrentSummonerName(data.displayName);
-            } else if (data?.gameName && data?.tagLine) {
-              this.setCurrentSummonerName(`${data.gameName}#${data.tagLine}`);
-            }
-            observer.next(data);
-          })
+          .then((data: any) => observer.next(data))
           .catch((err: any) => observer.error(err))
           .finally(() => observer.complete());
-      }).pipe(catchError(this.handleError));
+      });
+
+      const ranked$ = new Observable(observer => {
+        (window as any).electronAPI.lcu.getCurrentRanked()
+          .then((data: any) => observer.next(data))
+          .catch((err: any) => {
+            console.warn('⚠️ Erro ao buscar ranked, continuando sem rank:', err);
+            observer.next(null); // Não falhar se ranked não estiver disponível
+          })
+          .finally(() => observer.complete());
+      });
+
+      return forkJoin({
+        summoner: summoner$,
+        ranked: ranked$
+      }).pipe(
+        map(({ summoner, ranked }: { summoner: any, ranked: any }) => {
+          // ✅ Armazenar summonerName para headers HTTP
+          if (summoner?.displayName) {
+            this.setCurrentSummonerName(summoner.displayName);
+          } else if (summoner?.gameName && summoner?.tagLine) {
+            this.setCurrentSummonerName(`${summoner.gameName}#${summoner.tagLine}`);
+          }
+
+          // ✅ MESCLAR dados de summoner + ranked
+          const merged: any = { ...summoner };
+          if (ranked && ranked.queues && Array.isArray(ranked.queues)) {
+            // Procurar por ranked solo
+            const soloQueue = ranked.queues.find((q: any) => 
+              q.queueType === 'RANKED_SOLO_5x5' || q.queueType === 'RANKED_SOLO'
+            );
+            
+            if (soloQueue) {
+              merged.rank = {
+                tier: soloQueue.tier || 'UNRANKED',
+                rank: soloQueue.division || '',
+                lp: soloQueue.leaguePoints || 0,
+                wins: soloQueue.wins || 0,
+                losses: soloQueue.losses || 0
+              };
+              merged.wins = soloQueue.wins || 0;
+              merged.losses = soloQueue.losses || 0;
+              
+              console.log('✅ [ApiService] Rank encontrado:', merged.rank);
+            }
+          }
+
+          return merged;
+        }),
+        catchError(this.handleError)
+      );
     }
 
     // Modo web: usar backend
@@ -1368,6 +1416,34 @@ export class ApiService {
         return response;
       }),
       catchError(this.handleError)
+    );
+  }
+
+  /**
+   * ✅ NOVO: Sincroniza dados do jogador com backend em segundo plano
+   * Atualiza MMR customizado baseado em rank + custom_lp
+   * Busca maestria e picks mais utilizados da Riot API
+   * Prioriza jogadores sem dados
+   *
+   * Este método é não-bloqueante e deve ser chamado após mostrar dados do LCU
+   */
+  syncPlayerWithBackend(summonerName: string): Observable<any> {
+    console.log('🔄 [ApiService] Sincronizando dados do jogador com backend:', summonerName);
+
+    // Usar o endpoint de refresh que já faz todo o trabalho:
+    // 1. Calcula custom_mmr baseado em rank + custom_lp
+    // 2. Busca dados da Riot API (maestria, picks)
+    // 3. Salva no banco de dados
+    return this.refreshPlayerByDisplayName(summonerName, 'br1').pipe(
+      map(response => {
+        console.log('✅ [ApiService] Sincronização concluída:', response);
+        return response;
+      }),
+      // Em caso de erro, não falhar - apenas logar
+      catchError(error => {
+        console.warn('⚠️ [ApiService] Erro na sincronização (não crítico):', error);
+        return of({ success: false, error: error.message });
+      })
     );
   }
   // Get current player from LCU - UPDATED TO USE CORRECT ENDPOINT

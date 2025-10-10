@@ -33,6 +33,11 @@ public class DraftFlowService {
     // ✅ NOVO: Tracking de confirmações finais (TODOS os 10 jogadores)
     private final Map<Long, Set<String>> finalConfirmations = new ConcurrentHashMap<>();
 
+    // ✅ TIMER SIMPLES: Apenas guardar segundos restantes por match
+    private final Map<Long, Integer> matchTimers = new ConcurrentHashMap<>();
+    private Thread timerThread;
+    private volatile boolean timerRunning = false;
+
     public record DraftAction(
             int index,
             String type,
@@ -125,7 +130,104 @@ public class DraftFlowService {
             }
         });
 
+        // ✅ TIMER: Iniciar thread simples
+        startSimpleTimer();
+
         log.info("✅ DraftFlowService inicializado com sucesso");
+    }
+
+    /**
+     * ✅ TIMER SIMPLES: Thread que apenas decrementa 30→0 e envia o número
+     */
+    private void startSimpleTimer() {
+        timerRunning = true;
+        timerThread = new Thread(() -> {
+            log.info("⏰ Thread de timer INICIADA");
+
+            while (timerRunning) {
+                try {
+                    Thread.sleep(1000); // 1 segundo
+
+                    // Para cada draft ativo
+                    for (Map.Entry<Long, DraftState> entry : states.entrySet()) {
+                        Long matchId = entry.getKey();
+                        DraftState st = entry.getValue();
+
+                        // Só se não estiver completo
+                        if (st.getCurrentIndex() >= st.getActions().size()) {
+                            continue;
+                        }
+
+                        // Pegar timer atual (se não existe, iniciar em 30)
+                        int currentTimer = matchTimers.getOrDefault(matchId, 30);
+
+                        // Decrementar
+                        currentTimer--;
+
+                        if (currentTimer <= 0) {
+                            // Timer zerou - não fazer nada, o monitorActionTimeouts vai cuidar
+                            currentTimer = 0;
+                        }
+
+                        // Atualizar e enviar
+                        matchTimers.put(matchId, currentTimer);
+                        sendTimerOnly(matchId, st, currentTimer);
+                    }
+
+                } catch (InterruptedException e) {
+                    timerRunning = false;
+                    break;
+                } catch (Exception e) {
+                    log.error("❌ Erro no timer", e);
+                }
+            }
+
+            log.info("⏰ Thread de timer FINALIZADA");
+        }, "Draft-Simple-Timer");
+
+        timerThread.setDaemon(true);
+        timerThread.start();
+    }
+
+    /**
+     * ✅ TIMER: Envia APENAS o número via draft_update
+     */
+    private void sendTimerOnly(Long matchId, DraftState st, int seconds) {
+        try {
+            // Combinar jogadores
+            Collection<String> allPlayers = new ArrayList<>();
+            allPlayers.addAll(st.getTeam1Players());
+            allPlayers.addAll(st.getTeam2Players());
+
+            // Buscar sessões
+            Collection<org.springframework.web.socket.WebSocketSession> sessions = sessionRegistry
+                    .getByPlayers(allPlayers);
+
+            if (sessions.isEmpty()) {
+                return;
+            }
+
+            // Criar payload SIMPLES
+            Map<String, Object> data = Map.of(
+                    "matchId", matchId,
+                    "timeRemaining", seconds);
+
+            String payload = mapper.writeValueAsString(Map.of(
+                    "type", "draft_update",
+                    "data", data));
+
+            // Enviar
+            for (org.springframework.web.socket.WebSocketSession ws : sessions) {
+                try {
+                    ws.sendMessage(new TextMessage(payload));
+                } catch (Exception e) {
+                    log.warn("⚠️ Erro ao enviar timer");
+                }
+            }
+
+        } catch (Exception e) {
+            log.error("❌ Erro sendTimerOnly", e);
+        }
     }
 
     private void restoreDraftStatesAsync() {
@@ -347,6 +449,9 @@ public class DraftFlowService {
         st.getActions().set(actionIndex, updated);
         st.advance();
         st.markActionStart();
+
+        // ✅ TIMER: Resetar para 30 quando ação acontece
+        matchTimers.put(matchId, 30);
 
         // ✅ LOGS ANTES DE PERSISTIR
         log.info("💾 Salvando ação no banco de dados...");
