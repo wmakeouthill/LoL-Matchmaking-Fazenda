@@ -121,10 +121,10 @@ public class PlayerService {
      */
     @Transactional
     public Player createOrUpdatePlayerOnLogin(String summonerName, String region, Integer currentMmrFromLoL,
-            String summonerId, String puuid) {
+            String summonerId, String puuid, Integer profileIconId) {
         log.info("🎯🎯🎯 [PlayerService.createOrUpdatePlayerOnLogin] MÉTODO CHAMADO!");
-        log.info("🔄 Criando/atualizando player no login: {} (MMR: {}, ID: {}, PUUID: {})",
-                summonerName, currentMmrFromLoL, summonerId, puuid);
+        log.info("🔄 Criando/atualizando player no login: {} (MMR: {}, ID: {}, PUUID: {}, ProfileIcon: {})",
+                summonerName, currentMmrFromLoL, summonerId, puuid, profileIconId);
 
         Optional<Player> existingPlayer = playerRepository.findBySummonerNameIgnoreCase(summonerName);
 
@@ -142,6 +142,16 @@ public class PlayerService {
                 player.setPuuid(puuid);
             }
 
+            // ✅ NOVO: Atualizar profileIconUrl se profileIconId fornecido e URL ainda não existe
+            if (profileIconId != null && (player.getProfileIconUrl() == null || player.getProfileIconUrl().isEmpty())) {
+                String profileIconUrl = String.format(
+                    "https://ddragon.leagueoflegends.com/cdn/15.19.1/img/profileicon/%d.png",
+                    profileIconId
+                );
+                player.setProfileIconUrl(profileIconUrl);
+                log.info("✅ Profile icon URL salva no login: {}", profileIconUrl);
+            }
+
             // ✅ Atualizar custom_mmr (current_mmr + custom_lp)
             int customLp = player.getCustomLp() != null ? player.getCustomLp() : 0;
             player.setCustomMmr(currentMmrFromLoL + customLp);
@@ -152,12 +162,23 @@ public class PlayerService {
                     customLp,
                     player.getCustomMmr());
         } else {
+            // ✅ NOVO: Construir profileIconUrl se profileIconId fornecido
+            String profileIconUrl = null;
+            if (profileIconId != null) {
+                profileIconUrl = String.format(
+                    "https://ddragon.leagueoflegends.com/cdn/15.19.1/img/profileicon/%d.png",
+                    profileIconId
+                );
+                log.info("✅ Profile icon URL definida para novo jogador: {}", profileIconUrl);
+            }
+
             player = Player.builder()
                     .summonerName(summonerName)
                     .region(region)
                     .currentMmr(currentMmrFromLoL)
                     .summonerId(summonerId)
                     .puuid(puuid)
+                    .profileIconUrl(profileIconUrl) // ✅ NOVO: Adicionar URL do ícone
                     .customLp(0) // Inicia com 0 LP customizado
                     .customMmr(currentMmrFromLoL) // custom_mmr = current_mmr + 0
                     .customWins(0)
@@ -850,6 +871,15 @@ public class PlayerService {
                 player.setSummonerId(data.getId());
                 player.setPuuid(data.getPuuid());
 
+                // ✅ NOVO: Construir e salvar URL do ícone de perfil
+                if (data.getProfileIconId() != null) {
+                    String profileIconUrl = String.format(
+                            "https://ddragon.leagueoflegends.com/cdn/15.19.1/img/profileicon/%d.png",
+                            data.getProfileIconId());
+                    player.setProfileIconUrl(profileIconUrl);
+                    log.debug("✅ Profile icon URL salva para {}: {}", player.getSummonerName(), profileIconUrl);
+                }
+
                 // Buscar dados ranked
                 List<RiotAPIService.RankedData> rankedData = riotAPIService.getRankedData(data.getId(),
                         player.getRegion());
@@ -878,6 +908,14 @@ public class PlayerService {
                 RiotAPIService.SummonerData data = summonerData.get();
                 dto.setProfileIconId(data.getProfileIconId());
                 dto.setSummonerLevel(data.getSummonerLevel());
+
+                // ✅ NOVO: Adicionar URL do ícone de perfil ao DTO
+                if (data.getProfileIconId() != null) {
+                    String profileIconUrl = String.format(
+                            "https://ddragon.leagueoflegends.com/cdn/15.19.1/img/profileicon/%d.png",
+                            data.getProfileIconId());
+                    dto.setProfileIconUrl(profileIconUrl);
+                }
 
                 // Buscar dados ranked
                 List<RiotAPIService.RankedData> rankedData = riotAPIService.getRankedData(data.getId(),

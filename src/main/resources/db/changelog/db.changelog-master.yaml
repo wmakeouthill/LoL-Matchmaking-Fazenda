@@ -17,3 +17,5 @@ databaseChangeLog:
       file: db/changelog/changes/0008-add-lcu-config-to-players.yaml
   - include:
       file: db/changelog/changes/0009-add-championship-titles.yaml
+  - include:
+      file: db/changelog/changes/0010-add-profile-icon-url.yaml

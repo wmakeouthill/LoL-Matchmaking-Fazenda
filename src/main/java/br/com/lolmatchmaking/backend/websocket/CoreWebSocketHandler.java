@@ -99,6 +99,21 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         int port = root.path("port").asInt(0);
         String authToken = root.path("authToken").asText(null);
 
+        // ✅ NOVO: Extrair profileIconId, puuid e summonerId do payload
+        Integer profileIconId = root.has("profileIconId") && !root.get("profileIconId").isNull()
+                ? root.get("profileIconId").asInt()
+                : null;
+        String puuid = root.has("puuid") && !root.get("puuid").isNull()
+                ? root.get("puuid").asText()
+                : null;
+        String summonerId = root.has("summonerId") && !root.get("summonerId").isNull()
+                ? root.get("summonerId").asText()
+                : null;
+
+        log.info("📦 [WS] register_lcu_connection recebido: summonerName={}, profileIconId={}, puuid={}, summonerId={}",
+                summonerName, profileIconId, puuid != null ? "present" : "null",
+                summonerId != null ? "present" : "null");
+
         if (summonerName == null || summonerName.trim().isEmpty()) {
             log.warn("⚠️ [WS] register_lcu_connection sem summonerName");
             session.sendMessage(new TextMessage(
@@ -133,9 +148,15 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                 summonerName, session.getId(), host, port);
 
         // ✅ NOVO: Buscar dados de ranked e salvar MMR no banco IMEDIATAMENTE
+        // Capturar variáveis para uso no async (final ou effectively final)
+        final String finalSummonerName = summonerName;
+        final Integer finalProfileIconId = profileIconId;
+        final String finalPuuid = puuid;
+        final String finalSummonerId = summonerId;
+
         CompletableFuture.runAsync(() -> {
             try {
-                log.info("📊 [WS] Buscando dados de ranked para inicializar MMR: {}", summonerName);
+                log.info("📊 [WS] Buscando dados de ranked para inicializar MMR: {}", finalSummonerName);
 
                 // Buscar ranked stats via RPC gateway
                 JsonNode rankedData = webSocketService.requestLcu(
@@ -196,15 +217,17 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                     int currentMmr = calculateMMRFromRank(tier, division, lp);
                     log.info("🔢 [WS] MMR calculado: {}", currentMmr);
 
-                    // Salvar no banco via PlayerService
+                    // ✅ NOVO: Salvar no banco via PlayerService COM profileIconId do LCU
                     playerService.createOrUpdatePlayerOnLogin(
-                            summonerName,
+                            finalSummonerName,
                             "br1",
                             currentMmr,
-                            null,
-                            null);
+                            finalSummonerId,
+                            finalPuuid,
+                            finalProfileIconId);
 
-                    log.info("✅ [WS] Player atualizado no banco com MMR calculado: {}", currentMmr);
+                    log.info("✅ [WS] Player atualizado no banco com MMR calculado: {} (profileIconId: {})",
+                            currentMmr, finalProfileIconId);
                 } else {
                     log.warn("⚠️ [WS] Não foi possível extrair dados de ranked solo");
                 }
@@ -216,7 +239,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         // ✅ CORREÇÃO: Enviar confirmação de registro para TODAS as sessões do jogador
         // (não apenas para a sessão gateway, mas também para a sessão do frontend)
         String confirmationMessage = "{\"type\":\"lcu_connection_registered\",\"success\":true,\"summonerName\":\""
-                + summonerName + "\"}";
+                + finalSummonerName + "\"}";
 
         // Enviar para a sessão atual (gateway do Electron)
         session.sendMessage(new TextMessage(confirmationMessage));
@@ -224,10 +247,10 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         // Enviar para todas as outras sessões do mesmo jogador (frontend)
         try {
             Map<String, Object> data = new HashMap<>();
-            data.put(FIELD_SUMMONER_NAME, summonerName);
-            webSocketService.sendToPlayers("lcu_connection_registered", data, List.of(summonerName));
+            data.put(FIELD_SUMMONER_NAME, finalSummonerName);
+            webSocketService.sendToPlayers("lcu_connection_registered", data, List.of(finalSummonerName));
             log.info("📡 [WS] Notificação lcu_connection_registered enviada para todas as sessões de: {}",
-                    summonerName);
+                    finalSummonerName);
         } catch (Exception e) {
             log.warn("⚠️ [WS] Erro ao enviar broadcast de lcu_connection_registered: {}", e.getMessage());
         }

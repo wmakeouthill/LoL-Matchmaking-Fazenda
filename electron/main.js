@@ -378,11 +378,14 @@ function startWebSocketGateway(backendBase) {
                     summonerName: summonerName,
                     port: info.port,
                     authToken: info.password,
-                    protocol: info.protocol || 'https'
+                    protocol: info.protocol || 'https',
+                    profileIconId: result.profileIconId || null, // ✅ NOVO: Incluir profileIconId do LCU
+                    puuid: result.puuid || null, // ✅ NOVO: Incluir puuid
+                    summonerId: result.summonerId || null // ✅ NOVO: Incluir summonerId
                   };
                   try {
                     wsClient.send(JSON.stringify(registerLcuConnection));
-                    safeLog(`🎯 LCU connection registrada para ${summonerName} na porta ${info.port}`);
+                    safeLog(`🎯 LCU connection registrada para ${summonerName} (profileIcon: ${result.profileIconId || 'N/A'})`);
                   } catch (e) {
                     safeLog('❌ Erro ao registrar LCU connection', String(e));
                   }

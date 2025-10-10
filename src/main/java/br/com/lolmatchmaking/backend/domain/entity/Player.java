@@ -28,6 +28,10 @@ public class Player {
     @Column(name = "region", nullable = false, length = 10)
     private String region;
 
+    // ✅ NOVO: URL do ícone de perfil (Data Dragon)
+    @Column(name = "profile_icon_url", length = 255)
+    private String profileIconUrl;
+
     @Column(name = "current_mmr")
     private Integer currentMmr;
 
