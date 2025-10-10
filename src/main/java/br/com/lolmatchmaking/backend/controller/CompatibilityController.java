@@ -2,7 +2,9 @@ package br.com.lolmatchmaking.backend.controller;
 
 import br.com.lolmatchmaking.backend.dto.MatchDTO;
 import br.com.lolmatchmaking.backend.dto.PlayerDTO;
+import br.com.lolmatchmaking.backend.domain.entity.Player;
 import br.com.lolmatchmaking.backend.domain.repository.MatchRepository;
+import br.com.lolmatchmaking.backend.domain.repository.PlayerRepository;
 import br.com.lolmatchmaking.backend.service.MatchHistoryService;
 import br.com.lolmatchmaking.backend.service.PlayerService;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +25,7 @@ public class CompatibilityController {
     private final MatchHistoryService matchHistoryService;
     private final PlayerService playerService;
     private final MatchRepository matchRepository;
+    private final PlayerRepository playerRepository;
 
     // GET /api/matches/recent
     @GetMapping("/matches/recent")
@@ -130,12 +133,46 @@ public class CompatibilityController {
             log.info("✅ Estatísticas básicas: {} jogadores", basicUpdated);
 
             // Atualizar estatísticas detalhadas de campeões (custom + Riot API)
-            List<PlayerDTO> players = playerService.getAllPlayers();
-            int championStatsUpdated = 0;
+            // Usar repository diretamente para ter acesso ao tipo Instant
+            List<Player> allPlayers = playerRepository.findAll();
 
-            for (PlayerDTO player : players) {
+            // Priorizar jogadores: sem dados primeiro, depois os mais antigos
+            java.time.Instant fiveDaysAgo = java.time.Instant.now().minus(5, java.time.temporal.ChronoUnit.DAYS);
+
+            List<Player> playersNeedingUpdate = allPlayers.stream()
+                    .filter(p -> {
+                        // Sempre atualizar se não tem dados ou dados estão antigos (> 5 dias)
+                        if (p.getStatsLastUpdated() == null) {
+                            return true;
+                        }
+                        return p.getStatsLastUpdated().isBefore(fiveDaysAgo);
+                    })
+                    .sorted((p1, p2) -> {
+                        // Jogadores sem dados primeiro, depois por data mais antiga
+                        if (p1.getStatsLastUpdated() == null && p2.getStatsLastUpdated() != null)
+                            return -1;
+                        if (p1.getStatsLastUpdated() != null && p2.getStatsLastUpdated() == null)
+                            return 1;
+                        if (p1.getStatsLastUpdated() == null && p2.getStatsLastUpdated() == null)
+                            return 0;
+                        return p1.getStatsLastUpdated().compareTo(p2.getStatsLastUpdated());
+                    })
+                    .toList();
+
+            int championStatsUpdated = 0;
+            int skippedRecent = allPlayers.size() - playersNeedingUpdate.size();
+
+            log.info("📊 Total de jogadores: {}", allPlayers.size());
+            log.info("📊 Jogadores precisando atualização: {}", playersNeedingUpdate.size());
+            log.info("📊 Jogadores com dados recentes (< 5 dias): {}", skippedRecent);
+
+            // Atualizar apenas jogadores que precisam (sem dados ou dados antigos)
+            for (Player player : playersNeedingUpdate) {
                 try {
-                    playerService.updatePlayerChampionStats(player.getSummonerName(), forceUpdate);
+                    // Sempre passa forceUpdate=false para respeitar a lógica de 5 dias no método
+                    // O método já vai atualizar porque esses jogadores não têm dados ou estão com
+                    // dados antigos
+                    playerService.updatePlayerChampionStats(player.getSummonerName(), false);
                     championStatsUpdated++;
                 } catch (Exception e) {
                     log.warn("⚠️ Erro ao atualizar stats de campeões para {}: {}",
@@ -143,12 +180,15 @@ public class CompatibilityController {
                 }
             }
 
-            log.info("✅ {} jogadores com estatísticas de campeões atualizadas", championStatsUpdated);
+            log.info("✅ {} jogadores atualizados, {} pulados (dados recentes)",
+                    championStatsUpdated, skippedRecent);
+
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "message", "Estatísticas de campeões atualizadas com sucesso",
                     "basicStatsUpdated", basicUpdated,
                     "championStatsUpdated", championStatsUpdated,
+                    "skippedRecent", skippedRecent,
                     "forceUpdate", forceUpdate));
         } catch (Exception e) {
             log.error("❌ Erro ao atualizar estatísticas de campeões", e);
