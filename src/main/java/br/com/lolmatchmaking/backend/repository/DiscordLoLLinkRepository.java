@@ -2,6 +2,7 @@ package br.com.lolmatchmaking.backend.repository;
 
 import br.com.lolmatchmaking.backend.entity.DiscordLoLLink;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -46,6 +47,7 @@ public interface DiscordLoLLinkRepository extends JpaRepository<DiscordLoLLink, 
     /**
      * Desativa vinculação por Discord ID
      */
-    @Query("UPDATE DiscordLoLLink d SET d.active = false, d.updatedAt = CURRENT_TIMESTAMP WHERE d.discordId = :discordId AND d.active = true")
+    @Modifying
+    @Query("UPDATE DiscordLoLLink d SET d.active = false WHERE d.discordId = :discordId AND d.active = true")
     int deactivateByDiscordId(@Param("discordId") String discordId);
 }

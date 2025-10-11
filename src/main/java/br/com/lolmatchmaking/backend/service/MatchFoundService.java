@@ -38,6 +38,12 @@ public class MatchFoundService {
     // ✅ NOVO: Redis para mapear jogadores → partidas ativas (OWNERSHIP)
     private final br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch;
 
+    // ✅ NOVO: Services de Lock e Broadcasting
+    private final br.com.lolmatchmaking.backend.service.lock.PlayerStateService playerStateService;
+    private final br.com.lolmatchmaking.backend.service.lock.MatchOperationsLockService matchOpsLockService;
+    private final br.com.lolmatchmaking.backend.service.lock.AcceptanceStatusLockService acceptanceStatusLockService;
+    private final EventBroadcastService eventBroadcastService;
+
     // Constructor manual para @Lazy
     public MatchFoundService(
             QueuePlayerRepository queuePlayerRepository,
@@ -47,7 +53,11 @@ public class MatchFoundService {
             DraftFlowService draftFlowService,
             DiscordService discordService,
             RedisMatchAcceptanceService redisAcceptance,
-            br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch) {
+            br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch,
+            br.com.lolmatchmaking.backend.service.lock.PlayerStateService playerStateService,
+            br.com.lolmatchmaking.backend.service.lock.MatchOperationsLockService matchOpsLockService,
+            br.com.lolmatchmaking.backend.service.lock.AcceptanceStatusLockService acceptanceStatusLockService,
+            EventBroadcastService eventBroadcastService) {
         this.queuePlayerRepository = queuePlayerRepository;
         this.customMatchRepository = customMatchRepository;
         this.webSocketService = webSocketService;
@@ -56,6 +66,10 @@ public class MatchFoundService {
         this.discordService = discordService;
         this.redisAcceptance = redisAcceptance;
         this.redisPlayerMatch = redisPlayerMatch;
+        this.playerStateService = playerStateService;
+        this.matchOpsLockService = matchOpsLockService;
+        this.acceptanceStatusLockService = acceptanceStatusLockService;
+        this.eventBroadcastService = eventBroadcastService;
     }
 
     // ✅ REMOVIDO: HashMap local removido - Redis é fonte única da verdade
@@ -147,6 +161,15 @@ public class MatchFoundService {
     @Transactional
     public void acceptMatch(Long matchId, String summonerName) {
         try {
+            // ✅ NOVO: VERIFICAR SE JOGADOR ESTÁ EM IN_MATCH_FOUND
+            br.com.lolmatchmaking.backend.service.lock.PlayerState state = playerStateService
+                    .getPlayerState(summonerName);
+            if (state != br.com.lolmatchmaking.backend.service.lock.PlayerState.IN_MATCH_FOUND) {
+                log.warn("⚠️ [MatchFound] Jogador {} não está em match_found (estado: {})",
+                        summonerName, state);
+                return;
+            }
+
             log.info("✅ [MatchFound] Jogador {} aceitou partida {}", summonerName, matchId);
 
             // ✅ NOVO: Aceitar no Redis primeiro (fonte da verdade, com distributed lock)
@@ -157,10 +180,12 @@ public class MatchFoundService {
                 return;
             }
 
-            // Atualizar no banco
-            queuePlayerRepository.findBySummonerName(summonerName).ifPresent(player -> {
-                player.setAcceptanceStatus(1); // 1 = accepted
-                queuePlayerRepository.save(player);
+            // ✅ NOVO: Atualizar no banco COM LOCK
+            acceptanceStatusLockService.updateWithLock(summonerName, () -> {
+                queuePlayerRepository.findBySummonerName(summonerName).ifPresent(player -> {
+                    player.setAcceptanceStatus(1); // 1 = accepted
+                    queuePlayerRepository.save(player);
+                });
             });
 
             // ✅ REDIS ONLY: Buscar dados do Redis para notificação
@@ -171,7 +196,11 @@ public class MatchFoundService {
                 log.info("✅ [MatchFound] Match {} - {}/{} jogadores aceitaram (Redis)",
                         matchId, acceptedPlayers.size(), allPlayers.size());
 
-                // Notificar progresso
+                // ✅ NOVO: PUBLICAR PROGRESSO DE ACEITAÇÃO (Redis Pub/Sub)
+                eventBroadcastService.publishMatchAcceptance(
+                        matchId, summonerName, acceptedPlayers.size(), allPlayers.size());
+
+                // Notificar progresso (backward compatibility)
                 notifyAcceptanceProgress(matchId, acceptedPlayers, allPlayers);
             }
 
@@ -183,6 +212,9 @@ public class MatchFoundService {
 
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao aceitar partida", e);
+        } finally {
+            // ✅ SEMPRE LIBERAR LOCK
+            matchOpsLockService.releaseAcceptanceLock(matchId, summonerName);
         }
     }
 
@@ -191,6 +223,13 @@ public class MatchFoundService {
      */
     @Transactional
     public void declineMatch(Long matchId, String summonerName) {
+        // ✅ NOVO: ADQUIRIR LOCK DE ACEITAÇÃO INDIVIDUAL (previne múltiplas recusas)
+        if (!matchOpsLockService.acquireAcceptanceLock(matchId, summonerName)) {
+            log.warn("⚠️ [MatchFound] Jogador {} já está processando recusa de match {}", 
+                     summonerName, matchId);
+            return;
+        }
+        
         try {
             log.warn("❌ [MatchFound] Jogador {} recusou partida {}", summonerName, matchId);
 
@@ -202,17 +241,26 @@ public class MatchFoundService {
                 return;
             }
 
-            // Atualizar no banco
-            queuePlayerRepository.findBySummonerName(summonerName).ifPresent(player -> {
-                player.setAcceptanceStatus(2); // 2 = declined
-                queuePlayerRepository.save(player);
+            // ✅ NOVO: Atualizar no banco COM LOCK
+            acceptanceStatusLockService.updateWithLock(summonerName, () -> {
+                queuePlayerRepository.findBySummonerName(summonerName).ifPresent(player -> {
+                    player.setAcceptanceStatus(2); // 2 = declined
+                    queuePlayerRepository.save(player);
+                });
             });
+
+            // ✅ NOVO: ATUALIZAR ESTADO PARA AVAILABLE (jogador volta para fila ou sai)
+            playerStateService.setPlayerState(summonerName,
+                    br.com.lolmatchmaking.backend.service.lock.PlayerState.AVAILABLE);
 
             // Cancelar partida
             handleMatchDeclined(matchId, summonerName);
 
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao recusar partida", e);
+        } finally {
+            // ✅ SEMPRE LIBERAR LOCK
+            matchOpsLockService.releaseAcceptanceLock(matchId, summonerName);
         }
     }
 
@@ -272,12 +320,22 @@ public class MatchFoundService {
             // ✅ Salvar dados completos dos times no pick_ban_data AGORA
             saveTeamsDataToPickBan(matchId, team1DTOs, team2DTOs);
 
-            // ✅ AGORA remover todos os jogadores da fila (agora vão para o draft)
+            // ✅ NOVO: ATUALIZAR ESTADO DE TODOS PARA IN_DRAFT
             List<String> allPlayers = redisAcceptance.getAllPlayers(matchId);
+            for (String playerName : allPlayers) {
+                playerStateService.setPlayerState(playerName,
+                        br.com.lolmatchmaking.backend.service.lock.PlayerState.IN_DRAFT);
+                log.info("✅ [Estado] Jogador {} → IN_DRAFT", playerName);
+            }
+
+            // Remover todos os jogadores da fila (agora vão para o draft)
             for (String playerName : allPlayers) {
                 queueManagementService.removeFromQueue(playerName);
                 log.info("🗑️ [MatchFound] Jogador {} removido da fila - indo para draft", playerName);
             }
+
+            // ✅ NOVO: PUBLICAR draft_started VIA REDIS PUB/SUB
+            eventBroadcastService.publishDraftStarted(matchId, allPlayers);
 
             // Notificar todos os jogadores
             notifyAllPlayersAccepted(matchId);
@@ -307,6 +365,12 @@ public class MatchFoundService {
      */
     @Transactional
     private void handleMatchDeclined(Long matchId, String declinedPlayer) {
+        // ✅ NOVO: ADQUIRIR LOCK DE CANCELAMENTO
+        if (!matchOpsLockService.acquireMatchCancelLock(matchId)) {
+            log.warn("⚠️ [MatchFound] Cancelamento de match {} já está sendo processado", matchId);
+            return;
+        }
+        
         try {
             // ✅ REDIS ONLY: Buscar jogadores do Redis
             List<String> allPlayers = redisAcceptance.getAllPlayers(matchId);
@@ -315,37 +379,69 @@ public class MatchFoundService {
                 return;
             }
 
-            // Atualizar status da partida
-            customMatchRepository.findById(matchId).ifPresent(match -> {
-                match.setStatus("declined");
-                customMatchRepository.save(match);
-            });
+            // ✅ CORREÇÃO CRÍTICA: DELETAR partida do banco (não apenas mudar status)
+            log.info("🗑️ [MatchFound] DELETANDO partida {} do banco de dados (recusada por {})", matchId, declinedPlayer);
+            customMatchRepository.deleteById(matchId);
+            log.info("✅ [MatchFound] Partida {} EXCLUÍDA do banco de dados", matchId);
 
-            // ✅ Remover apenas jogador que recusou da fila
+            // ✅ Remover APENAS jogador que recusou da fila
             queueManagementService.removeFromQueue(declinedPlayer);
-            log.info("🗑️ [MatchFound] Jogador {} removido da fila por recusar", declinedPlayer);
+            log.info("🗑️ [MatchFound] Jogador {} REMOVIDO da fila por recusar", declinedPlayer);
 
-            // ✅ Resetar status de aceitação dos outros jogadores (voltam ao normal na fila)
+            // ✅ NOVO: Atualizar PlayerState para AVAILABLE para jogador que recusou
+            try {
+                playerStateService.setPlayerState(declinedPlayer, 
+                    br.com.lolmatchmaking.backend.service.lock.PlayerState.AVAILABLE);
+                log.info("✅ [MatchFound] Estado de {} atualizado para AVAILABLE", declinedPlayer);
+            } catch (Exception e) {
+                log.error("❌ [MatchFound] Erro ao atualizar estado de {}: {}", declinedPlayer, e.getMessage());
+            }
+
+            // ✅ Resetar status de aceitação dos OUTROS jogadores (voltam ao normal na fila)
             for (String playerName : allPlayers) {
                 if (!playerName.equals(declinedPlayer)) {
                     queuePlayerRepository.findBySummonerName(playerName).ifPresent(player -> {
-                        player.setAcceptanceStatus(0); // Resetar status
+                        player.setAcceptanceStatus(0); // Resetar status para voltar à fila normal
                         queuePlayerRepository.save(player);
                         log.info("🔄 [MatchFound] Jogador {} voltou ao estado normal na fila", playerName);
                     });
+                    
+                    // ✅ NOVO: Atualizar PlayerState para IN_QUEUE para outros jogadores
+                    try {
+                        playerStateService.setPlayerState(playerName, 
+                            br.com.lolmatchmaking.backend.service.lock.PlayerState.IN_QUEUE);
+                        log.info("✅ [MatchFound] Estado de {} atualizado para IN_QUEUE", playerName);
+                    } catch (Exception e) {
+                        log.error("❌ [MatchFound] Erro ao atualizar estado de {}: {}", playerName, e.getMessage());
+                    }
+                }
+            }
+
+            // ✅ NOVO: Limpar Redis OWNERSHIP (player → match)
+            log.info("🧹 [MatchFound] Limpando ownership de {} jogadores", allPlayers.size());
+            for (String playerName : allPlayers) {
+                try {
+                    redisPlayerMatch.clearPlayerMatch(playerName);
+                    log.info("✅ [MatchFound] Ownership de {} limpo", playerName);
+                } catch (Exception e) {
+                    log.error("❌ [MatchFound] Erro ao limpar ownership de {}: {}", playerName, e.getMessage());
                 }
             }
 
             // Notificar cancelamento
             notifyMatchCancelled(matchId, declinedPlayer);
 
-            // ✅ REDIS ONLY: Limpar dados do Redis
+            // ✅ REDIS ONLY: Limpar dados do Redis (acceptance tracking)
             redisAcceptance.clearMatch(matchId);
+            log.info("🧹 [MatchFound] Dados de aceitação limpos do Redis para match {}", matchId);
 
-            log.info("❌ [MatchFound] Partida {} cancelada - {} recusou", matchId, declinedPlayer);
+            log.info("✅ [MatchFound] Partida {} COMPLETAMENTE CANCELADA E EXCLUÍDA - {} recusou", matchId, declinedPlayer);
 
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao processar recusa", e);
+        } finally {
+            // ✅ SEMPRE LIBERAR LOCK
+            matchOpsLockService.releaseMatchCancelLock(matchId);
         }
     }
 
@@ -391,6 +487,12 @@ public class MatchFoundService {
      */
     @Transactional
     private void handleAcceptanceTimeout(Long matchId) {
+        // ✅ NOVO: ADQUIRIR LOCK DE TIMEOUT PROCESSING
+        if (!matchOpsLockService.acquireTimeoutProcessingLock(matchId)) {
+            log.debug("⏭️ [MatchFound] Timeout de match {} já está sendo processado", matchId);
+            return;
+        }
+        
         try {
             // ✅ REDIS ONLY: Buscar dados do Redis
             List<String> allPlayers = redisAcceptance.getAllPlayers(matchId);
@@ -412,6 +514,9 @@ public class MatchFoundService {
 
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao processar timeout", e);
+        } finally {
+            // ✅ SEMPRE LIBERAR LOCK
+            matchOpsLockService.releaseTimeoutProcessingLock(matchId);
         }
     }
 
@@ -439,6 +544,12 @@ public class MatchFoundService {
      * DraftFlowService
      */
     private void startDraft(Long matchId) {
+        // ✅ NOVO: ADQUIRIR LOCK DE DRAFT START
+        if (!matchOpsLockService.acquireDraftStartLock(matchId)) {
+            log.warn("⚠️ [MatchFound] Draft de match {} já está sendo iniciado", matchId);
+            return;
+        }
+        
         try {
             log.info("🎯 [MatchFound] Iniciando draft para partida {}", matchId);
 
@@ -593,6 +704,9 @@ public class MatchFoundService {
 
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao iniciar draft", e);
+        } finally {
+            // ✅ SEMPRE LIBERAR LOCK
+            matchOpsLockService.releaseDraftStartLock(matchId);
         }
     }
 

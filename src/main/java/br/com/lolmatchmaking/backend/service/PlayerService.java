@@ -28,6 +28,9 @@ public class PlayerService {
     private final RiotAPIService riotAPIService;
     private final RiotChampionStatsService riotChampionStatsService;
     private final RedisLeaderboardService redisLeaderboard; // ✅ NOVO: Cache Redis para leaderboard
+    
+    // ✅ NOVO: Lock service para prevenir lost updates em stats
+    private final br.com.lolmatchmaking.backend.service.lock.PlayerStatsLockService playerStatsLockService;
 
     @Cacheable("players")
     public List<PlayerDTO> getAllPlayers() {
@@ -70,6 +73,12 @@ public class PlayerService {
         }
 
         Player savedPlayer = playerRepository.save(player);
+
+        // ✅ REDIS: Invalidar cache do leaderboard após criar/atualizar jogador
+        redisLeaderboard.invalidateCache();
+        log.info("🗑️ [REDIS] Cache do leaderboard invalidado após createOrUpdatePlayer de {}",
+                playerDTO.getSummonerName());
+
         return enrichPlayerData(savedPlayer);
     }
 
@@ -89,11 +98,24 @@ public class PlayerService {
         }
 
         Player player = playerOpt.get();
-        player.setWins(wins);
-        player.setLosses(losses);
+        Long playerId = player.getId();
 
-        Player savedPlayer = playerRepository.save(player);
-        return enrichPlayerData(savedPlayer);
+        // 🔒 NOVO: ATUALIZAR COM LOCK
+        if (!playerStatsLockService.acquireStatsLock(playerId)) {
+            log.warn("⚠️ [PlayerStats] Não foi possível adquirir lock para atualizar stats de {}", summonerName);
+            // Retornar dados atuais sem atualizar (evitar espera)
+            return enrichPlayerData(player);
+        }
+
+        try {
+            player.setWins(wins);
+            player.setLosses(losses);
+            Player savedPlayer = playerRepository.save(player);
+            return enrichPlayerData(savedPlayer);
+        } finally {
+            // 🔓 SEMPRE LIBERAR LOCK
+            playerStatsLockService.releaseStatsLock(playerId);
+        }
     }
 
     @Transactional
@@ -105,16 +127,35 @@ public class PlayerService {
         }
 
         Player player = playerOpt.get();
-        player.setCustomWins(customWins);
-        player.setCustomLosses(customLosses);
-        player.setCustomMmr(customMmr);
+        Long playerId = player.getId();
 
-        if (customMmr > player.getCustomPeakMmr()) {
-            player.setCustomPeakMmr(customMmr);
+        // 🔒 NOVO: ATUALIZAR COM LOCK
+        if (!playerStatsLockService.acquireStatsLock(playerId)) {
+            log.warn("⚠️ [PlayerStats] Não foi possível adquirir lock para atualizar custom stats de {}", summonerName);
+            // Retornar dados atuais sem atualizar (evitar espera)
+            return enrichPlayerData(player);
         }
 
-        Player savedPlayer = playerRepository.save(player);
-        return enrichPlayerData(savedPlayer);
+        try {
+            player.setCustomWins(customWins);
+            player.setCustomLosses(customLosses);
+            player.setCustomMmr(customMmr);
+
+            if (customMmr > player.getCustomPeakMmr()) {
+                player.setCustomPeakMmr(customMmr);
+            }
+
+            Player savedPlayer = playerRepository.save(player);
+
+            // ✅ REDIS: Invalidar cache do leaderboard após atualizar stats do jogador
+            redisLeaderboard.invalidateCache();
+            log.info("🗑️ [REDIS] Cache do leaderboard invalidado após updateCustomStats de {}", summonerName);
+
+            return enrichPlayerData(savedPlayer);
+        } finally {
+            // 🔓 SEMPRE LIBERAR LOCK
+            playerStatsLockService.releaseStatsLock(playerId);
+        }
     }
 
     /**
@@ -148,7 +189,7 @@ public class PlayerService {
             // existe
             if (profileIconId != null && (player.getProfileIconUrl() == null || player.getProfileIconUrl().isEmpty())) {
                 String profileIconUrl = String.format(
-                        "https://ddragon.leagueoflegends.com/cdn/15.19.1/img/profileicon/%d.png",
+                        "https://ddragon.leagueoflegends.com/cdn/latest/img/profileicon/%d.png",
                         profileIconId);
                 player.setProfileIconUrl(profileIconUrl);
                 log.info("✅ Profile icon URL salva no login: {}", profileIconUrl);
@@ -168,7 +209,7 @@ public class PlayerService {
             String profileIconUrl = null;
             if (profileIconId != null) {
                 profileIconUrl = String.format(
-                        "https://ddragon.leagueoflegends.com/cdn/15.19.1/img/profileicon/%d.png",
+                        "https://ddragon.leagueoflegends.com/cdn/latest/img/profileicon/%d.png",
                         profileIconId);
                 log.info("✅ Profile icon URL definida para novo jogador: {}", profileIconUrl);
             }

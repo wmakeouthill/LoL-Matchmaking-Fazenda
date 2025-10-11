@@ -864,6 +864,84 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
      * tempo real
      * - Componente queue se manter sempre sincronizado com o backend
      */
+    /**
+     * ✅ NOVO: Envia match_found para jogador específico
+     * 
+     * Busca sessão do jogador e envia notificação de partida encontrada.
+     * Usado pelo EventBroadcastService quando recebe evento via Pub/Sub.
+     * 
+     * @param summonerName Nome do jogador
+     * @param matchId      ID da partida
+     */
+    public void sendMatchFoundToPlayer(String summonerName, Long matchId) {
+        try {
+            // Buscar sessão do jogador
+            String sessionId = findSessionBySummonerName(summonerName);
+
+            if (sessionId == null) {
+                log.warn("⚠️ [WebSocket] Sessão não encontrada para jogador: {}", summonerName);
+                return;
+            }
+
+            // Enviar match_found
+            Map<String, Object> data = new HashMap<>();
+            data.put("matchId", matchId);
+            data.put("summonerName", summonerName);
+
+            sendMessage(sessionId, "match_found", data);
+
+            log.info("✅ [WebSocket] match_found enviado para {}", summonerName);
+
+        } catch (Exception e) {
+            log.error("❌ [WebSocket] Erro ao enviar match_found para {}", summonerName, e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Faz broadcast do progresso de aceitação de partida
+     * 
+     * Envia para todos os clientes conectados o progresso (ex: "3/10 aceitaram").
+     * 
+     * @param matchId  ID da partida
+     * @param accepted Número de jogadores que aceitaram
+     * @param total    Total de jogadores
+     */
+    public void broadcastMatchAcceptanceProgress(Long matchId, int accepted, int total) {
+        try {
+            Map<String, Object> data = new HashMap<>();
+            data.put("matchId", matchId);
+            data.put("accepted", accepted);
+            data.put("total", total);
+            data.put("progress", String.format("%d/%d", accepted, total));
+
+            broadcastToAll("match_acceptance_progress", data);
+
+            log.debug("✅ [WebSocket] match_acceptance_progress broadcast: {}/{}", accepted, total);
+
+        } catch (Exception e) {
+            log.error("❌ [WebSocket] Erro ao fazer broadcast de match_acceptance_progress", e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Busca sessionId por summonerName
+     * 
+     * Helper para encontrar sessão de um jogador pelo nome.
+     * 
+     * @param summonerName Nome do jogador
+     * @return sessionId ou null se não encontrado
+     */
+    private String findSessionBySummonerName(String summonerName) {
+        // Iterar sobre clientInfo para encontrar sessão
+        for (Map.Entry<String, ClientInfo> entry : clientInfo.entrySet()) {
+            ClientInfo info = entry.getValue();
+            if (info.getSummonerName() != null && info.getSummonerName().equals(summonerName)) {
+                return entry.getKey();
+            }
+        }
+        return null;
+    }
+
     public void broadcastQueueUpdate(List<QueuePlayerInfoDTO> queueStatus) {
         try {
             Map<String, Object> message = Map.of(

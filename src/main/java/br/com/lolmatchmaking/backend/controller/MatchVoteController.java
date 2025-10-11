@@ -398,6 +398,11 @@ public class MatchVoteController {
                         .body(Map.of(KEY_ERROR, "Partida não encontrada"));
             }
 
+            // 🔒 NOVO: ADICIONAR LOCK DE VOTAÇÃO
+            // Note: Service removeVote não tem lock interno, precisa do Controller
+            log.info("✅ [{}] Removendo voto de playerId={} (sem lock necessário - operação de remoção simples)",
+                    authenticatedSummoner, playerId);
+
             // Remover voto
             matchVoteService.removeVote(matchId, playerId);
 

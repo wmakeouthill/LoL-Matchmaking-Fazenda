@@ -299,19 +299,18 @@
               <i class="fas fa-link"></i>
               <span>Vincular</span>
             </button>
-            <button
-              *ngIf="hasLinkedNickname(user) && !isUserInQueue(user)"
-              class="action-btn invite-btn"
-              (click)="inviteToQueue(user)"
-            >
-              <i class="fas fa-plus"></i>
-              <span>Convidar</span>
-            </button>
+            <!-- ✅ REMOVIDO: Botão "Convidar" removido conforme solicitado -->
             <span
               *ngIf="hasLinkedNickname(user) && isUserInQueue(user)"
               class="queue-status in-queue"
             >
-              Na Fila
+              ✅ Na Fila
+            </span>
+            <span
+              *ngIf="hasLinkedNickname(user) && !isUserInQueue(user)"
+              class="queue-status not-in-queue"
+            >
+              Aguardando
             </span>
           </div>
         </div>

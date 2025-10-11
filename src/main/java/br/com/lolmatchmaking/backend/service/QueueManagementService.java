@@ -4,6 +4,7 @@ import br.com.lolmatchmaking.backend.domain.entity.*;
 import br.com.lolmatchmaking.backend.domain.repository.*;
 import br.com.lolmatchmaking.backend.dto.QueueStatusDTO;
 import br.com.lolmatchmaking.backend.dto.QueuePlayerInfoDTO;
+import br.com.lolmatchmaking.backend.service.lock.PlayerState;
 import br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -36,6 +37,12 @@ public class QueueManagementService {
     private final MatchFoundService matchFoundService;
     private final PlayerService playerService;
 
+    // ✅ NOVO: Services de Lock e Broadcasting
+    private final br.com.lolmatchmaking.backend.service.lock.MatchmakingLockService matchmakingLockService;
+    private final br.com.lolmatchmaking.backend.service.lock.PlayerStateService playerStateService;
+    private final EventBroadcastService eventBroadcastService;
+    private final br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch;
+
     // ✅ Construtor com injeção de dependências
     public QueueManagementService(
             QueuePlayerRepository queuePlayerRepository,
@@ -48,7 +55,11 @@ public class QueueManagementService {
             LCUConnectionRegistry lcuConnectionRegistry,
             ObjectMapper objectMapper,
             @Lazy MatchFoundService matchFoundService,
-            PlayerService playerService) {
+            PlayerService playerService,
+            br.com.lolmatchmaking.backend.service.lock.MatchmakingLockService matchmakingLockService,
+            br.com.lolmatchmaking.backend.service.lock.PlayerStateService playerStateService,
+            EventBroadcastService eventBroadcastService,
+            br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatchService) {
         this.queuePlayerRepository = queuePlayerRepository;
         this.playerRepository = playerRepository;
         this.customMatchRepository = customMatchRepository;
@@ -60,6 +71,10 @@ public class QueueManagementService {
         this.objectMapper = objectMapper;
         this.matchFoundService = matchFoundService;
         this.playerService = playerService;
+        this.matchmakingLockService = matchmakingLockService;
+        this.playerStateService = playerStateService;
+        this.eventBroadcastService = eventBroadcastService;
+        this.redisPlayerMatch = redisPlayerMatchService;
     }
 
     // ✅ REMOVIDO: HashMaps locais removidos - SQL é fonte da verdade
@@ -122,6 +137,15 @@ public class QueueManagementService {
     public boolean addToQueue(String summonerName, String region, Long playerId,
             Integer customLp, String primaryLane, String secondaryLane) {
         try {
+            // ✅ NOVO: VERIFICAR SE JOGADOR PODE ENTRAR NA FILA
+            if (!playerStateService.canJoinQueue(summonerName)) {
+                br.com.lolmatchmaking.backend.service.lock.PlayerState currentState = playerStateService
+                        .getPlayerState(summonerName);
+                log.warn("❌ [addToQueue] Jogador {} não pode entrar na fila (estado: {})",
+                        summonerName, currentState);
+                return false;
+            }
+
             // ✅ SQL ONLY: Buscar fila do banco
             List<QueuePlayer> currentQueue = queuePlayerRepository.findByActiveTrueOrderByJoinTimeAsc();
 
@@ -183,17 +207,33 @@ public class QueueManagementService {
             queuePlayer = queuePlayerRepository.save(queuePlayer);
             log.info("✅ [addToQueue] Jogador salvo no SQL");
 
+            // ✅ NOVO: ATUALIZAR ESTADO PARA IN_QUEUE
+            if (!playerStateService.setPlayerState(summonerName, PlayerState.IN_QUEUE)) {
+                log.error("❌ [addToQueue] Falha ao atualizar estado para IN_QUEUE, revertendo...");
+                queuePlayerRepository.delete(queuePlayer);
+                return false;
+            }
+
             // Atualizar posições
             updateQueuePositions();
 
-            // Broadcast atualização
-            broadcastQueueUpdate();
+            // ✅ NOVO: INVALIDAR CACHE REDIS
+            redisQueueCache.clearCache();
 
-            log.info("✅ {} entrou na fila (posição: {})", summonerName, queuePlayer.getQueuePosition());
+            // ✅ NOVO: PUBLICAR EVENTO DE JOGADOR ENTROU (Redis Pub/Sub)
+            eventBroadcastService.publishPlayerJoinedQueue(summonerName);
+
+            // ✅ NOVO: PUBLICAR ATUALIZAÇÃO COMPLETA DA FILA (Redis Pub/Sub)
+            QueueStatusDTO status = getQueueStatus(null);
+            eventBroadcastService.publishQueueUpdate(status);
+
+            log.info("✅ {} entrou na fila EM TEMPO REAL (posição: {})", summonerName, queuePlayer.getQueuePosition());
             return true;
 
         } catch (Exception e) {
             log.error("❌ Erro ao adicionar jogador à fila", e);
+            // ✅ ROLLBACK: Remover estado se falhou
+            playerStateService.setPlayerState(summonerName, PlayerState.AVAILABLE);
             return false;
         }
     }
@@ -215,13 +255,23 @@ public class QueueManagementService {
             queuePlayerRepository.delete(queuePlayer);
             log.info("✅ [removeFromQueue] Jogador removido do SQL: {}", summonerName);
 
+            // ✅ NOVO: ATUALIZAR ESTADO PARA AVAILABLE
+            playerStateService.setPlayerState(summonerName, PlayerState.AVAILABLE);
+
             // Atualizar posições
             updateQueuePositions();
 
-            // Broadcast atualização
-            broadcastQueueUpdate();
+            // ✅ NOVO: INVALIDAR CACHE REDIS
+            redisQueueCache.clearCache();
 
-            log.info("✅ {} saiu da fila", summonerName);
+            // ✅ NOVO: PUBLICAR EVENTO DE JOGADOR SAIU (Redis Pub/Sub)
+            eventBroadcastService.publishPlayerLeftQueue(summonerName);
+
+            // ✅ NOVO: PUBLICAR ATUALIZAÇÃO COMPLETA DA FILA (Redis Pub/Sub)
+            QueueStatusDTO status = getQueueStatus(null);
+            eventBroadcastService.publishQueueUpdate(status);
+
+            log.info("✅ {} saiu da fila EM TEMPO REAL", summonerName);
             return true;
 
         } catch (Exception e) {
@@ -298,6 +348,13 @@ public class QueueManagementService {
      */
     @Scheduled(fixedRate = 5000) // Executa a cada 5 segundos
     public void processQueue() {
+        // ✅ NOVO: ADQUIRIR LOCK DISTRIBUÍDO
+        // Previne múltiplas instâncias processarem fila simultaneamente
+        if (!matchmakingLockService.acquireProcessLock()) {
+            log.debug("⏭️ [Scheduled] Outra instância está processando fila, pulando...");
+            return;
+        }
+
         try {
             // ✅ SQL ONLY: Buscar fila do banco
             List<QueuePlayer> allPlayers = queuePlayerRepository.findByActiveTrueOrderByJoinTimeAsc();
@@ -317,34 +374,88 @@ public class QueueManagementService {
             allPlayers.forEach(
                     p -> log.debug("  - {}: acceptanceStatus = {}", p.getSummonerName(), p.getAcceptanceStatus()));
 
-            // ✅ Obter APENAS jogadores disponíveis (não estão em partida pendente)
+            // ✅ NOVO: Filtrar jogadores por PlayerState (deve estar IN_QUEUE ou AVAILABLE)
             List<QueuePlayer> activePlayers = allPlayers.stream()
-                    .filter(p -> p.getAcceptanceStatus() == 0) // 0 = disponível, -1 = aguardando aceitação
+                    .filter(p -> {
+                        // Filtro antigo: acceptanceStatus
+                        if (p.getAcceptanceStatus() != 0) {
+                            return false;
+                        }
+
+                        // ✅ NOVO: Verificar PlayerState
+                        br.com.lolmatchmaking.backend.service.lock.PlayerState state = playerStateService
+                                .getPlayerState(p.getSummonerName());
+
+                        // Aceitar apenas jogadores AVAILABLE ou IN_QUEUE
+                        // Rejeitar jogadores em IN_MATCH_FOUND, IN_DRAFT, IN_GAME
+                        if (state.isInMatch()) {
+                            log.debug("⏭️ Jogador {} está em partida (estado: {}), pulando",
+                                    p.getSummonerName(), state);
+                            return false;
+                        }
+
+                        return true;
+                    })
                     .sorted(Comparator.comparing(QueuePlayer::getJoinTime))
                     .collect(Collectors.toList());
 
             log.info("📊 Jogadores disponíveis para matchmaking: {}/{}", activePlayers.size(), allPlayers.size());
 
             if (activePlayers.size() < MATCH_SIZE) {
-                log.warn("⏳ Apenas {} jogadores disponíveis (outros aguardando aceitação)", activePlayers.size());
+                log.warn("⏳ Apenas {} jogadores disponíveis (outros aguardando aceitação ou em partida)",
+                        activePlayers.size());
                 return;
             }
 
-            // Selecionar 10 jogadores mais antigos
+            // Selecionar 10 jogadores mais antigos (FIFO)
             List<QueuePlayer> selectedPlayers = activePlayers.stream()
                     .limit(MATCH_SIZE)
                     .collect(Collectors.toList());
+
+            // ✅ NOVO: DOUBLE-CHECK - Verificar se todos ainda estão disponíveis
+            boolean allStillAvailable = selectedPlayers.stream()
+                    .allMatch(p -> !playerStateService.isInMatch(p.getSummonerName()));
+
+            if (!allStillAvailable) {
+                log.warn("⚠️ Alguns jogadores já não estão mais disponíveis, abortando criação de partida");
+                return;
+            }
+
+            // ✅ CRÍTICO: MARCAR JOGADORES COMO "EM PROCESSAMENTO" IMEDIATAMENTE
+            // Isso previne outra instância de pegar os mesmos jogadores
+            // AINDA DENTRO DO LOCK!
+            log.info("🔒 [FIFO] Marcando {} jogadores como EM PROCESSAMENTO (ainda dentro do lock)",
+                    selectedPlayers.size());
+            for (QueuePlayer player : selectedPlayers) {
+                player.setAcceptanceStatus(-1); // -1 = em processamento
+                queuePlayerRepository.save(player);
+            }
+
+            // ✅ FLUSH para garantir que SQL foi atualizado ANTES de liberar lock
+            queuePlayerRepository.flush();
+            log.info("✅ [FIFO] Jogadores marcados e flush realizado - seguro para liberar lock");
 
             // Balancear equipes por MMR e lanes
             List<QueuePlayer> balancedTeams = balanceTeamsByMMRAndLanes(selectedPlayers);
 
             if (balancedTeams.size() == MATCH_SIZE) {
-                // Criar partida
+                // ✅ Criar partida (com locks e state management)
                 createMatch(balancedTeams);
+            } else {
+                // ❌ Balanceamento falhou - reverter status
+                log.error("❌ [FIFO] Balanceamento falhou, revertendo status dos jogadores");
+                for (QueuePlayer player : selectedPlayers) {
+                    player.setAcceptanceStatus(0);
+                    queuePlayerRepository.save(player);
+                }
+                queuePlayerRepository.flush();
             }
 
         } catch (Exception e) {
             log.error("❌ Erro ao processar fila", e);
+        } finally {
+            // ✅ SEMPRE LIBERAR LOCK
+            matchmakingLockService.releaseProcessLock();
         }
     }
 
@@ -570,6 +681,35 @@ public class QueueManagementService {
 
             log.info("✅ [Validação] {} jogadores confirmados", players.size());
 
+            // ✅ NOVO: VERIFICAR SE TODOS OS JOGADORES AINDA ESTÃO DISPONÍVEIS
+            List<String> playerNames = players.stream()
+                    .map(QueuePlayer::getSummonerName)
+                    .collect(Collectors.toList());
+
+            // ✅ PROTEÇÃO 1: Verificar PlayerState
+            for (String playerName : playerNames) {
+                if (playerStateService.isInMatch(playerName)) {
+                    log.error("❌ [CRÍTICO] Jogador {} já está em partida! ABORTANDO criação", playerName);
+                    return;
+                }
+            }
+
+            // ✅ PROTEÇÃO 2: Verificar se jogador já está em outra partida (Redis ownership)
+            for (String playerName : playerNames) {
+                Long existingMatchId = redisPlayerMatch.getCurrentMatch(playerName);
+                if (existingMatchId != null) {
+                    log.error("❌ [CRÍTICO] Jogador {} JÁ está registrado em partida {}! ABORTANDO",
+                            playerName, existingMatchId);
+                    // Reverter estados
+                    for (String pn : playerNames) {
+                        playerStateService.setPlayerState(pn, PlayerState.IN_QUEUE);
+                    }
+                    return;
+                }
+            }
+
+            log.info("✅ [Validação] Todos os jogadores disponíveis e sem partida ativa");
+
             // ✅ LOG DETALHADO: Mostrar TODOS os 10 jogadores antes de separar
             log.info("📋 [Formação] Lista completa de jogadores balanceados:");
             for (int i = 0; i < players.size(); i++) {
@@ -594,6 +734,20 @@ public class QueueManagementService {
                 return;
             }
 
+            // ✅ NOVO: ATUALIZAR ESTADO DE TODOS PARA IN_MATCH_FOUND
+            for (String playerName : playerNames) {
+                if (!playerStateService.setPlayerState(playerName, PlayerState.IN_MATCH_FOUND)) {
+                    log.error("❌ [CRÍTICO] Falha ao atualizar estado de {}, ABORTANDO criação", playerName);
+                    // Rollback: Voltar estados para IN_QUEUE
+                    for (String pn : playerNames) {
+                        playerStateService.setPlayerState(pn, PlayerState.IN_QUEUE);
+                    }
+                    return;
+                }
+            }
+
+            log.info("✅ [Estado] Todos os jogadores marcados como IN_MATCH_FOUND");
+
             log.info("✅ [Times] Team1: {} jogadores | Team2: {} jogadores", team1.size(), team2.size());
 
             // Criar partida no banco
@@ -612,6 +766,8 @@ public class QueueManagementService {
 
             match = customMatchRepository.save(match);
 
+            log.info("✅ Partida criada no banco: ID {}", match.getId());
+
             // ✅ NÃO remover jogadores aqui! Eles só devem ser removidos após aceitação
             // completa
             // O MatchFoundService gerencia o ciclo de vida:
@@ -619,13 +775,26 @@ public class QueueManagementService {
             // - Se ALGUÉM recusa → MatchFoundService remove apenas quem recusou, outros
             // voltam
 
+            // ✅ NOVO: PUBLICAR match_found VIA REDIS PUB/SUB
+            // Garante que TODOS os 10 jogadores recebem notificação SIMULTANEAMENTE
+            eventBroadcastService.publishMatchFound(match.getId(), playerNames);
+
+            log.info("📢 [Broadcasting] match_found publicado via Pub/Sub para {} jogadores", playerNames.size());
+
             // Iniciar processo de aceitação via MatchFoundService
             matchFoundService.createMatchForAcceptance(match, team1, team2);
 
-            log.info("✅ Partida criada: ID {} - aguardando aceitação (jogadores ainda na fila)", match.getId());
+            log.info("✅ Partida criada: ID {} - aguardando aceitação (jogadores em IN_MATCH_FOUND)", match.getId());
 
         } catch (Exception e) {
             log.error("❌ Erro ao criar partida", e);
+            // ✅ ROLLBACK: Voltar estados para IN_QUEUE
+            List<String> playerNames = players.stream()
+                    .map(QueuePlayer::getSummonerName)
+                    .collect(Collectors.toList());
+            for (String pn : playerNames) {
+                playerStateService.setPlayerState(pn, PlayerState.IN_QUEUE);
+            }
         }
     }
 
