@@ -72,6 +72,10 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
   // ✅ NOVO: Timer para atualizar tempos dos jogadores na fila
   private playersTimeInterval?: number;
 
+  // ✅ NOVO: Scheduler para verificar partida ativa (reconexão/redirecionamento)
+  private activeMatchCheckInterval?: number;
+  private readonly ACTIVE_MATCH_CHECK_INTERVAL_MS = 5000; // 5 segundos
+
   constructor(
     public discordService: DiscordIntegrationService,
     private readonly queueStateService: QueueStateService,
@@ -107,6 +111,9 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
 
     // ✅ NOVO: Iniciar timer para atualizar tempos dos jogadores na fila
     this.startPlayersTimeUpdate();
+
+    // ✅ NOVO: Iniciar verificação de partida ativa (reconexão automática)
+    this.startActiveMatchCheck();
   }
 
   ngOnDestroy(): void {
@@ -115,6 +122,9 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
     this.destroy$.next();
     this.destroy$.complete();
     this.cleanup();
+
+    // ✅ NOVO: Parar verificação de partida ativa
+    this.stopActiveMatchCheck();
 
     console.log('✅ [Queue] Cleanup completo');
   }
@@ -203,6 +213,7 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
     // ✅ stopAutoRefresh() removido - WebSocket push em tempo real não precisa de polling
     this.stopQueueTimer();
     this.stopPlayersTimeUpdate();
+    this.stopActiveMatchCheck(); // ✅ NOVO: Parar verificação de partida ativa
   }
 
   // =============================================================================
@@ -824,6 +835,129 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
       clearInterval(this.playersTimeInterval);
       this.playersTimeInterval = undefined;
       console.log('🛑 [Queue] Timer de atualização de tempos dos jogadores parado');
+    }
+  }
+
+  // =============================================================================
+  // ✅ NOVO: VERIFICAÇÃO DE PARTIDA ATIVA (RECONEXÃO AUTOMÁTICA)
+  // =============================================================================
+
+  /**
+   * ✅ NOVO: Inicia verificação periódica de partida ativa
+   * Usado para reconectar player que fechou Electron durante draft/game
+   */
+  private startActiveMatchCheck(): void {
+    if (!this.currentPlayer?.displayName && !this.currentPlayer?.summonerName) {
+      console.warn('⚠️ [Queue] currentPlayer não definido, scheduler não iniciado');
+      return;
+    }
+
+    const summonerName = this.currentPlayer.displayName || this.currentPlayer.summonerName;
+    console.log('✅ [Queue] Iniciando verificação de partida ativa (5s) para:', summonerName);
+
+    // ✅ Primeira verificação imediata
+    this.checkForActiveMatch();
+
+    // ✅ Verificações periódicas
+    this.activeMatchCheckInterval = window.setInterval(() => {
+      this.checkForActiveMatch();
+    }, this.ACTIVE_MATCH_CHECK_INTERVAL_MS);
+  }
+
+  /**
+   * ✅ NOVO: Para verificação periódica
+   */
+  private stopActiveMatchCheck(): void {
+    if (this.activeMatchCheckInterval) {
+      clearInterval(this.activeMatchCheckInterval);
+      this.activeMatchCheckInterval = undefined;
+      console.log('🛑 [Queue] Verificação de partida ativa interrompida');
+    }
+  }
+
+  /**
+   * ✅ NOVO: Verifica se player tem partida ativa e redireciona automaticamente
+   */
+  private async checkForActiveMatch(): Promise<void> {
+    if (!this.currentPlayer?.displayName && !this.currentPlayer?.summonerName) {
+      return;
+    }
+
+    try {
+      const summonerName = this.currentPlayer.displayName || this.currentPlayer.summonerName;
+      
+      // ✅ Chamar endpoint backend com validação e Redis
+      const response = await fetch(
+        `/api/queue/my-active-match?summonerName=${encodeURIComponent(summonerName)}`,
+        {
+          method: 'GET',
+          headers: {
+            'X-Summoner-Name': summonerName,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      if (response.status === 404) {
+        // ✅ Nenhuma partida ativa, tudo OK
+        return;
+      }
+
+      if (!response.ok) {
+        console.warn('⚠️ [Queue] Erro ao verificar partida ativa:', response.status);
+        return;
+      }
+
+      const activeMatch = await response.json();
+
+      if (activeMatch && activeMatch.id) {
+        console.log('🎮 [Queue] PARTIDA ATIVA DETECTADA:', activeMatch);
+        
+        // ✅ Redirecionar baseado no status
+        this.redirectToActiveMatch(activeMatch);
+      }
+
+    } catch (error) {
+      // ✅ Silenciar erro para não poluir console (rede pode estar instável)
+      console.debug('❌ [Queue] Erro ao verificar partida ativa:', error);
+    }
+  }
+
+  /**
+   * ✅ NOVO: Redireciona para a tela correta baseado no status da partida
+   */
+  private redirectToActiveMatch(match: any): void {
+    const status = match.status?.toUpperCase();
+    const matchId = match.id;
+
+    console.log(`🚀 [Queue] Redirecionando para partida ${matchId} (status: ${status})`);
+
+    // ✅ Parar verificação (não precisa mais)
+    this.stopActiveMatchCheck();
+
+    // ✅ Notificar via WebSocket (se aplicável)
+    if (status === 'MATCH_FOUND' || status === 'ACCEPTING') {
+      console.log('→ [Queue] Match found detectado, aguardando modal de aceitação...');
+      // ✅ O WebSocket deve já ter enviado a notificação
+      // Se não, forçar reload da página principal
+      window.location.reload();
+      
+    } else if (status === 'DRAFT' || status === 'DRAFTING') {
+      console.log('→ [Queue] Draft detectado, redirecionando...');
+      // ✅ Redirecionar para draft
+      // TODO: Implementar navegação para draft quando houver roteamento
+      // this.router.navigate(['/draft', matchId]);
+      window.location.reload(); // Temporary: forçar reload para entrar no draft
+      
+    } else if (status === 'IN_PROGRESS' || status === 'GAME') {
+      console.log('→ [Queue] Game in progress detectado, redirecionando...');
+      // ✅ Redirecionar para game
+      // TODO: Implementar navegação para game quando houver roteamento
+      // this.router.navigate(['/game', matchId]);
+      window.location.reload(); // Temporary: forçar reload para entrar no game
+      
+    } else {
+      console.warn(`⚠️ [Queue] Status desconhecido: ${status}`);
     }
   }
 

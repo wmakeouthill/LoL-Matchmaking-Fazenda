@@ -269,6 +269,13 @@ public class MatchFoundService {
      */
     @Transactional
     private void handleAllPlayersAccepted(Long matchId) {
+        // ✅ NOVO: ADQUIRIR LOCK DE PROCESSAMENTO
+        // Previne múltiplas instâncias processando "todos aceitaram" simultaneamente
+        if (!matchOpsLockService.acquireAllAcceptedProcessingLock(matchId)) {
+            log.warn("⚠️ [MatchFound] Aceitação completa de match {} já está sendo processada", matchId);
+            return;
+        }
+        
         try {
             // ✅ REDIS ONLY: Buscar dados do Redis (fonte da verdade)
             List<String> team1Names = redisAcceptance.getTeam1Players(matchId);
@@ -340,23 +347,22 @@ public class MatchFoundService {
             // Notificar todos os jogadores
             notifyAllPlayersAccepted(matchId);
 
-            // Iniciar draft após 3 segundos
-            Timer timer = new Timer();
-            timer.schedule(new TimerTask() {
-                @Override
-                public void run() {
-                    startDraft(matchId);
-                }
-            }, 500); // ✅ REDIS: Reduzido de 3000ms → 500ms (apenas para garantir que broadcasts
-                     // foram enviados)
+            // ✅ CORREÇÃO: Iniciar draft IMEDIATAMENTE (sem delay)
+            // Redis Pub/Sub é instantâneo, não há necessidade de esperar
+            CompletableFuture.runAsync(() -> {
+                startDraft(matchId);
+            });
 
             // ✅ REDIS ONLY: Limpar dados do Redis após processar
             redisAcceptance.clearMatch(matchId);
 
-            log.info("✅ [MatchFound] Partida {} aceita por todos - iniciando draft em 0.5s", matchId);
+            log.info("✅ [MatchFound] Partida {} aceita por todos - iniciando draft IMEDIATAMENTE", matchId);
 
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao processar aceitação completa", e);
+        } finally {
+            // ✅ SEMPRE LIBERAR LOCK
+            matchOpsLockService.releaseAllAcceptedProcessingLock(matchId);
         }
     }
 
@@ -615,8 +621,9 @@ public class MatchFoundService {
                     if (discordMatch != null) {
                         log.info("✅ [MatchFound] Canais Discord criados com sucesso");
 
-                        // ✅ REDIS: 250ms (canais Discord já criados, mover é rápido)
-                        CompletableFuture.delayedExecutor(250, TimeUnit.MILLISECONDS).execute(() -> {
+                        // ✅ CORREÇÃO: Mover jogadores IMEDIATAMENTE (sem delay)
+                        // Discord API é assíncrona, não há race condition
+                        CompletableFuture.runAsync(() -> {
                             try {
                                 log.info("🚚 [MatchFound] Movendo jogadores para canais de time...");
                                 discordService.movePlayersToTeamChannels(matchId);
