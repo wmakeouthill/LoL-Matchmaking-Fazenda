@@ -165,7 +165,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
 
             if (oldSessionId != null) {
                 // Verificar se sessão antiga ainda está ativa no SessionRegistry
-                boolean oldSessionExists = sessionRegistry.getSession(oldSessionId) != null;
+                boolean oldSessionExists = sessionRegistry.get(oldSessionId) != null;
 
                 if (!oldSessionExists) {
                     // ✅ Sessão antiga não existe mais, forçar release e tentar novamente
