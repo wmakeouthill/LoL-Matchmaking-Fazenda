@@ -58,7 +58,8 @@ public class MatchOperationsLockService {
     private static final Duration START_LOCK_TTL = Duration.ofSeconds(10);
     private static final Duration SAVE_LOCK_TTL = Duration.ofSeconds(10);
     private static final Duration TIMEOUT_LOCK_TTL = Duration.ofSeconds(5);
-    private static final Duration ALL_ACCEPTED_LOCK_TTL = Duration.ofSeconds(30); // ✅ NOVO
+    // ✅ CORRIGIDO: 30s → 10s (alinhado com outros start locks)
+    private static final Duration ALL_ACCEPTED_LOCK_TTL = Duration.ofSeconds(10);
 
     // ═══════════════════════════════════════════════════════════
     // LOCKS DE ACEITAÇÃO/RECUSA
