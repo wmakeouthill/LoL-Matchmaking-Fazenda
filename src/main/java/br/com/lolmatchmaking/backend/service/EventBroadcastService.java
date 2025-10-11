@@ -325,7 +325,7 @@ public class EventBroadcastService {
      */
     public void handleQueueEvent(String message, String pattern) {
         try {
-            log.debug("📥 [Pub/Sub] Evento recebido no canal: {}", pattern);
+            log.info("📥 [Pub/Sub] Evento recebido no canal: {}", pattern);
 
             if (pattern.equals("queue:update")) {
                 QueueEvent event = objectMapper.readValue(message, QueueEvent.class);
@@ -334,7 +334,8 @@ public class EventBroadcastService {
                 webSocketService.broadcastQueueUpdate(
                         event.getQueueStatus().getPlayersInQueueList());
 
-                log.debug("✅ [Pub/Sub] queue_update processado e broadcast realizado");
+                log.info("✅ [Pub/Sub] queue_update processado e broadcast WebSocket realizado para {} jogadores",
+                        event.getQueueStatus().getPlayersInQueue());
 
             } else if (pattern.equals("queue:player_joined")) {
                 PlayerQueueEvent event = objectMapper.readValue(message, PlayerQueueEvent.class);
@@ -342,7 +343,7 @@ public class EventBroadcastService {
                 // Broadcast notificação de jogador entrou
                 // webSocketService.broadcastPlayerJoined(event.getSummonerName());
 
-                log.debug("✅ [Pub/Sub] player_joined processado: {}", event.getSummonerName());
+                log.info("✅ [Pub/Sub] player_joined processado: {}", event.getSummonerName());
 
             } else if (pattern.equals("queue:player_left")) {
                 PlayerQueueEvent event = objectMapper.readValue(message, PlayerQueueEvent.class);
@@ -350,7 +351,7 @@ public class EventBroadcastService {
                 // Broadcast notificação de jogador saiu
                 // webSocketService.broadcastPlayerLeft(event.getSummonerName());
 
-                log.debug("✅ [Pub/Sub] player_left processado: {}", event.getSummonerName());
+                log.info("✅ [Pub/Sub] player_left processado: {}", event.getSummonerName());
             }
 
         } catch (JsonProcessingException e) {

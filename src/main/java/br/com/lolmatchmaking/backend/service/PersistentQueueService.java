@@ -42,8 +42,12 @@ public class PersistentQueueService {
     @Value("${app.queue.sync-interval:10}") // 10 segundos
     private long syncIntervalSeconds;
 
-    // Cache local da fila
+    // ❌ DEPRECIADO: Cache local da fila (QueueManagementService com Redis
+    // substituiu)
+    @Deprecated(forRemoval = true)
     private final Map<String, QueuePlayer> queueCache = new ConcurrentHashMap<>();
+
+    @Deprecated(forRemoval = true)
     private final Map<String, Instant> lastSync = new ConcurrentHashMap<>();
 
     /**

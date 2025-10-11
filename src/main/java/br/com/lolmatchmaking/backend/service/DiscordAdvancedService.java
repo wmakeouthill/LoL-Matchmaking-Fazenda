@@ -28,7 +28,8 @@ public class DiscordAdvancedService {
     private final DiscordConfigRepository discordConfigRepository;
     private final DiscordService discordService;
     private final PlayerRepository playerRepository;
-    private final MatchmakingService matchmakingService;
+    // ✅ MIGRADO: QueueManagementService (Redis-only) ao invés de MatchmakingService
+    private final QueueManagementService queueManagementService;
 
     private boolean isConnected = false;
 
@@ -153,8 +154,20 @@ public class DiscordAdvancedService {
                 return "❌ Você precisa vincular uma conta primeiro! Use `/vincular`";
             }
 
-            // Entrar na fila
-            boolean joined = matchmakingService.joinQueue(link.get().getSummonerName(), primaryLane, secondaryLane);
+            // Buscar dados do player
+            Optional<Player> player = playerRepository.findBySummonerName(link.get().getSummonerName());
+            if (player.isEmpty()) {
+                return "❌ Jogador não encontrado no sistema";
+            }
+
+            // ✅ MIGRADO: Entrar na fila via QueueManagementService (Redis-only)
+            boolean joined = queueManagementService.addToQueue(
+                    player.get().getSummonerName(),
+                    player.get().getRegion(),
+                    player.get().getId(),
+                    null, // customLp (usa LP atual)
+                    primaryLane,
+                    secondaryLane);
 
             if (joined) {
                 return "✅ Entrou na fila!\n" +
@@ -180,7 +193,8 @@ public class DiscordAdvancedService {
                 return "❌ Você não possui uma conta vinculada";
             }
 
-            boolean left = matchmakingService.leaveQueue(link.get().getSummonerName());
+            // ✅ MIGRADO: Sair da fila via QueueManagementService (Redis-only)
+            boolean left = queueManagementService.removeFromQueue(link.get().getSummonerName());
 
             if (left) {
                 return "✅ Saiu da fila";

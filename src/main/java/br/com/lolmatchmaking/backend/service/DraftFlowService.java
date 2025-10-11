@@ -30,6 +30,9 @@ public class DraftFlowService {
     // ✅ NOVO: Redis para performance e resiliência
     private final RedisDraftFlowService redisDraftFlow;
 
+    // ✅ NOVO: PlayerStateService para cleanup inteligente
+    private final br.com.lolmatchmaking.backend.service.lock.PlayerStateService playerStateService;
+
     @Value("${app.draft.action-timeout-ms:30000}")
     private long configuredActionTimeoutMs;
 
@@ -619,6 +622,39 @@ public class DraftFlowService {
         log.info("📋 Champion ID: {}", championId);
         log.info("📋 By Player: {}", byPlayer);
 
+        // ✅ NOVO: VALIDAR PlayerState COM CLEANUP INTELIGENTE
+        br.com.lolmatchmaking.backend.service.lock.PlayerState state = playerStateService.getPlayerState(byPlayer);
+        if (state != br.com.lolmatchmaking.backend.service.lock.PlayerState.IN_DRAFT) {
+            // ✅ CLEANUP INTELIGENTE: Verificar no MySQL
+            boolean reallyInDraft = customMatchRepository.findById(matchId)
+                    .map(match -> {
+                        // Verificar status
+                        if (!"draft".equalsIgnoreCase(match.getStatus())) {
+                            return false;
+                        }
+
+                        // Verificar se player está na partida
+                        String team1 = match.getTeam1PlayersJson();
+                        String team2 = match.getTeam2PlayersJson();
+                        return (team1 != null && team1.contains(byPlayer)) ||
+                                (team2 != null && team2.contains(byPlayer));
+                    })
+                    .orElse(false);
+
+            if (reallyInDraft) {
+                log.warn("🧹 [processAction] ESTADO INCONSISTENTE: {} está no draft (MySQL) mas estado Redis é {}",
+                        byPlayer, state);
+                // ✅ FORCE SET pois pode estar em qualquer estado
+                playerStateService.forceSetPlayerState(byPlayer,
+                        br.com.lolmatchmaking.backend.service.lock.PlayerState.IN_DRAFT);
+                log.info("✅ [processAction] PlayerState corrigido para IN_DRAFT");
+            } else {
+                log.warn("❌ [processAction] Player {} NÃO está no draft {} (estado: {})",
+                        byPlayer, matchId, state);
+                return false;
+            }
+        }
+
         // ✅ Buscar do Redis (que busca do MySQL se necessário)
         DraftState st = getDraftStateFromRedis(matchId);
         if (st == null) {
@@ -766,6 +802,38 @@ public class DraftFlowService {
      */
     @Transactional
     public synchronized void confirmDraft(long matchId, String playerId) {
+        // ✅ NOVO: VALIDAR PlayerState COM CLEANUP INTELIGENTE
+        br.com.lolmatchmaking.backend.service.lock.PlayerState state = playerStateService.getPlayerState(playerId);
+        if (state != br.com.lolmatchmaking.backend.service.lock.PlayerState.IN_DRAFT) {
+            // ✅ CLEANUP INTELIGENTE: Verificar no MySQL
+            boolean reallyInDraft = customMatchRepository.findById(matchId)
+                    .map(match -> {
+                        String status = match.getStatus();
+                        if (!"draft".equalsIgnoreCase(status)) {
+                            return false;
+                        }
+
+                        String team1 = match.getTeam1PlayersJson();
+                        String team2 = match.getTeam2PlayersJson();
+                        return (team1 != null && team1.contains(playerId)) ||
+                                (team2 != null && team2.contains(playerId));
+                    })
+                    .orElse(false);
+
+            if (reallyInDraft) {
+                log.warn("🧹 [confirmDraft] ESTADO INCONSISTENTE: {} está no draft (MySQL) mas estado Redis é {}",
+                        playerId, state);
+                // ✅ FORCE SET pois pode estar em qualquer estado
+                playerStateService.forceSetPlayerState(playerId,
+                        br.com.lolmatchmaking.backend.service.lock.PlayerState.IN_DRAFT);
+                log.info("✅ [confirmDraft] PlayerState corrigido para IN_DRAFT");
+            } else {
+                log.warn("❌ [confirmDraft] Player {} NÃO está no draft {} (estado: {})",
+                        playerId, matchId, state);
+                return;
+            }
+        }
+
         // ✅ Buscar do Redis
         DraftState st = getDraftStateFromRedis(matchId);
         if (st == null) {

@@ -1067,20 +1067,20 @@ export class App implements OnInit, OnDestroy {
   private async savePlayerData(player: any): Promise<void> {
     const summonerName = player.summonerName || player.displayName || '';
 
+    // ❌ REMOVIDO: localStorage pode causar race condition com Redis locks
+    // Se múltiplos users usarem o mesmo Electron, localStorage mantém dados antigos
+    // causando conflito: sessão WebSocket de UserB registrada como UserA no Redis!
+    //
+    // SOLUÇÃO: SOMENTE LCU é fonte da verdade. Electron storage OK (por summonerName).
     if (this.isElectron && (window as any).electronAPI?.storage && summonerName) {
       try {
         const result = await (window as any).electronAPI.storage.savePlayerData(summonerName, player);
         console.log(`💾 [Electron] Dados salvos para: ${summonerName}`, result);
       } catch (error) {
         console.error('❌ [Electron] Erro ao salvar via Electron storage:', error);
-        // Fallback para localStorage em caso de erro
-        try { localStorage.setItem('currentPlayer', JSON.stringify(player)); } catch { }
       }
-    } else {
-      // Fallback para web ou se Electron storage não disponível
-      try { localStorage.setItem('currentPlayer', JSON.stringify(player)); } catch { }
-      console.log('💾 [Web] Dados salvos no localStorage');
     }
+    // ❌ REMOVIDO: Não usar localStorage - causa conflito de sessão WebSocket!
   }
 
   /**
@@ -1845,11 +1845,10 @@ export class App implements OnInit, OnDestroy {
         this.addNotification('success', 'Dados Carregados', 'Dados do jogador carregados do League of Legends');
       },
       error: (error) => {
-        console.warn('⚠️ [App] Erro ao carregar do LCU:', error);
-        console.log('🔄 [App] Tentando carregar do localStorage como fallback...');
-
-        // Fallback to localStorage if LCU fails
-        this.tryLoadFromLocalStorage();
+        console.error('❌ [App] Erro ao carregar do LCU:', error);
+        // ❌ REMOVIDO: localStorage causa race condition com Redis locks
+        // NÃO fazer fallback - usuário DEVE ter LCU conectado para usar o app
+        this.addNotification('error', 'LCU Desconectado', 'Conecte-se ao League of Legends para usar o app');
       }
     });
   }
@@ -1898,16 +1897,9 @@ export class App implements OnInit, OnDestroy {
       }
     }
 
-    // ✅ CORREÇÃO: Se chegou aqui MAS já temos currentPlayer (do localStorage), não mostrar erro
-    if (this.currentPlayer && this.currentPlayer.summonerId) {
-      console.log('✅ [App] Dados do localStorage já disponíveis, ignorando erro de retry');
-      return;
-    }
-
     // Se chegou aqui sem dados, mostrar erro
     console.error('❌ [App] Esgotadas as tentativas de getCurrentPlayerDetails');
-    this.addNotification('error', 'Erro', 'Não foi possível carregar dados do jogador');
-    this.tryLoadFromLocalStorage();
+    this.addNotification('error', 'LCU Desconectado', 'Conecte-se ao League of Legends para usar o app');
   }
 
   /**
@@ -2025,7 +2017,8 @@ export class App implements OnInit, OnDestroy {
         console.log(`✅ [App] SummonerName configurado no ApiService (getCurrentPlayerDetails): ${displayName}`);
       }
 
-      localStorage.setItem('currentPlayer', JSON.stringify(player));
+      // ❌ REMOVIDO: localStorage causa race condition com Redis locks
+      // localStorage.setItem('currentPlayer', JSON.stringify(player));
 
       // ✅ ADICIONADO: Atualizar formulário de configurações
       this.updateSettingsForm();
@@ -2080,8 +2073,8 @@ export class App implements OnInit, OnDestroy {
           if (p.wins !== undefined) this.currentPlayer.wins = p.wins;
           if (p.losses !== undefined) this.currentPlayer.losses = p.losses;
 
-          // Atualizar localStorage
-          localStorage.setItem('currentPlayer', JSON.stringify(this.currentPlayer));
+          // ❌ REMOVIDO: localStorage causa race condition com Redis locks
+          // localStorage.setItem('currentPlayer', JSON.stringify(this.currentPlayer));
           this.cdr.detectChanges();
         }
       },
@@ -2123,74 +2116,28 @@ export class App implements OnInit, OnDestroy {
       }
     }
 
-    // Fallback: tentar localStorage (para web ou se Electron storage falhar)
-    const stored = localStorage.getItem('currentPlayer');
-    if (stored) {
-      try {
-        this.currentPlayer = JSON.parse(stored);
-
-        // ✅ Garantir que displayName seja definido se ausente
-        if (this.currentPlayer && !this.currentPlayer.displayName) {
-          if (this.currentPlayer.gameName && this.currentPlayer.tagLine) {
-            this.currentPlayer.displayName = `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`;
-            console.log('🔧 [App] DisplayName construído do localStorage:', this.currentPlayer.displayName);
-          } else if (this.currentPlayer.summonerName?.includes('#')) {
-            this.currentPlayer.displayName = this.currentPlayer.summonerName;
-            console.log('🔧 [App] DisplayName definido como summonerName do localStorage:', this.currentPlayer.displayName);
-          }
-        }
-
-        console.log('✅ [Web] Dados do jogador carregados do localStorage, displayName:', this.currentPlayer?.displayName);
-      } catch (error) {
-        console.warn('⚠️ [App] Erro ao carregar do localStorage:', error);
-      }
-    } else {
-      console.log('ℹ️ [App] Nenhum dado encontrado no localStorage');
-    }
+    // ❌ REMOVIDO: localStorage causa race condition com Redis locks
+    // NÃO carregar dados antigos - força LCU a ser única fonte da verdade
+    console.log('ℹ️ [App] localStorage desabilitado - aguardando LCU para dados do player');
   }
 
   private tryLoadFromLocalStorage(): void {
-    const stored = localStorage.getItem('currentPlayer');
-    if (stored) {
-      try {
-        this.currentPlayer = JSON.parse(stored);
+    // ❌ REMOVIDO: localStorage causa race condition com Redis locks
+    //
+    // PROBLEMA IDENTIFICADO:
+    // 1. localStorage mantém dados de sessão anterior (pode ser outro player!)
+    // 2. Frontend carrega "PlayerA" do localStorage
+    // 3. Frontend conecta WebSocket e envia identify_player com dados de "PlayerA"
+    // 4. Backend registra sessão atual como "PlayerA" no Redis
+    // 5. MAS o LCU está conectado com "PlayerB" (player atual real!)
+    // 6. CONFLITO: Redis tem sessão→PlayerA mas LCU é PlayerB
+    // 7. Player locks ficam inconsistentes!
+    //
+    // SOLUÇÃO: NÃO usar localStorage. LCU é ÚNICA fonte da verdade.
+    // O app aguarda o LCU conectar e enviar dados reais do player atual.
 
-        // ✅ NOVA CORREÇÃO: Garantir que displayName seja definido se ausente
-        if (this.currentPlayer && !this.currentPlayer.displayName) {
-          if (this.currentPlayer.gameName && this.currentPlayer.tagLine) {
-            this.currentPlayer.displayName = `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`;
-            console.log('🔧 [App] DisplayName construído do localStorage:', this.currentPlayer.displayName);
-          } else if (this.currentPlayer.summonerName?.includes('#')) {
-            this.currentPlayer.displayName = this.currentPlayer.summonerName;
-            console.log('🔧 [App] DisplayName definido como summonerName do localStorage:', this.currentPlayer.displayName);
-          }
-        }
-
-        // ❌ REMOVIDO: NÃO setar summonerName do localStorage no ApiService!
-        // O summonerName DEVE vir APENAS do evento WebSocket 'lcu_connection_registered'
-        // para garantir que seja o jogador correto conectado no LCU agora.
-        // Setar do localStorage causava confusão quando testando em múltiplos PCs
-        // pois o localStorage pode ter dados de sessões antigas/outros jogadores.
-
-        // if (this.currentPlayer) {
-        //   const playerName = this.currentPlayer.displayName || this.currentPlayer.summonerName || '';
-        //   if (playerName) {
-        //     this.apiService.setCurrentSummonerName(playerName);
-        //     console.log(`✅ [App] SummonerName configurado no ApiService (localStorage): ${playerName}`);
-        //   } else {
-        //     console.error('❌ [App] Não foi possível extrair summonerName do localStorage:', this.currentPlayer);
-        //   }
-        // }
-
-        console.log('✅ [App] Dados do jogador carregados do localStorage, displayName:', this.currentPlayer?.displayName);
-        console.log('⏳ [App] SummonerName será definido quando evento WebSocket "lcu_connection_registered" chegar');
-      } catch (error) {
-        console.warn('⚠️ [App] Erro ao carregar do localStorage:', error);
-      }
-    }
-  }
-
-  /**
+    console.log('⚠️ [App] localStorage desabilitado - aguardando LCU para identificação correta');
+  }  /**
    * 🆕 Helper para atualizar o CurrentSummonerService sempre que currentPlayer mudar
    * Deve ser chamado toda vez que this.currentPlayer for modificado
    */

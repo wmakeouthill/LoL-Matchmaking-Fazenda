@@ -45,7 +45,7 @@ import java.util.stream.Collectors;
 @Slf4j
 public class MatchmakingOrchestrator {
     private final QueueService queueService;
-    private final MatchmakingService matchmakingService;
+    // ✅ REMOVIDO: MatchmakingService (deletado, este orquestrador está @Deprecated)
     private final AcceptanceService acceptanceService;
     private final SessionRegistry sessionRegistry;
     private final CustomMatchRepository customMatchRepository;
@@ -56,21 +56,14 @@ public class MatchmakingOrchestrator {
     private static final String FIELD_PLAYERS = "players";
 
     // tenta formar partida (usa jogadores ativos que nao estejam locked)
+    // ✅ DESABILITADO: Este orquestrador está @Deprecated(forRemoval = true)
+    // Use QueueManagementService.processQueue() ao invés
     @Scheduled(fixedDelay = 2000)
     @Transactional
     public void tick() {
-        List<QueuePlayer> actives = queueService.activePlayers();
-        Optional<List<QueuePlayer>> maybe = matchmakingService.tryFormMatch();
-        if (maybe.isEmpty())
-            return;
-        List<QueuePlayer> selected = maybe.get();
-        selected.forEach(p -> {
-            p.setAcceptanceStatus(0);
-            // lock: remover da fila marcando active=false para evitar nova match
-            p.setActive(false);
-        });
-        var session = acceptanceService.createSession(selected, 20_000);
-        broadcastMatchFound(session.matchTempId, selected);
+        log.trace("⚠️ [ORCHESTRATOR-LEGACY] tick() desabilitado - use QueueManagementService");
+        // Este método foi desabilitado porque MatchmakingService foi removido
+        // Use QueueManagementService.processQueue() no novo fluxo
     }
 
     @Scheduled(fixedDelay = 1000, initialDelay = 1500)

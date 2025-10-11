@@ -1,7 +1,9 @@
 package br.com.lolmatchmaking.backend.controller;
 
 import br.com.lolmatchmaking.backend.domain.entity.EventInbox;
+import br.com.lolmatchmaking.backend.domain.entity.QueuePlayer;
 import br.com.lolmatchmaking.backend.domain.repository.EventInboxRepository;
+import br.com.lolmatchmaking.backend.domain.repository.QueuePlayerRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
@@ -9,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @RestController
@@ -16,10 +19,11 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class SyncController {
     private final EventInboxRepository inboxRepository;
+    // ✅ MIGRADO: QueuePlayerRepository (SQL = fonte da verdade)
+    private final QueuePlayerRepository queuePlayerRepository;
     @Value("${app.backend.sync.enabled:true}")
     private boolean syncEnabled;
     private static final String KEY_SUCCESS = "success";
-    private final br.com.lolmatchmaking.backend.service.MatchmakingService matchmakingService;
 
     @PostMapping("/event")
     @Transactional
@@ -52,12 +56,12 @@ public class SyncController {
     @GetMapping("/status")
     public ResponseEntity<Map<String, Object>> getSyncStatus(@RequestParam String summonerName) {
         try {
-            // Fallback simples: verificar se o jogador está na fila / em draft / em jogo
+            // ✅ MIGRADO: Verifica diretamente no MySQL (fonte da verdade)
             String status = "none";
 
-            // Verifica fila
-            boolean inQueue = matchmakingService.isPlayerInQueue(null, summonerName);
-            if (inQueue) {
+            // Verifica fila: busca diretamente no banco
+            Optional<QueuePlayer> queuePlayer = queuePlayerRepository.findBySummonerName(summonerName);
+            if (queuePlayer.isPresent() && queuePlayer.get().getActive()) {
                 status = "in_queue";
             }
 

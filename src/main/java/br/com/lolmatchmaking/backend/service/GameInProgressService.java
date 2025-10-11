@@ -47,6 +47,9 @@ public class GameInProgressService {
     // ✅ NOVO: Lock service para prevenir múltiplas finalizações/cancelamentos
     private final br.com.lolmatchmaking.backend.service.lock.GameEndLockService gameEndLockService;
 
+    // ✅ NOVO: PlayerStateService para cleanup inteligente
+    private final br.com.lolmatchmaking.backend.service.lock.PlayerStateService playerStateService;
+
     // scheduler for monitoring
     private ScheduledExecutorService scheduler;
 
@@ -232,6 +235,39 @@ public class GameInProgressService {
         try {
             log.info("🏁 Finalizando jogo para partida {} - motivo: {}", matchId, endReason);
 
+            // ✅ NOVO: VALIDAR E CORRIGIR PlayerState de TODOS os players
+            // CRÍTICO: Verificar no MySQL antes de finalizar
+            CustomMatch match = customMatchRepository.findById(matchId).orElse(null);
+            if (match == null) {
+                log.warn("❌ [finishGame] Partida {} não encontrada no MySQL", matchId);
+                return;
+            }
+
+            // Verificar se partida está realmente IN_PROGRESS
+            if (!"in_progress".equalsIgnoreCase(match.getStatus())) {
+                log.warn("❌ [finishGame] Partida {} não está in_progress (status: {})",
+                        matchId, match.getStatus());
+                return;
+            }
+
+            // ✅ CLEANUP INTELIGENTE: Corrigir PlayerState de todos os players
+            List<String> allPlayers = new ArrayList<>();
+            allPlayers.addAll(parsePlayerList(match.getTeam1PlayersJson()));
+            allPlayers.addAll(parsePlayerList(match.getTeam2PlayersJson()));
+
+            for (String playerName : allPlayers) {
+                br.com.lolmatchmaking.backend.service.lock.PlayerState state = playerStateService
+                        .getPlayerState(playerName);
+                if (state != br.com.lolmatchmaking.backend.service.lock.PlayerState.IN_GAME) {
+                    log.warn("🧹 [finishGame] ESTADO INCONSISTENTE: {} está no game (MySQL) mas estado Redis é {}",
+                            playerName, state);
+                    // ✅ FORCE SET pois pode estar em qualquer estado
+                    playerStateService.forceSetPlayerState(playerName,
+                            br.com.lolmatchmaking.backend.service.lock.PlayerState.IN_GAME);
+                    log.info("✅ [finishGame] PlayerState de {} corrigido para IN_GAME", playerName);
+                }
+            }
+
             // ✅ REDIS ONLY: Buscar dados do Redis
             Map<String, Object> gameStats = redisGameMonitoring.getGameStats(matchId);
             if (gameStats == null || gameStats.isEmpty()) {
@@ -245,7 +281,8 @@ public class GameInProgressService {
                     ? (int) ((System.currentTimeMillis() - startedAtMillis) / 1000)
                     : 0;
 
-            CustomMatch match = customMatchRepository.findById(matchId).orElse(null);
+            // ✅ Usar variável 'match' já definida acima (linha 237)
+            // CustomMatch match = customMatchRepository.findById(matchId).orElse(null);
             if (match != null) {
                 match.setStatus("completed");
                 match.setWinnerTeam(winnerTeam);

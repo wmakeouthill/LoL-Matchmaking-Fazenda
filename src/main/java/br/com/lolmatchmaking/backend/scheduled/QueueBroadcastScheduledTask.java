@@ -65,7 +65,7 @@ public class QueueBroadcastScheduledTask {
             QueueStatusDTO status = queueManagementService.getQueueStatus(null);
 
             if (status == null) {
-                log.debug("⚠️ [QueueBroadcast] Status nulo, pulando broadcast");
+                log.warn("⚠️ [QueueBroadcast] Status nulo, pulando broadcast");
                 return;
             }
 
@@ -75,7 +75,7 @@ public class QueueBroadcastScheduledTask {
             // 3. Publicar via Pub/Sub (todas instâncias fazem broadcast)
             eventBroadcastService.publishQueueUpdate(status);
 
-            log.debug("✅ [QueueBroadcast] Broadcast automático: {} jogadores em tempo real",
+            log.info("✅ [QueueBroadcast] Broadcast automático executado: {} jogadores em tempo real",
                     status.getPlayersInQueue());
 
         } catch (Exception e) {
