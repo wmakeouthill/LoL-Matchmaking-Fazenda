@@ -62,9 +62,9 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
   isRefreshing = false;
   autoRefreshEnabled = false;
 
-  // Auto-refresh (controlado pelo QueueStateService)
-  private autoRefreshInterval?: number;
-  private readonly AUTO_REFRESH_INTERVAL_MS = 5000; // ✅ CORREÇÃO: 5 segundos
+  // ✅ REMOVIDO: Auto-refresh eliminado - WebSocket push em tempo real (backend faz broadcast a cada 3s)
+  // private autoRefreshInterval?: number;
+  // private readonly AUTO_REFRESH_INTERVAL_MS = 5000;
 
   // Cleanup
   private readonly destroy$ = new Subject<void>();
@@ -200,7 +200,7 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
 
   private cleanup(): void {
     this.queueStateService.stopMySQLSync();
-    this.stopAutoRefresh();
+    // ✅ stopAutoRefresh() removido - WebSocket push em tempo real não precisa de polling
     this.stopQueueTimer();
     this.stopPlayersTimeUpdate();
   }
@@ -279,30 +279,7 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
       this.refreshQueueData();
     } else {
       this.queueStateService.stopMySQLSync();
-      this.stopAutoRefresh();
-    }
-  }
-
-  private startAutoRefresh(): void {
-    if (this.autoRefreshInterval) {
-      clearInterval(this.autoRefreshInterval);
-    }
-
-    console.log('🔄 [Queue] Auto-refresh iniciado (intervalo: {}ms)', this.AUTO_REFRESH_INTERVAL_MS);
-    this.autoRefreshInterval = setInterval(() => {
-      if (this.autoRefreshEnabled && !this.isRefreshing) {
-        // ✅ CORREÇÃO: Só fazer refresh se há mudanças significativas
-        console.log('🔄 [Queue] Auto-refresh executando...');
-        this.refreshData.emit();
-      }
-    }, this.AUTO_REFRESH_INTERVAL_MS);
-  }
-
-  private stopAutoRefresh(): void {
-    if (this.autoRefreshInterval) {
-      clearInterval(this.autoRefreshInterval);
-      this.autoRefreshInterval = undefined;
-      console.log('🛑 [Queue] Auto-refresh parado');
+      console.log('🛑 [Queue] Auto-refresh desabilitado');
     }
   }
 

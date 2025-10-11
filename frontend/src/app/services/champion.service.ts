@@ -58,11 +58,13 @@ export class ChampionService {
   }
 
   /**
-   * Get champion image URL
+   * Get champion image URL by ID (number from LCU)
+   * ✅ Usa image.full do Data Dragon (formato correto: "MasterYi.png")
    */
   getChampionImageUrl(championId: number): string {
     const champion = this.championsCache.get(championId.toString());
     if (champion) {
+      // ✅ Usa image.full diretamente do Data Dragon (ex: "MasterYi.png", "Chogath.png")
       return `${this.DD_BASE_URL}/img/champion/${champion.image.full}`;
     }
     return `${this.DD_BASE_URL}/img/champion/champion_placeholder.png`;
@@ -78,11 +80,12 @@ export class ChampionService {
 
   /**
    * Get champion ID by name (case-insensitive)
+   * Retorna o ID do Data Dragon (ex: "MasterYi" para Master Yi)
    */
   getChampionIdByName(championName: string): string | null {
     if (!championName) return null;
 
-    // Normalizar o nome: remover espaços e caracteres especiais
+    // Normalizar o nome: remover espaços e caracteres especiais para busca
     const normalizedSearchName = championName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
 
     // Procurar no cache
@@ -91,6 +94,7 @@ export class ChampionService {
       const normalizedChampionName = champion.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
 
       if (normalizedChampionId === normalizedSearchName || normalizedChampionName === normalizedSearchName) {
+        // ✅ Retorna o ID original do Data Dragon (sem normalizações)
         return champion.id;
       }
     }
@@ -100,12 +104,38 @@ export class ChampionService {
 
   /**
    * Get champion image URL by name
+   * ✅ CORREÇÃO: Usar image.full do Data Dragon (sem normalizações)
    */
   getChampionImageUrlByName(championName: string): string {
+    if (!championName) {
+      return `${this.DD_BASE_URL}/img/champion/champion_placeholder.png`;
+    }
+
+    // Normalizar o nome para busca: remover espaços e caracteres especiais
+    const normalizedSearchName = championName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+
+    // Procurar campeão no cache
+    for (const champion of this.championsCache.values()) {
+      const normalizedChampionId = champion.id.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+      const normalizedChampionName = champion.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+
+      if (normalizedChampionId === normalizedSearchName || normalizedChampionName === normalizedSearchName) {
+        // ✅ CORREÇÃO: Usar image.full diretamente do Data Dragon (ex: "MasterYi.png")
+        return `${this.DD_BASE_URL}/img/champion/${champion.image.full}`;
+      }
+    }
+
+    // Fallback: tentar com o nome original do Data Dragon
     const championId = this.getChampionIdByName(championName);
     if (championId) {
-      return `${this.DD_BASE_URL}/img/champion/${championId}.png`;
+      // Buscar o campeão pelo ID para pegar o image.full correto
+      for (const champion of this.championsCache.values()) {
+        if (champion.id === championId) {
+          return `${this.DD_BASE_URL}/img/champion/${champion.image.full}`;
+        }
+      }
     }
+
     return `${this.DD_BASE_URL}/img/champion/champion_placeholder.png`;
   }
 

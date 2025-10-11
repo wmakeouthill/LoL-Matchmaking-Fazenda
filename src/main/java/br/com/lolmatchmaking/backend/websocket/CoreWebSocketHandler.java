@@ -71,6 +71,9 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
     private final RedisLCUConnectionService redisLCUConnection;
     private final br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch;
 
+    // ✅ NOVO: Lock services
+    private final br.com.lolmatchmaking.backend.service.lock.PlayerLockService playerLockService;
+
     // ✅ DEPRECIADO: Migrado para Redis (backward compatibility)
     // ✅ REMOVIDO: identifiedPlayers e lastLcuStatus - Redis é fonte única da
     // verdade
@@ -153,6 +156,18 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                     "{\"type\":\"lcu_connection_registered\",\"success\":false,\"error\":\"port e authToken obrigatórios\"}"));
             return;
         }
+
+        // ✅ NOVO: ADQUIRIR PLAYER LOCK (prevenir múltiplas instâncias do mesmo jogador)
+        String lockedSession = playerLockService.acquirePlayerLock(summonerName, session.getId());
+        if (lockedSession == null) {
+            log.warn("❌ [WS] Jogador {} já está conectado em outra sessão", summonerName);
+            session.sendMessage(new TextMessage(
+                    "{\"type\":\"lcu_connection_registered\",\"success\":false,\"error\":\"Você já está conectado em outro dispositivo\"}"));
+            session.close(CloseStatus.NOT_ACCEPTABLE);
+            return;
+        }
+
+        log.info("✅ [WS] Player lock adquirido para: {}", summonerName);
 
         // Registrar no registry
         lcuConnectionRegistry.registerConnection(
@@ -412,6 +427,10 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         if (summonerName != null && !summonerName.isEmpty()) {
             redisLCUConnection.removeLastLcuStatus(summonerName);
             log.debug("✅ [CoreWS] Dados Redis removidos: sessionId={}, summonerName={}", sessionId, summonerName);
+
+            // ✅ NOVO: LIBERAR PLAYER LOCK ao desconectar
+            playerLockService.releasePlayerLock(summonerName);
+            log.info("🔓 [WS] Player lock liberado para: {}", summonerName);
         }
 
         sessionRegistry.remove(sessionId);
@@ -424,6 +443,53 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         // NÃO remover da fila aqui (mesma regra do Node)
     }
 
+    /**
+     * ✅ NOVO: Valida se a sessão WebSocket pertence ao player que está tentando
+     * agir.
+     * 
+     * CRÍTICO: Previne session spoofing (cliente enviando nome de outro player).
+     * Esta é uma camada adicional de segurança além de ownership validation.
+     * 
+     * FLUXO:
+     * 1. Cliente envia payload com summonerName
+     * 2. Backend busca summonerName REAL da sessão (SessionRegistry → Redis)
+     * 3. Compara com summonerName do payload
+     * 4. Se não corresponder → REJEITA (tentativa de spoofing)
+     * 
+     * @param session             WebSocket session
+     * @param claimedSummonerName Nome que o cliente afirma ser
+     * @return true se válido, false se tentativa de spoofing
+     */
+    private boolean validatePlayerSession(WebSocketSession session, String claimedSummonerName) {
+        if (claimedSummonerName == null || claimedSummonerName.isEmpty()) {
+            log.warn("⚠️ [Security] summonerName vazio no payload");
+            return false;
+        }
+
+        // ✅ Buscar summonerName REAL registrado na sessão (SessionRegistry → Redis)
+        String actualSummonerName = sessionRegistry.getSummonerBySession(session.getId());
+
+        if (actualSummonerName == null) {
+            log.warn("⚠️ [Security] Sessão {} não registrada (player não fez register_lcu_connection)",
+                    session.getId());
+            return false;
+        }
+
+        // ✅ Verificar se corresponde (case-insensitive)
+        if (!actualSummonerName.equalsIgnoreCase(claimedSummonerName)) {
+            log.error("🚨 [SECURITY ALERT] Tentativa de session spoofing detectada!");
+            log.error("   Sessão ID: {}", session.getId());
+            log.error("   Player REAL (registrado): {}", actualSummonerName);
+            log.error("   Tentou agir como: {}", claimedSummonerName);
+            log.error("   Ação BLOQUEADA por segurança!");
+            return false;
+        }
+
+        log.debug("✅ [Security] Validação de sessão OK: session={}, player={}",
+                session.getId(), actualSummonerName);
+        return true;
+    }
+
     private void handleJoinQueue(WebSocketSession session, JsonNode root) throws IOException {
         JsonNode data = root.path("data");
         String summonerName = data.path(FIELD_SUMMONER_NAME).asText(null);
@@ -432,6 +498,14 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                     "{\"type\":\"join_queue_result\",\"success\":false,\"error\":\"summonerName required\"}"));
             return;
         }
+
+        // 🔒 NOVO: VALIDAR SESSÃO (prevenir session spoofing)
+        if (!validatePlayerSession(session, summonerName)) {
+            session.sendMessage(new TextMessage(
+                    "{\"type\":\"join_queue_result\",\"success\":false,\"error\":\"unauthorized\"}"));
+            return;
+        }
+
         queueService.joinQueue(summonerName, data.path("region").asText("br1"), data.path(FIELD_PLAYER_ID).asLong(0),
                 data.has(FIELD_CUSTOM_LP) && !data.get(FIELD_CUSTOM_LP).isNull() ? data.get(FIELD_CUSTOM_LP).asInt()
                         : null,
@@ -442,32 +516,52 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
 
     private void handleLeaveQueue(WebSocketSession session, JsonNode root) throws IOException {
         String summonerName = root.path("data").path(FIELD_SUMMONER_NAME).asText(null);
-        if (summonerName != null) {
-            queueService.leaveQueue(summonerName);
-            session.sendMessage(new TextMessage("{\"type\":\"leave_queue_result\",\"success\":true}"));
-            broadcastQueueUpdate();
-        } else {
+        if (summonerName == null) {
             session.sendMessage(new TextMessage(
                     "{\"type\":\"leave_queue_result\",\"success\":false,\"error\":\"summonerName required\"}"));
+            return;
         }
+
+        // 🔒 NOVO: VALIDAR SESSÃO (prevenir session spoofing)
+        if (!validatePlayerSession(session, summonerName)) {
+            session.sendMessage(new TextMessage(
+                    "{\"type\":\"leave_queue_result\",\"success\":false,\"error\":\"unauthorized\"}"));
+            return;
+        }
+
+        queueService.leaveQueue(summonerName);
+        session.sendMessage(new TextMessage("{\"type\":\"leave_queue_result\",\"success\":true}"));
+        broadcastQueueUpdate();
     }
 
     private void handleAcceptDecline(WebSocketSession session, JsonNode root, boolean accept) throws IOException {
         long queuePlayerId = root.path("data").path("queuePlayerId").asLong(-1);
         long matchId = root.path("data").path("matchId").asLong(-1);
         String summonerName = root.path("data").path("summonerName").asText(null);
-        
+
         if (queuePlayerId <= 0) {
             session.sendMessage(new TextMessage(
                     "{\"type\":\"accept_match_result\",\"success\":false,\"error\":\"queuePlayerId invalid\"}"));
             return;
         }
 
+        // 🔒 NOVO: VALIDAR SESSÃO PRIMEIRO (prevenir session spoofing)
+        if (summonerName != null && !summonerName.isEmpty()) {
+            if (!validatePlayerSession(session, summonerName)) {
+                log.warn("🚫 [Security] Sessão tentou aceitar/recusar como outro player");
+                session.sendMessage(new TextMessage(
+                        "{\"type\":\"accept_match_result\",\"success\":false,\"error\":\"session_mismatch\"}"));
+                return;
+            }
+        }
+
         // ✅ CRÍTICO: Validar ownership antes de aceitar/recusar
         if (matchId > 0 && summonerName != null && !summonerName.isEmpty()) {
             if (!redisPlayerMatch.validateOwnership(summonerName, matchId)) {
-                log.warn("🚫 [SEGURANÇA] Jogador {} tentou aceitar/recusar match {} sem ownership!", summonerName, matchId);
-                session.sendMessage(new TextMessage("{\"type\":\"accept_match_result\",\"success\":false,\"error\":\"unauthorized\"}"));
+                log.warn("🚫 [SEGURANÇA] Jogador {} tentou aceitar/recusar match {} sem ownership!", summonerName,
+                        matchId);
+                session.sendMessage(new TextMessage(
+                        "{\"type\":\"accept_match_result\",\"success\":false,\"error\":\"not_in_match\"}"));
                 return;
             }
         }
@@ -535,10 +629,20 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             return;
         }
 
+        // 🔒 NOVO: VALIDAR SESSÃO PRIMEIRO (prevenir session spoofing)
+        if (!validatePlayerSession(session, byPlayer)) {
+            log.warn("🚫 [Security] Sessão tentou executar draft action como outro player");
+            session.sendMessage(
+                    new TextMessage(
+                            "{\"type\":\"draft_action_result\",\"success\":false,\"error\":\"session_mismatch\"}"));
+            return;
+        }
+
         // ✅ CRÍTICO: Validar ownership antes de processar ação
         if (!redisPlayerMatch.validateOwnership(byPlayer, matchId)) {
             log.warn("🚫 [SEGURANÇA] Jogador {} tentou acessar draft de match {} sem ownership!", byPlayer, matchId);
-            session.sendMessage(new TextMessage("{\"type\":\"draft_action_result\",\"success\":false,\"error\":\"unauthorized\"}"));
+            session.sendMessage(
+                    new TextMessage("{\"type\":\"draft_action_result\",\"success\":false,\"error\":\"not_in_match\"}"));
             return;
         }
 
@@ -555,10 +659,19 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             return;
         }
 
+        // 🔒 NOVO: VALIDAR SESSÃO PRIMEIRO (prevenir session spoofing)
+        if (!validatePlayerSession(session, playerId)) {
+            log.warn("🚫 [Security] Sessão tentou confirmar draft como outro player");
+            session.sendMessage(new TextMessage(
+                    "{\"type\":\"draft_confirm_result\",\"success\":false,\"error\":\"session_mismatch\"}"));
+            return;
+        }
+
         // ✅ CRÍTICO: Validar ownership antes de confirmar
         if (!redisPlayerMatch.validateOwnership(playerId, matchId)) {
             log.warn("🚫 [SEGURANÇA] Jogador {} tentou confirmar draft de match {} sem ownership!", playerId, matchId);
-            session.sendMessage(new TextMessage("{\"type\":\"draft_confirm_result\",\"success\":false,\"error\":\"unauthorized\"}"));
+            session.sendMessage(new TextMessage(
+                    "{\"type\":\"draft_confirm_result\",\"success\":false,\"error\":\"not_in_match\"}"));
             return;
         }
 
@@ -569,17 +682,29 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
     private void handleDraftSnapshot(WebSocketSession session, JsonNode root) throws IOException {
         long matchId = root.path("data").path(FIELD_MATCH_ID).asLong(-1);
         String playerId = root.path("data").path(FIELD_PLAYER_ID).asText(null);
-        
+
         if (matchId <= 0) {
             session.sendMessage(new TextMessage("{\"type\":\"draft_snapshot\",\"success\":false}"));
             return;
         }
 
+        // 🔒 NOVO: VALIDAR SESSÃO se playerId fornecido (prevenir session spoofing)
+        if (playerId != null && !playerId.isEmpty()) {
+            if (!validatePlayerSession(session, playerId)) {
+                log.warn("🚫 [Security] Sessão tentou acessar snapshot como outro player");
+                session.sendMessage(
+                        new TextMessage("{\"type\":\"draft_snapshot\",\"success\":false,\"error\":\"session_mismatch\"}"));
+                return;
+            }
+        }
+
         // ✅ CRÍTICO: Validar ownership se playerId fornecido
         if (playerId != null && !playerId.isEmpty()) {
             if (!redisPlayerMatch.validateOwnership(playerId, matchId)) {
-                log.warn("🚫 [SEGURANÇA] Jogador {} tentou acessar snapshot de match {} sem ownership!", playerId, matchId);
-                session.sendMessage(new TextMessage("{\"type\":\"draft_snapshot\",\"success\":false,\"error\":\"unauthorized\"}"));
+                log.warn("🚫 [SEGURANÇA] Jogador {} tentou acessar snapshot de match {} sem ownership!", playerId,
+                        matchId);
+                session.sendMessage(
+                        new TextMessage("{\"type\":\"draft_snapshot\",\"success\":false,\"error\":\"not_in_match\"}"));
                 return;
             }
         }

@@ -32,9 +32,12 @@ public class MatchVoteService {
 
     // ✅ NOVO: Redis para votação distribuída
     private final RedisMatchVoteService redisMatchVote;
-    
+
     // ✅ NOVO: Redis para validação de ownership
     private final br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch;
+
+    // ✅ NOVO: Lock service para prevenir race conditions em votação
+    private final br.com.lolmatchmaking.backend.service.lock.MatchVoteLockService matchVoteLockService;
 
     private static final int VOTES_REQUIRED_FOR_AUTO_LINK = 5;
 
@@ -43,82 +46,98 @@ public class MatchVoteService {
 
     @Transactional
     public Map<String, Object> processVote(Long matchId, Long playerId, Long lcuGameId) {
-        log.info("🗳️ [MatchVoteService] Voto recebido: matchId={}, playerId={}, lcuGameId={}",
-                matchId, playerId, lcuGameId);
-
-        Match match = matchRepository.findById(matchId)
-                .orElseThrow(() -> new IllegalArgumentException("Partida nao encontrada"));
-
-        String status = match.getStatus();
-        boolean validStatus = "in_progress".equals(status) || "game_in_progress".equals(status)
-                || "ended".equals(status);
-        if (!validStatus) {
-            throw new IllegalStateException("Partida nao disponivel para votacao");
-        }
-
-        Player player = playerRepository.findById(playerId)
-                .orElseThrow(() -> new IllegalArgumentException("Jogador nao encontrado"));
-
-        // ✅ CRÍTICO: Validar ownership antes de registrar voto
-        if (!redisPlayerMatch.validateOwnership(player.getSummonerName(), matchId)) {
-            log.warn("🚫 [SEGURANÇA] Jogador {} (ID: {}) tentou votar em match {} sem ownership!", 
-                    player.getSummonerName(), playerId, matchId);
+        // 🔒 NOVO: ADQUIRIR LOCK DE VOTAÇÃO
+        if (!matchVoteLockService.acquireVoteLock(matchId, playerId)) {
+            log.warn("⏭️ [MatchVote] Jogador {} já está processando voto para match {}", playerId, matchId);
             Map<String, Object> errorResult = new HashMap<>();
             errorResult.put("success", false);
-            errorResult.put("error", "Jogador não pertence a esta partida");
+            errorResult.put("error", "Voto já está sendo processado");
             return errorResult;
         }
 
-        // ✅ REDIS ONLY: Registrar voto no Redis (fonte única da verdade, com
-        // distributed lock)
-        boolean redisSuccess = redisMatchVote.registerVote(matchId, playerId, lcuGameId);
+        try {
+            log.info("🗳️ [MatchVoteService] Voto recebido: matchId={}, playerId={}, lcuGameId={}",
+                    matchId, playerId, lcuGameId);
 
-        if (!redisSuccess) {
-            log.warn("⚠️ [MatchVoteService] Falha ao registrar voto no Redis");
-            Map<String, Object> errorResult = new HashMap<>();
-            errorResult.put("success", false);
-            errorResult.put("error", "Falha ao registrar voto");
-            return errorResult;
-        }
+            Match match = matchRepository.findById(matchId)
+                    .orElseThrow(() -> new IllegalArgumentException("Partida nao encontrada"));
 
-        boolean isSpecialUser = specialUserService.isSpecialUser(player.getSummonerName());
+            String status = match.getStatus();
+            boolean validStatus = "in_progress".equals(status) || "game_in_progress".equals(status)
+                    || "ended".equals(status);
+            if (!validStatus) {
+                throw new IllegalStateException("Partida nao disponivel para votacao");
+            }
 
-        if (isSpecialUser) {
-            log.info("🌟 Special user detectado! Voto finaliza a partida imediatamente");
+            Player player = playerRepository.findById(playerId)
+                    .orElseThrow(() -> new IllegalArgumentException("Jogador nao encontrado"));
+
+            // ✅ CRÍTICO: Validar ownership antes de registrar voto
+            if (!redisPlayerMatch.validateOwnership(player.getSummonerName(), matchId)) {
+                log.warn("🚫 [SEGURANÇA] Jogador {} (ID: {}) tentou votar em match {} sem ownership!",
+                        player.getSummonerName(), playerId, matchId);
+                Map<String, Object> errorResult = new HashMap<>();
+                errorResult.put("success", false);
+                errorResult.put("error", "Jogador não pertence a esta partida");
+                return errorResult;
+            }
+
+            // ✅ REDIS ONLY: Registrar voto no Redis (fonte única da verdade, com
+            // distributed lock)
+            boolean redisSuccess = redisMatchVote.registerVote(matchId, playerId, lcuGameId);
+
+            if (!redisSuccess) {
+                log.warn("⚠️ [MatchVoteService] Falha ao registrar voto no Redis");
+                Map<String, Object> errorResult = new HashMap<>();
+                errorResult.put("success", false);
+                errorResult.put("error", "Falha ao registrar voto");
+                return errorResult;
+            }
+
+            boolean isSpecialUser = specialUserService.isSpecialUser(player.getSummonerName());
+
+            if (isSpecialUser) {
+                log.info("🌟 Special user detectado! Voto finaliza a partida imediatamente");
+                Map<String, Object> result = new HashMap<>();
+                result.put("success", true);
+                result.put("shouldLink", true);
+                result.put("lcuGameId", lcuGameId);
+                result.put("specialUserVote", true);
+                result.put("voteCount", 1);
+                result.put("playerVote", lcuGameId);
+                return result;
+            }
+
+            // ✅ NOVO: Buscar contagem do Redis (fonte da verdade)
+            Map<Long, Long> voteCountMap = redisMatchVote.getVoteCounts(matchId);
+            log.info("📊 [MatchVoteService] Contagem atual de votos (Redis): {}", voteCountMap);
+
+            // ✅ NOVO: Verificar se algum lcuGameId atingiu votos necessários
+            Optional<Long> winningLcuGameId = redisMatchVote.getWinningLcuGameId(matchId, VOTES_REQUIRED_FOR_AUTO_LINK);
+
+            int currentVoteCount = voteCountMap.getOrDefault(lcuGameId, 0L).intValue();
+
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);
-            result.put("shouldLink", true);
+            result.put("shouldLink", winningLcuGameId.isPresent());
             result.put("lcuGameId", lcuGameId);
-            result.put("specialUserVote", true);
-            result.put("voteCount", 1);
+            result.put("specialUserVote", false);
+            result.put("voteCount", currentVoteCount);
             result.put("playerVote", lcuGameId);
+            result.put("totalVoters", redisMatchVote.getTotalVoters(matchId));
+
+            if (winningLcuGameId.isPresent()) {
+                log.info("🎯 [MatchVoteService] {} votos atingidos para lcuGameId={}",
+                        VOTES_REQUIRED_FOR_AUTO_LINK, winningLcuGameId.get());
+            }
+
             return result;
+
+        } finally {
+            // 🔓 SEMPRE LIBERAR LOCK
+            matchVoteLockService.releaseVoteLock(matchId, playerId);
+            log.debug("🔓 [MatchVote] Lock de votação liberado: match={}, player={}", matchId, playerId);
         }
-
-        // ✅ NOVO: Buscar contagem do Redis (fonte da verdade)
-        Map<Long, Long> voteCountMap = redisMatchVote.getVoteCounts(matchId);
-        log.info("📊 [MatchVoteService] Contagem atual de votos (Redis): {}", voteCountMap);
-
-        // ✅ NOVO: Verificar se algum lcuGameId atingiu votos necessários
-        Optional<Long> winningLcuGameId = redisMatchVote.getWinningLcuGameId(matchId, VOTES_REQUIRED_FOR_AUTO_LINK);
-
-        int currentVoteCount = voteCountMap.getOrDefault(lcuGameId, 0L).intValue();
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("success", true);
-        result.put("shouldLink", winningLcuGameId.isPresent());
-        result.put("lcuGameId", lcuGameId);
-        result.put("specialUserVote", false);
-        result.put("voteCount", currentVoteCount);
-        result.put("playerVote", lcuGameId);
-        result.put("totalVoters", redisMatchVote.getTotalVoters(matchId));
-
-        if (winningLcuGameId.isPresent()) {
-            log.info("🎯 [MatchVoteService] {} votos atingidos para lcuGameId={}",
-                    VOTES_REQUIRED_FOR_AUTO_LINK, winningLcuGameId.get());
-        }
-
-        return result;
     }
 
     /**
@@ -151,7 +170,15 @@ public class MatchVoteService {
 
     @Transactional
     public void linkMatch(Long matchId, Long lcuGameId, JsonNode lcuMatchData) {
+        // 🔒 NOVO: ADQUIRIR LOCK DE VINCULAÇÃO
+        if (!matchVoteLockService.acquireLinkLock(matchId)) {
+            log.warn("⏭️ [MatchVote] Match {} já está sendo vinculado por outra instância", matchId);
+            throw new IllegalStateException("Match já está sendo vinculado");
+        }
+
         try {
+            log.info("🔗 [MatchVote] Vinculando match {} com LCU game {}", matchId, lcuGameId);
+
             Match match = matchRepository.findById(matchId)
                     .orElseThrow(() -> new IllegalArgumentException("Partida nao encontrada"));
 
@@ -393,9 +420,15 @@ public class MatchVoteService {
                 // Não falhar a vinculação por erro na limpeza do Discord
             }
 
+            log.info("✅ [MatchVote] Vinculação completada com sucesso: match={}, lcuGame={}", matchId, lcuGameId);
+
         } catch (Exception e) {
             log.error("❌ Erro ao vincular partida: {}", e.getMessage(), e);
             throw new IllegalStateException("Erro ao vincular partida", e);
+        } finally {
+            // 🔓 SEMPRE LIBERAR LOCK
+            matchVoteLockService.releaseLinkLock(matchId);
+            log.debug("🔓 [MatchVote] Lock de vinculação liberado: matchId={}", matchId);
         }
     }
 

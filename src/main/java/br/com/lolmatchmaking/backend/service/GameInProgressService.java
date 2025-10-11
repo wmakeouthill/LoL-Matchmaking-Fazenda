@@ -44,6 +44,9 @@ public class GameInProgressService {
     // ✅ NOVO: Redis para ownership (limpar quando jogo termina)
     private final br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch;
 
+    // ✅ NOVO: Lock service para prevenir múltiplas finalizações/cancelamentos
+    private final br.com.lolmatchmaking.backend.service.lock.GameEndLockService gameEndLockService;
+
     // scheduler for monitoring
     private ScheduledExecutorService scheduler;
 
@@ -220,6 +223,12 @@ public class GameInProgressService {
      */
     @Transactional
     public void finishGame(Long matchId, Integer winnerTeam, String endReason) {
+        // 🔒 NOVO: ADQUIRIR LOCK DE FINALIZAÇÃO
+        if (!gameEndLockService.acquireFinishLock(matchId)) {
+            log.warn("⏭️ [GameEnd] Finalização de match {} já está sendo processada por outra instância", matchId);
+            return; // Outra instância já está finalizando
+        }
+
         try {
             log.info("🏁 Finalizando jogo para partida {} - motivo: {}", matchId, endReason);
 
@@ -315,6 +324,10 @@ public class GameInProgressService {
 
         } catch (Exception e) {
             log.error("❌ Erro ao finalizar jogo", e);
+        } finally {
+            // 🔓 SEMPRE LIBERAR LOCK
+            gameEndLockService.releaseFinishLock(matchId);
+            log.debug("🔓 [GameEnd] Lock de finalização liberado: matchId={}", matchId);
         }
     }
 
@@ -323,6 +336,12 @@ public class GameInProgressService {
      */
     @Transactional
     public void cancelGame(Long matchId, String reason) {
+        // 🔒 NOVO: ADQUIRIR LOCK DE CANCELAMENTO
+        if (!gameEndLockService.acquireCancelLock(matchId)) {
+            log.warn("⏭️ [GameEnd] Cancelamento de match {} já está sendo processado por outra instância", matchId);
+            return; // Outra instância já está cancelando
+        }
+
         try {
             log.info("❌ Cancelando jogo para partida {}: {}", matchId, reason);
 
@@ -349,6 +368,10 @@ public class GameInProgressService {
 
         } catch (Exception e) {
             log.error("❌ Erro ao cancelar jogo", e);
+        } finally {
+            // 🔓 SEMPRE LIBERAR LOCK
+            gameEndLockService.releaseCancelLock(matchId);
+            log.debug("🔓 [GameEnd] Lock de cancelamento liberado: matchId={}", matchId);
         }
     }
 

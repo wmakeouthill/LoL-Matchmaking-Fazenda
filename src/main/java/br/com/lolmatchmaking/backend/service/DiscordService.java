@@ -45,6 +45,9 @@ public class DiscordService extends ListenerAdapter {
     private final br.com.lolmatchmaking.backend.service.redis.RedisDiscordMatchService redisDiscordMatch;
     private final br.com.lolmatchmaking.backend.service.redis.RedisSpectatorService redisSpectator;
 
+    // ✅ NOVO: Lock service para prevenir race conditions
+    private final br.com.lolmatchmaking.backend.service.lock.DiscordLockService discordLockService;
+
     private JDA jda;
     private String discordToken;
     private String discordChannelName; // Mudança: usar nome do canal em vez de ID
@@ -244,11 +247,18 @@ public class DiscordService extends ListenerAdapter {
 
     /**
      * ✅ REFATORADO: Busca usuários direto do JDA e cacheia no Redis
+     * ✅ NOVO: Com lock distribuído para prevenir race conditions
      * NUNCA usa HashMap local
      */
     private void loadCurrentUsersInChannel() {
         if (monitoredChannel == null)
             return;
+
+        // 🔒 NOVO: ADQUIRIR LOCK ANTES DE ATUALIZAR
+        if (!discordLockService.acquireDiscordUpdateLock()) {
+            log.debug("⏭️ [DiscordService] Outra instância já está atualizando usuários, pulando");
+            return; // Outra instância está processando
+        }
 
         try {
             List<Member> members = monitoredChannel.getMembers();
@@ -269,6 +279,9 @@ public class DiscordService extends ListenerAdapter {
 
         } catch (Exception e) {
             log.error("❌ [DiscordService] Erro ao carregar usuários do canal", e);
+        } finally {
+            // 🔓 SEMPRE LIBERAR LOCK
+            discordLockService.releaseDiscordUpdateLock();
         }
     }
 
@@ -617,6 +630,16 @@ public class DiscordService extends ListenerAdapter {
             return;
         }
 
+        String userId = event.getUser().getId();
+
+        // 🔒 NOVO: ADQUIRIR LOCK DE VINCULAÇÃO
+        if (!discordLockService.acquireUserLinkLock(userId)) {
+            event.reply("⏳ Você já está processando uma vinculação! Aguarde alguns segundos.")
+                    .setEphemeral(true).queue();
+            log.warn("⚠️ [DiscordService] Tentativa de vinculação duplicada: {}", event.getUser().getAsTag());
+            return;
+        }
+
         try {
             // ✅ NOVO: Adicionar # automaticamente se não tiver
             if (!tagLine.startsWith("#")) {
@@ -624,7 +647,6 @@ public class DiscordService extends ListenerAdapter {
             }
 
             // ✅ NOVO: Salvar vinculação no MySQL
-            String userId = event.getUser().getId();
             String discordUsername = event.getUser().getName();
 
             // Salvar no banco de dados
@@ -649,14 +671,25 @@ public class DiscordService extends ListenerAdapter {
         } catch (Exception e) {
             log.error("❌ [DiscordService] Erro ao vincular conta", e);
             event.reply("❌ Erro ao vincular conta").setEphemeral(true).queue();
+        } finally {
+            // 🔓 SEMPRE LIBERAR LOCK
+            discordLockService.releaseUserLinkLock(userId);
         }
     }
 
     private void handleDesvincularCommand(SlashCommandInteractionEvent event) {
+        String userId = event.getUser().getId();
+
+        // 🔒 NOVO: ADQUIRIR LOCK DE DESVINCULAÇÃO
+        if (!discordLockService.acquireUserLinkLock(userId)) {
+            event.reply("⏳ Você já está processando uma operação! Aguarde alguns segundos.")
+                    .setEphemeral(true).queue();
+            log.warn("⚠️ [DiscordService] Tentativa de desvinculação duplicada: {}", event.getUser().getAsTag());
+            return;
+        }
+
         try {
             // ✅ NOVO: Remover vinculação do MySQL e da memória
-            String userId = event.getUser().getId();
-
             // Buscar vinculação existente para mostrar o que foi removido
             String previousLinked = "nenhum";
             var existingLink = discordLoLLinkService.findByDiscordId(userId);
@@ -688,6 +721,9 @@ public class DiscordService extends ListenerAdapter {
         } catch (Exception e) {
             log.error("❌ [DiscordService] Erro ao desvincular conta", e);
             event.reply("❌ Erro ao desvincular conta").setEphemeral(true).queue();
+        } finally {
+            // 🔓 SEMPRE LIBERAR LOCK
+            discordLockService.releaseUserLinkLock(userId);
         }
     }
 

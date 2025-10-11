@@ -398,20 +398,40 @@ public class DraftController {
 
     // ✅ NOVO: Endpoint para cancelar partida em progresso
     @DeleteMapping("/match/{matchId}/cancel")
-    public ResponseEntity<Map<String, Object>> cancelMatch(@PathVariable Long matchId) {
+    public ResponseEntity<Map<String, Object>> cancelMatch(
+            @PathVariable Long matchId,
+            HttpServletRequest httpRequest) {
         log.info("╔════════════════════════════════════════════════════════════════╗");
         log.info("║  ❌ [DraftController] CANCELANDO PARTIDA                      ║");
         log.info("╚════════════════════════════════════════════════════════════════╝");
         log.info("🎯 Match ID: {}", matchId);
 
         try {
+            // ✅ NOVO: Validar header X-Summoner-Name
+            String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
+            log.info("🔐 [{}] Solicitando cancelamento de match {}", authenticatedSummoner, matchId);
+
+            // ✅ NOVO: Validar ownership (player pertence ao match)
+            if (!redisPlayerMatch.validateOwnership(authenticatedSummoner, matchId)) {
+                log.warn("⚠️ [{}] Tentativa de cancelar match {} sem ownership!", 
+                         authenticatedSummoner, matchId);
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(Map.of(KEY_ERROR, "Você não pertence a esta partida"));
+            }
+
+            // ✅ Service DraftFlowService.cancelMatch() já tem locks internos
             draftFlowService.cancelMatch(matchId);
 
-            log.info("✅ [DraftController] Partida cancelada com sucesso");
+            log.info("✅ [DraftController] Partida {} cancelada com sucesso por {}", 
+                     matchId, authenticatedSummoner);
             return ResponseEntity.ok(Map.of(
                     KEY_SUCCESS, true,
                     "message", "Partida cancelada com sucesso"));
 
+        } catch (IllegalArgumentException e) {
+            log.warn("⚠️ Header X-Summoner-Name ausente em cancelamento de match");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of(KEY_ERROR, "Header X-Summoner-Name obrigatório"));
         } catch (Exception e) {
             log.error("❌ [DraftController] Erro ao cancelar partida: {}", e.getMessage(), e);
             return ResponseEntity.status(500).body(Map.of(

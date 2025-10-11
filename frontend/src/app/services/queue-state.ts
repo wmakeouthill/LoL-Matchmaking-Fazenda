@@ -52,65 +52,47 @@ export class QueueStateService {
     averageWaitTime: 0
   });
 
-  // Sistema de sincronização via polling para consultar a tabela queue_players
-  private pollingInterval: any = null;
-  private readonly POLLING_INTERVAL_MS = 15000; // Polling a cada 15 segundos
+  // ✅ REMOVIDO: Polling eliminado - 100% WebSocket agora
   private currentPlayerData: any = null;
   private lastIdentifiers: string[] = []; // ✅ NOVO: Para evitar spam de logs
 
   constructor(private apiService: ApiService) {
-    console.log('🔄 QueueStateService inicializado com sincronização MySQL (tabela queue_players)');
+    console.log('✅ QueueStateService inicializado - 100% WebSocket (sem polling)');
   }
 
   /**
-   * REGRA: Iniciar sincronização via polling para consultar a tabela queue_players
-   * ✅ MUDANÇA: Só fazer polling se explicitamente solicitado
+   * ✅ NOVO: Sincronização inicial (uma vez) + WebSocket listeners
+   * 
+   * Agora usa apenas WebSocket para atualizações em tempo real.
+   * Backend faz broadcast automático a cada 3s via Redis Pub/Sub.
    */
   startMySQLSync(currentPlayer?: any): void {
     this.currentPlayerData = currentPlayer;
 
-    if (this.pollingInterval) {
-      clearInterval(this.pollingInterval);
-    }
-
-    // Executar sincronização imediatamente
+    // Executar sincronização inicial (apenas uma vez)
     this.syncQueueFromDatabase();
 
-    // ✅ MUDANÇA: Só configurar polling se explicitamente habilitado
-    // O controle de polling será feito pelo componente Queue
-    console.log(`🔄 [QueueState] Sincronização MySQL iniciada (sem polling automático)`);
+    console.log(`✅ [QueueState] Sincronização inicial completa - aguardando WebSocket updates`);
   }
 
   /**
-   * ✅ REMOVIDO: Polling automático (usar apenas WebSocket)
-   * Auto-refresh desnecessário - WebSocket já notifica em tempo real
-   *
-   * O backend já faz broadcast via WebSocket quando:
-   * - Alguém entra na fila (queue_update)
-   * - Alguém sai da fila (queue_update)
-   * - Partida é encontrada (match_found)
-   *
-   * Polling forçaria requisições HTTP a cada 5s desnecessariamente.
-   * Mantendo método apenas para compatibilidade, mas sem efeito.
+   * ✅ REMOVIDO: Polling completamente eliminado
+   * 
+   * Backend agora faz broadcast automático a cada 3s via:
+   * - QueueBroadcastScheduledTask (@Scheduled)
+   * - Redis Pub/Sub
+   * - WebSocket push
+   * 
+   * Fila funciona em TEMPO REAL igual Discord!
    */
   startPolling(): void {
-    console.log('⚠️ [QueueState] startPolling() desabilitado - usando apenas WebSocket para atualizações em tempo real');
-    // ❌ NÃO iniciar polling - WebSocket é suficiente
-    // ❌ Comentado: Evita requisições desnecessárias a cada 5s
-    // if (this.pollingInterval) {
-    //   clearInterval(this.pollingInterval);
-    // }
-    // this.pollingInterval = setInterval(() => {
-    //   this.syncQueueFromDatabase();
-    // }, this.POLLING_INTERVAL_MS);
+    console.log('✅ [QueueState] Polling desabilitado - WebSocket 100% ativo (tempo real)');
+    // ✅ Polling removido - backend faz broadcast automático a cada 3s
   }
 
   stopMySQLSync(): void {
-    if (this.pollingInterval) {
-      clearInterval(this.pollingInterval);
-      this.pollingInterval = null;
-      console.log('🛑 [QueueState] Sincronização MySQL parada');
-    }
+    console.log('✅ [QueueState] Sync parado - WebSocket continua ativo');
+    // Sem polling para parar
   }
 
   /**
