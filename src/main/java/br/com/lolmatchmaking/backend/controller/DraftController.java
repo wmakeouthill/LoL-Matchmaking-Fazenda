@@ -116,12 +116,35 @@ public class DraftController {
     }
 
     @GetMapping("/match/{matchId}/draft-session")
-    public ResponseEntity<Map<String, Object>> getDraftSession(@PathVariable Long matchId) {
-        Map<String, Object> snapshot = draftFlowService.snapshot(matchId);
-        if (snapshot.containsKey("exists") && !Boolean.TRUE.equals(snapshot.get("exists"))) {
-            return ResponseEntity.notFound().build();
+    public ResponseEntity<Map<String, Object>> getDraftSession(
+            @PathVariable Long matchId,
+            HttpServletRequest httpRequest) {
+
+        try {
+            // ✅ 1. HEADER VALIDATION
+            String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
+
+            // ✅ 2. OWNERSHIP VALIDATION
+            if (!redisPlayerMatch.validateOwnership(authenticatedSummoner, matchId)) {
+                log.warn("⚠️ [{}] Tentou acessar draft de partida {} sem ownership",
+                        authenticatedSummoner, matchId);
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(Map.of("error", "Você não pertence a esta partida"));
+            }
+
+            // ✅ 3. GET DATA (sem lock, é read-only)
+            Map<String, Object> snapshot = draftFlowService.snapshot(matchId);
+
+            if (snapshot.containsKey("exists") && !Boolean.TRUE.equals(snapshot.get("exists"))) {
+                return ResponseEntity.notFound().build();
+            }
+
+            return ResponseEntity.ok(snapshot);
+
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("error", "Header X-Summoner-Name obrigatório"));
         }
-        return ResponseEntity.ok(snapshot);
     }
 
     /**
@@ -413,8 +436,8 @@ public class DraftController {
 
             // ✅ NOVO: Validar ownership (player pertence ao match)
             if (!redisPlayerMatch.validateOwnership(authenticatedSummoner, matchId)) {
-                log.warn("⚠️ [{}] Tentativa de cancelar match {} sem ownership!", 
-                         authenticatedSummoner, matchId);
+                log.warn("⚠️ [{}] Tentativa de cancelar match {} sem ownership!",
+                        authenticatedSummoner, matchId);
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                         .body(Map.of(KEY_ERROR, "Você não pertence a esta partida"));
             }
@@ -422,8 +445,8 @@ public class DraftController {
             // ✅ Service DraftFlowService.cancelMatch() já tem locks internos
             draftFlowService.cancelMatch(matchId);
 
-            log.info("✅ [DraftController] Partida {} cancelada com sucesso por {}", 
-                     matchId, authenticatedSummoner);
+            log.info("✅ [DraftController] Partida {} cancelada com sucesso por {}",
+                    matchId, authenticatedSummoner);
             return ResponseEntity.ok(Map.of(
                     KEY_SUCCESS, true,
                     "message", "Partida cancelada com sucesso"));
