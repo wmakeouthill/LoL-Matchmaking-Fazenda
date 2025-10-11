@@ -629,6 +629,25 @@ export class App implements OnInit, OnDestroy {
           this.queueStatus = message.status;
         }
         break;
+
+      case 'queue_update':
+        // ✅ NOVO: Processar queue_update do Redis Pub/Sub
+        console.log('📊 [App] queue_update recebido via Pub/Sub:', message);
+        if (message.data && Array.isArray(message.data)) {
+          // Atualizar lista de jogadores na fila
+          this.queueStatus = {
+            ...this.queueStatus,
+            playersInQueue: message.data.length,
+            playersInQueueList: message.data,
+            isActive: true
+          };
+          console.log('✅ [App] queueStatus atualizado via queue_update:', {
+            playersInQueue: this.queueStatus.playersInQueue,
+            playersCount: message.data.length
+          });
+        }
+        break;
+
       case 'backend_connection_success':
         console.log('🔌 [App] Backend conectado');
         break;

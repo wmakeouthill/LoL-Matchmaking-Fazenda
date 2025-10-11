@@ -43,12 +43,14 @@ public class GameLockService {
     private static final String GAME_CONFIRM_LOCK_PREFIX = "lock:game:";
     private static final String GAME_END_LOCK_PREFIX = "lock:game:";
     private static final String GAME_STATE_PREFIX = "state:game:";
-    
+
     // TTLs
-    private static final Duration VOTE_LOCK_TTL = Duration.ofMinutes(5); // 5 minutos para votar
+    // ✅ CORRIGIDO: 5min → 30s (votação dura segundos, não minutos)
+    private static final Duration VOTE_LOCK_TTL = Duration.ofSeconds(30); // 30 segundos para votar
     private static final Duration CONFIRM_LOCK_TTL = Duration.ofSeconds(30); // 30 segundos para confirmar
     private static final Duration END_LOCK_TTL = Duration.ofSeconds(10); // 10 segundos para encerrar
-    private static final Duration VOTE_STATE_TTL = Duration.ofMinutes(10); // 10 minutos de votação
+    // ✅ CORRIGIDO: 10min → 2min (cleanup mais rápido se órfão)
+    private static final Duration VOTE_STATE_TTL = Duration.ofMinutes(2); // 2 minutos de votação
 
     /**
      * ✅ Adquire lock de winner vote
@@ -60,19 +62,19 @@ public class GameLockService {
      */
     public boolean acquireWinnerVoteLock(Long matchId) {
         String key = GAME_VOTE_LOCK_PREFIX + matchId + ":winner_vote";
-        
+
         try {
             Boolean acquired = redisTemplate.opsForValue()
-                .setIfAbsent(key, "voting", VOTE_LOCK_TTL);
-            
+                    .setIfAbsent(key, "voting", VOTE_LOCK_TTL);
+
             if (Boolean.TRUE.equals(acquired)) {
                 log.info("🔒 [GameLock] Winner vote lock adquirido: match {}", matchId);
                 return true;
             }
-            
+
             log.warn("⚠️ [GameLock] Winner vote já em andamento: match {}", matchId);
             return false;
-            
+
         } catch (Exception e) {
             log.error("❌ [GameLock] Erro ao adquirir winner vote lock para match {}", matchId, e);
             return false;
@@ -86,14 +88,14 @@ public class GameLockService {
      */
     public void releaseWinnerVoteLock(Long matchId) {
         String key = GAME_VOTE_LOCK_PREFIX + matchId + ":winner_vote";
-        
+
         try {
             Boolean deleted = redisTemplate.delete(key);
-            
+
             if (Boolean.TRUE.equals(deleted)) {
                 log.info("🔓 [GameLock] Winner vote lock liberado: match {}", matchId);
             }
-            
+
         } catch (Exception e) {
             log.error("❌ [GameLock] Erro ao liberar winner vote lock de match {}", matchId, e);
         }
@@ -104,43 +106,43 @@ public class GameLockService {
      * 
      * Thread-safe: Usa lock para garantir consistência.
      * 
-     * @param matchId ID da partida
+     * @param matchId      ID da partida
      * @param summonerName Nome do jogador
-     * @param votedWinner Time vencedor votado (1 ou 2)
+     * @param votedWinner  Time vencedor votado (1 ou 2)
      * @return true se voto registrado, false se já votou ou erro
      */
     public boolean registerVote(Long matchId, String summonerName, int votedWinner) {
         String voteKey = GAME_STATE_PREFIX + matchId + ":votes:" + summonerName;
         String lockKey = GAME_VOTE_LOCK_PREFIX + matchId + ":vote:" + summonerName;
-        
+
         try {
             // Lock individual para este jogador votar
             Boolean lockAcquired = redisTemplate.opsForValue()
-                .setIfAbsent(lockKey, "voting", Duration.ofSeconds(5));
-            
+                    .setIfAbsent(lockKey, "voting", Duration.ofSeconds(5));
+
             if (Boolean.FALSE.equals(lockAcquired)) {
                 log.warn("⚠️ [GameLock] Jogador {} já está votando em match {}", summonerName, matchId);
                 return false;
             }
-            
+
             try {
                 // Verificar se já votou
                 if (redisTemplate.hasKey(voteKey)) {
                     log.warn("⚠️ [GameLock] Jogador {} já votou em match {}", summonerName, matchId);
                     return false;
                 }
-                
+
                 // Registrar voto
                 redisTemplate.opsForValue().set(voteKey, String.valueOf(votedWinner), VOTE_STATE_TTL);
-                
-                log.info("✅ [GameLock] Voto registrado: match {} {} votou em time {}", 
-                         matchId, summonerName, votedWinner);
+
+                log.info("✅ [GameLock] Voto registrado: match {} {} votou em time {}",
+                        matchId, summonerName, votedWinner);
                 return true;
-                
+
             } finally {
                 redisTemplate.delete(lockKey);
             }
-            
+
         } catch (Exception e) {
             log.error("❌ [GameLock] Erro ao registrar voto de {} em match {}", summonerName, matchId, e);
             return false;
@@ -155,32 +157,34 @@ public class GameLockService {
      */
     public int[] countVotes(Long matchId) {
         String pattern = GAME_STATE_PREFIX + matchId + ":votes:*";
-        
+
         try {
             Set<String> voteKeys = redisTemplate.keys(pattern);
-            
+
             int votesTeam1 = 0;
             int votesTeam2 = 0;
-            
+
             if (voteKeys != null) {
                 for (String key : voteKeys) {
                     Object vote = redisTemplate.opsForValue().get(key);
                     if (vote != null) {
                         int team = Integer.parseInt(vote.toString());
-                        if (team == 1) votesTeam1++;
-                        else if (team == 2) votesTeam2++;
+                        if (team == 1)
+                            votesTeam1++;
+                        else if (team == 2)
+                            votesTeam2++;
                     }
                 }
             }
-            
-            log.debug("📊 [GameLock] Contagem de votos match {}: Team1={}, Team2={}", 
-                     matchId, votesTeam1, votesTeam2);
-            
-            return new int[]{votesTeam1, votesTeam2};
-            
+
+            log.debug("📊 [GameLock] Contagem de votos match {}: Team1={}, Team2={}",
+                    matchId, votesTeam1, votesTeam2);
+
+            return new int[] { votesTeam1, votesTeam2 };
+
         } catch (Exception e) {
             log.error("❌ [GameLock] Erro ao contar votos de match {}", matchId, e);
-            return new int[]{0, 0};
+            return new int[] { 0, 0 };
         }
     }
 
@@ -192,18 +196,18 @@ public class GameLockService {
      */
     public boolean acquireConfirmLock(Long matchId) {
         String key = GAME_CONFIRM_LOCK_PREFIX + matchId + ":confirm";
-        
+
         try {
             Boolean acquired = redisTemplate.opsForValue()
-                .setIfAbsent(key, "confirming", CONFIRM_LOCK_TTL);
-            
+                    .setIfAbsent(key, "confirming", CONFIRM_LOCK_TTL);
+
             if (Boolean.TRUE.equals(acquired)) {
                 log.info("🔒 [GameLock] Confirm lock adquirido: match {}", matchId);
                 return true;
             }
-            
+
             return false;
-            
+
         } catch (Exception e) {
             log.error("❌ [GameLock] Erro ao adquirir confirm lock para match {}", matchId, e);
             return false;
@@ -217,14 +221,14 @@ public class GameLockService {
      */
     public void releaseConfirmLock(Long matchId) {
         String key = GAME_CONFIRM_LOCK_PREFIX + matchId + ":confirm";
-        
+
         try {
             Boolean deleted = redisTemplate.delete(key);
-            
+
             if (Boolean.TRUE.equals(deleted)) {
                 log.info("🔓 [GameLock] Confirm lock liberado: match {}", matchId);
             }
-            
+
         } catch (Exception e) {
             log.error("❌ [GameLock] Erro ao liberar confirm lock de match {}", matchId, e);
         }
@@ -240,19 +244,19 @@ public class GameLockService {
      */
     public boolean acquireEndGameLock(Long matchId) {
         String key = GAME_END_LOCK_PREFIX + matchId + ":end";
-        
+
         try {
             Boolean acquired = redisTemplate.opsForValue()
-                .setIfAbsent(key, "ending", END_LOCK_TTL);
-            
+                    .setIfAbsent(key, "ending", END_LOCK_TTL);
+
             if (Boolean.TRUE.equals(acquired)) {
                 log.info("🔒 [GameLock] End game lock adquirido: match {}", matchId);
                 return true;
             }
-            
+
             log.warn("⚠️ [GameLock] End game já em andamento: match {}", matchId);
             return false;
-            
+
         } catch (Exception e) {
             log.error("❌ [GameLock] Erro ao adquirir end game lock para match {}", matchId, e);
             return false;
@@ -266,14 +270,14 @@ public class GameLockService {
      */
     public void releaseEndGameLock(Long matchId) {
         String key = GAME_END_LOCK_PREFIX + matchId + ":end";
-        
+
         try {
             Boolean deleted = redisTemplate.delete(key);
-            
+
             if (Boolean.TRUE.equals(deleted)) {
                 log.info("🔓 [GameLock] End game lock liberado: match {}", matchId);
             }
-            
+
         } catch (Exception e) {
             log.error("❌ [GameLock] Erro ao liberar end game lock de match {}", matchId, e);
         }
@@ -291,20 +295,20 @@ public class GameLockService {
             releaseWinnerVoteLock(matchId);
             releaseConfirmLock(matchId);
             releaseEndGameLock(matchId);
-            
+
             // Limpar todos os votos
             String votePattern = GAME_STATE_PREFIX + matchId + ":votes:*";
             Set<String> voteKeys = redisTemplate.keys(votePattern);
             if (voteKeys != null && !voteKeys.isEmpty()) {
                 redisTemplate.delete(voteKeys);
             }
-            
+
             // Limpar resultado
             String resultKey = GAME_STATE_PREFIX + matchId + ":result";
             redisTemplate.delete(resultKey);
-            
+
             log.info("🗑️ [GameLock] Todos os locks e votos limpos: match {}", matchId);
-            
+
         } catch (Exception e) {
             log.error("❌ [GameLock] Erro ao limpar locks de match {}", matchId, e);
         }
@@ -313,16 +317,16 @@ public class GameLockService {
     /**
      * ✅ Define resultado final da partida
      * 
-     * @param matchId ID da partida
+     * @param matchId    ID da partida
      * @param winnerTeam Time vencedor (1 ou 2)
      */
     public void setGameResult(Long matchId, int winnerTeam) {
         String key = GAME_STATE_PREFIX + matchId + ":result";
-        
+
         try {
             redisTemplate.opsForValue().set(key, String.valueOf(winnerTeam), Duration.ofHours(24));
             log.info("✅ [GameLock] Resultado definido: match {} → Time {} venceu", matchId, winnerTeam);
-            
+
         } catch (Exception e) {
             log.error("❌ [GameLock] Erro ao definir resultado de match {}", matchId, e);
         }
@@ -336,15 +340,14 @@ public class GameLockService {
      */
     public int getGameResult(Long matchId) {
         String key = GAME_STATE_PREFIX + matchId + ":result";
-        
+
         try {
             Object result = redisTemplate.opsForValue().get(key);
             return result != null ? Integer.parseInt(result.toString()) : -1;
-            
+
         } catch (Exception e) {
             log.error("❌ [GameLock] Erro ao obter resultado de match {}", matchId, e);
             return -1;
         }
     }
 }
-

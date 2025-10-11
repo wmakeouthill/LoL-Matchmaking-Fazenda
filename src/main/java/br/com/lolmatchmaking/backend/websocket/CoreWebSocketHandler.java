@@ -160,11 +160,42 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         // ✅ NOVO: ADQUIRIR PLAYER LOCK (prevenir múltiplas instâncias do mesmo jogador)
         String lockedSession = playerLockService.acquirePlayerLock(summonerName, session.getId());
         if (lockedSession == null) {
-            log.warn("❌ [WS] Jogador {} já está conectado em outra sessão", summonerName);
-            session.sendMessage(new TextMessage(
-                    "{\"type\":\"lcu_connection_registered\",\"success\":false,\"error\":\"Você já está conectado em outro dispositivo\"}"));
-            session.close(CloseStatus.NOT_ACCEPTABLE);
-            return;
+            // ✅ CORREÇÃO: Verificar se sessão antiga ainda existe
+            String oldSessionId = playerLockService.getPlayerSession(summonerName);
+
+            if (oldSessionId != null) {
+                // Verificar se sessão antiga ainda está ativa no SessionRegistry
+                boolean oldSessionExists = sessionRegistry.getSession(oldSessionId) != null;
+
+                if (!oldSessionExists) {
+                    // ✅ Sessão antiga não existe mais, forçar release e tentar novamente
+                    log.warn("⚠️ [WS] Jogador {} tinha lock de sessão antiga {} (não existe mais), forçando release...",
+                            summonerName, oldSessionId);
+
+                    playerLockService.forceReleasePlayerLock(summonerName);
+
+                    // Tentar adquirir lock novamente
+                    lockedSession = playerLockService.acquirePlayerLock(summonerName, session.getId());
+
+                    if (lockedSession == null) {
+                        log.error("❌ [WS] Falha ao adquirir lock mesmo após force release: {}", summonerName);
+                        session.sendMessage(new TextMessage(
+                                "{\"type\":\"lcu_connection_registered\",\"success\":false,\"error\":\"Erro ao reconectar\"}"));
+                        session.close(CloseStatus.SERVER_ERROR);
+                        return;
+                    }
+
+                    log.info("✅ [WS] Lock readquirido após force release: {}", summonerName);
+
+                } else {
+                    // Sessão antiga ainda existe - REALMENTE duplicado
+                    log.warn("❌ [WS] Jogador {} JÁ está conectado em sessão ativa: {}", summonerName, oldSessionId);
+                    session.sendMessage(new TextMessage(
+                            "{\"type\":\"lcu_connection_registered\",\"success\":false,\"error\":\"Você já está conectado em outro dispositivo\"}"));
+                    session.close(CloseStatus.NOT_ACCEPTABLE);
+                    return;
+                }
+            }
         }
 
         log.info("✅ [WS] Player lock adquirido para: {}", summonerName);
@@ -693,7 +724,8 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             if (!validatePlayerSession(session, playerId)) {
                 log.warn("🚫 [Security] Sessão tentou acessar snapshot como outro player");
                 session.sendMessage(
-                        new TextMessage("{\"type\":\"draft_snapshot\",\"success\":false,\"error\":\"session_mismatch\"}"));
+                        new TextMessage(
+                                "{\"type\":\"draft_snapshot\",\"success\":false,\"error\":\"session_mismatch\"}"));
                 return;
             }
         }

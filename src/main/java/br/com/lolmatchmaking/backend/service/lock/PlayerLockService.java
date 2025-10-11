@@ -38,9 +38,12 @@ public class PlayerLockService {
     // Prefixo de chave
     private static final String PLAYER_LOCK_PREFIX = "lock:player:";
 
-    // TTL padrão: 30 minutos (tempo máximo que jogador pode ficar conectado sem
-    // atividade)
-    private static final Duration LOCK_TTL = Duration.ofMinutes(30);
+    // ✅ CORRIGIDO: TTL de 4 horas (sessão de jogo completa)
+    // Com force release inteligente, pode ser maior sem riscos:
+    // - Lock liberado ao fechar Electron (afterConnectionClosed)
+    // - Force release se sessão antiga não existe (reconexão)
+    // - Player pode ficar em draft + game por 1-2 horas
+    private static final Duration LOCK_TTL = Duration.ofHours(4);
 
     /**
      * ✅ Adquire lock para o jogador, vinculando-o a uma sessão

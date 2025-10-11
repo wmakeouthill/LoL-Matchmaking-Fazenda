@@ -989,6 +989,15 @@ public class QueueManagementService {
             botPlayer = queuePlayerRepository.save(botPlayer);
             log.info("✅ [addBotToQueue] Bot salvo no SQL: {}", botName);
 
+            // ✅ CRÍTICO: SETAR PlayerState para IN_QUEUE
+            // Sem isso, o bot é filtrado em processQueue() e nunca entra em partida!
+            if (!playerStateService.setPlayerState(botName, PlayerState.IN_QUEUE)) {
+                log.error("❌ [addBotToQueue] Falha ao atualizar PlayerState do bot, removendo...");
+                queuePlayerRepository.delete(botPlayer);
+                throw new RuntimeException("Falha ao setar PlayerState do bot");
+            }
+            log.info("✅ [addBotToQueue] PlayerState do bot {} setado para IN_QUEUE", botName);
+
             // Atualizar posições
             updateQueuePositions();
 

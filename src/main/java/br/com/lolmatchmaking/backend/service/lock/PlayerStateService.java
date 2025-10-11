@@ -46,9 +46,11 @@ public class PlayerStateService {
     private static final String STATE_PREFIX = "state:player:";
     private static final String STATE_LOCK_PREFIX = "lock:state:";
 
-    // TTL do estado: 2 horas (tempo máximo que jogador pode permanecer em um
-    // estado)
-    private static final Duration STATE_TTL = Duration.ofHours(2);
+    // ✅ CORRIGIDO: TTL de 4 horas (ALINHADO com PlayerLock)
+    // CRÍTICO: Deve ser >= PlayerLock TTL para evitar estado expirar antes da
+    // sessão
+    // Player pode ficar conectado por horas (draft longo + game longo)
+    private static final Duration STATE_TTL = Duration.ofHours(4);
 
     // TTL do lock de mudança de estado: 5 segundos (tempo para processar mudança)
     private static final Duration STATE_LOCK_TTL = Duration.ofSeconds(5);
