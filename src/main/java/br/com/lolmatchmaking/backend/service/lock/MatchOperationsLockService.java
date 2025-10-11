@@ -50,6 +50,7 @@ public class MatchOperationsLockService {
     private static final String GAME_START_LOCK_PREFIX = "lock:game:start:";
     private static final String RESULT_SAVE_LOCK_PREFIX = "lock:result:save:";
     private static final String TIMEOUT_LOCK_PREFIX = "lock:timeout:process:";
+    private static final String ALL_ACCEPTED_LOCK_PREFIX = "lock:match:all_accepted:"; // ✅ NOVO
 
     // TTLs
     private static final Duration ACCEPTANCE_LOCK_TTL = Duration.ofSeconds(5);
@@ -57,6 +58,7 @@ public class MatchOperationsLockService {
     private static final Duration START_LOCK_TTL = Duration.ofSeconds(10);
     private static final Duration SAVE_LOCK_TTL = Duration.ofSeconds(10);
     private static final Duration TIMEOUT_LOCK_TTL = Duration.ofSeconds(5);
+    private static final Duration ALL_ACCEPTED_LOCK_TTL = Duration.ofSeconds(30); // ✅ NOVO
 
     // ═══════════════════════════════════════════════════════════
     // LOCKS DE ACEITAÇÃO/RECUSA
@@ -278,6 +280,54 @@ public class MatchOperationsLockService {
     }
 
     // ═══════════════════════════════════════════════════════════
+    // ✅ NOVO: LOCKS DE ACEITAÇÃO COMPLETA (TODOS ACEITARAM)
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * ✅ NOVO: Adquire lock de processamento de aceitação completa
+     * 
+     * Previne:
+     * - Múltiplas instâncias processando "todos aceitaram" simultaneamente
+     * - Draft sendo iniciado múltiplas vezes
+     * - Race condition ao remover jogadores da fila
+     * 
+     * ONDE USAR:
+     * - MatchFoundService.handleAllPlayersAccepted() (INÍCIO do método)
+     * 
+     * @param matchId ID da partida
+     * @return true se conseguiu adquirir lock
+     */
+    public boolean acquireAllAcceptedProcessingLock(Long matchId) {
+        String key = ALL_ACCEPTED_LOCK_PREFIX + matchId;
+
+        try {
+            Boolean acquired = redisTemplate.opsForValue()
+                    .setIfAbsent(key, "processing_all_accepted", ALL_ACCEPTED_LOCK_TTL);
+
+            if (Boolean.TRUE.equals(acquired)) {
+                log.info("🔒 [MatchOps] AllAccepted processing lock adquirido: match {}", matchId);
+                return true;
+            }
+
+            log.warn("⚠️ [MatchOps] AllAccepted já está sendo processado: match {}", matchId);
+            return false;
+
+        } catch (Exception e) {
+            log.error("❌ [MatchOps] Erro ao adquirir all_accepted lock", e);
+            return false;
+        }
+    }
+
+    /**
+     * ✅ Libera lock de aceitação completa
+     */
+    public void releaseAllAcceptedProcessingLock(Long matchId) {
+        String key = ALL_ACCEPTED_LOCK_PREFIX + matchId;
+        redisTemplate.delete(key);
+        log.info("🔓 [MatchOps] AllAccepted processing lock liberado: match {}", matchId);
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // LOCKS DE PROCESSAMENTO DE TIMEOUT
     // ═══════════════════════════════════════════════════════════
 
@@ -338,6 +388,7 @@ public class MatchOperationsLockService {
             releaseGameStartLock(matchId);
             releaseResultSaveLock(matchId);
             releaseTimeoutProcessingLock(matchId);
+            releaseAllAcceptedProcessingLock(matchId); // ✅ NOVO
 
             log.info("🗑️ [MatchOps] Todos os locks de operações limpos: match {}", matchId);
 
@@ -361,12 +412,14 @@ public class MatchOperationsLockService {
             String gameStartKey = GAME_START_LOCK_PREFIX + matchId;
             String resultSaveKey = RESULT_SAVE_LOCK_PREFIX + matchId;
             String timeoutKey = TIMEOUT_LOCK_PREFIX + matchId;
+            String allAcceptedKey = ALL_ACCEPTED_LOCK_PREFIX + matchId; // ✅ NOVO
 
             return Boolean.TRUE.equals(redisTemplate.hasKey(cancelKey))
                     || Boolean.TRUE.equals(redisTemplate.hasKey(draftStartKey))
                     || Boolean.TRUE.equals(redisTemplate.hasKey(gameStartKey))
                     || Boolean.TRUE.equals(redisTemplate.hasKey(resultSaveKey))
-                    || Boolean.TRUE.equals(redisTemplate.hasKey(timeoutKey));
+                    || Boolean.TRUE.equals(redisTemplate.hasKey(timeoutKey))
+                    || Boolean.TRUE.equals(redisTemplate.hasKey(allAcceptedKey)); // ✅ NOVO
 
         } catch (Exception e) {
             log.error("❌ [MatchOps] Erro ao verificar locks ativos", e);
