@@ -2,7 +2,7 @@ package br.com.lolmatchmaking.backend.controller;
 
 import br.com.lolmatchmaking.backend.domain.entity.*;
 import br.com.lolmatchmaking.backend.domain.repository.*;
-import br.com.lolmatchmaking.backend.service.MatchmakingService;
+import br.com.lolmatchmaking.backend.service.QueueManagementService;
 import br.com.lolmatchmaking.backend.service.PlayerService;
 import br.com.lolmatchmaking.backend.service.GameInProgressService;
 import lombok.RequiredArgsConstructor;
@@ -28,7 +28,8 @@ public class DebugController {
     private final DiscordLolLinkRepository discordLolLinkRepository;
     private final EventInboxRepository eventInboxRepository;
     private final SettingRepository settingRepository;
-    private final MatchmakingService matchmakingService;
+    // ✅ MIGRADO: QueueManagementService (Redis-only) ao invés de MatchmakingService
+    private final QueueManagementService queueManagementService;
     private final PlayerService playerService;
     private final GameInProgressService gameInProgressService;
 
@@ -90,9 +91,13 @@ public class DebugController {
             tablesInfo.put("settings", Map.of(
                     "total", settingsCount));
 
-            // Estatísticas do matchmaking
-            Map<String, Object> matchmakingStats = matchmakingService.getMatchmakingStats();
-            tablesInfo.put("matchmaking", matchmakingStats);
+            // ✅ MIGRADO: Estatísticas do matchmaking via QueueManagementService
+            var queueStatus = queueManagementService.getQueueStatus(null);
+            tablesInfo.put("matchmaking", Map.of(
+                    "queueSize", queueStatus.getPlayersInQueue(),
+                    "avgWaitTime", queueStatus.getAverageWaitTime(),
+                    "estimatedMatchTime", queueStatus.getEstimatedMatchTime(),
+                    "isActive", queueStatus.isActive()));
 
             tablesInfo.put("timestamp", Instant.now().toString());
 
@@ -177,8 +182,13 @@ public class DebugController {
                     "events", eventInboxRepository.count(),
                     "settings", settingRepository.count()));
 
-            // Estatísticas do matchmaking
-            stats.put("matchmaking", matchmakingService.getMatchmakingStats());
+            // ✅ MIGRADO: Estatísticas do matchmaking via QueueManagementService
+            var queueStatus = queueManagementService.getQueueStatus(null);
+            stats.put("matchmaking", Map.of(
+                    "queueSize", queueStatus.getPlayersInQueue(),
+                    "avgWaitTime", queueStatus.getAverageWaitTime(),
+                    "estimatedMatchTime", queueStatus.getEstimatedMatchTime(),
+                    "isActive", queueStatus.isActive()));
 
             // Estatísticas dos jogadores
             try {

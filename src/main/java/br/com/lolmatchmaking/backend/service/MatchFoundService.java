@@ -165,9 +165,48 @@ public class MatchFoundService {
             br.com.lolmatchmaking.backend.service.lock.PlayerState state = playerStateService
                     .getPlayerState(summonerName);
             if (state != br.com.lolmatchmaking.backend.service.lock.PlayerState.IN_MATCH_FOUND) {
-                log.warn("⚠️ [MatchFound] Jogador {} não está em match_found (estado: {})",
-                        summonerName, state);
-                return;
+                // ✅ CORREÇÃO CRÍTICA: CLEANUP INTELIGENTE baseado no MySQL
+                // Se estado não é IN_MATCH_FOUND, verificar se player realmente está na partida
+                if (state == br.com.lolmatchmaking.backend.service.lock.PlayerState.IN_QUEUE ||
+                        state == br.com.lolmatchmaking.backend.service.lock.PlayerState.AVAILABLE) {
+                    // Verificar no MySQL (fonte da verdade)
+                    boolean reallyInMatch = customMatchRepository.findById(matchId)
+                            .map(match -> {
+                                String status = match.getStatus();
+                                if (!"match_found".equalsIgnoreCase(status) &&
+                                        !"accepting".equalsIgnoreCase(status)) {
+                                    return false; // Partida não está mais aceitando
+                                }
+
+                                String team1 = match.getTeam1PlayersJson();
+                                String team2 = match.getTeam2PlayersJson();
+                                return (team1 != null && team1.contains(summonerName)) ||
+                                        (team2 != null && team2.contains(summonerName));
+                            })
+                            .orElse(false);
+
+                    if (reallyInMatch) {
+                        log.warn("🧹 [acceptMatch] ESTADO INCONSISTENTE: {} está na partida no MySQL mas estado é {}",
+                                summonerName, state);
+                        log.warn("🧹 [acceptMatch] Corrigindo PlayerState para IN_MATCH_FOUND...");
+
+                        // Corrigir estado (FORCE pois pode estar em IN_QUEUE ou AVAILABLE)
+                        playerStateService.forceSetPlayerState(summonerName,
+                                br.com.lolmatchmaking.backend.service.lock.PlayerState.IN_MATCH_FOUND);
+
+                        log.info("✅ [acceptMatch] PlayerState corrigido, permitindo aceitação agora");
+                        // Continuar o fluxo normalmente
+
+                    } else {
+                        log.warn("❌ [acceptMatch] Jogador {} NÃO está na partida {} (estado: {})",
+                                summonerName, matchId, state);
+                        return;
+                    }
+                } else {
+                    log.warn("⚠️ [MatchFound] Jogador {} não está em match_found (estado: {})",
+                            summonerName, state);
+                    return;
+                }
             }
 
             log.info("✅ [MatchFound] Jogador {} aceitou partida {}", summonerName, matchId);
@@ -225,11 +264,11 @@ public class MatchFoundService {
     public void declineMatch(Long matchId, String summonerName) {
         // ✅ NOVO: ADQUIRIR LOCK DE ACEITAÇÃO INDIVIDUAL (previne múltiplas recusas)
         if (!matchOpsLockService.acquireAcceptanceLock(matchId, summonerName)) {
-            log.warn("⚠️ [MatchFound] Jogador {} já está processando recusa de match {}", 
-                     summonerName, matchId);
+            log.warn("⚠️ [MatchFound] Jogador {} já está processando recusa de match {}",
+                    summonerName, matchId);
             return;
         }
-        
+
         try {
             log.warn("❌ [MatchFound] Jogador {} recusou partida {}", summonerName, matchId);
 
@@ -275,7 +314,7 @@ public class MatchFoundService {
             log.warn("⚠️ [MatchFound] Aceitação completa de match {} já está sendo processada", matchId);
             return;
         }
-        
+
         try {
             // ✅ REDIS ONLY: Buscar dados do Redis (fonte da verdade)
             List<String> team1Names = redisAcceptance.getTeam1Players(matchId);
@@ -376,7 +415,7 @@ public class MatchFoundService {
             log.warn("⚠️ [MatchFound] Cancelamento de match {} já está sendo processado", matchId);
             return;
         }
-        
+
         try {
             // ✅ REDIS ONLY: Buscar jogadores do Redis
             List<String> allPlayers = redisAcceptance.getAllPlayers(matchId);
@@ -386,7 +425,8 @@ public class MatchFoundService {
             }
 
             // ✅ CORREÇÃO CRÍTICA: DELETAR partida do banco (não apenas mudar status)
-            log.info("🗑️ [MatchFound] DELETANDO partida {} do banco de dados (recusada por {})", matchId, declinedPlayer);
+            log.info("🗑️ [MatchFound] DELETANDO partida {} do banco de dados (recusada por {})", matchId,
+                    declinedPlayer);
             customMatchRepository.deleteById(matchId);
             log.info("✅ [MatchFound] Partida {} EXCLUÍDA do banco de dados", matchId);
 
@@ -396,8 +436,8 @@ public class MatchFoundService {
 
             // ✅ NOVO: Atualizar PlayerState para AVAILABLE para jogador que recusou
             try {
-                playerStateService.setPlayerState(declinedPlayer, 
-                    br.com.lolmatchmaking.backend.service.lock.PlayerState.AVAILABLE);
+                playerStateService.setPlayerState(declinedPlayer,
+                        br.com.lolmatchmaking.backend.service.lock.PlayerState.AVAILABLE);
                 log.info("✅ [MatchFound] Estado de {} atualizado para AVAILABLE", declinedPlayer);
             } catch (Exception e) {
                 log.error("❌ [MatchFound] Erro ao atualizar estado de {}: {}", declinedPlayer, e.getMessage());
@@ -411,11 +451,11 @@ public class MatchFoundService {
                         queuePlayerRepository.save(player);
                         log.info("🔄 [MatchFound] Jogador {} voltou ao estado normal na fila", playerName);
                     });
-                    
+
                     // ✅ NOVO: Atualizar PlayerState para IN_QUEUE para outros jogadores
                     try {
-                        playerStateService.setPlayerState(playerName, 
-                            br.com.lolmatchmaking.backend.service.lock.PlayerState.IN_QUEUE);
+                        playerStateService.setPlayerState(playerName,
+                                br.com.lolmatchmaking.backend.service.lock.PlayerState.IN_QUEUE);
                         log.info("✅ [MatchFound] Estado de {} atualizado para IN_QUEUE", playerName);
                     } catch (Exception e) {
                         log.error("❌ [MatchFound] Erro ao atualizar estado de {}: {}", playerName, e.getMessage());
@@ -441,7 +481,8 @@ public class MatchFoundService {
             redisAcceptance.clearMatch(matchId);
             log.info("🧹 [MatchFound] Dados de aceitação limpos do Redis para match {}", matchId);
 
-            log.info("✅ [MatchFound] Partida {} COMPLETAMENTE CANCELADA E EXCLUÍDA - {} recusou", matchId, declinedPlayer);
+            log.info("✅ [MatchFound] Partida {} COMPLETAMENTE CANCELADA E EXCLUÍDA - {} recusou", matchId,
+                    declinedPlayer);
 
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao processar recusa", e);
@@ -498,7 +539,7 @@ public class MatchFoundService {
             log.debug("⏭️ [MatchFound] Timeout de match {} já está sendo processado", matchId);
             return;
         }
-        
+
         try {
             // ✅ REDIS ONLY: Buscar dados do Redis
             List<String> allPlayers = redisAcceptance.getAllPlayers(matchId);
@@ -555,7 +596,7 @@ public class MatchFoundService {
             log.warn("⚠️ [MatchFound] Draft de match {} já está sendo iniciado", matchId);
             return;
         }
-        
+
         try {
             log.info("🎯 [MatchFound] Iniciando draft para partida {}", matchId);
 

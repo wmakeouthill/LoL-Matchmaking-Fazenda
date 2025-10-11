@@ -4,10 +4,12 @@ import br.com.lolmatchmaking.backend.domain.entity.CustomMatch;
 import br.com.lolmatchmaking.backend.domain.entity.Player;
 import br.com.lolmatchmaking.backend.domain.repository.CustomMatchRepository;
 import br.com.lolmatchmaking.backend.domain.repository.PlayerRepository;
+import br.com.lolmatchmaking.backend.domain.repository.QueuePlayerRepository;
 import br.com.lolmatchmaking.backend.dto.AdjustPlayerLpRequest;
 import br.com.lolmatchmaking.backend.dto.AwardChampionshipRequest;
-import br.com.lolmatchmaking.backend.service.MatchmakingService;
+import br.com.lolmatchmaking.backend.service.QueueManagementService;
 import br.com.lolmatchmaking.backend.service.PlayerService;
+import java.util.List;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,7 +31,9 @@ public class AdminController {
 
     private final CustomMatchRepository customMatchRepository;
     private final PlayerRepository playerRepository;
-    private final MatchmakingService matchmakingService;
+    private final QueuePlayerRepository queuePlayerRepository;
+    // ✅ MIGRADO: QueueManagementService (Redis-only) ao invés de MatchmakingService
+    private final QueueManagementService queueManagementService;
     private final PlayerService playerService;
 
     /**
@@ -115,10 +119,22 @@ public class AdminController {
         try {
             log.info("🧹 [ADMIN] Limpando fila de matchmaking...");
 
-            matchmakingService.clearQueue();
+            // ✅ MIGRADO: QueueManagementService (SQL = fonte da verdade)
+            // Remove todos os players da fila
+            List<br.com.lolmatchmaking.backend.domain.entity.QueuePlayer> allPlayers = queuePlayerRepository
+                    .findByActiveTrueOrderByJoinTimeAsc();
+
+            int removedCount = 0;
+            for (var player : allPlayers) {
+                queueManagementService.removeFromQueue(player.getSummonerName());
+                removedCount++;
+            }
+
+            log.info("✅ [ADMIN] Fila limpa: {} jogadores removidos", removedCount);
 
             return ResponseEntity.ok(Map.of(
                     "success", true,
+                    "removedCount", removedCount,
                     "message", "Fila limpa com sucesso"));
 
         } catch (Exception e) {
@@ -138,7 +154,9 @@ public class AdminController {
         try {
             log.info("🔄 [ADMIN] Forçando sincronização da fila...");
 
-            matchmakingService.syncCacheWithDatabase();
+            // ✅ MIGRADO: QueueManagementService já sincroniza automaticamente via Redis
+            // Não precisa de syncCacheWithDatabase - MySQL é fonte da verdade
+            log.info("✅ [ADMIN] Fila já sincronizada (MySQL + Redis)");
 
             return ResponseEntity.ok(Map.of(
                     "success", true,
@@ -184,8 +202,12 @@ public class AdminController {
                             "status", m.getStatus(),
                             "createdAt", m.getCreatedAt())).toList()));
 
-            // Estatísticas do matchmaking
-            stats.put("matchmaking", matchmakingService.getMatchmakingStats());
+            // ✅ MIGRADO: Estatísticas do matchmaking via QueueManagementService
+            var queueStatus = queueManagementService.getQueueStatus(null);
+            stats.put("matchmaking", Map.of(
+                    "queueSize", queueStatus.getPlayersInQueue(), // Número total
+                    "avgWaitTime", queueStatus.getAverageWaitTime(),
+                    "estimatedMatchTime", queueStatus.getEstimatedMatchTime()));
 
             stats.put("timestamp", Instant.now().toString());
 
@@ -208,8 +230,9 @@ public class AdminController {
         try {
             log.info("🔄 [ADMIN] Reiniciando serviços do sistema...");
 
-            // Reinicializar serviços
-            matchmakingService.initialize();
+            // ✅ MIGRADO: QueueManagementService usa Spring lifecycle, não precisa de
+            // initialize()
+            log.info("✅ [ADMIN] Services Redis-only não precisam de reinicialização manual");
 
             return ResponseEntity.ok(Map.of(
                     "success", true,

@@ -2,7 +2,6 @@ package br.com.lolmatchmaking.backend.controller;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import br.com.lolmatchmaking.backend.service.DraftService;
 import br.com.lolmatchmaking.backend.util.SummonerAuthUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
@@ -16,450 +15,469 @@ import java.util.Map;
 @RequestMapping("/api")
 @RequiredArgsConstructor
 public class DraftController {
-    // ⚠️ LEGADO: DraftService está sendo substituído por DraftFlowService
-    @Deprecated(forRemoval = true)
-    private final DraftService draftService;
+        // ✅ MIGRADO: DraftService REMOVIDO - usando apenas DraftFlowService
+        // (Redis-only)
+        private final br.com.lolmatchmaking.backend.service.DraftFlowService draftFlowService;
 
-    private final br.com.lolmatchmaking.backend.service.DraftFlowService draftFlowService;
+        // ✅ NOVO: Redis para validação de ownership
+        private final br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch;
 
-    // ✅ NOVO: Redis para validação de ownership
-    private final br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch;
+        private static final String KEY_ERROR = "error";
+        private static final String KEY_SUCCESS = "success";
 
-    private static final String KEY_ERROR = "error";
-    private static final String KEY_SUCCESS = "success";
-
-    record ConfirmSyncRequest(Long matchId, String playerId, Integer actionIndex, String summonerName) {
-    }
-
-    /**
-     * ⚠️ LEGADO - Endpoint antigo, use /match/draft-action ao invés
-     * 
-     * @deprecated Use /match/draft-action
-     */
-    @Deprecated(forRemoval = true)
-    @PostMapping("/draft/sync-confirm")
-    public ResponseEntity<Map<String, Object>> confirmSync(
-            @RequestBody ConfirmSyncRequest req,
-            HttpServletRequest httpRequest) {
-        try {
-            // 🔒 Autenticação via header
-            String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
-
-            // 🔍 Validação de ownership (se summonerName for fornecido no body)
-            if (req.summonerName() != null && !authenticatedSummoner.equalsIgnoreCase(req.summonerName())) {
-                log.warn("⚠️ [{}] Tentativa de confirmar sync de outro jogador: {}",
-                        authenticatedSummoner, req.summonerName());
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                        .body(Map.of(KEY_ERROR, "Nome do invocador não corresponde ao jogador autenticado"));
-            }
-
-            log.info("✅ [{}] Confirmando sync: matchId={}, playerId={}, actionIndex={}",
-                    authenticatedSummoner, req.matchId(), req.playerId(), req.actionIndex());
-
-            if (req.matchId() == null || req.playerId() == null || req.actionIndex() == null) {
-                log.warn("⚠️ [{}] Parâmetros obrigatórios ausentes", authenticatedSummoner);
-                return ResponseEntity.badRequest().body(Map.of(KEY_ERROR, "Parâmetros obrigatórios ausentes"));
-            }
-
-            draftService.confirmSync(req.matchId(), req.playerId(), req.actionIndex());
-            return ResponseEntity.ok(Map.of("ok", true));
-
-        } catch (Exception e) {
-            log.error("❌ Erro ao confirmar sync", e);
-            return ResponseEntity.internalServerError()
-                    .body(Map.of(KEY_ERROR, e.getMessage()));
+        record ConfirmSyncRequest(Long matchId, String playerId, Integer actionIndex, String summonerName) {
         }
-    }
 
-    record ConfirmDraftRequest(Long matchId, String playerId, String summonerName) {
-    }
+        /**
+         * ⚠️ LEGADO - Endpoint antigo, use /match/draft-action ao invés
+         * 
+         * @deprecated Use /match/draft-action
+         */
+        @Deprecated(forRemoval = true)
+        @PostMapping("/draft/sync-confirm")
+        public ResponseEntity<Map<String, Object>> confirmSync(
+                        @RequestBody ConfirmSyncRequest req,
+                        HttpServletRequest httpRequest) {
+                try {
+                        // 🔒 Autenticação via header
+                        String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
 
-    /**
-     * ⚠️ LEGADO - Endpoint antigo, use /match/{matchId}/confirm-final-draft ao
-     * invés
-     * 
-     * @deprecated Use /match/{matchId}/confirm-final-draft
-     */
-    @Deprecated(forRemoval = true)
-    @PostMapping("/match/confirm-draft")
-    public ResponseEntity<Map<String, Object>> confirmDraft(
-            @RequestBody ConfirmDraftRequest req,
-            HttpServletRequest httpRequest) {
-        try {
-            // 🔒 Autenticação via header
-            String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
+                        // 🔍 Validação de ownership (se summonerName for fornecido no body)
+                        if (req.summonerName() != null && !authenticatedSummoner.equalsIgnoreCase(req.summonerName())) {
+                                log.warn("⚠️ [{}] Tentativa de confirmar sync de outro jogador: {}",
+                                                authenticatedSummoner, req.summonerName());
+                                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                                                .body(Map.of(KEY_ERROR,
+                                                                "Nome do invocador não corresponde ao jogador autenticado"));
+                        }
 
-            // 🔍 Validação de ownership (se summonerName for fornecido no body)
-            if (req.summonerName() != null && !authenticatedSummoner.equalsIgnoreCase(req.summonerName())) {
-                log.warn("⚠️ [{}] Tentativa de confirmar draft de outro jogador: {}",
-                        authenticatedSummoner, req.summonerName());
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                        .body(Map.of(KEY_ERROR, "Nome do invocador não corresponde ao jogador autenticado"));
-            }
+                        log.info("✅ [{}] Confirmando sync: matchId={}, playerId={}, actionIndex={}",
+                                        authenticatedSummoner, req.matchId(), req.playerId(), req.actionIndex());
 
-            log.info("✅ [{}] Confirmando draft: matchId={}, playerId={}",
-                    authenticatedSummoner, req.matchId(), req.playerId());
+                        if (req.matchId() == null || req.playerId() == null || req.actionIndex() == null) {
+                                log.warn("⚠️ [{}] Parâmetros obrigatórios ausentes", authenticatedSummoner);
+                                return ResponseEntity.badRequest()
+                                                .body(Map.of(KEY_ERROR, "Parâmetros obrigatórios ausentes"));
+                        }
 
-            if (req.matchId() == null || req.playerId() == null) {
-                log.warn("⚠️ [{}] matchId e playerId são obrigatórios", authenticatedSummoner);
-                return ResponseEntity.badRequest().body(Map.of(KEY_ERROR, "matchId e playerId são obrigatórios"));
-            }
+                        // ✅ MIGRADO: DraftFlowService (Redis-only) ao invés de DraftService
+                        // Note: confirmSync não existe no DraftFlowService, mas confirmFinalDraft serve
+                        // o mesmo propósito
+                        draftFlowService.confirmFinalDraft(req.matchId(), authenticatedSummoner);
+                        return ResponseEntity.ok(Map.of("ok", true));
 
-            draftService.confirmDraft(req.matchId(), req.playerId());
-            return ResponseEntity.ok(Map.of(KEY_SUCCESS, true));
-
-        } catch (Exception e) {
-            log.error("❌ Erro ao confirmar draft", e);
-            return ResponseEntity.internalServerError()
-                    .body(Map.of(KEY_ERROR, e.getMessage()));
+                } catch (Exception e) {
+                        log.error("❌ Erro ao confirmar sync", e);
+                        return ResponseEntity.internalServerError()
+                                        .body(Map.of(KEY_ERROR, e.getMessage()));
+                }
         }
-    }
 
-    @GetMapping("/match/{matchId}/draft-session")
-    public ResponseEntity<Map<String, Object>> getDraftSession(
-            @PathVariable Long matchId,
-            HttpServletRequest httpRequest) {
-
-        try {
-            // ✅ 1. HEADER VALIDATION
-            String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
-
-            // ✅ 2. OWNERSHIP VALIDATION
-            if (!redisPlayerMatch.validateOwnership(authenticatedSummoner, matchId)) {
-                log.warn("⚠️ [{}] Tentou acessar draft de partida {} sem ownership",
-                        authenticatedSummoner, matchId);
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body(Map.of("error", "Você não pertence a esta partida"));
-            }
-
-            // ✅ 3. GET DATA (sem lock, é read-only)
-            Map<String, Object> snapshot = draftFlowService.snapshot(matchId);
-
-            if (snapshot.containsKey("exists") && !Boolean.TRUE.equals(snapshot.get("exists"))) {
-                return ResponseEntity.notFound().build();
-            }
-
-            return ResponseEntity.ok(snapshot);
-
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(Map.of("error", "Header X-Summoner-Name obrigatório"));
+        record ConfirmDraftRequest(Long matchId, String playerId, String summonerName) {
         }
-    }
 
-    /**
-     * ⚠️ LEGADO - Endpoint antigo
-     * 
-     * @deprecated Status de confirmação agora via WebSocket
-     */
-    @Deprecated(forRemoval = true)
-    @GetMapping("/match/{matchId}/confirmation-status")
-    public ResponseEntity<Map<String, Object>> confirmationStatus(@PathVariable Long matchId) {
-        return ResponseEntity.ok(Map.of("confirmationData", draftService.confirmationStatus(matchId)));
-    }
+        /**
+         * ⚠️ LEGADO - Endpoint antigo, use /match/{matchId}/confirm-final-draft ao
+         * invés
+         * 
+         * @deprecated Use /match/{matchId}/confirm-final-draft
+         */
+        @Deprecated(forRemoval = true)
+        @PostMapping("/match/confirm-draft")
+        public ResponseEntity<Map<String, Object>> confirmDraft(
+                        @RequestBody ConfirmDraftRequest req,
+                        HttpServletRequest httpRequest) {
+                try {
+                        // 🔒 Autenticação via header
+                        String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
 
-    record ChangePickRequest(Long matchId, String playerId, String championId, String summonerName) {
-    }
+                        // 🔍 Validação de ownership (se summonerName for fornecido no body)
+                        if (req.summonerName() != null && !authenticatedSummoner.equalsIgnoreCase(req.summonerName())) {
+                                log.warn("⚠️ [{}] Tentativa de confirmar draft de outro jogador: {}",
+                                                authenticatedSummoner, req.summonerName());
+                                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                                                .body(Map.of(KEY_ERROR,
+                                                                "Nome do invocador não corresponde ao jogador autenticado"));
+                        }
 
-    /**
-     * ✅ ATUALIZADO: Chama DraftFlowService diretamente
-     */
-    @PostMapping("/match/change-pick")
-    public ResponseEntity<Map<String, Object>> changePick(
-            @RequestBody ChangePickRequest req,
-            HttpServletRequest httpRequest) {
-        try {
-            // 🔒 Autenticação via header
-            String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
+                        log.info("✅ [{}] Confirmando draft: matchId={}, playerId={}",
+                                        authenticatedSummoner, req.matchId(), req.playerId());
 
-            // 🔍 Validação de ownership (se summonerName for fornecido no body)
-            if (req.summonerName() != null && !authenticatedSummoner.equalsIgnoreCase(req.summonerName())) {
-                log.warn("⚠️ [{}] Tentativa de alterar pick de outro jogador: {}",
-                        authenticatedSummoner, req.summonerName());
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                        .body(Map.of(KEY_ERROR, "Nome do invocador não corresponde ao jogador autenticado"));
-            }
+                        if (req.matchId() == null || req.playerId() == null) {
+                                log.warn("⚠️ [{}] matchId e playerId são obrigatórios", authenticatedSummoner);
+                                return ResponseEntity.badRequest()
+                                                .body(Map.of(KEY_ERROR, "matchId e playerId são obrigatórios"));
+                        }
 
-            log.info("🔄 [{}] Alterando pick: matchId={}, playerId={}, championId={}",
-                    authenticatedSummoner, req.matchId(), req.playerId(), req.championId());
+                        // ✅ MIGRADO: DraftFlowService (Redis-only) ao invés de DraftService
+                        draftFlowService.confirmFinalDraft(req.matchId(), authenticatedSummoner);
+                        return ResponseEntity.ok(Map.of(KEY_SUCCESS, true));
 
-            if (req.matchId() == null || req.playerId() == null || req.championId() == null) {
-                log.warn("⚠️ [{}] Requisição inválida - campos obrigatórios faltando", authenticatedSummoner);
-                return ResponseEntity.badRequest()
-                        .body(Map.of(KEY_ERROR, "matchId, playerId e championId são obrigatórios"));
-            }
-
-            // ✅ CRÍTICO: Validar ownership do matchId via Redis
-            if (!redisPlayerMatch.validateOwnership(authenticatedSummoner, req.matchId())) {
-                log.warn("🚫 [SEGURANÇA] Jogador {} tentou alterar pick em match {} sem ownership!",
-                        authenticatedSummoner, req.matchId());
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body(Map.of(KEY_ERROR, "Jogador não pertence a esta partida"));
-            }
-
-            // ✅ MIGRADO: Chama DraftFlowService diretamente (não mais DraftService)
-            draftFlowService.changePick(req.matchId(), req.playerId(), req.championId());
-            return ResponseEntity.ok(Map.of(KEY_SUCCESS, true));
-
-        } catch (Exception e) {
-            log.error("❌ Erro ao alterar pick", e);
-            return ResponseEntity.internalServerError()
-                    .body(Map.of(KEY_ERROR, e.getMessage()));
+                } catch (Exception e) {
+                        log.error("❌ Erro ao confirmar draft", e);
+                        return ResponseEntity.internalServerError()
+                                        .body(Map.of(KEY_ERROR, e.getMessage()));
+                }
         }
-    }
 
-    // ✅ ATUALIZADO: Endpoint para editar picks no modal de confirmação
-    record ChangePickPathRequest(String playerId, Integer championId, Boolean confirmed, String summonerName) {
-    }
+        @GetMapping("/match/{matchId}/draft-session")
+        public ResponseEntity<Map<String, Object>> getDraftSession(
+                        @PathVariable Long matchId,
+                        HttpServletRequest httpRequest) {
 
-    /**
-     * ✅ ATUALIZADO: Chama DraftFlowService diretamente
-     */
-    @PostMapping("/draft/{matchId}/changePick")
-    public ResponseEntity<Map<String, Object>> changePickPath(
-            @PathVariable Long matchId,
-            @RequestBody ChangePickPathRequest req,
-            HttpServletRequest httpRequest) {
-        try {
-            // 🔒 Autenticação via header
-            String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
+                try {
+                        // ✅ 1. HEADER VALIDATION
+                        String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
 
-            // 🔍 Validação de ownership (se summonerName for fornecido no body)
-            if (req.summonerName() != null && !authenticatedSummoner.equalsIgnoreCase(req.summonerName())) {
-                log.warn("⚠️ [{}] Tentativa de alterar pick de outro jogador: {}",
-                        authenticatedSummoner, req.summonerName());
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                        .body(Map.of(KEY_ERROR, "Nome do invocador não corresponde ao jogador autenticado"));
-            }
+                        // ✅ 2. OWNERSHIP VALIDATION
+                        if (!redisPlayerMatch.validateOwnership(authenticatedSummoner, matchId)) {
+                                log.warn("⚠️ [{}] Tentou acessar draft de partida {} sem ownership",
+                                                authenticatedSummoner, matchId);
+                                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                                                .body(Map.of("error", "Você não pertence a esta partida"));
+                        }
 
-            log.info("🔄 [{}] changePick chamado: matchId={}, playerId={}, championId={}",
-                    authenticatedSummoner, matchId, req.playerId(), req.championId());
+                        // ✅ 3. GET DATA (sem lock, é read-only)
+                        Map<String, Object> snapshot = draftFlowService.snapshot(matchId);
 
-            if (req.playerId() == null || req.championId() == null) {
-                log.warn("⚠️ [{}] Requisição inválida - campos obrigatórios faltando", authenticatedSummoner);
-                return ResponseEntity.badRequest()
-                        .body(Map.of(KEY_ERROR, "playerId e championId são obrigatórios"));
-            }
+                        if (snapshot.containsKey("exists") && !Boolean.TRUE.equals(snapshot.get("exists"))) {
+                                return ResponseEntity.notFound().build();
+                        }
 
-            // ✅ CRÍTICO: Validar ownership do matchId via Redis
-            if (!redisPlayerMatch.validateOwnership(authenticatedSummoner, matchId)) {
-                log.warn("🚫 [SEGURANÇA] Jogador {} tentou alterar pick em match {} sem ownership!",
-                        authenticatedSummoner, matchId);
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body(Map.of(KEY_ERROR, "Jogador não pertence a esta partida"));
-            }
+                        return ResponseEntity.ok(snapshot);
 
-            // ✅ MIGRADO: Chama DraftFlowService diretamente (não mais DraftService)
-            draftFlowService.changePick(matchId, req.playerId(), String.valueOf(req.championId()));
-            return ResponseEntity.ok(Map.of(KEY_SUCCESS, true));
-
-        } catch (Exception e) {
-            log.error("❌ Erro ao alterar pick", e);
-            return ResponseEntity.internalServerError()
-                    .body(Map.of(KEY_ERROR, e.getMessage()));
+                } catch (IllegalArgumentException e) {
+                        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                                        .body(Map.of("error", "Header X-Summoner-Name obrigatório"));
+                }
         }
-    }
 
-    // ✅ CORREÇÃO #1: Endpoint para processar ações de draft (pick/ban)
-    record DraftActionRequest(Long matchId, Integer actionIndex, String championId, String playerId, String action,
-            String summonerName) {
-    }
-
-    @PostMapping("/match/draft-action")
-    public ResponseEntity<Map<String, Object>> processDraftAction(
-            @RequestBody DraftActionRequest req,
-            HttpServletRequest httpRequest) {
-        log.info("\n╔════════════════════════════════════════════════════════════════╗");
-        log.info("║  🎯 [DraftController] REQUISIÇÃO RECEBIDA                     ║");
-        log.info("╚════════════════════════════════════════════════════════════════╝");
-
-        try {
-            // 🔒 Autenticação via header
-            String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
-
-            // 🔍 Validação de ownership (se summonerName for fornecido no body)
-            if (req.summonerName() != null && !authenticatedSummoner.equalsIgnoreCase(req.summonerName())) {
-                log.warn("⚠️ [{}] Tentativa de processar ação de draft de outro jogador: {}",
-                        authenticatedSummoner, req.summonerName());
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                        .body(Map.of(KEY_ERROR, "Nome do invocador não corresponde ao jogador autenticado"));
-            }
-
-            log.info("📥 [{}] POST /match/draft-action", authenticatedSummoner);
-            log.info("📋 [{}] Match ID: {}", authenticatedSummoner, req.matchId());
-            log.info("📋 [{}] Action Index: {}", authenticatedSummoner, req.actionIndex());
-            log.info("📋 [{}] Champion ID: {}", authenticatedSummoner, req.championId());
-            log.info("📋 [{}] Player ID: {}", authenticatedSummoner, req.playerId());
-            log.info("📋 [{}] Action: {}", authenticatedSummoner, req.action());
-
-            if (req.matchId() == null || req.actionIndex() == null || req.championId() == null
-                    || req.playerId() == null) {
-                log.warn("⚠️ [{}] Requisição inválida - campos obrigatórios faltando", authenticatedSummoner);
-                log.info("════════════════════════════════════════════════════════════════\n");
-                return ResponseEntity.badRequest().body(Map.of(
-                        KEY_SUCCESS, false,
-                        KEY_ERROR, "matchId, actionIndex, championId e playerId são obrigatórios"));
-            }
-            log.info("🔄 [DraftController] Chamando DraftFlowService.processAction()...");
-
-            // ✅ Chamar DraftFlowService.processAction()
-            boolean success = draftFlowService.processAction(
-                    req.matchId(),
-                    req.actionIndex(),
-                    req.championId(),
-                    req.playerId());
-
-            if (success) {
-                log.info("╔════════════════════════════════════════════════════════════════╗");
-                log.info("║  ✅ [DraftController] AÇÃO PROCESSADA COM SUCESSO             ║");
-                log.info("╚════════════════════════════════════════════════════════════════╝\n");
-                return ResponseEntity.ok(Map.of(KEY_SUCCESS, true));
-            } else {
-                log.warn("╔════════════════════════════════════════════════════════════════╗");
-                log.warn("║  ❌ [DraftController] AÇÃO REJEITADA                          ║");
-                log.warn("╚════════════════════════════════════════════════════════════════╝");
-                log.warn("⚠️ Motivos possíveis:");
-                log.warn("   - Campeão já utilizado");
-                log.warn("   - Jogador incorreto para esta ação");
-                log.warn("   - Ação fora de ordem");
-                log.info("════════════════════════════════════════════════════════════════\n");
-                return ResponseEntity.badRequest().body(Map.of(
-                        KEY_SUCCESS, false,
-                        KEY_ERROR, "Ação inválida: campeão já utilizado, jogador errado ou fora de ordem"));
-            }
-        } catch (Exception e) {
-            log.error("╔════════════════════════════════════════════════════════════════╗");
-            log.error("║  💥 [DraftController] ERRO AO PROCESSAR                       ║");
-            log.error("╚════════════════════════════════════════════════════════════════╝");
-            log.error("❌ Exceção: {}", e.getMessage(), e);
-            log.info("════════════════════════════════════════════════════════════════\n");
-            return ResponseEntity.status(500).body(Map.of(
-                    KEY_SUCCESS, false,
-                    KEY_ERROR, "Erro ao processar ação: " + e.getMessage()));
+        /**
+         * ⚠️ LEGADO - Endpoint antigo
+         * 
+         * @deprecated Status de confirmação agora via WebSocket
+         */
+        @Deprecated(forRemoval = true)
+        @GetMapping("/match/{matchId}/confirmation-status")
+        public ResponseEntity<Map<String, Object>> confirmationStatus(@PathVariable Long matchId) {
+                // ✅ MIGRADO: DraftFlowService snapshot ao invés de DraftService
+                Map<String, Object> snapshot = draftFlowService.snapshot(matchId);
+                return ResponseEntity.ok(Map.of("confirmationData", snapshot));
         }
-    }
 
-    // ✅ NOVO: Endpoint para confirmação final individual (TODOS os 10 jogadores)
-    record ConfirmFinalDraftRequest(String playerId, String summonerName) {
-    }
+        record ChangePickRequest(Long matchId, String playerId, String championId, String summonerName) {
+        }
 
-    @PostMapping("/match/{matchId}/confirm-final-draft")
-    public ResponseEntity<Map<String, Object>> confirmFinalDraft(
-            @PathVariable Long matchId,
-            @RequestBody ConfirmFinalDraftRequest req,
-            HttpServletRequest httpRequest) {
+        /**
+         * ✅ ATUALIZADO: Chama DraftFlowService diretamente
+         */
+        @PostMapping("/match/change-pick")
+        public ResponseEntity<Map<String, Object>> changePick(
+                        @RequestBody ChangePickRequest req,
+                        HttpServletRequest httpRequest) {
+                try {
+                        // 🔒 Autenticação via header
+                        String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
 
-        log.info("╔════════════════════════════════════════════════════════════════╗");
-        log.info("║  ✅ [DraftController] CONFIRMAÇÃO FINAL RECEBIDA              ║");
-        log.info("╚════════════════════════════════════════════════════════════════╝");
+                        // 🔍 Validação de ownership (se summonerName for fornecido no body)
+                        if (req.summonerName() != null && !authenticatedSummoner.equalsIgnoreCase(req.summonerName())) {
+                                log.warn("⚠️ [{}] Tentativa de alterar pick de outro jogador: {}",
+                                                authenticatedSummoner, req.summonerName());
+                                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                                                .body(Map.of(KEY_ERROR,
+                                                                "Nome do invocador não corresponde ao jogador autenticado"));
+                        }
 
-        try {
-            // 🔒 Autenticação via header
-            String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
+                        log.info("🔄 [{}] Alterando pick: matchId={}, playerId={}, championId={}",
+                                        authenticatedSummoner, req.matchId(), req.playerId(), req.championId());
 
-            // 🔍 Validação de ownership (se summonerName for fornecido no body)
-            if (req.summonerName() != null && !authenticatedSummoner.equalsIgnoreCase(req.summonerName())) {
-                log.warn("⚠️ [{}] Tentativa de confirmar draft final de outro jogador: {}",
-                        authenticatedSummoner, req.summonerName());
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                        .body(Map.of(KEY_ERROR, "Nome do invocador não corresponde ao jogador autenticado"));
-            }
+                        if (req.matchId() == null || req.playerId() == null || req.championId() == null) {
+                                log.warn("⚠️ [{}] Requisição inválida - campos obrigatórios faltando",
+                                                authenticatedSummoner);
+                                return ResponseEntity.badRequest()
+                                                .body(Map.of(KEY_ERROR,
+                                                                "matchId, playerId e championId são obrigatórios"));
+                        }
 
-            // ✅ CRÍTICO: Validar ownership do matchId via Redis
-            if (!redisPlayerMatch.validateOwnership(authenticatedSummoner, matchId)) {
-                log.warn("🚫 [SEGURANÇA] Jogador {} tentou confirmar draft de match {} sem ownership!",
-                        authenticatedSummoner, matchId);
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body(Map.of(KEY_ERROR, "Jogador não pertence a esta partida"));
-            }
+                        // ✅ CRÍTICO: Validar ownership do matchId via Redis
+                        if (!redisPlayerMatch.validateOwnership(authenticatedSummoner, req.matchId())) {
+                                log.warn("🚫 [SEGURANÇA] Jogador {} tentou alterar pick em match {} sem ownership!",
+                                                authenticatedSummoner, req.matchId());
+                                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                                                .body(Map.of(KEY_ERROR, "Jogador não pertence a esta partida"));
+                        }
 
-            log.info("📥 [{}] POST /match/{}/confirm-final-draft", authenticatedSummoner, matchId);
-            log.info("👤 [{}] Player ID: {}", authenticatedSummoner, req.playerId());
+                        // ✅ MIGRADO: Chama DraftFlowService diretamente (não mais DraftService)
+                        draftFlowService.changePick(req.matchId(), req.playerId(), req.championId());
+                        return ResponseEntity.ok(Map.of(KEY_SUCCESS, true));
 
-            if (req.playerId() == null || req.playerId().trim().isEmpty()) {
-                log.warn("⚠️ [{}] playerId não fornecido", authenticatedSummoner);
-                return ResponseEntity.badRequest().body(Map.of(
-                        KEY_SUCCESS, false,
-                        KEY_ERROR, "playerId é obrigatório"));
-            }
+                } catch (Exception e) {
+                        log.error("❌ Erro ao alterar pick", e);
+                        return ResponseEntity.internalServerError()
+                                        .body(Map.of(KEY_ERROR, e.getMessage()));
+                }
+        }
 
-            // ✅ Chamar DraftFlowService para registrar confirmação individual
-            Map<String, Object> result = draftFlowService.confirmFinalDraft(matchId, req.playerId());
+        // ✅ ATUALIZADO: Endpoint para editar picks no modal de confirmação
+        record ChangePickPathRequest(String playerId, Integer championId, Boolean confirmed, String summonerName) {
+        }
 
-            boolean allConfirmed = (boolean) result.getOrDefault("allConfirmed", false);
-            int confirmedCount = (int) result.getOrDefault("confirmedCount", 0);
-            int totalPlayers = (int) result.getOrDefault("totalPlayers", 10);
+        /**
+         * ✅ ATUALIZADO: Chama DraftFlowService diretamente
+         */
+        @PostMapping("/draft/{matchId}/changePick")
+        public ResponseEntity<Map<String, Object>> changePickPath(
+                        @PathVariable Long matchId,
+                        @RequestBody ChangePickPathRequest req,
+                        HttpServletRequest httpRequest) {
+                try {
+                        // 🔒 Autenticação via header
+                        String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
 
-            log.info("✅ [{}] Confirmação registrada: {}/{} jogadores confirmaram",
-                    authenticatedSummoner, confirmedCount, totalPlayers);
+                        // 🔍 Validação de ownership (se summonerName for fornecido no body)
+                        if (req.summonerName() != null && !authenticatedSummoner.equalsIgnoreCase(req.summonerName())) {
+                                log.warn("⚠️ [{}] Tentativa de alterar pick de outro jogador: {}",
+                                                authenticatedSummoner, req.summonerName());
+                                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                                                .body(Map.of(KEY_ERROR,
+                                                                "Nome do invocador não corresponde ao jogador autenticado"));
+                        }
 
-            if (allConfirmed) {
-                log.info("╔════════════════════════════════════════════════════════════════╗");
-                log.info("║  🎮 [DraftController] TODOS CONFIRMARAM - INICIANDO JOGO      ║");
+                        log.info("🔄 [{}] changePick chamado: matchId={}, playerId={}, championId={}",
+                                        authenticatedSummoner, matchId, req.playerId(), req.championId());
+
+                        if (req.playerId() == null || req.championId() == null) {
+                                log.warn("⚠️ [{}] Requisição inválida - campos obrigatórios faltando",
+                                                authenticatedSummoner);
+                                return ResponseEntity.badRequest()
+                                                .body(Map.of(KEY_ERROR, "playerId e championId são obrigatórios"));
+                        }
+
+                        // ✅ CRÍTICO: Validar ownership do matchId via Redis
+                        if (!redisPlayerMatch.validateOwnership(authenticatedSummoner, matchId)) {
+                                log.warn("🚫 [SEGURANÇA] Jogador {} tentou alterar pick em match {} sem ownership!",
+                                                authenticatedSummoner, matchId);
+                                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                                                .body(Map.of(KEY_ERROR, "Jogador não pertence a esta partida"));
+                        }
+
+                        // ✅ MIGRADO: Chama DraftFlowService diretamente (não mais DraftService)
+                        draftFlowService.changePick(matchId, req.playerId(), String.valueOf(req.championId()));
+                        return ResponseEntity.ok(Map.of(KEY_SUCCESS, true));
+
+                } catch (Exception e) {
+                        log.error("❌ Erro ao alterar pick", e);
+                        return ResponseEntity.internalServerError()
+                                        .body(Map.of(KEY_ERROR, e.getMessage()));
+                }
+        }
+
+        // ✅ CORREÇÃO #1: Endpoint para processar ações de draft (pick/ban)
+        record DraftActionRequest(Long matchId, Integer actionIndex, String championId, String playerId, String action,
+                        String summonerName) {
+        }
+
+        @PostMapping("/match/draft-action")
+        public ResponseEntity<Map<String, Object>> processDraftAction(
+                        @RequestBody DraftActionRequest req,
+                        HttpServletRequest httpRequest) {
+                log.info("\n╔════════════════════════════════════════════════════════════════╗");
+                log.info("║  🎯 [DraftController] REQUISIÇÃO RECEBIDA                     ║");
                 log.info("╚════════════════════════════════════════════════════════════════╝");
-            }
 
-            return ResponseEntity.ok(Map.of(
-                    KEY_SUCCESS, true,
-                    "allConfirmed", allConfirmed,
-                    "confirmedCount", confirmedCount,
-                    "totalPlayers", totalPlayers,
-                    "message", allConfirmed
-                            ? "Todos confirmaram! Iniciando jogo..."
-                            : String.format("Confirmado! Aguardando %d jogadores...", totalPlayers - confirmedCount)));
+                try {
+                        // 🔒 Autenticação via header
+                        String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
 
-        } catch (Exception e) {
-            log.error("╔════════════════════════════════════════════════════════════════╗");
-            log.error("║  💥 [DraftController] ERRO AO CONFIRMAR                       ║");
-            log.error("╚════════════════════════════════════════════════════════════════╝");
-            log.error("❌ Exceção: {}", e.getMessage(), e);
-            return ResponseEntity.status(500).body(Map.of(
-                    KEY_SUCCESS, false,
-                    KEY_ERROR, "Erro ao confirmar: " + e.getMessage()));
+                        // 🔍 Validação de ownership (se summonerName for fornecido no body)
+                        if (req.summonerName() != null && !authenticatedSummoner.equalsIgnoreCase(req.summonerName())) {
+                                log.warn("⚠️ [{}] Tentativa de processar ação de draft de outro jogador: {}",
+                                                authenticatedSummoner, req.summonerName());
+                                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                                                .body(Map.of(KEY_ERROR,
+                                                                "Nome do invocador não corresponde ao jogador autenticado"));
+                        }
+
+                        log.info("📥 [{}] POST /match/draft-action", authenticatedSummoner);
+                        log.info("📋 [{}] Match ID: {}", authenticatedSummoner, req.matchId());
+                        log.info("📋 [{}] Action Index: {}", authenticatedSummoner, req.actionIndex());
+                        log.info("📋 [{}] Champion ID: {}", authenticatedSummoner, req.championId());
+                        log.info("📋 [{}] Player ID: {}", authenticatedSummoner, req.playerId());
+                        log.info("📋 [{}] Action: {}", authenticatedSummoner, req.action());
+
+                        if (req.matchId() == null || req.actionIndex() == null || req.championId() == null
+                                        || req.playerId() == null) {
+                                log.warn("⚠️ [{}] Requisição inválida - campos obrigatórios faltando",
+                                                authenticatedSummoner);
+                                log.info("════════════════════════════════════════════════════════════════\n");
+                                return ResponseEntity.badRequest().body(Map.of(
+                                                KEY_SUCCESS, false,
+                                                KEY_ERROR,
+                                                "matchId, actionIndex, championId e playerId são obrigatórios"));
+                        }
+                        log.info("🔄 [DraftController] Chamando DraftFlowService.processAction()...");
+
+                        // ✅ Chamar DraftFlowService.processAction()
+                        boolean success = draftFlowService.processAction(
+                                        req.matchId(),
+                                        req.actionIndex(),
+                                        req.championId(),
+                                        req.playerId());
+
+                        if (success) {
+                                log.info("╔════════════════════════════════════════════════════════════════╗");
+                                log.info("║  ✅ [DraftController] AÇÃO PROCESSADA COM SUCESSO             ║");
+                                log.info("╚════════════════════════════════════════════════════════════════╝\n");
+                                return ResponseEntity.ok(Map.of(KEY_SUCCESS, true));
+                        } else {
+                                log.warn("╔════════════════════════════════════════════════════════════════╗");
+                                log.warn("║  ❌ [DraftController] AÇÃO REJEITADA                          ║");
+                                log.warn("╚════════════════════════════════════════════════════════════════╝");
+                                log.warn("⚠️ Motivos possíveis:");
+                                log.warn("   - Campeão já utilizado");
+                                log.warn("   - Jogador incorreto para esta ação");
+                                log.warn("   - Ação fora de ordem");
+                                log.info("════════════════════════════════════════════════════════════════\n");
+                                return ResponseEntity.badRequest().body(Map.of(
+                                                KEY_SUCCESS, false,
+                                                KEY_ERROR,
+                                                "Ação inválida: campeão já utilizado, jogador errado ou fora de ordem"));
+                        }
+                } catch (Exception e) {
+                        log.error("╔════════════════════════════════════════════════════════════════╗");
+                        log.error("║  💥 [DraftController] ERRO AO PROCESSAR                       ║");
+                        log.error("╚════════════════════════════════════════════════════════════════╝");
+                        log.error("❌ Exceção: {}", e.getMessage(), e);
+                        log.info("════════════════════════════════════════════════════════════════\n");
+                        return ResponseEntity.status(500).body(Map.of(
+                                        KEY_SUCCESS, false,
+                                        KEY_ERROR, "Erro ao processar ação: " + e.getMessage()));
+                }
         }
-    }
 
-    // ✅ NOVO: Endpoint para cancelar partida em progresso
-    @DeleteMapping("/match/{matchId}/cancel")
-    public ResponseEntity<Map<String, Object>> cancelMatch(
-            @PathVariable Long matchId,
-            HttpServletRequest httpRequest) {
-        log.info("╔════════════════════════════════════════════════════════════════╗");
-        log.info("║  ❌ [DraftController] CANCELANDO PARTIDA                      ║");
-        log.info("╚════════════════════════════════════════════════════════════════╝");
-        log.info("🎯 Match ID: {}", matchId);
-
-        try {
-            // ✅ NOVO: Validar header X-Summoner-Name
-            String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
-            log.info("🔐 [{}] Solicitando cancelamento de match {}", authenticatedSummoner, matchId);
-
-            // ✅ NOVO: Validar ownership (player pertence ao match)
-            if (!redisPlayerMatch.validateOwnership(authenticatedSummoner, matchId)) {
-                log.warn("⚠️ [{}] Tentativa de cancelar match {} sem ownership!",
-                        authenticatedSummoner, matchId);
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body(Map.of(KEY_ERROR, "Você não pertence a esta partida"));
-            }
-
-            // ✅ Service DraftFlowService.cancelMatch() já tem locks internos
-            draftFlowService.cancelMatch(matchId);
-
-            log.info("✅ [DraftController] Partida {} cancelada com sucesso por {}",
-                    matchId, authenticatedSummoner);
-            return ResponseEntity.ok(Map.of(
-                    KEY_SUCCESS, true,
-                    "message", "Partida cancelada com sucesso"));
-
-        } catch (IllegalArgumentException e) {
-            log.warn("⚠️ Header X-Summoner-Name ausente em cancelamento de match");
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(Map.of(KEY_ERROR, "Header X-Summoner-Name obrigatório"));
-        } catch (Exception e) {
-            log.error("❌ [DraftController] Erro ao cancelar partida: {}", e.getMessage(), e);
-            return ResponseEntity.status(500).body(Map.of(
-                    KEY_SUCCESS, false,
-                    KEY_ERROR, "Erro ao cancelar partida: " + e.getMessage()));
+        // ✅ NOVO: Endpoint para confirmação final individual (TODOS os 10 jogadores)
+        record ConfirmFinalDraftRequest(String playerId, String summonerName) {
         }
-    }
+
+        @PostMapping("/match/{matchId}/confirm-final-draft")
+        public ResponseEntity<Map<String, Object>> confirmFinalDraft(
+                        @PathVariable Long matchId,
+                        @RequestBody ConfirmFinalDraftRequest req,
+                        HttpServletRequest httpRequest) {
+
+                log.info("╔════════════════════════════════════════════════════════════════╗");
+                log.info("║  ✅ [DraftController] CONFIRMAÇÃO FINAL RECEBIDA              ║");
+                log.info("╚════════════════════════════════════════════════════════════════╝");
+
+                try {
+                        // 🔒 Autenticação via header
+                        String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
+
+                        // 🔍 Validação de ownership (se summonerName for fornecido no body)
+                        if (req.summonerName() != null && !authenticatedSummoner.equalsIgnoreCase(req.summonerName())) {
+                                log.warn("⚠️ [{}] Tentativa de confirmar draft final de outro jogador: {}",
+                                                authenticatedSummoner, req.summonerName());
+                                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                                                .body(Map.of(KEY_ERROR,
+                                                                "Nome do invocador não corresponde ao jogador autenticado"));
+                        }
+
+                        // ✅ CRÍTICO: Validar ownership do matchId via Redis
+                        if (!redisPlayerMatch.validateOwnership(authenticatedSummoner, matchId)) {
+                                log.warn("🚫 [SEGURANÇA] Jogador {} tentou confirmar draft de match {} sem ownership!",
+                                                authenticatedSummoner, matchId);
+                                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                                                .body(Map.of(KEY_ERROR, "Jogador não pertence a esta partida"));
+                        }
+
+                        log.info("📥 [{}] POST /match/{}/confirm-final-draft", authenticatedSummoner, matchId);
+                        log.info("👤 [{}] Player ID: {}", authenticatedSummoner, req.playerId());
+
+                        if (req.playerId() == null || req.playerId().trim().isEmpty()) {
+                                log.warn("⚠️ [{}] playerId não fornecido", authenticatedSummoner);
+                                return ResponseEntity.badRequest().body(Map.of(
+                                                KEY_SUCCESS, false,
+                                                KEY_ERROR, "playerId é obrigatório"));
+                        }
+
+                        // ✅ Chamar DraftFlowService para registrar confirmação individual
+                        Map<String, Object> result = draftFlowService.confirmFinalDraft(matchId, req.playerId());
+
+                        boolean allConfirmed = (boolean) result.getOrDefault("allConfirmed", false);
+                        int confirmedCount = (int) result.getOrDefault("confirmedCount", 0);
+                        int totalPlayers = (int) result.getOrDefault("totalPlayers", 10);
+
+                        log.info("✅ [{}] Confirmação registrada: {}/{} jogadores confirmaram",
+                                        authenticatedSummoner, confirmedCount, totalPlayers);
+
+                        if (allConfirmed) {
+                                log.info("╔════════════════════════════════════════════════════════════════╗");
+                                log.info("║  🎮 [DraftController] TODOS CONFIRMARAM - INICIANDO JOGO      ║");
+                                log.info("╚════════════════════════════════════════════════════════════════╝");
+                        }
+
+                        return ResponseEntity.ok(Map.of(
+                                        KEY_SUCCESS, true,
+                                        "allConfirmed", allConfirmed,
+                                        "confirmedCount", confirmedCount,
+                                        "totalPlayers", totalPlayers,
+                                        "message", allConfirmed
+                                                        ? "Todos confirmaram! Iniciando jogo..."
+                                                        : String.format("Confirmado! Aguardando %d jogadores...",
+                                                                        totalPlayers - confirmedCount)));
+
+                } catch (Exception e) {
+                        log.error("╔════════════════════════════════════════════════════════════════╗");
+                        log.error("║  💥 [DraftController] ERRO AO CONFIRMAR                       ║");
+                        log.error("╚════════════════════════════════════════════════════════════════╝");
+                        log.error("❌ Exceção: {}", e.getMessage(), e);
+                        return ResponseEntity.status(500).body(Map.of(
+                                        KEY_SUCCESS, false,
+                                        KEY_ERROR, "Erro ao confirmar: " + e.getMessage()));
+                }
+        }
+
+        // ✅ NOVO: Endpoint para cancelar partida em progresso
+        @DeleteMapping("/match/{matchId}/cancel")
+        public ResponseEntity<Map<String, Object>> cancelMatch(
+                        @PathVariable Long matchId,
+                        HttpServletRequest httpRequest) {
+                log.info("╔════════════════════════════════════════════════════════════════╗");
+                log.info("║  ❌ [DraftController] CANCELANDO PARTIDA                      ║");
+                log.info("╚════════════════════════════════════════════════════════════════╝");
+                log.info("🎯 Match ID: {}", matchId);
+
+                try {
+                        // ✅ NOVO: Validar header X-Summoner-Name
+                        String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
+                        log.info("🔐 [{}] Solicitando cancelamento de match {}", authenticatedSummoner, matchId);
+
+                        // ✅ NOVO: Validar ownership (player pertence ao match)
+                        if (!redisPlayerMatch.validateOwnership(authenticatedSummoner, matchId)) {
+                                log.warn("⚠️ [{}] Tentativa de cancelar match {} sem ownership!",
+                                                authenticatedSummoner, matchId);
+                                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                                                .body(Map.of(KEY_ERROR, "Você não pertence a esta partida"));
+                        }
+
+                        // ✅ Service DraftFlowService.cancelMatch() já tem locks internos
+                        draftFlowService.cancelMatch(matchId);
+
+                        log.info("✅ [DraftController] Partida {} cancelada com sucesso por {}",
+                                        matchId, authenticatedSummoner);
+                        return ResponseEntity.ok(Map.of(
+                                        KEY_SUCCESS, true,
+                                        "message", "Partida cancelada com sucesso"));
+
+                } catch (IllegalArgumentException e) {
+                        log.warn("⚠️ Header X-Summoner-Name ausente em cancelamento de match");
+                        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                                        .body(Map.of(KEY_ERROR, "Header X-Summoner-Name obrigatório"));
+                } catch (Exception e) {
+                        log.error("❌ [DraftController] Erro ao cancelar partida: {}", e.getMessage(), e);
+                        return ResponseEntity.status(500).body(Map.of(
+                                        KEY_SUCCESS, false,
+                                        KEY_ERROR, "Erro ao cancelar partida: " + e.getMessage()));
+                }
+        }
 }

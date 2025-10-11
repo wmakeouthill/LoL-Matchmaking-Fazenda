@@ -59,12 +59,8 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
 
   // UI state
   activeTab: 'queue' | 'lobby' | 'all' = 'all';
-  isRefreshing = false;
-  autoRefreshEnabled = false;
 
-  // ✅ REMOVIDO: Auto-refresh eliminado - WebSocket push em tempo real (backend faz broadcast a cada 3s)
-  // private autoRefreshInterval?: number;
-  // private readonly AUTO_REFRESH_INTERVAL_MS = 5000;
+  isRefreshing = false;
 
   // Cleanup
   private readonly destroy$ = new Subject<void>();
@@ -97,13 +93,9 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
       this.apiService.connect().subscribe();
     }
 
+
     this.setupDiscordListeners();
     this.setupQueueStateListener();
-    this.autoRefreshToggle.emit(this.autoRefreshEnabled);
-
-    // ✅ NOVO: Fazer refresh inicial SEMPRE que entrar no componente
-    console.log('🔄 [Queue] Fazendo refresh inicial do estado da fila...');
-    this.refreshData.emit();
 
     if (this.isInQueue) {
       this.startQueueTimer();
@@ -192,10 +184,6 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
     console.log('🔄 [Queue] CurrentPlayer atualizado');
     this.queueStateService.updateCurrentPlayer(newPlayer);
 
-    if (this.autoRefreshEnabled) {
-      this.queueStateService.startPolling();
-    }
-
     // Enviar dados LCU para Discord (backend gerencia a vinculação)
     if (newPlayer?.displayName) {
       console.log('🎮 [Queue] Enviando dados do LCU para identificação Discord...');
@@ -271,41 +259,6 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
     this.discordService.checkConnection();
   }
 
-  // =============================================================================
-  // AUTO-REFRESH METHODS (usando APENAS WebSocket)
-  // =============================================================================
-  onAutoRefreshChange(): void {
-    this.autoRefreshEnabled = !this.autoRefreshEnabled;
-    console.log(`🔄 [Queue] Auto-refresh ${this.autoRefreshEnabled ? 'habilitado' : 'desabilitado'} (apenas WebSocket)`);
-
-    this.autoRefreshToggle.emit(this.autoRefreshEnabled);
-
-    if (this.autoRefreshEnabled) {
-      if (this.currentPlayer?.displayName) {
-        this.queueStateService.updateCurrentPlayer(this.currentPlayer);
-        // ⚠️ NÃO chamar startPolling() - usar apenas WebSocket
-        console.log('✅ [Queue] Usando apenas WebSocket para atualizações em tempo real');
-      }
-      // ✅ Forçar uma sincronização manual inicial
-      this.refreshQueueData();
-    } else {
-      this.queueStateService.stopMySQLSync();
-      console.log('🛑 [Queue] Auto-refresh desabilitado');
-    }
-  }
-
-  refreshQueueData(): void {
-    if (this.isRefreshing) return;
-
-    this.isRefreshing = true;
-    console.log('🔄 [Queue] Refresh manual solicitado');
-    this.refreshData.emit();
-
-    setTimeout(() => {
-      this.isRefreshing = false;
-      this.cdr.detectChanges();
-    }, 1000);
-  }
 
   // Método chamado pelo template (compatibilidade)
   refreshPlayersData(): void {
@@ -885,7 +838,7 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
 
     try {
       const summonerName = this.currentPlayer.displayName || this.currentPlayer.summonerName;
-      
+
       // ✅ Chamar endpoint backend com validação e Redis
       const response = await fetch(
         `/api/queue/my-active-match?summonerName=${encodeURIComponent(summonerName)}`,
@@ -912,7 +865,7 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
 
       if (activeMatch && activeMatch.id) {
         console.log('🎮 [Queue] PARTIDA ATIVA DETECTADA:', activeMatch);
-        
+
         // ✅ Redirecionar baseado no status
         this.redirectToActiveMatch(activeMatch);
       }
@@ -941,21 +894,21 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
       // ✅ O WebSocket deve já ter enviado a notificação
       // Se não, forçar reload da página principal
       window.location.reload();
-      
+
     } else if (status === 'DRAFT' || status === 'DRAFTING') {
       console.log('→ [Queue] Draft detectado, redirecionando...');
       // ✅ Redirecionar para draft
       // TODO: Implementar navegação para draft quando houver roteamento
       // this.router.navigate(['/draft', matchId]);
       window.location.reload(); // Temporary: forçar reload para entrar no draft
-      
+
     } else if (status === 'IN_PROGRESS' || status === 'GAME') {
       console.log('→ [Queue] Game in progress detectado, redirecionando...');
       // ✅ Redirecionar para game
       // TODO: Implementar navegação para game quando houver roteamento
       // this.router.navigate(['/game', matchId]);
       window.location.reload(); // Temporary: forçar reload para entrar no game
-      
+
     } else {
       console.warn(`⚠️ [Queue] Status desconhecido: ${status}`);
     }

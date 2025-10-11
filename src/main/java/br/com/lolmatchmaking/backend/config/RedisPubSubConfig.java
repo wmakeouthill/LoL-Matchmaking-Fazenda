@@ -54,27 +54,27 @@ public class RedisPubSubConfig {
             MessageListenerAdapter draftListenerAdapter,
             MessageListenerAdapter spectatorListenerAdapter,
             MessageListenerAdapter gameListenerAdapter) {
-        
+
         RedisMessageListenerContainer container = new RedisMessageListenerContainer();
         container.setConnectionFactory(connectionFactory);
-        
+
         // ✅ CANAIS DE FILA (queue:*)
         container.addMessageListener(queueListenerAdapter, new PatternTopic("queue:*"));
-        
+
         // ✅ CANAIS DE PARTIDA (match:*)
         container.addMessageListener(matchListenerAdapter, new PatternTopic("match:*"));
-        
+
         // ✅ CANAIS DE DRAFT (draft:*)
         container.addMessageListener(draftListenerAdapter, new PatternTopic("draft:*"));
-        
+
         // ✅ CANAIS DE ESPECTADORES (spectator:*)
         container.addMessageListener(spectatorListenerAdapter, new PatternTopic("spectator:*"));
-        
+
         // ✅ CANAIS DE GAME (game:*)
         container.addMessageListener(gameListenerAdapter, new PatternTopic("game:*"));
-        
+
         log.info("✅ [RedisPubSub] Configurado para escutar canais: queue:*, match:*, draft:*, spectator:*, game:*");
-        
+
         return container;
     }
 
@@ -86,6 +86,10 @@ public class RedisPubSubConfig {
         MessageListenerAdapter adapter = new MessageListenerAdapter(
                 eventBroadcastService,
                 "handleQueueEvent");
+
+        // ✅ CRÍTICO: Configurar adapter para aceitar nome do canal como segundo
+        // parâmetro
+        adapter.setSerializer(null); // Usar String diretamente
 
         log.info("✅ [RedisPubSub] Queue listener adapter criado");
         return adapter;
@@ -100,6 +104,10 @@ public class RedisPubSubConfig {
                 eventBroadcastService,
                 "handleMatchEvent");
 
+        // ✅ CRÍTICO: Configurar adapter para aceitar nome do canal como segundo
+        // parâmetro
+        adapter.setSerializer(null); // Usar String diretamente
+
         log.info("✅ [RedisPubSub] Match listener adapter criado");
         return adapter;
     }
@@ -112,7 +120,11 @@ public class RedisPubSubConfig {
         MessageListenerAdapter adapter = new MessageListenerAdapter(
                 eventBroadcastService,
                 "handleDraftEvent");
-        
+
+        // ✅ CRÍTICO: Configurar adapter para aceitar nome do canal como segundo
+        // parâmetro
+        adapter.setSerializer(null); // Usar String diretamente
+
         log.info("✅ [RedisPubSub] Draft listener adapter criado");
         return adapter;
     }
@@ -125,7 +137,11 @@ public class RedisPubSubConfig {
         MessageListenerAdapter adapter = new MessageListenerAdapter(
                 eventBroadcastService,
                 "handleSpectatorEvent");
-        
+
+        // ✅ CRÍTICO: Configurar adapter para aceitar nome do canal como segundo
+        // parâmetro
+        adapter.setSerializer(null); // Usar String diretamente
+
         log.info("✅ [RedisPubSub] Spectator listener adapter criado");
         return adapter;
     }
@@ -138,7 +154,11 @@ public class RedisPubSubConfig {
         MessageListenerAdapter adapter = new MessageListenerAdapter(
                 eventBroadcastService,
                 "handleGameEvent");
-        
+
+        // ✅ CRÍTICO: Configurar adapter para aceitar nome do canal como segundo
+        // parâmetro
+        adapter.setSerializer(null); // Usar String diretamente
+
         log.info("✅ [RedisPubSub] Game listener adapter criado");
         return adapter;
     }
