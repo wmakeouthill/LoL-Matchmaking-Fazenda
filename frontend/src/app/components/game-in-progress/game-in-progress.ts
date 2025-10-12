@@ -43,15 +43,9 @@ interface GameResult {
   riotId?: string | null;
 }
 
+// ✅ DESABILITADO: Salvamento de logs em arquivo (por solicitação do usuário)
 function logGameInProgress(...args: any[]) {
-  const fs = (window as any).electronAPI?.fs;
-  const path = (window as any).electronAPI?.path;
-  const process = (window as any).electronAPI?.process;
-  const logPath = path && process ? path.join(process.cwd(), 'frontend.log') : '';
-  const logLine = `[${new Date().toISOString()}] [GameInProgress] ` + args.map(a => (typeof a === 'object' ? JSON.stringify(a) : a)).join(' ') + '\n';
-  if (fs && logPath) {
-    fs.appendFile(logPath, logLine, (err: any) => { });
-  }
+  // Apenas console.log para debug no DevTools
   console.log('[GameInProgress]', ...args);
 }
 

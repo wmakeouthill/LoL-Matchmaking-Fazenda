@@ -38,15 +38,9 @@ export interface PlayerInfo {
   profileIconId?: number;
 }
 
+// ✅ DESABILITADO: Salvamento de logs em arquivo (por solicitação do usuário)
 function logMatchFound(...args: any[]) {
-  const fs = (window as any).electronAPI?.fs;
-  const path = (window as any).electronAPI?.path;
-  const process = (window as any).electronAPI?.process;
-  const logPath = path && process ? path.join(process.cwd(), 'frontend.log') : '';
-  const logLine = `[${new Date().toISOString()}] [MatchFound] ` + args.map(a => (typeof a === 'object' ? JSON.stringify(a) : a)).join(' ') + '\n';
-  if (fs && logPath) {
-    fs.appendFile(logPath, logLine, (err: any) => { });
-  }
+  // Apenas console.log para debug no DevTools
   console.log('[MatchFound]', ...args);
 }
 

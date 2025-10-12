@@ -50,6 +50,9 @@ public class GameInProgressService {
     // ✅ NOVO: PlayerStateService para cleanup inteligente
     private final br.com.lolmatchmaking.backend.service.lock.PlayerStateService playerStateService;
 
+    // ✅ NOVO: RedisTemplate para throttling de retries
+    private final org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
+
     // scheduler for monitoring
     private ScheduledExecutorService scheduler;
 
@@ -505,6 +508,8 @@ public class GameInProgressService {
             scheduler.scheduleWithFixedDelay(() -> {
                 try {
                     checkExpiredGames();
+                    // ✅ NOVO: Retry game state para jogadores desconectados
+                    retryGameStateForAllPlayers();
                 } catch (Exception e) {
                     log.error("❌ Erro no monitoramento de jogos agendado", e);
                 }
@@ -558,6 +563,124 @@ public class GameInProgressService {
         } catch (Exception e) {
             log.error("❌ Erro ao cancelar jogo expirado: {}", matchId, e);
         }
+    }
+
+    /**
+     * ✅ NOVO: Reenviar game state para TODOS os jogadores (retry para
+     * desconectados)
+     * Garante que ninguém fique sem ver a tela de game in progress
+     */
+    private void retryGameStateForAllPlayers() {
+        try {
+            // ✅ Buscar jogos ativos do MySQL
+            List<CustomMatch> activeGames = customMatchRepository.findByStatus("in_progress");
+
+            if (activeGames.isEmpty()) {
+                return;
+            }
+
+            for (CustomMatch match : activeGames) {
+                Long matchId = match.getId();
+
+                // ✅ THROTTLE: Reenviar apenas a cada 5 segundos para não spammar
+                String retryKey = "game_retry:" + matchId;
+                Long lastRetrySec = redisTemplate.opsForValue()
+                        .get(retryKey) != null ? (Long) redisTemplate.opsForValue().get(retryKey) : null;
+
+                long nowSec = System.currentTimeMillis() / 1000;
+                if (lastRetrySec != null && (nowSec - lastRetrySec) < 5) {
+                    continue; // Reenviar apenas a cada 5s
+                }
+
+                // ✅ Marcar último retry
+                redisTemplate.opsForValue().set(retryKey, nowSec, java.time.Duration.ofMinutes(10));
+
+                // ✅ VALIDAÇÃO: Buscar todos os jogadores do MySQL (ownership)
+                List<String> team1Players = parsePlayerNames(match.getTeam1PlayersJson());
+                List<String> team2Players = parsePlayerNames(match.getTeam2PlayersJson());
+
+                List<String> allPlayers = new ArrayList<>();
+                allPlayers.addAll(team1Players);
+                allPlayers.addAll(team2Players);
+
+                if (allPlayers.isEmpty()) {
+                    continue;
+                }
+
+                // ✅ OTIMIZAÇÃO: Verificar quantos jogadores TÊM sessão WebSocket ativa
+                int connectedCount = 0;
+                for (String player : allPlayers) {
+                    Optional<org.springframework.web.socket.WebSocketSession> session = sessionRegistry
+                            .getByPlayer(player);
+                    if (session.isPresent()) {
+                        connectedCount++;
+                    }
+                }
+
+                // ✅ Se TODOS estão conectados, não precisa retry!
+                if (connectedCount == allPlayers.size()) {
+                    log.debug("✅ [GameInProgress] Todos os {} jogadores estão conectados - pulando retry",
+                            allPlayers.size());
+                    continue;
+                }
+
+                log.debug("⚠️ [GameInProgress] Apenas {}/{} jogadores conectados - enviando retry",
+                        connectedCount, allPlayers.size());
+
+                // ✅ Validar ownership case-insensitive
+                List<String> validPlayers = new ArrayList<>();
+                for (String player : allPlayers) {
+                    boolean inTeam1 = match.getTeam1PlayersJson() != null &&
+                            match.getTeam1PlayersJson().toLowerCase().contains(player.toLowerCase());
+                    boolean inTeam2 = match.getTeam2PlayersJson() != null &&
+                            match.getTeam2PlayersJson().toLowerCase().contains(player.toLowerCase());
+
+                    if (inTeam1 || inTeam2) {
+                        validPlayers.add(player);
+                    }
+                }
+
+                if (!validPlayers.isEmpty()) {
+                    log.debug("🔄 [GameInProgress] RETRY: Reenviando game_started para {} jogadores da partida {}",
+                            validPlayers.size(), matchId);
+
+                    // ✅ Montar payload do game (dados do pick_ban_data)
+                    Map<String, Object> gameData = new HashMap<>();
+                    gameData.put("matchId", matchId);
+                    gameData.put("status", "in_progress");
+                    gameData.put("startTime", match.getCreatedAt());
+
+                    // ✅ Adicionar pick_ban_data completo
+                    if (match.getPickBanDataJson() != null && !match.getPickBanDataJson().isEmpty()) {
+                        try {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> pickBanData = objectMapper.readValue(
+                                    match.getPickBanDataJson(), Map.class);
+                            gameData.put("pickBanData", pickBanData);
+                        } catch (Exception e) {
+                            log.warn("⚠️ [GameInProgress] Erro ao parsear pick_ban_data", e);
+                        }
+                    }
+
+                    // ✅ BROADCAST PARALELO
+                    webSocketService.sendToPlayers("game_started", gameData, validPlayers);
+
+                    log.debug("✅ [GameInProgress] RETRY enviado para {} jogadores", validPlayers.size());
+                }
+            }
+
+        } catch (Exception e) {
+            log.debug("❌ [GameInProgress] Erro ao retry game state", e);
+        }
+    }
+
+    private List<String> parsePlayerNames(String csv) {
+        if (csv == null || csv.isBlank())
+            return new ArrayList<>();
+        return Arrays.stream(csv.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
     }
 
     /**

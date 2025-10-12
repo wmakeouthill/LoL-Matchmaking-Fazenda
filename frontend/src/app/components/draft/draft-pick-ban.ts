@@ -13,43 +13,15 @@ import { ApiService } from '../../services/api';
 
 // ✅ MELHORADO: Sistema de logs mais robusto
 function logDraft(...args: any[]) {
-  const fs = (window as any).electronAPI?.fs;
-  const path = (window as any).electronAPI?.path;
-  const process = (window as any).electronAPI?.process;
-  const logPath = path && process ? path.join(process.cwd(), 'draft.log') : '';
-  const logLine = `[${new Date().toISOString()}] [DraftPickBan] ` + args.map(a => (typeof a === 'object' ? JSON.stringify(a) : a)).join(' ') + '\n';
-  if (fs && logPath) {
-    fs.appendFile(logPath, logLine, (err: any) => {
-      if (err) console.error('Erro ao escrever log:', err);
-    });
-  }
+  // ✅ DESABILITADO: Salvamento de logs em arquivo (por solicitação do usuário)
+  // Apenas console.log para debug no DevTools
   console.log('[DraftPickBan]', ...args);
 }
 
-// ✅ NOVO: Função para salvar logs na raiz do projeto (com controle via log-config.json)
+// ✅ DESABILITADO: Salvamento de logs em arquivo (por solicitação do usuário)
 function saveLogToRoot(message: string, filename: string = 'draft-debug.log') {
-  // Verificar se logs estão habilitados
-  const logConfig = (window as any).logConfig;
-  if (logConfig?.frontend?.saveToFile === false) {
-    return; // Logs desabilitados
-  }
-
-  const fs = (window as any).electronAPI?.fs;
-  const path = (window as any).electronAPI?.path;
-  const process = (window as any).electronAPI?.process;
-
-  if (fs && path && process) {
-    const rootPath = process.cwd();
-    const logPath = path.join(rootPath, filename);
-    const timestamp = new Date().toISOString();
-    const logLine = `[${timestamp}] ${message}\n`;
-
-    fs.appendFile(logPath, logLine, (err: any) => {
-      if (err) {
-        console.error('Erro ao salvar log na raiz:', err);
-      }
-    });
-  }
+  // Apenas no console, sem salvar em arquivo
+  console.log(`[SaveLog]`, message);
 }
 
 @Component({
@@ -1752,16 +1724,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
     // ✅ NOVO: Se o draft está completo (currentAction >= phases.length), não há fase atual
     if (this.session.currentAction >= this.session.phases.length) {
-      const debugInfo = {
-        currentAction: this.session.currentAction,
-        phasesLength: this.session.phases.length,
-        phases: this.session.phases,
-        hasPhases: !!this.session.phases,
-        phasesIsArray: Array.isArray(this.session.phases)
-      };
-      logDraft('🏁 [getCurrentPlayerName] Draft completado - sem fase atual:', debugInfo);
-      console.error('❌ [DraftPickBan] PHASES VAZIO OU INCORRETO:', debugInfo);
-      saveLogToRoot(`❌ [getCurrentPlayerName] PROBLEMA: currentAction=${this.session.currentAction}, phasesLength=${this.session.phases.length}, phases=${JSON.stringify(this.session.phases?.slice(0, 3))}`);
+      logDraft('🏁 [getCurrentPlayerName] Draft completado - todas as ações concluídas');
       return 'Draft Completo';
     }
 
