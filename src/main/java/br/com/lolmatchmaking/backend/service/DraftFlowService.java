@@ -33,6 +33,9 @@ public class DraftFlowService {
     // ✅ NOVO: PlayerStateService para cleanup inteligente
     private final br.com.lolmatchmaking.backend.service.lock.PlayerStateService playerStateService;
 
+    // ✅ NOVO: RedisPlayerMatchService para cleanup de ownership
+    private final br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch;
+
     @Value("${app.draft.action-timeout-ms:30000}")
     private long configuredActionTimeoutMs;
 
@@ -2294,6 +2297,28 @@ public class DraftFlowService {
 
             log.info("📊 [DraftFlow] Partida encontrada - Status: {}", match.getStatus());
 
+            // ✅ 1.5. NOVO: Buscar jogadores ANTES de deletar partida
+            DraftState state = getDraftStateFromRedis(matchId);
+            Set<String> allPlayers = new HashSet<>();
+            if (state != null) {
+                allPlayers.addAll(state.getTeam1Players());
+                allPlayers.addAll(state.getTeam2Players());
+                log.info("🎯 [DraftFlow] {} jogadores para limpar estados", allPlayers.size());
+            } else {
+                log.warn("⚠️ [DraftFlow] DraftState null, tentando extrair jogadores do pick_ban_data");
+                // Fallback: tentar extrair do pick_ban_data
+                if (match.getPickBanDataJson() != null) {
+                    try {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> pickBanData = mapper.readValue(match.getPickBanDataJson(), Map.class);
+                        // Extrair jogadores de team1/team2 ou teams.blue/red
+                        // (implementação simplificada, pode melhorar depois)
+                    } catch (Exception e) {
+                        log.warn("⚠️ [DraftFlow] Erro ao parsear pick_ban_data: {}", e.getMessage());
+                    }
+                }
+            }
+
             // 2. Limpar Discord (mover jogadores de volta e deletar canais)
             discordService.deleteMatchChannels(matchId, true);
             log.info("🧹 [DraftFlow] Canais do Discord limpos e jogadores movidos de volta");
@@ -2302,14 +2327,38 @@ public class DraftFlowService {
             customMatchRepository.deleteById(matchId);
             log.info("🗑️ [DraftFlow] Partida deletada do banco de dados");
 
-            // 4. ✅ REDIS ONLY: Limpar dados do Redis
+            // ✅ 4. NOVO: Limpar PlayerState de TODOS os jogadores
+            for (String playerName : allPlayers) {
+                try {
+                    playerStateService.setPlayerState(playerName,
+                            br.com.lolmatchmaking.backend.service.lock.PlayerState.AVAILABLE);
+                    log.info("✅ [DraftFlow] Estado de {} limpo para AVAILABLE", playerName);
+                } catch (Exception e) {
+                    log.error("❌ [DraftFlow] Erro ao limpar estado de {}: {}", playerName, e.getMessage());
+                }
+            }
+
+            // ✅ 5. NOVO: Limpar RedisPlayerMatch ownership
+            // Note: clearPlayerMatch agora valida MySQL antes de limpar, mas como deletamos
+            // a match,
+            // ele vai detectar que não existe e vai limpar corretamente
+            for (String playerName : allPlayers) {
+                try {
+                    redisPlayerMatch.clearPlayerMatch(playerName);
+                    log.info("✅ [DraftFlow] Ownership de {} limpo", playerName);
+                } catch (Exception e) {
+                    log.error("❌ [DraftFlow] Erro ao limpar ownership de {}: {}", playerName, e.getMessage());
+                }
+            }
+
+            // 6. ✅ REDIS ONLY: Limpar dados do Redis
             redisDraftFlow.clearAllDraftData(matchId);
             log.info("🧹 [DraftFlow] Dados limpos do Redis");
 
-            // 5. Broadcast evento de cancelamento
+            // 7. Broadcast evento de cancelamento
             broadcastMatchCancelled(matchId);
 
-            // ✅ 6. Limpar do Redis
+            // ✅ 8. Limpar do Redis
             redisDraftFlow.clearDraftState(matchId);
             log.info("🗑️ [DraftFlow] Estado do draft limpo do Redis");
 

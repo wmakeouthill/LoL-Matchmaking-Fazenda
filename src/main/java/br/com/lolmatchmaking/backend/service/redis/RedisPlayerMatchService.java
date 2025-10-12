@@ -58,32 +58,34 @@ public class RedisPlayerMatchService {
     public void registerPlayerMatch(String summonerName, Long matchId) {
         try {
             String normalizedName = normalizePlayerName(summonerName);
-            
+
             // ✅ VALIDAÇÃO MySQL: Verificar se a partida existe e está ativa
             Optional<CustomMatch> matchOpt = customMatchRepository.findById(matchId);
             if (matchOpt.isEmpty()) {
-                log.error("🚨 [RedisPlayerMatch] Tentativa de registrar player {} em match {} que NÃO EXISTE no MySQL! BLOQUEADO!", 
+                log.error(
+                        "🚨 [RedisPlayerMatch] Tentativa de registrar player {} em match {} que NÃO EXISTE no MySQL! BLOQUEADO!",
                         normalizedName, matchId);
                 return;
             }
-            
+
             CustomMatch match = matchOpt.get();
             String status = match.getStatus();
             boolean isActiveMatch = "pending".equals(status) || "draft".equals(status) || "in_progress".equals(status);
-            
+
             if (!isActiveMatch) {
-                log.error("🚨 [RedisPlayerMatch] Tentativa de registrar player {} em match {} com status INVÁLIDO ({})! BLOQUEADO!", 
+                log.error(
+                        "🚨 [RedisPlayerMatch] Tentativa de registrar player {} em match {} com status INVÁLIDO ({})! BLOQUEADO!",
                         normalizedName, matchId, status);
                 return;
             }
-            
+
             // ✅ Tudo OK, pode registrar no Redis
             String playerKey = PLAYER_MATCH_PREFIX + normalizedName;
             redisTemplate.opsForValue().set(playerKey, matchId, TTL);
             String matchKey = MATCH_PLAYERS_PREFIX + matchId;
             redisTemplate.opsForSet().add(matchKey, normalizedName);
             redisTemplate.expire(matchKey, TTL);
-            log.info("✅ [RedisPlayerMatch] Registrado: {} → match {} (validado no MySQL: status={})", 
+            log.info("✅ [RedisPlayerMatch] Registrado: {} → match {} (validado no MySQL: status={})",
                     normalizedName, matchId, status);
         } catch (Exception e) {
             log.error("❌ [RedisPlayerMatch] Erro ao registrar player: {}", summonerName, e);
@@ -101,12 +103,40 @@ public class RedisPlayerMatchService {
         try {
             String normalizedName = normalizePlayerName(summonerName);
 
-            // 1. Buscar matchId atual do jogador
+            // 1. Buscar matchId atual do jogador no Redis
             String playerKey = PLAYER_MATCH_PREFIX + normalizedName;
             Object currentMatchIdObj = redisTemplate.opsForValue().get(playerKey);
 
             if (currentMatchIdObj == null) {
-                log.warn("⚠️ [RedisPlayerMatch] Jogador {} não tem partida ativa", normalizedName);
+                // ✅ CLEANUP INTELIGENTE: Redis não tem, mas MySQL pode ter!
+                // Verificar MySQL (fonte da verdade)
+                boolean inMySQLMatch = customMatchRepository.findById(matchId)
+                        .map(match -> {
+                            String status = match.getStatus();
+                            if (!"pending".equals(status) && !"draft".equals(status) && !"in_progress".equals(status)) {
+                                return false; // Match finalizada
+                            }
+
+                            // Verificar se player está na partida
+                            String team1 = match.getTeam1PlayersJson();
+                            String team2 = match.getTeam2PlayersJson();
+                            return (team1 != null && team1.contains(summonerName)) ||
+                                    (team2 != null && team2.contains(summonerName));
+                        })
+                        .orElse(false);
+
+                if (inMySQLMatch) {
+                    log.warn(
+                            "🧹 [validateOwnership] ESTADO FANTASMA: {} está na match {} (MySQL) mas NÃO tem ownership no Redis!",
+                            normalizedName, matchId);
+                    log.warn("🧹 [validateOwnership] Recriando ownership no Redis...");
+                    registerPlayerMatch(summonerName, matchId);
+                    log.info("✅ [validateOwnership] Ownership recriado, validação OK");
+                    return true;
+                }
+
+                log.warn("⚠️ [validateOwnership] Jogador {} não tem partida ativa no Redis nem no MySQL",
+                        normalizedName);
                 return false;
             }
 
@@ -115,16 +145,50 @@ public class RedisPlayerMatchService {
             // 2. Verificar se o matchId corresponde
             if (!currentMatchId.equals(matchId)) {
                 log.warn(
-                        "⚠️ [RedisPlayerMatch] TENTATIVA DE ACESSO INDEVIDO! Jogador {} tentou acessar match {}, mas está em match {}",
+                        "⚠️ [validateOwnership] TENTATIVA DE ACESSO INDEVIDO! Jogador {} tentou acessar match {}, mas está em match {}",
                         normalizedName, matchId, currentMatchId);
                 return false;
             }
 
-            log.debug("✅ [RedisPlayerMatch] Ownership validado: {} → match {}", normalizedName, matchId);
+            // ✅ VALIDAÇÃO MySQL: Redis diz que tem ownership, confirmar no MySQL
+            boolean validInMySQL = customMatchRepository.findById(matchId)
+                    .map(match -> {
+                        String status = match.getStatus();
+                        if (!"pending".equals(status) && !"draft".equals(status) && !"in_progress".equals(status)) {
+                            log.warn(
+                                    "🧹 [validateOwnership] Match {} está finalizada no MySQL (status={}), ownership Redis deve ser limpo!",
+                                    matchId, status);
+                            return false;
+                        }
+
+                        // Verificar se player está na partida
+                        String team1 = match.getTeam1PlayersJson();
+                        String team2 = match.getTeam2PlayersJson();
+                        boolean isInMatch = (team1 != null && team1.contains(summonerName)) ||
+                                (team2 != null && team2.contains(summonerName));
+
+                        if (!isInMatch) {
+                            log.warn(
+                                    "🧹 [validateOwnership] Jogador {} NÃO está na match {} no MySQL, ownership Redis deve ser limpo!",
+                                    normalizedName, matchId);
+                        }
+
+                        return isInMatch;
+                    })
+                    .orElse(false);
+
+            if (!validInMySQL) {
+                log.warn("🧹 [validateOwnership] Ownership inválido no MySQL, limpando Redis...");
+                clearPlayerMatch(summonerName); // Já valida MySQL antes de limpar
+                return false;
+            }
+
+            log.debug("✅ [validateOwnership] Ownership validado: {} → match {} (Redis + MySQL OK)", normalizedName,
+                    matchId);
             return true;
 
         } catch (Exception e) {
-            log.error("❌ [RedisPlayerMatch] Erro ao validar ownership: summonerName={}, matchId={}",
+            log.error("❌ [validateOwnership] Erro ao validar ownership: summonerName={}, matchId={}",
                     summonerName, matchId, e);
             return false;
         }
@@ -191,18 +255,19 @@ public class RedisPlayerMatchService {
         try {
             String normalizedName = normalizePlayerName(summonerName);
             Long matchId = getCurrentMatch(normalizedName);
-            
+
             if (matchId == null) {
                 log.debug("✅ [RedisPlayerMatch] Nada a limpar: {} não tem match no Redis", normalizedName);
                 return;
             }
-            
-            // ✅ VALIDAÇÃO MySQL: Verificar se a partida está finalizada/cancelada antes de limpar
+
+            // ✅ VALIDAÇÃO MySQL: Verificar se a partida está finalizada/cancelada antes de
+            // limpar
             Optional<CustomMatch> matchOpt = customMatchRepository.findById(matchId);
-            
+
             if (matchOpt.isEmpty()) {
                 // ✅ Match não existe no MySQL, pode limpar Redis
-                log.warn("🧹 [RedisPlayerMatch] Match {} não existe no MySQL, limpando Redis para {}", 
+                log.warn("🧹 [RedisPlayerMatch] Match {} não existe no MySQL, limpando Redis para {}",
                         matchId, normalizedName);
                 String playerKey = PLAYER_MATCH_PREFIX + normalizedName;
                 redisTemplate.delete(playerKey);
@@ -210,24 +275,25 @@ public class RedisPlayerMatchService {
                 redisTemplate.opsForSet().remove(matchKey, normalizedName);
                 return;
             }
-            
+
             CustomMatch match = matchOpt.get();
             String status = match.getStatus();
             boolean isFinished = "completed".equalsIgnoreCase(status) || "cancelled".equalsIgnoreCase(status);
-            
+
             if (!isFinished) {
                 // 🚨 CRÍTICO: Match ainda está ativa no MySQL, NÃO PODE LIMPAR!
-                log.error("🚨 [RedisPlayerMatch] BLOQUEADO! Tentativa de limpar {} da match {} que ainda está ATIVA no MySQL (status={})! Redis NÃO será limpo!", 
+                log.error(
+                        "🚨 [RedisPlayerMatch] BLOQUEADO! Tentativa de limpar {} da match {} que ainda está ATIVA no MySQL (status={})! Redis NÃO será limpo!",
                         normalizedName, matchId, status);
                 return;
             }
-            
+
             // ✅ Match está finalizada no MySQL, pode limpar Redis
             String playerKey = PLAYER_MATCH_PREFIX + normalizedName;
             redisTemplate.delete(playerKey);
             String matchKey = MATCH_PLAYERS_PREFIX + matchId;
             redisTemplate.opsForSet().remove(matchKey, normalizedName);
-            log.info("🗑️ [RedisPlayerMatch] Removido: {} (match: {} finalizada com status={})", 
+            log.info("🗑️ [RedisPlayerMatch] Removido: {} (match: {} finalizada com status={})",
                     normalizedName, matchId, status);
         } catch (Exception e) {
             log.error("❌ [RedisPlayerMatch] Erro ao remover player: {}", summonerName, e);
@@ -243,7 +309,7 @@ public class RedisPlayerMatchService {
         try {
             // ✅ VALIDAÇÃO MySQL: Verificar se a partida está finalizada antes de limpar
             Optional<CustomMatch> matchOpt = customMatchRepository.findById(matchId);
-            
+
             if (matchOpt.isEmpty()) {
                 // ✅ Match não existe no MySQL, pode limpar Redis
                 log.warn("🧹 [RedisPlayerMatch] Match {} não existe no MySQL, limpando Redis", matchId);
@@ -251,18 +317,19 @@ public class RedisPlayerMatchService {
                 CustomMatch match = matchOpt.get();
                 String status = match.getStatus();
                 boolean isFinished = "completed".equalsIgnoreCase(status) || "cancelled".equalsIgnoreCase(status);
-                
+
                 if (!isFinished) {
                     // 🚨 CRÍTICO: Match ainda está ativa no MySQL, NÃO PODE LIMPAR!
-                    log.error("🚨 [RedisPlayerMatch] BLOQUEADO! Tentativa de limpar jogadores da match {} que ainda está ATIVA no MySQL (status={})! Redis NÃO será limpo!", 
+                    log.error(
+                            "🚨 [RedisPlayerMatch] BLOQUEADO! Tentativa de limpar jogadores da match {} que ainda está ATIVA no MySQL (status={})! Redis NÃO será limpo!",
                             matchId, status);
                     return;
                 }
-                
-                log.info("🗑️ [RedisPlayerMatch] Match {} finalizada no MySQL (status={}), limpando Redis", 
+
+                log.info("🗑️ [RedisPlayerMatch] Match {} finalizada no MySQL (status={}), limpando Redis",
                         matchId, status);
             }
-            
+
             // ✅ Tudo OK, pode limpar Redis
             // 1. Buscar todos os jogadores da partida
             Set<String> players = getMatchPlayers(matchId);
