@@ -141,37 +141,42 @@ public class QueueManagementService {
             if (!playerStateService.canJoinQueue(summonerName)) {
                 br.com.lolmatchmaking.backend.service.lock.PlayerState currentState = playerStateService
                         .getPlayerState(summonerName);
-
-                // ✅ CORREÇÃO CRÍTICA: CLEANUP INTELIGENTE
-                // Se estado é IN_QUEUE mas player NÃO está no MySQL, é estado fantasma!
+                // Sempre corrigir o Redis para refletir o MySQL
                 if (currentState == PlayerState.IN_QUEUE) {
-                    // Verificar no MySQL (fonte da verdade)
                     boolean reallyInQueue = queuePlayerRepository.findBySummonerName(summonerName)
                             .map(qp -> qp.getActive() != null && qp.getActive())
                             .orElse(false);
-
                     if (!reallyInQueue) {
+                        boolean inActiveMatch = customMatchRepository.findActiveMatchByPlayerPuuid(summonerName)
+                                .isPresent();
+                        if (inActiveMatch) {
+                            log.error(
+                                    "🚨 [addToQueue] Tentativa de cleanup de estado mas jogador {} está em partida ativa no MySQL! NUNCA limpar estado!",
+                                    summonerName);
+                            return false;
+                        }
                         log.warn(
                                 "🧹 [addToQueue] ESTADO FANTASMA detectado: {} tem estado IN_QUEUE mas NÃO está no MySQL!",
                                 summonerName);
-                        log.warn("🧹 [addToQueue] Fazendo CLEANUP automático do PlayerState...");
-
-                        // Limpar estado fantasma (FORCE pois IN_QUEUE → AVAILABLE não é transição válida)
+                        log.warn("🧹 [addToQueue] Corrigindo Redis para refletir MySQL...");
                         playerStateService.forceSetPlayerState(summonerName, PlayerState.AVAILABLE);
-
                         log.info("✅ [addToQueue] PlayerState FORÇADAMENTE limpo, permitindo entrar na fila agora");
-                        // Continuar o fluxo normalmente
-
                     } else {
-                        // Player REALMENTE está na fila no MySQL
-                        log.warn("❌ [addToQueue] Jogador {} JÁ está na fila no MySQL (estado: {})",
-                                summonerName, currentState);
+                        log.warn("❌ [addToQueue] Jogador {} JÁ está na fila no MySQL (estado: {})", summonerName,
+                                currentState);
                         return false;
                     }
                 } else {
-                    // Outro estado (IN_MATCH_FOUND, IN_DRAFT, IN_GAME)
-                    log.warn("❌ [addToQueue] Jogador {} não pode entrar na fila (estado: {})",
-                            summonerName, currentState);
+                    boolean inActiveMatch = customMatchRepository.findActiveMatchByPlayerPuuid(summonerName)
+                            .isPresent();
+                    if (inActiveMatch) {
+                        log.error(
+                                "🚨 [addToQueue] Jogador {} está em estado {} e em partida ativa no MySQL. NUNCA limpar estado!",
+                                summonerName, currentState);
+                        return false;
+                    }
+                    log.warn("❌ [addToQueue] Jogador {} não pode entrar na fila (estado: {})", summonerName,
+                            currentState);
                     return false;
                 }
             }
@@ -274,30 +279,37 @@ public class QueueManagementService {
     @Transactional
     public boolean removeFromQueue(String summonerName) {
         try {
-            // ✅ SQL ONLY: Buscar do banco
+            // Buscar do banco
             QueuePlayer queuePlayer = queuePlayerRepository.findBySummonerName(summonerName).orElse(null);
             if (queuePlayer == null) {
-                log.warn("⚠️ Jogador {} não encontrado na fila", summonerName);
-                return false;
+                log.warn("⚠️ Jogador {} não encontrado na fila, verificando locks/estado...", summonerName);
+                // Cleanup inteligente: se não está no MySQL, limpar locks/estado Redis
+                playerStateService.forceSetPlayerState(summonerName, PlayerState.AVAILABLE);
+                redisQueueCache.clearCache();
+                log.info("✅ [removeFromQueue] Cleanup inteligente: locks/estado limpos para {} (não estava na fila)",
+                        summonerName);
+                // Publicar evento de saída e atualização da fila
+                eventBroadcastService.publishPlayerLeftQueue(summonerName);
+                QueueStatusDTO status = getQueueStatus(null);
+                eventBroadcastService.publishQueueUpdate(status);
+                return true;
             }
 
             // Remover do banco
             queuePlayerRepository.delete(queuePlayer);
             log.info("✅ [removeFromQueue] Jogador removido do SQL: {}", summonerName);
 
-            // ✅ NOVO: ATUALIZAR ESTADO PARA AVAILABLE
+            // Atualizar estado para AVAILABLE
             playerStateService.setPlayerState(summonerName, PlayerState.AVAILABLE);
 
             // Atualizar posições
             updateQueuePositions();
 
-            // ✅ NOVO: INVALIDAR CACHE REDIS
+            // Invalidar cache Redis
             redisQueueCache.clearCache();
 
-            // ✅ NOVO: PUBLICAR EVENTO DE JOGADOR SAIU (Redis Pub/Sub)
+            // Publicar evento de saída e atualização da fila
             eventBroadcastService.publishPlayerLeftQueue(summonerName);
-
-            // ✅ NOVO: PUBLICAR ATUALIZAÇÃO COMPLETA DA FILA (Redis Pub/Sub)
             QueueStatusDTO status = getQueueStatus(null);
             eventBroadcastService.publishQueueUpdate(status);
 
@@ -314,14 +326,19 @@ public class QueueManagementService {
      * ✅ SQL ONLY: Obtém status da fila do banco
      */
     public QueueStatusDTO getQueueStatus(String currentPlayerDisplayName) {
-        // ✅ NOVO: Tentar buscar do cache Redis primeiro (performance)
+        // Tentar buscar do cache Redis primeiro (performance)
         QueueStatusDTO cachedStatus = redisQueueCache.getCachedQueueStatus();
+
+        boolean isCurrentPlayerInQueue = false;
 
         if (cachedStatus != null) {
             log.debug("⚡ [QueueManagementService] Status retornado do cache Redis (rápido)");
 
             // Marcar jogador atual se fornecido
             if (currentPlayerDisplayName != null) {
+                isCurrentPlayerInQueue = cachedStatus.getPlayersInQueueList().stream()
+                        .anyMatch(player -> player.getSummonerName().equals(currentPlayerDisplayName) ||
+                                player.getSummonerName().contains(currentPlayerDisplayName));
                 cachedStatus.getPlayersInQueueList().forEach(player -> {
                     if (player.getSummonerName().equals(currentPlayerDisplayName) ||
                             player.getSummonerName().contains(currentPlayerDisplayName)) {
@@ -329,7 +346,7 @@ public class QueueManagementService {
                     }
                 });
             }
-
+            cachedStatus.setIsCurrentPlayerInQueue(isCurrentPlayerInQueue);
             return cachedStatus;
         }
 
@@ -345,9 +362,11 @@ public class QueueManagementService {
                 .map(this::convertToQueuePlayerInfoDTO)
                 .collect(Collectors.toList());
 
-        // Marcar jogador atual se fornecido
         if (currentPlayerDisplayName != null) {
             log.info("📊 [QueueManagementService] Procurando jogador atual: {}", currentPlayerDisplayName);
+            isCurrentPlayerInQueue = playersInQueueList.stream()
+                    .anyMatch(player -> player.getSummonerName().equals(currentPlayerDisplayName) ||
+                            player.getSummonerName().contains(currentPlayerDisplayName));
             playersInQueueList.forEach(player -> {
                 if (player.getSummonerName().equals(currentPlayerDisplayName) ||
                         player.getSummonerName().contains(currentPlayerDisplayName)) {
@@ -363,9 +382,9 @@ public class QueueManagementService {
                 .averageWaitTime(calculateAverageWaitTime(activePlayers))
                 .estimatedMatchTime(calculateEstimatedMatchTime(activePlayers.size()))
                 .isActive(true)
+                .isCurrentPlayerInQueue(isCurrentPlayerInQueue)
                 .build();
 
-        // ✅ NOVO: Cachear no Redis para próximas requisições
         redisQueueCache.cacheQueueStatus(status);
         log.info("✅ [QueueManagementService] Status cacheado no Redis");
 
@@ -431,7 +450,8 @@ public class QueueManagementService {
 
                             // ✅ CORRIGIR: Player está na fila do MySQL, então estado deveria ser IN_QUEUE
                             playerStateService.forceSetPlayerState(p.getSummonerName(), PlayerState.IN_QUEUE);
-                            log.info("✅ [processQueue] PlayerState de {} FORÇADAMENTE corrigido para IN_QUEUE", p.getSummonerName());
+                            log.info("✅ [processQueue] PlayerState de {} FORÇADAMENTE corrigido para IN_QUEUE",
+                                    p.getSummonerName());
 
                             // ✅ AGORA ACEITAR: Player agora pode ser incluído no matchmaking
                             return true;
@@ -709,7 +729,7 @@ public class QueueManagementService {
      */
     @Transactional
     public void createMatch(List<QueuePlayer> players) {
-        try { 
+        try {
             log.info("╔════════════════════════════════════════════════════════════════╗");
             log.info("║  🎯 [CRIAÇÃO DE PARTIDA] INICIANDO                            ║");
             log.info("╚════════════════════════════════════════════════════════════════╝");
@@ -748,25 +768,32 @@ public class QueueManagementService {
                     // ✅ CLEANUP INTELIGENTE: Verificar se essa partida REALMENTE existe no MySQL
                     Optional<CustomMatch> existingMatch = customMatchRepository.findById(existingMatchId);
 
-                    boolean isRealMatch = existingMatch.isPresent() &&
-                            (existingMatch.get().getStatus().equals("pending") ||
-                                    existingMatch.get().getStatus().equals("draft") ||
-                                    existingMatch.get().getStatus().equals("in_progress"));
+                    boolean isActiveMatch = existingMatch.isPresent() &&
+                            ("match_found".equalsIgnoreCase(existingMatch.get().getStatus()) ||
+                                    "accepting".equalsIgnoreCase(existingMatch.get().getStatus()));
 
-                    if (!isRealMatch) {
+                    if (!isActiveMatch) {
                         // ❌ INCONSISTÊNCIA: Redis diz "em partida", MySQL diz "não existe" ou
                         // "finalizada"
                         log.warn("🧹 [createMatch] PARTIDA FANTASMA detectada: Redis={}, MySQL={}",
                                 existingMatchId,
                                 existingMatch.map(m -> m.getStatus()).orElse("NÃO EXISTE"));
-                        log.warn("🧹 [createMatch] Fazendo CLEANUP do RedisPlayerMatchService...");
-
-                        // Limpar registro fantasma
-                        redisPlayerMatch.clearPlayerMatch(playerName);
-
-                        log.info("✅ [createMatch] RedisPlayerMatchService limpo para {}, permitindo criar partida",
-                                playerName);
-                        // Continuar o fluxo normalmente (NÃO abortar)
+                        log.warn("🧹 [createMatch] Verificando se pode limpar ownership do RedisPlayerMatchService...");
+                        // Só limpar se MySQL diz que a partida está finalizada/cancelada
+                        if (existingMatch.isPresent()) {
+                            String status = existingMatch.get().getStatus();
+                            if ("completed".equalsIgnoreCase(status) || "cancelled".equalsIgnoreCase(status)) {
+                                redisPlayerMatch.clearPlayerMatch(playerName);
+                                log.info("✅ [createMatch] Ownership limpo para {} (match finalizada/cancelada)",
+                                        playerName);
+                            } else {
+                                log.info("⏳ [createMatch] Ownership NÃO limpo para {} (match ainda ativa)", playerName);
+                            }
+                        } else {
+                            // Se não existe no MySQL, pode limpar
+                            redisPlayerMatch.clearPlayerMatch(playerName);
+                            log.info("✅ [createMatch] Ownership limpo para {} (match não existe)", playerName);
+                        }
                     } else {
                         // ✅ Partida REALMENTE existe e está ativa - ABORTAR é correto
                         log.error(
@@ -811,7 +838,8 @@ public class QueueManagementService {
             for (String playerName : playerNames) {
                 if (!playerStateService.setPlayerState(playerName, PlayerState.IN_MATCH_FOUND)) {
                     log.error("❌ [CRÍTICO] Falha ao atualizar estado de {}, ABORTANDO criação", playerName);
-                    // Rollback: Voltar estados para IN_QUEUE (FORCE pois pode estar em IN_MATCH_FOUND)
+                    // Rollback: Voltar estados para IN_QUEUE (FORCE pois pode estar em
+                    // IN_MATCH_FOUND)
                     for (String pn : playerNames) {
                         playerStateService.forceSetPlayerState(pn, PlayerState.IN_QUEUE);
                     }
@@ -1110,27 +1138,41 @@ public class QueueManagementService {
         try {
             log.debug("🔍 Buscando partida ativa para summonerName: {}", summonerName);
 
+            // ✅ CORREÇÃO: Verificar primeiro se jogador está na fila (queue_players)
+            Optional<QueuePlayer> queuePlayer = queuePlayerRepository.findBySummonerName(summonerName);
+            if (queuePlayer.isPresent() && queuePlayer.get().getActive()) {
+                log.info("✅ [getActiveMatch] Jogador {} está na fila (queue_players)", summonerName);
+                Map<String, Object> response = new HashMap<>();
+                response.put("id", "queue-" + queuePlayer.get().getId());
+                response.put("status", "in_queue");
+                response.put("type", "queue");
+                response.put("queuePosition", queuePlayer.get().getQueuePosition());
+                response.put("joinTime", queuePlayer.get().getJoinTime());
+                return response;
+            }
+
             // ✅ CLEANUP INTELIGENTE: Verificar RedisPlayerMatchService primeiro
             Long redisMatchId = redisPlayerMatch.getCurrentMatch(summonerName);
             if (redisMatchId != null) {
-                log.debug("🔍 [getActiveMatch] Redis diz: {} está na partida {}. Verificando MySQL...", 
-                         summonerName, redisMatchId);
-                
+                log.debug("🔍 [getActiveMatch] Redis diz: {} está na partida {}. Verificando MySQL...",
+                        summonerName, redisMatchId);
+
                 Optional<CustomMatch> redisMatch = customMatchRepository.findById(redisMatchId);
-                boolean isRealMatch = redisMatch.isPresent() && 
-                    (redisMatch.get().getStatus().equals("pending") ||
-                     redisMatch.get().getStatus().equals("draft") ||
-                     redisMatch.get().getStatus().equals("in_progress"));
-                
+                boolean isRealMatch = redisMatch.isPresent() &&
+                        (redisMatch.get().getStatus().equals("pending") ||
+                                redisMatch.get().getStatus().equals("draft") ||
+                                redisMatch.get().getStatus().equals("in_progress"));
+
                 if (isRealMatch) {
                     // ✅ Redis + MySQL concordam: player TEM partida ativa
-                    log.info("✅ [getActiveMatch] Partida ativa encontrada via Redis: ID={}, Status={}", 
+                    log.info("✅ [getActiveMatch] Partida ativa encontrada via Redis: ID={}, Status={}",
                             redisMatchId, redisMatch.get().getStatus());
-                    
+
                     // ✅ Usar a partida encontrada no Redis
                     CustomMatch match = redisMatch.get();
-                    // Continuar para montagem da resposta (código abaixo após o if activeMatchOpt.isEmpty())
-                    
+                    // Continuar para montagem da resposta (código abaixo após o if
+                    // activeMatchOpt.isEmpty())
+
                     // Montar resposta
                     Map<String, Object> response = new HashMap<>();
                     response.put("id", match.getId());
@@ -1138,7 +1180,7 @@ public class QueueManagementService {
                     response.put("status", match.getStatus());
                     response.put("title", match.getTitle());
                     response.put("createdAt", match.getCreatedAt());
-                    
+
                     // Adicionar dados específicos por status (mesmo código que está abaixo)
                     if ("draft".equals(match.getStatus())) {
                         response.put("type", "draft");
@@ -1149,18 +1191,30 @@ public class QueueManagementService {
                     } else if ("pending".equals(match.getStatus())) {
                         response.put("type", "match_found");
                     }
-                    
+
                     return response;
                 } else {
                     // ❌ INCONSISTÊNCIA: Redis diz "tem partida", MySQL diz "não" ou "finalizada"
                     log.warn("🧹 [getActiveMatch] PARTIDA FANTASMA: Redis={}, MySQL={}",
                             redisMatchId,
                             redisMatch.map(m -> m.getStatus()).orElse("NÃO EXISTE"));
-                    
-                    // Limpar Redis
-                    redisPlayerMatch.clearPlayerMatch(summonerName);
-                    log.info("✅ [getActiveMatch] RedisPlayerMatchService limpo para {}", summonerName);
-                    // Continuar verificando no MySQL normal
+
+                    // ✅ SÓ LIMPAR SE MYSQL CONFIRMA QUE NÃO EXISTE OU ESTÁ FINALIZADA
+                    if (redisMatch.isPresent()) {
+                        String status = redisMatch.get().getStatus();
+                        if ("completed".equalsIgnoreCase(status) || "cancelled".equalsIgnoreCase(status)) {
+                            redisPlayerMatch.clearPlayerMatch(summonerName);
+                            log.info("✅ [getActiveMatch] Ownership limpo para {} (match finalizada/cancelada)",
+                                    summonerName);
+                        } else {
+                            log.info("⏳ [getActiveMatch] Ownership NÃO limpo para {} (match ainda ativa no MySQL)",
+                                    summonerName);
+                        }
+                    } else {
+                        // Se não existe no MySQL, pode limpar
+                        redisPlayerMatch.clearPlayerMatch(summonerName);
+                        log.info("✅ [getActiveMatch] Ownership limpo para {} (match não existe no MySQL)", summonerName);
+                    }
                 }
             }
 

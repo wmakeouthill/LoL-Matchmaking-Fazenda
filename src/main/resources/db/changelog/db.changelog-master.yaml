@@ -19,3 +19,5 @@ databaseChangeLog:
       file: db/changelog/changes/0009-add-championship-titles.yaml
   - include:
       file: db/changelog/changes/0010-add-profile-icon-url.yaml
+  - include:
+      file: db/changelog/changes/0011-add-match-integrity-indexes.yaml
