@@ -1237,18 +1237,124 @@ public class QueueManagementService {
                     response.put("title", match.getTitle());
                     response.put("createdAt", match.getCreatedAt());
 
-                    // Adicionar dados específicos por status (mesmo código que está abaixo)
+                    // Adicionar dados específicos por status
                     if ("draft".equalsIgnoreCase(match.getStatus())) {
                         response.put("type", "draft");
-                        // TODO: adicionar draft data se necessário
+
+                        // ✅ CRÍTICO: Retornar dados COMPLETOS do draft!
+                        Object pickBanData = parseJsonSafely(match.getPickBanDataJson());
+                        Map<String, Object> draftState = new HashMap<>();
+                        List<Map<String, Object>> team1Players = new ArrayList<>();
+                        List<Map<String, Object>> team2Players = new ArrayList<>();
+
+                        if (pickBanData instanceof Map<?, ?>) {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> pickBanMap = (Map<String, Object>) pickBanData;
+
+                            // Incluir actions/phases
+                            if (pickBanMap.containsKey("actions")) {
+                                draftState.put("actions", pickBanMap.get("actions"));
+                                draftState.put("phases", pickBanMap.get("actions"));
+                            }
+                            if (pickBanMap.containsKey("currentAction")) {
+                                draftState.put("currentAction", pickBanMap.get("currentAction"));
+                            }
+                            if (pickBanMap.containsKey("currentIndex")) {
+                                draftState.put("currentIndex", pickBanMap.get("currentIndex"));
+                            }
+                            if (pickBanMap.containsKey("teams")) {
+                                draftState.put("teams", pickBanMap.get("teams"));
+                            }
+
+                            // Extrair jogadores
+                            if (pickBanMap.containsKey("teams") && pickBanMap.get("teams") instanceof Map<?, ?>) {
+                                @SuppressWarnings("unchecked")
+                                Map<String, Object> teams = (Map<String, Object>) pickBanMap.get("teams");
+
+                                if (teams.containsKey("blue") && teams.get("blue") instanceof Map<?, ?>) {
+                                    @SuppressWarnings("unchecked")
+                                    Map<String, Object> blueTeam = (Map<String, Object>) teams.get("blue");
+                                    if (blueTeam.containsKey("players") && blueTeam.get("players") instanceof List<?>) {
+                                        @SuppressWarnings("unchecked")
+                                        List<Map<String, Object>> bluePlayers = (List<Map<String, Object>>) blueTeam
+                                                .get("players");
+                                        team1Players = bluePlayers;
+                                    }
+                                }
+
+                                if (teams.containsKey("red") && teams.get("red") instanceof Map<?, ?>) {
+                                    @SuppressWarnings("unchecked")
+                                    Map<String, Object> redTeam = (Map<String, Object>) teams.get("red");
+                                    if (redTeam.containsKey("players") && redTeam.get("players") instanceof List<?>) {
+                                        @SuppressWarnings("unchecked")
+                                        List<Map<String, Object>> redPlayers = (List<Map<String, Object>>) redTeam
+                                                .get("players");
+                                        team2Players = redPlayers;
+                                    }
+                                }
+                            }
+                        }
+
+                        response.put("draftState", draftState);
+                        response.put("team1", team1Players);
+                        response.put("team2", team2Players);
+
                     } else if ("in_progress".equalsIgnoreCase(match.getStatus())) {
                         response.put("type", "game");
-                        // TODO: adicionar game data se necessário
+
+                        // ✅ CRÍTICO: Retornar dados COMPLETOS do game!
+                        Object pickBanData = parseJsonSafely(match.getPickBanDataJson());
+                        List<Map<String, Object>> team1Players = new ArrayList<>();
+                        List<Map<String, Object>> team2Players = new ArrayList<>();
+
+                        if (pickBanData instanceof Map<?, ?>) {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> pickBanMap = (Map<String, Object>) pickBanData;
+
+                            if (pickBanMap.containsKey("teams") && pickBanMap.get("teams") instanceof Map<?, ?>) {
+                                @SuppressWarnings("unchecked")
+                                Map<String, Object> teams = (Map<String, Object>) pickBanMap.get("teams");
+
+                                if (teams.containsKey("blue") && teams.get("blue") instanceof Map<?, ?>) {
+                                    @SuppressWarnings("unchecked")
+                                    Map<String, Object> blueTeam = (Map<String, Object>) teams.get("blue");
+                                    if (blueTeam.containsKey("players") && blueTeam.get("players") instanceof List<?>) {
+                                        @SuppressWarnings("unchecked")
+                                        List<Map<String, Object>> bluePlayers = (List<Map<String, Object>>) blueTeam
+                                                .get("players");
+                                        team1Players = bluePlayers;
+                                    }
+                                }
+
+                                if (teams.containsKey("red") && teams.get("red") instanceof Map<?, ?>) {
+                                    @SuppressWarnings("unchecked")
+                                    Map<String, Object> redTeam = (Map<String, Object>) teams.get("red");
+                                    if (redTeam.containsKey("players") && redTeam.get("players") instanceof List<?>) {
+                                        @SuppressWarnings("unchecked")
+                                        List<Map<String, Object>> redPlayers = (List<Map<String, Object>>) redTeam
+                                                .get("players");
+                                        team2Players = redPlayers;
+                                    }
+                                }
+                            }
+                        }
+
+                        response.put("team1", team1Players);
+                        response.put("team2", team2Players);
+                        response.put("pickBanData", pickBanData);
+
                     } else if ("match_found".equalsIgnoreCase(match.getStatus()) ||
                             "accepting".equalsIgnoreCase(match.getStatus()) ||
                             "accepted".equalsIgnoreCase(match.getStatus()) ||
                             "pending".equalsIgnoreCase(match.getStatus())) {
                         response.put("type", "match_found");
+
+                        // Extrair jogadores dos times
+                        List<String> team1Names = parsePlayersFromJson(match.getTeam1PlayersJson());
+                        List<String> team2Names = parsePlayersFromJson(match.getTeam2PlayersJson());
+
+                        response.put("team1", team1Names);
+                        response.put("team2", team2Names);
                     }
 
                     return response;
