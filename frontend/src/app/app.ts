@@ -532,15 +532,22 @@ export class App implements OnInit, OnDestroy {
         this.inGamePhase = false;
         this.showMatchFound = false;
 
-        // Montar dados do draft
+        // ✅ CRÍTICO: Passar TODOS os dados do backend (não filtrar!)
+        // Backend envia: teams, phases, currentPhase, currentIndex, confirmations, etc
         this.draftData = {
+          ...activeMatch,  // ✅ Spread - pega TUDO do backend!
           matchId: activeMatch.matchId || activeMatch.id,
-          state: activeMatch.draftState,
-          team1: activeMatch.team1,
-          team2: activeMatch.team2
+          id: activeMatch.matchId || activeMatch.id
         };
 
-        console.log('✅ [App] Estado de draft restaurado:', this.draftData);
+        console.log('✅ [App] Estado de draft restaurado:', {
+          matchId: this.draftData.matchId,
+          hasPhases: !!this.draftData.phases,
+          phasesCount: this.draftData.phases?.length || 0,
+          hasTeams: !!this.draftData.teams,
+          currentPhase: this.draftData.currentPhase,
+          currentIndex: this.draftData.currentIndex
+        });
         this.cdr.detectChanges();
 
       } else if (activeMatch.status === 'in_progress') {

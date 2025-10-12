@@ -72,8 +72,10 @@ public class MatchFoundService {
         this.eventBroadcastService = eventBroadcastService;
     }
 
-    // ✅ REMOVIDO: HashMap local removido - Redis é fonte única da verdade
-    // Use redisAcceptance para todas as operações de aceitação
+    // ✅ REMOVIDO: HashMap local removido
+    // MySQL = Fonte da verdade (persistent storage)
+    // Redis = Cache/estado volátil (performance, locks, aceitações temporárias)
+    // SEMPRE validar contra MySQL antes de decisões críticas
 
     // Configurações
     private static final int ACCEPTANCE_TIMEOUT_SECONDS = 30;
@@ -117,7 +119,8 @@ public class MatchFoundService {
             log.info("✅ [MatchFound] Partida {} criada no Redis para aceitação (team1: {}, team2: {})",
                     match.getId(), team1Names.size(), team2Names.size());
 
-            // ✅ REDIS ONLY: Não criar tracking HashMap, Redis é fonte única da verdade
+            // ✅ REDIS: Cache de aceitações para performance
+            // MySQL permanece como fonte da verdade para partidas/jogadores
 
             // ✅ VALIDAÇÃO: Verificar se dados foram salvos corretamente no Redis
             List<String> redisAllPlayers = redisAcceptance.getAllPlayers(match.getId());

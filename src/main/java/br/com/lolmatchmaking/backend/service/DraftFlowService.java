@@ -39,8 +39,11 @@ public class DraftFlowService {
     @Value("${app.draft.action-timeout-ms:30000}")
     private long configuredActionTimeoutMs;
 
-    // ✅ REMOVIDO: finalConfirmations e matchTimers - Redis é fonte única da verdade
-    // Use redisDraftFlow.confirmFinalDraft() e redisDraftFlow.getTimer() ao invés
+    // ✅ REMOVIDO: finalConfirmations e matchTimers (agora em Redis para
+    // performance)
+    // MySQL = Fonte da verdade (persistent storage em pick_ban_data)
+    // Redis = Cache/estado volátil (draft temporário, confirmações, timers)
+    // SEMPRE salvar no MySQL (pick_ban_data) antes de transições críticas
 
     private Thread timerThread;
     private volatile boolean timerRunning = false;
@@ -310,33 +313,29 @@ public class DraftFlowService {
      * 3. Cachear no Redis
      * 4. Retornar DraftState
      */
+    /**
+     * ✅ REFATORADO: Busca DraftState (para lógica interna)
+     * Redis/MySQL têm JSON puro, este método converte para DraftState
+     */
     private DraftState getDraftStateFromRedis(Long matchId) {
         try {
-            // ✅ 1. Tentar buscar do Redis
-            Map<String, Object> redisState = redisDraftFlow.getDraftState(matchId);
-
-            if (redisState != null) {
-                // Converter Map para DraftState
-                return deserializeDraftState(matchId, redisState);
+            // ✅ ESTRATÉGIA: SEMPRE buscar do MySQL (fonte da verdade)
+            // Redis tem JSON puro, mas DraftState precisa de conversão complexa
+            // Para lógica interna, é mais seguro buscar direto do MySQL
+            
+            log.debug("🔄 [getDraftStateFromRedis] Buscando do MySQL: matchId={}", matchId);
+            DraftState state = loadDraftStateFromMySQL(matchId);
+            
+            if (state != null) {
+                log.debug("✅ [getDraftStateFromRedis] DraftState carregado do MySQL");
+                return state;
             }
-
-            // ✅ 2. Redis vazio → Buscar do MySQL
-            log.info("🔄 [DraftFlow] Redis vazio, buscando do MySQL: matchId={}", matchId);
-
-            DraftState stateFromMySQL = loadDraftStateFromMySQL(matchId);
-
-            if (stateFromMySQL != null) {
-                // ✅ 3. Cachear no Redis
-                saveDraftStateToRedis(matchId, stateFromMySQL);
-                log.info("✅ [DraftFlow] Estado carregado do MySQL e cacheado no Redis");
-                return stateFromMySQL;
-            }
-
-            log.warn("⚠️ [DraftFlow] Draft {} não encontrado nem no Redis nem no MySQL", matchId);
+            
+            log.warn("⚠️ [getDraftStateFromRedis] Draft {} não encontrado no MySQL", matchId);
             return null;
 
         } catch (Exception e) {
-            log.error("❌ [DraftFlow] Erro ao buscar DraftState: matchId={}", matchId, e);
+            log.error("❌ [getDraftStateFromRedis] Erro ao buscar DraftState: matchId={}", matchId, e);
             return null;
         }
     }
@@ -366,58 +365,135 @@ public class DraftFlowService {
     }
 
     /**
-     * ✅ NOVO: Parseia DraftState do JSON do MySQL
+     * ✅ REFATORADO: Parseia DraftState do JSON PURO do MySQL
+     * Extrai actions de dentro de teams.blue/red.players[].actions
      */
     private DraftState parseDraftStateFromJSON(Long matchId, br.com.lolmatchmaking.backend.domain.entity.CustomMatch cm)
             throws Exception {
-        Map<?, ?> snap = mapper.readValue(cm.getPickBanDataJson(), Map.class);
-        Object actionsObj = snap.get("actions");
-        Object currentIdxObj = snap.get("currentIndex");
-
         @SuppressWarnings("unchecked")
-        List<Map<String, Object>> actionMaps = actionsObj instanceof List<?> l
-                ? (List<Map<String, Object>>) (List<?>) l
-                : List.of();
-
-        List<DraftAction> actions = new ArrayList<>();
-        for (Map<String, Object> am : actionMaps) {
-            int idx = ((Number) am.getOrDefault("index", 0)).intValue();
-            String type = (String) am.getOrDefault("type", "pick");
-            int team = ((Number) am.getOrDefault("team", 1)).intValue();
-            String champId = (String) am.get("championId");
-            String byPlayer = (String) am.get("byPlayer");
-
-            String championName = null;
-            if (champId != null && !champId.isBlank() && !"SKIPPED".equalsIgnoreCase(champId)) {
-                championName = dataDragonService.getChampionName(champId);
+        Map<String, Object> pickBanData = mapper.readValue(cm.getPickBanDataJson(), Map.class);
+        
+        // ✅ Extrair actions de dentro de teams.blue/red.players[].actions
+        List<DraftAction> allActions = new ArrayList<>();
+        
+        if (pickBanData.containsKey("teams") && pickBanData.get("teams") instanceof Map<?, ?>) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> teams = (Map<String, Object>) pickBanData.get("teams");
+            
+            // Blue team
+            if (teams.containsKey("blue") && teams.get("blue") instanceof Map<?, ?>) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> blueTeam = (Map<String, Object>) teams.get("blue");
+                if (blueTeam.containsKey("players") && blueTeam.get("players") instanceof List<?>) {
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> players = (List<Map<String, Object>>) blueTeam.get("players");
+                    for (Map<String, Object> player : players) {
+                        if (player.containsKey("actions") && player.get("actions") instanceof List<?>) {
+                            @SuppressWarnings("unchecked")
+                            List<Map<String, Object>> playerActions = (List<Map<String, Object>>) player.get("actions");
+                            for (Map<String, Object> action : playerActions) {
+                                allActions.add(parseDraftAction(action));
+                            }
+                        }
+                    }
+                }
             }
-
-            actions.add(new DraftAction(idx, type, team, champId, championName, byPlayer));
+            
+            // Red team
+            if (teams.containsKey("red") && teams.get("red") instanceof Map<?, ?>) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> redTeam = (Map<String, Object>) teams.get("red");
+                if (redTeam.containsKey("players") && redTeam.get("players") instanceof List<?>) {
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> players = (List<Map<String, Object>>) redTeam.get("players");
+                    for (Map<String, Object> player : players) {
+                        if (player.containsKey("actions") && player.get("actions") instanceof List<?>) {
+                            @SuppressWarnings("unchecked")
+                            List<Map<String, Object>> playerActions = (List<Map<String, Object>>) player.get("actions");
+                            for (Map<String, Object> action : playerActions) {
+                                allActions.add(parseDraftAction(action));
+                            }
+                        }
+                    }
+                }
+            }
         }
-
+        
+        // Ordenar por index
+        allActions.sort((a, b) -> Integer.compare(a.index(), b.index()));
+        
+        // Criar DraftState
         List<String> team1 = parseCSV(cm.getTeam1PlayersJson());
         List<String> team2 = parseCSV(cm.getTeam2PlayersJson());
-        DraftState st = new DraftState(matchId, actions, team1, team2);
-
+        DraftState st = new DraftState(matchId, allActions, team1, team2);
+        
+        // Avançar para currentIndex
+        Object currentIdxObj = pickBanData.get("currentIndex");
         int cur = currentIdxObj instanceof Number n ? n.intValue() : 0;
-        while (st.getCurrentIndex() < cur && st.getCurrentIndex() < actions.size()) {
+        while (st.getCurrentIndex() < cur && st.getCurrentIndex() < allActions.size()) {
             st.advance();
         }
-
+        
         return st;
+    }
+    
+    /**
+     * ✅ NOVO: Parseia uma action individual
+     */
+    private DraftAction parseDraftAction(Map<String, Object> actionMap) {
+        int idx = actionMap.containsKey("index") 
+                ? ((Number) actionMap.get("index")).intValue() 
+                : 0;
+        String type = (String) actionMap.getOrDefault("type", "pick");
+        String champId = (String) actionMap.get("championId");
+        String champName = (String) actionMap.get("championName");
+        
+        // Determinar team (1=blue, 2=red) baseado no index
+        // Actions 0-9: alternadas blue/red
+        // Simplificação: usar championId presence para indicar completed
+        int team = (idx < 10) ? (idx % 2 == 0 ? 1 : 2) : ((idx / 2) % 2 == 0 ? 2 : 1);
+        
+        String byPlayer = null; // ⚠️ Não temos byPlayer no JSON novo
+        
+        return new DraftAction(idx, type, team, champId, champName, byPlayer);
     }
 
     /**
-     * ✅ NOVO: Salva DraftState no Redis
+     * ✅ REFATORADO: Sincroniza MySQL → Redis (JSON puro, sem conversões)
+     * Redis armazena EXATAMENTE o mesmo JSON que está no MySQL
      */
-    private void saveDraftStateToRedis(Long matchId, DraftState st) {
+    private void syncMySQLtoRedis(Long matchId) {
         try {
-            Map<String, Object> stateMap = serializeDraftState(st);
-            redisDraftFlow.saveDraftState(matchId, stateMap);
-            log.debug("💾 [DraftFlow] Estado salvo no Redis: matchId={}", matchId);
+            // 1. Buscar JSON puro do MySQL
+            var matchOpt = customMatchRepository.findById(matchId);
+            if (matchOpt.isEmpty()) {
+                log.warn("⚠️ [syncMySQLtoRedis] Match {} não encontrado", matchId);
+                return;
+            }
+            
+            String pickBanDataJson = matchOpt.get().getPickBanDataJson();
+            if (pickBanDataJson == null || pickBanDataJson.isBlank()) {
+                log.warn("⚠️ [syncMySQLtoRedis] pick_ban_data_json NULL/vazio para match {}", matchId);
+                return;
+            }
+            
+            // 2. Salvar STRING JSON DIRETA no Redis (zero conversões!)
+            redisDraftFlow.saveDraftStateJson(matchId, pickBanDataJson);
+            log.debug("💾 [syncMySQLtoRedis] JSON puro sincronizado MySQL→Redis: matchId={}, {}chars", 
+                    matchId, pickBanDataJson.length());
+                    
         } catch (Exception e) {
-            log.error("❌ [DraftFlow] Erro ao salvar no Redis: matchId={}", matchId, e);
+            log.error("❌ [syncMySQLtoRedis] Erro ao sincronizar: matchId={}", matchId, e);
         }
+    }
+    
+    /**
+     * ⚠️ DEPRECATED: Usar syncMySQLtoRedis() ao invés
+     */
+    @Deprecated
+    private void saveDraftStateToRedis(Long matchId, DraftState st) {
+        // Agora apenas sincroniza do MySQL (fonte da verdade)
+        syncMySQLtoRedis(matchId);
     }
 
     /**
@@ -2456,5 +2532,136 @@ public class DraftFlowService {
             return "";
         String normalized = lane.toLowerCase().trim();
         return normalized.equals("adc") ? "bot" : normalized;
+    }
+
+    /**
+     * ✅ PÚBLICO: Retorna dados completos do draft para my-active-match
+     * REDIS FIRST → MySQL fallback (fonte da verdade)
+     * 
+     * @param matchId ID da partida
+     * @return Map com dados completos (pickBanData, draftState, confirmationOnly,
+     *         etc)
+     */
+    /**
+     * ✅ REFATORADO: Retorna APENAS o JSON do MySQL (sem conversões)
+     * MySQL = Redis = Frontend = MESMA ESTRUTURA
+     * 
+     * Estrutura do MySQL (pickBanData):
+     * {
+     *   "teams": {
+     *     "blue": { "players": [{ "actions": [...] }], "allBans": [...], "allPicks": [...] },
+     *     "red": { ... }
+     *   },
+     *   "currentPhase": "completed",
+     *   "currentIndex": 20,
+     *   "currentActionType": null,
+     *   "team1": [...],
+     *   "team2": [...]
+     * }
+     */
+    public Map<String, Object> getDraftDataForRestore(Long matchId) {
+        Map<String, Object> result = new HashMap<>();
+
+        try {
+            // ✅ 1. Buscar do MySQL (SEMPRE fonte da verdade)
+            var matchOpt = customMatchRepository.findById(matchId);
+            if (matchOpt.isEmpty()) {
+                log.warn("⚠️ [getDraftDataForRestore] Match {} não encontrado no MySQL", matchId);
+                return result;
+            }
+
+            var match = matchOpt.get();
+
+            // ✅ 2. Parsear pickBanData do MySQL
+            if (match.getPickBanDataJson() != null && !match.getPickBanDataJson().isBlank()) {
+                try {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> pickBanData = mapper.readValue(match.getPickBanDataJson(), Map.class);
+
+                    log.info("✅ [getDraftDataForRestore] pickBanData do MySQL: {} chars",
+                            match.getPickBanDataJson().length());
+
+                    // ✅ 3. Retornar pickBanData DIRETO (SEM conversões!)
+                    result.putAll(pickBanData);
+
+                    // ✅ 3.5. COMPATIBILIDADE: Criar 'phases' flat para frontend antigo
+                    // Frontend espera array flat com todas as actions
+                    List<Map<String, Object>> flatPhases = new ArrayList<>();
+                    
+                    if (pickBanData.containsKey("teams") && pickBanData.get("teams") instanceof Map<?, ?>) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> teams = (Map<String, Object>) pickBanData.get("teams");
+                        
+                        // Extrair actions de blue e red teams
+                        for (String teamSide : new String[]{"blue", "red"}) {
+                            Object teamObj = teams.get(teamSide);
+                            if (teamObj instanceof Map<?, ?>) {
+                                @SuppressWarnings("unchecked")
+                                Map<String, Object> team = (Map<String, Object>) teamObj;
+                                
+                                if (team.containsKey("players") && team.get("players") instanceof List<?>) {
+                                    @SuppressWarnings("unchecked")
+                                    List<Map<String, Object>> players = (List<Map<String, Object>>) team.get("players");
+                                    
+                                    for (Map<String, Object> player : players) {
+                                        if (player.containsKey("actions") && player.get("actions") instanceof List<?>) {
+                                            @SuppressWarnings("unchecked")
+                                            List<Map<String, Object>> playerActions = (List<Map<String, Object>>) player.get("actions");
+                                            
+                                            // Adicionar byPlayer em cada action para compatibilidade
+                                            for (Map<String, Object> action : playerActions) {
+                                                Map<String, Object> actionCopy = new HashMap<>(action);
+                                                actionCopy.put("byPlayer", player.get("summonerName"));
+                                                actionCopy.put("playerId", player.get("playerId"));
+                                                flatPhases.add(actionCopy);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Ordenar por index
+                    flatPhases.sort((a, b) -> {
+                        Integer idxA = (Integer) a.getOrDefault("index", 0);
+                        Integer idxB = (Integer) b.getOrDefault("index", 0);
+                        return idxA.compareTo(idxB);
+                    });
+                    
+                    result.put("phases", flatPhases);
+                    log.info("✅ [getDraftDataForRestore] phases flat criado: {} ações", flatPhases.size());
+
+                    // ✅ 4. Adicionar confirmações se draft completo
+                    Object indexObj = pickBanData.get("currentIndex");
+                    if (indexObj instanceof Integer) {
+                        int currentIndex = (Integer) indexObj;
+                        boolean isDraftComplete = currentIndex >= 20;
+                        result.put("confirmationOnly", isDraftComplete);
+
+                        if (isDraftComplete) {
+                            Set<String> confirmations = redisDraftFlow.getConfirmedPlayers(matchId);
+                            result.put("confirmations", confirmations != null ? confirmations : new HashSet<>());
+                            result.put("confirmedCount", confirmations != null ? confirmations.size() : 0);
+                            log.info("✅ [getDraftDataForRestore] Draft completo, confirmações: {}/10",
+                                    confirmations != null ? confirmations.size() : 0);
+                        }
+                    }
+
+                    log.info("✅ [getDraftDataForRestore] Retornando pickBanData PURO do MySQL (0 conversões)");
+
+                } catch (Exception e) {
+                    log.error("❌ [getDraftDataForRestore] Erro ao parsear pickBanData", e);
+                }
+            } else {
+                log.warn("⚠️ [getDraftDataForRestore] pick_ban_data_json é NULL ou vazio no MySQL!");
+            }
+
+            return result;
+
+        } catch (Exception e) {
+            log.error("❌ [getDraftDataForRestore] Erro ao buscar dados do draft", e);
+            return result;
+        }
     }
 }

@@ -3,6 +3,7 @@ package br.com.lolmatchmaking.backend.controller;
 import br.com.lolmatchmaking.backend.dto.QueueStatusDTO;
 import br.com.lolmatchmaking.backend.service.QueueManagementService;
 import br.com.lolmatchmaking.backend.util.SummonerAuthUtil;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
@@ -11,6 +12,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 
 @Slf4j
@@ -20,6 +23,7 @@ import java.util.Map;
 public class QueueController {
 
     private final QueueManagementService queueManagementService;
+    private final ObjectMapper objectMapper;
 
     /**
      * GET /api/queue/status
@@ -314,6 +318,35 @@ public class QueueController {
 
             log.info("✅ [{}] Partida ativa encontrada - ID: {}, Status: {}",
                     authenticatedSummoner, activeMatch.get("id"), activeMatch.get("status"));
+
+            // ✅ DEBUG: Verificar se phases está sendo enviado
+            if (activeMatch.containsKey("phases")) {
+                Object phases = activeMatch.get("phases");
+                if (phases instanceof List<?>) {
+                    log.info("🔍 [QueueController] phases no Map: {} elementos", ((List<?>) phases).size());
+                } else {
+                    log.warn("⚠️ [QueueController] phases existe mas não é List: type={}",
+                            phases != null ? phases.getClass().getSimpleName() : "NULL");
+                }
+            } else {
+                log.warn("⚠️ [QueueController] phases NÃO existe no Map! Keys: {}", activeMatch.keySet());
+            }
+
+            // ✅ Serializar para JSON e logar (para ver EXATAMENTE o que vai ser enviado)
+            try {
+                String jsonResponse = objectMapper.writeValueAsString(activeMatch);
+                log.info("🔍 [QueueController] JSON que será enviado (primeiros 500 chars): {}",
+                        jsonResponse.length() > 500 ? jsonResponse.substring(0, 500) + "..." : jsonResponse);
+
+                // Verificar se "phases" aparece no JSON
+                if (jsonResponse.contains("\"phases\"")) {
+                    log.info("✅ [QueueController] 'phases' ENCONTRADO no JSON serializado");
+                } else {
+                    log.warn("⚠️ [QueueController] 'phases' NÃO ENCONTRADO no JSON serializado!");
+                }
+            } catch (Exception e) {
+                log.error("❌ [QueueController] Erro ao serializar response para debug", e);
+            }
 
             return ResponseEntity.ok(activeMatch);
 
