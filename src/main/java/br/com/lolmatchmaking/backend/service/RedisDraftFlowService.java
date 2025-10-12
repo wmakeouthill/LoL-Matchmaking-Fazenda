@@ -304,6 +304,30 @@ public class RedisDraftFlowService {
      * @param matchId ID da partida
      * @param state   Dados do estado
      */
+    /**
+     * ✅ REFATORADO: Salva JSON puro do MySQL direto no Redis (ZERO conversões!)
+     * Este é o método preferencial - armazena EXATAMENTE o que está no MySQL
+     */
+    public void saveDraftStateJson(Long matchId, String pickBanDataJson) {
+        try {
+            String key = KEY_PREFIX + matchId + ":state";
+
+            // Salvar STRING JSON DIRETAMENTE (sem parse/serialize!)
+            redisTemplate.opsForValue().set(key, pickBanDataJson);
+            redisTemplate.expire(key, TTL_SECONDS, TimeUnit.SECONDS);
+
+            log.debug("💾 [RedisDraftFlow] JSON puro MySQL→Redis: matchId={}, {}bytes",
+                    matchId, pickBanDataJson.length());
+
+        } catch (Exception e) {
+            log.error("❌ [RedisDraftFlow] Erro ao salvar JSON puro: matchId={}", matchId, e);
+        }
+    }
+
+    /**
+     * ⚠️ DEPRECATED: Usar saveDraftStateJson() ao invés
+     */
+    @Deprecated
     public void saveDraftState(Long matchId, Map<String, Object> state) {
         try {
             String key = KEY_PREFIX + matchId + ":state";
@@ -319,6 +343,37 @@ public class RedisDraftFlowService {
 
         } catch (Exception e) {
             log.error("❌ [RedisDraftFlow] Erro ao salvar estado: matchId={}", matchId, e);
+        }
+    }
+
+    /**
+     * ✅ REFATORADO: Retorna JSON puro do Redis (ZERO conversões!)
+     * Retorna EXATAMENTE o que está armazenado (mesmo formato do MySQL)
+     */
+    public String getDraftStateJson(Long matchId) {
+        try {
+            String key = KEY_PREFIX + matchId + ":state";
+            Object value = redisTemplate.opsForValue().get(key);
+
+            if (value == null) {
+                log.debug("📭 [RedisDraftFlow] JSON não encontrado no Redis: matchId={}", matchId);
+                return null;
+            }
+
+            if (value instanceof String) {
+                String json = (String) value;
+                log.debug("📥 [RedisDraftFlow] JSON puro recuperado: matchId={}, {}bytes",
+                        matchId, json.length());
+                return json;
+            }
+
+            log.warn("⚠️ [RedisDraftFlow] Formato inválido: matchId={}, type={}",
+                    matchId, value.getClass().getSimpleName());
+            return null;
+
+        } catch (Exception e) {
+            log.error("❌ [RedisDraftFlow] Erro ao recuperar JSON: matchId={}", matchId, e);
+            return null;
         }
     }
 

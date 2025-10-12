@@ -42,6 +42,8 @@ public class QueueManagementService {
     private final br.com.lolmatchmaking.backend.service.lock.PlayerStateService playerStateService;
     private final EventBroadcastService eventBroadcastService;
     private final br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch;
+    private final RedisDraftFlowService redisDraftFlow;
+    private final DraftFlowService draftFlowService;
 
     // ✅ Construtor com injeção de dependências
     public QueueManagementService(
@@ -59,7 +61,9 @@ public class QueueManagementService {
             br.com.lolmatchmaking.backend.service.lock.MatchmakingLockService matchmakingLockService,
             br.com.lolmatchmaking.backend.service.lock.PlayerStateService playerStateService,
             EventBroadcastService eventBroadcastService,
-            br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatchService) {
+            br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatchService,
+            RedisDraftFlowService redisDraftFlowService,
+            @Lazy DraftFlowService draftFlowService) {
         this.queuePlayerRepository = queuePlayerRepository;
         this.playerRepository = playerRepository;
         this.customMatchRepository = customMatchRepository;
@@ -75,13 +79,15 @@ public class QueueManagementService {
         this.playerStateService = playerStateService;
         this.eventBroadcastService = eventBroadcastService;
         this.redisPlayerMatch = redisPlayerMatchService;
+        this.redisDraftFlow = redisDraftFlowService;
+        this.draftFlowService = draftFlowService;
     }
 
     // ✅ REMOVIDO: HashMaps locais removidos - SQL é fonte da verdade
     // Use queuePlayerRepository para todas as operações de fila
 
     // Configurações
-    private static final int MAX_QUEUE_SIZE = 20;
+    private static final int MAX_QUEUE_SIZE = 30;
     private static final int MATCH_SIZE = 10;
     private static final long QUEUE_SYNC_INTERVAL = 10000; // 10 segundos
     private static final long MATCH_FOUND_TIMEOUT = 30000; // 30 segundos
@@ -1224,6 +1230,18 @@ public class QueueManagementService {
                     log.info("✅ [getActiveMatch] Partida ativa encontrada via Redis: ID={}, Status={}",
                             redisMatchId, redisMatch.get().getStatus());
 
+                    // ✅ CRÍTICO: REGISTRAR OWNERSHIP no Redis se ainda não estiver registrado!
+                    // Quando jogador retorna via my-active-match, precisa estar registrado para
+                    // fazer ações
+                    Long currentOwnership = redisPlayerMatch.getCurrentMatch(summonerName);
+                    if (currentOwnership == null || !currentOwnership.equals(redisMatchId)) {
+                        log.warn(
+                                "🧹 [getActiveMatch] Jogador {} retornando ao draft mas ownership não registrado! Registrando agora...",
+                                summonerName);
+                        redisPlayerMatch.registerPlayerMatch(summonerName, redisMatchId);
+                        log.info("✅ [getActiveMatch] Ownership registrado: {} → match {}", summonerName, redisMatchId);
+                    }
+
                     // ✅ Usar a partida encontrada no Redis
                     CustomMatch match = redisMatch.get();
                     // Continuar para montagem da resposta (código abaixo após o if
@@ -1241,107 +1259,22 @@ public class QueueManagementService {
                     if ("draft".equalsIgnoreCase(match.getStatus())) {
                         response.put("type", "draft");
 
-                        // ✅ CRÍTICO: Retornar dados COMPLETOS do draft!
-                        Object pickBanData = parseJsonSafely(match.getPickBanDataJson());
-                        Map<String, Object> draftState = new HashMap<>();
-                        List<Map<String, Object>> team1Players = new ArrayList<>();
-                        List<Map<String, Object>> team2Players = new ArrayList<>();
+                        // ✅ CRÍTICO: RENOVAR ownership ao retornar para draft
+                        redisPlayerMatch.registerPlayerMatch(summonerName, match.getId());
+                        log.info("🔄 [getActiveMatch-Redis] Ownership renovado: {} → draft {}",
+                                summonerName, match.getId());
 
-                        if (pickBanData instanceof Map<?, ?>) {
-                            @SuppressWarnings("unchecked")
-                            Map<String, Object> pickBanMap = (Map<String, Object>) pickBanData;
+                        // ✅ CRÍTICO: Buscar dados direto do MySQL (sempre fonte da verdade)
+                        Map<String, Object> draftDataFromMySQL = draftFlowService.getDraftDataForRestore(match.getId());
+                        response.putAll(draftDataFromMySQL);
 
-                            // Incluir actions/phases
-                            if (pickBanMap.containsKey("actions")) {
-                                draftState.put("actions", pickBanMap.get("actions"));
-                                draftState.put("phases", pickBanMap.get("actions"));
-                            }
-                            if (pickBanMap.containsKey("currentAction")) {
-                                draftState.put("currentAction", pickBanMap.get("currentAction"));
-                            }
-                            if (pickBanMap.containsKey("currentIndex")) {
-                                draftState.put("currentIndex", pickBanMap.get("currentIndex"));
-                            }
-                            if (pickBanMap.containsKey("teams")) {
-                                draftState.put("teams", pickBanMap.get("teams"));
-                            }
-
-                            // Extrair jogadores
-                            if (pickBanMap.containsKey("teams") && pickBanMap.get("teams") instanceof Map<?, ?>) {
-                                @SuppressWarnings("unchecked")
-                                Map<String, Object> teams = (Map<String, Object>) pickBanMap.get("teams");
-
-                                if (teams.containsKey("blue") && teams.get("blue") instanceof Map<?, ?>) {
-                                    @SuppressWarnings("unchecked")
-                                    Map<String, Object> blueTeam = (Map<String, Object>) teams.get("blue");
-                                    if (blueTeam.containsKey("players") && blueTeam.get("players") instanceof List<?>) {
-                                        @SuppressWarnings("unchecked")
-                                        List<Map<String, Object>> bluePlayers = (List<Map<String, Object>>) blueTeam
-                                                .get("players");
-                                        team1Players = bluePlayers;
-                                    }
-                                }
-
-                                if (teams.containsKey("red") && teams.get("red") instanceof Map<?, ?>) {
-                                    @SuppressWarnings("unchecked")
-                                    Map<String, Object> redTeam = (Map<String, Object>) teams.get("red");
-                                    if (redTeam.containsKey("players") && redTeam.get("players") instanceof List<?>) {
-                                        @SuppressWarnings("unchecked")
-                                        List<Map<String, Object>> redPlayers = (List<Map<String, Object>>) redTeam
-                                                .get("players");
-                                        team2Players = redPlayers;
-                                    }
-                                }
-                            }
-                        }
-
-                        response.put("draftState", draftState);
-                        response.put("team1", team1Players);
-                        response.put("team2", team2Players);
+                        log.info("✅ [getActiveMatch-Redis] Draft data do MySQL: {} keys",
+                                draftDataFromMySQL.keySet());
 
                     } else if ("in_progress".equalsIgnoreCase(match.getStatus())) {
                         response.put("type", "game");
-
-                        // ✅ CRÍTICO: Retornar dados COMPLETOS do game!
-                        Object pickBanData = parseJsonSafely(match.getPickBanDataJson());
-                        List<Map<String, Object>> team1Players = new ArrayList<>();
-                        List<Map<String, Object>> team2Players = new ArrayList<>();
-
-                        if (pickBanData instanceof Map<?, ?>) {
-                            @SuppressWarnings("unchecked")
-                            Map<String, Object> pickBanMap = (Map<String, Object>) pickBanData;
-
-                            if (pickBanMap.containsKey("teams") && pickBanMap.get("teams") instanceof Map<?, ?>) {
-                                @SuppressWarnings("unchecked")
-                                Map<String, Object> teams = (Map<String, Object>) pickBanMap.get("teams");
-
-                                if (teams.containsKey("blue") && teams.get("blue") instanceof Map<?, ?>) {
-                                    @SuppressWarnings("unchecked")
-                                    Map<String, Object> blueTeam = (Map<String, Object>) teams.get("blue");
-                                    if (blueTeam.containsKey("players") && blueTeam.get("players") instanceof List<?>) {
-                                        @SuppressWarnings("unchecked")
-                                        List<Map<String, Object>> bluePlayers = (List<Map<String, Object>>) blueTeam
-                                                .get("players");
-                                        team1Players = bluePlayers;
-                                    }
-                                }
-
-                                if (teams.containsKey("red") && teams.get("red") instanceof Map<?, ?>) {
-                                    @SuppressWarnings("unchecked")
-                                    Map<String, Object> redTeam = (Map<String, Object>) teams.get("red");
-                                    if (redTeam.containsKey("players") && redTeam.get("players") instanceof List<?>) {
-                                        @SuppressWarnings("unchecked")
-                                        List<Map<String, Object>> redPlayers = (List<Map<String, Object>>) redTeam
-                                                .get("players");
-                                        team2Players = redPlayers;
-                                    }
-                                }
-                            }
-                        }
-
-                        response.put("team1", team1Players);
-                        response.put("team2", team2Players);
-                        response.put("pickBanData", pickBanData);
+                        Object pickBanDataGame = parseJsonSafely(match.getPickBanDataJson());
+                        response.put("pickBanData", pickBanDataGame);
 
                     } else if ("match_found".equalsIgnoreCase(match.getStatus()) ||
                             "accepting".equalsIgnoreCase(match.getStatus()) ||
@@ -1349,12 +1282,11 @@ public class QueueManagementService {
                             "pending".equalsIgnoreCase(match.getStatus())) {
                         response.put("type", "match_found");
 
-                        // Extrair jogadores dos times
-                        List<String> team1Names = parsePlayersFromJson(match.getTeam1PlayersJson());
-                        List<String> team2Names = parsePlayersFromJson(match.getTeam2PlayersJson());
+                        List<String> team1NamesMatched = parsePlayersFromJson(match.getTeam1PlayersJson());
+                        List<String> team2NamesMatched = parsePlayersFromJson(match.getTeam2PlayersJson());
 
-                        response.put("team1", team1Names);
-                        response.put("team2", team2Names);
+                        response.put("team1", team1NamesMatched);
+                        response.put("team2", team2NamesMatched);
                     }
 
                     return response;
@@ -1423,6 +1355,18 @@ public class QueueManagementService {
             log.info("✅ Partida ativa encontrada - ID: {}, Status: {}, Title: {}",
                     match.getId(), match.getStatus(), match.getTitle());
 
+            // ✅ CRÍTICO: REGISTRAR OWNERSHIP no Redis se ainda não estiver registrado!
+            // Quando jogador retorna via my-active-match, precisa estar registrado para
+            // fazer ações
+            Long currentOwnership = redisPlayerMatch.getCurrentMatch(summonerName);
+            if (currentOwnership == null || !currentOwnership.equals(match.getId())) {
+                log.warn(
+                        "🧹 [getActiveMatch-MySQL] Jogador {} retornando mas ownership não registrado! Registrando agora...",
+                        summonerName);
+                redisPlayerMatch.registerPlayerMatch(summonerName, match.getId());
+                log.info("✅ [getActiveMatch-MySQL] Ownership registrado: {} → match {}", summonerName, match.getId());
+            }
+
             // 3. Converter para formato esperado pelo frontend
             Map<String, Object> response = new HashMap<>();
             response.put("id", match.getId());
@@ -1435,90 +1379,22 @@ public class QueueManagementService {
             if ("draft".equals(match.getStatus())) {
                 response.put("type", "draft");
 
-                Object pickBanData = parseJsonSafely(match.getPickBanDataJson());
+                // ✅ CRÍTICO: RENOVAR ownership ao retornar para draft
+                redisPlayerMatch.registerPlayerMatch(summonerName, match.getId());
+                log.info("🔄 [getActiveMatch-MySQL] Ownership renovado: {} → draft {}",
+                        summonerName, match.getId());
 
-                // ✅ CORREÇÃO: draftState deve ter actions/phases e teams completos
-                Map<String, Object> draftState = new HashMap<>();
-                List<Map<String, Object>> team1Players = new ArrayList<>();
-                List<Map<String, Object>> team2Players = new ArrayList<>();
+                // ✅ CRÍTICO: Usar DraftFlowService.getDraftDataForRestore()
+                // SEMPRE busca MySQL (fonte da verdade), retorna JSON completo
+                Map<String, Object> draftData = draftFlowService.getDraftDataForRestore(match.getId());
 
-                if (pickBanData instanceof Map<?, ?>) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> pickBanMap = (Map<String, Object>) pickBanData;
+                // ✅ Adicionar TODOS os dados do draft na response
+                // pickBanData já vem no formato EXATO do MySQL (teams.blue/red, allBans,
+                // allPicks)
+                response.putAll(draftData);
 
-                    // ✅ Incluir actions/phases no draftState (frontend precisa!)
-                    if (pickBanMap.containsKey("actions")) {
-                        draftState.put("actions", pickBanMap.get("actions"));
-                        draftState.put("phases", pickBanMap.get("actions")); // phases = actions (alias)
-                    }
-
-                    // ✅ Incluir currentAction/currentIndex
-                    if (pickBanMap.containsKey("currentAction")) {
-                        draftState.put("currentAction", pickBanMap.get("currentAction"));
-                    }
-                    if (pickBanMap.containsKey("currentIndex")) {
-                        draftState.put("currentIndex", pickBanMap.get("currentIndex"));
-                    }
-
-                    // ✅ Incluir teams completo
-                    if (pickBanMap.containsKey("teams")) {
-                        draftState.put("teams", pickBanMap.get("teams"));
-                    }
-
-                    // Tentar extrair de teams.blue/red primeiro
-                    if (pickBanMap.containsKey("teams") && pickBanMap.get("teams") instanceof Map<?, ?>) {
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> teams = (Map<String, Object>) pickBanMap.get("teams");
-
-                        if (teams.containsKey("blue") && teams.get("blue") instanceof Map<?, ?>) {
-                            @SuppressWarnings("unchecked")
-                            Map<String, Object> blueTeam = (Map<String, Object>) teams.get("blue");
-                            if (blueTeam.containsKey("players") && blueTeam.get("players") instanceof List<?>) {
-                                @SuppressWarnings("unchecked")
-                                List<Map<String, Object>> bluePlayers = (List<Map<String, Object>>) blueTeam
-                                        .get("players");
-                                team1Players = bluePlayers;
-                            }
-                        }
-
-                        if (teams.containsKey("red") && teams.get("red") instanceof Map<?, ?>) {
-                            @SuppressWarnings("unchecked")
-                            Map<String, Object> redTeam = (Map<String, Object>) teams.get("red");
-                            if (redTeam.containsKey("players") && redTeam.get("players") instanceof List<?>) {
-                                @SuppressWarnings("unchecked")
-                                List<Map<String, Object>> redPlayers = (List<Map<String, Object>>) redTeam
-                                        .get("players");
-                                team2Players = redPlayers;
-                            }
-                        }
-                    }
-
-                    // Fallback: usar team1/team2 direto
-                    if (team1Players.isEmpty() && pickBanMap.containsKey("team1")) {
-                        Object t1 = pickBanMap.get("team1");
-                        if (t1 instanceof List<?>) {
-                            @SuppressWarnings("unchecked")
-                            List<Map<String, Object>> list1 = (List<Map<String, Object>>) t1;
-                            team1Players = list1;
-                        }
-                    }
-                    if (team2Players.isEmpty() && pickBanMap.containsKey("team2")) {
-                        Object t2 = pickBanMap.get("team2");
-                        if (t2 instanceof List<?>) {
-                            @SuppressWarnings("unchecked")
-                            List<Map<String, Object>> list2 = (List<Map<String, Object>>) t2;
-                            team2Players = list2;
-                        }
-                    }
-                }
-
-                // ✅ Retornar draftState completo com tudo que frontend precisa
-                response.put("draftState", draftState);
-                response.put("team1", team1Players);
-                response.put("team2", team2Players);
-
-                log.debug("✅ Retornando draft - Team1: {} jogadores, Team2: {} jogadores",
-                        team1Players.size(), team2Players.size());
+                log.info("✅ [getActiveMatch-MySQL] Draft data do MySQL: {} keys",
+                        draftData.keySet());
 
             } else if ("in_progress".equals(match.getStatus())) {
                 response.put("type", "game");
