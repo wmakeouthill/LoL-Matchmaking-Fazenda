@@ -39,7 +39,8 @@ public class QueueController {
                     "playersInQueueList", status.getPlayersInQueueList(),
                     "averageWaitTime", status.getAverageWaitTime(),
                     "estimatedMatchTime", status.getEstimatedMatchTime(),
-                    "isActive", status.isActive()));
+                    "isActive", status.isActive(),
+                    "isCurrentPlayerInQueue", status.isCurrentPlayerInQueue()));
 
         } catch (Exception e) {
             log.error("❌ Erro ao obter status da fila", e);

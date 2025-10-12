@@ -1,0 +1,81 @@
+databaseChangeLog:
+  - changeSet:
+      id: 0011-add-match-integrity-indexes
+      author: system
+      comment: |
+        Adiciona índices para melhorar performance de queries de integridade de partidas.
+        
+        IMPORTANTE: Integridade "um jogador = uma partida ativa" é garantida em 3 CAMADAS:
+        
+        1. APLICAÇÃO (QueueManagementService):
+           - getActiveMatchForPlayer() verifica queue_players + custom_matches
+           - canPlayerJoinQueue() valida se jogador está em partida/fila
+           - Bloqueia apenas partidas SIMULTÂNEAS, não sequenciais
+        
+        2. REDIS (RedisPlayerMatchService):
+           - player:current_match:{summonerName} → matchId (único por jogador)
+           - registerPlayerMatch() valida MySQL antes de registrar
+           - clearPlayerMatch() valida MySQL antes de limpar
+           - NÃO limpa se partida ainda está ativa no MySQL
+        
+        3. MYSQL (queue_players):
+           - summoner_name UNIQUE garante jogador não duplicado na fila
+           - Índices abaixo melhoram performance das validações
+        
+        NOTA: team1_players e team2_players são TEXT (JSON), então não temos
+        constraint SQL direta. A validação é feita via application logic.
+        
+        ✅ Jogador PODE jogar múltiplas partidas SEQUENCIAIS (depois que uma termina)
+        ❌ Jogador NÃO pode jogar múltiplas partidas SIMULTÂNEAS (ao mesmo tempo)
+      changes:
+        # Índice composto para buscar partidas ativas rapidamente
+        # Usado em: findActiveMatchByPlayerPuuid, queries de validação
+        - createIndex:
+            indexName: idx_status_created
+            tableName: custom_matches
+            columns:
+              - column:
+                  name: status
+              - column:
+                  name: created_at
+                  descending: true
+        
+        # Índice para buscar por riot_game_id (verificar se partida já existe)
+        - createIndex:
+            indexName: idx_riot_game_id
+            tableName: custom_matches
+            columns:
+              - column:
+                  name: riot_game_id
+        
+        # Índice para buscar por created_by (quem criou a partida)
+        - createIndex:
+            indexName: idx_created_by
+            tableName: custom_matches
+            columns:
+              - column:
+                  name: created_by
+        
+        # Índice para buscar jogadores ativos na fila rapidamente
+        - createIndex:
+            indexName: idx_is_active_join_time
+            tableName: queue_players
+            columns:
+              - column:
+                  name: is_active
+              - column:
+                  name: join_time
+      rollback:
+        - dropIndex:
+            indexName: idx_status_created
+            tableName: custom_matches
+        - dropIndex:
+            indexName: idx_riot_game_id
+            tableName: custom_matches
+        - dropIndex:
+            indexName: idx_created_by
+            tableName: custom_matches
+        - dropIndex:
+            indexName: idx_is_active_join_time
+            tableName: queue_players
+
