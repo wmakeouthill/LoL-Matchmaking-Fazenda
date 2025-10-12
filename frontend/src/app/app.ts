@@ -527,6 +527,15 @@ export class App implements OnInit, OnDestroy {
       // Redirecionar baseado no status
       if (activeMatch.status === 'draft') {
         console.log('🎯 [App] Restaurando estado de DRAFT...');
+        
+        // ✅ CRÍTICO: Se JÁ estamos no draft, NÃO recarregar!
+        // Isso evita "expulsar" o jogador do draft ao verificar estado
+        if (this.inDraftPhase && this.draftData?.matchId === (activeMatch.matchId || activeMatch.id)) {
+          console.log('✅ [App] JÁ estamos no draft desta partida - ignorando restauração');
+          console.log('🔍 [App] matchId atual:', this.draftData.matchId, '| matchId do backend:', activeMatch.matchId || activeMatch.id);
+          return;
+        }
+        
         this.isRestoredMatch = true; // ✅ MARCAR COMO RESTAURADO
         this.inDraftPhase = true;
         this.inGamePhase = false;
@@ -553,6 +562,14 @@ export class App implements OnInit, OnDestroy {
       } else if (activeMatch.status === 'in_progress') {
         console.log('🎯 [App] Restaurando estado de GAME IN PROGRESS...');
         console.log('🔍 [App] ANTES: inGamePhase =', this.inGamePhase, ', gameData =', this.gameData);
+
+        // ✅ CRÍTICO: Se JÁ estamos no jogo, NÃO recarregar!
+        // Isso evita "expulsar" o jogador do jogo ao verificar estado
+        if (this.inGamePhase && this.gameData?.matchId === (activeMatch.matchId || activeMatch.id)) {
+          console.log('✅ [App] JÁ estamos no jogo desta partida - ignorando restauração');
+          console.log('🔍 [App] matchId atual:', this.gameData.matchId, '| matchId do backend:', activeMatch.matchId || activeMatch.id);
+          return;
+        }
 
         this.isRestoredMatch = true; // ✅ MARCAR COMO RESTAURADO
         this.inGamePhase = true;
