@@ -742,26 +742,31 @@ public class MatchFoundService {
                     }
                 }
 
-                // Notificar início do draft com dados completos dos times + ações
-                Map<String, Object> draftData = new HashMap<>();
+                // ✅ CRÍTICO: Buscar estrutura COMPLETA do MySQL (mesma que
+                // getDraftDataForRestore)
+                Map<String, Object> draftDataFromMySQL = draftFlowService.getDraftDataForRestore(matchId);
+
+                // Notificar início do draft com dados completos (ESTRUTURA DO MySQL!)
+                Map<String, Object> draftData = new HashMap<>(draftDataFromMySQL);
                 draftData.put("matchId", matchId);
+                draftData.put("id", matchId);
+                draftData.put("timeRemaining", 30); // Timer inicial
+
+                // ✅ COMPATIBILIDADE: Manter team1/team2 flat para frontend antigo
                 draftData.put("team1", team1Data);
                 draftData.put("team2", team2Data);
                 draftData.put("averageMmrTeam1", match.getAverageMmrTeam1());
                 draftData.put("averageMmrTeam2", match.getAverageMmrTeam2());
-                draftData.put("actions", actions); // ✅ CRÍTICO: 20 ações do DraftState
-                draftData.put("currentIndex", currentIndex); // ✅ CRÍTICO: Índice atual (0)
-                draftData.put("currentPlayer", currentPlayer); // ✅ CRÍTICO: Jogador da vez inicial
-                draftData.put("timeRemaining", 30); // ✅ CORREÇÃO: Timer inicial em segundos (30s padrão)
 
                 // ✅ Log detalhado do que será enviado
-                log.info("📢 [MatchFound] Enviando draft_starting via WebSocket:");
+                log.info("📢 [MatchFound] Enviando draft_starting via WebSocket (ESTRUTURA MySQL):");
                 log.info("  - matchId: {}", matchId);
-                log.info("  - team1: {} jogadores", team1Data.size());
-                log.info("  - team2: {} jogadores", team2Data.size());
-                log.info("  - actions: {} fases", actions.size());
-                log.info("  - currentIndex: {}", currentIndex);
-                log.info("  - currentPlayer: {}", currentPlayer);
+                log.info("  - teams.blue: {} jogadores", draftData.containsKey("teams") ? "SIM" : "NÃO");
+                log.info("  - teams.red: {} jogadores", draftData.containsKey("teams") ? "SIM" : "NÃO");
+                log.info("  - phases (flat): {} ações",
+                        draftData.containsKey("phases") ? ((List<?>) draftData.get("phases")).size() : 0);
+                log.info("  - currentIndex: {}", draftData.get("currentIndex"));
+                log.info("  - currentPlayer: {}", draftData.get("currentPlayer"));
                 log.info("  - timeRemaining: 30s (inicial)");
 
                 // ✅ CRÍTICO: Enviar APENAS para os 10 jogadores da partida
@@ -778,8 +783,8 @@ public class MatchFoundService {
                 webSocketService.sendToPlayers("draft_starting", draftData, allPlayerNames);
 
                 log.info(
-                        "✅ [MatchFound] Draft starting enviado APENAS para {} jogadores específicos ({} ações, {} team1, {} team2)",
-                        allPlayerNames.size(), actions.size(), team1Data.size(), team2Data.size());
+                        "✅ [MatchFound] draft_starting enviado para {} jogadores (ESTRUTURA MySQL: teams.blue/red + phases flat)",
+                        allPlayerNames.size());
 
             } catch (Exception e) {
                 log.error("❌ [MatchFound] Erro ao parsear pick_ban_data", e);

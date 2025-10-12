@@ -322,15 +322,15 @@ public class DraftFlowService {
             // ✅ ESTRATÉGIA: SEMPRE buscar do MySQL (fonte da verdade)
             // Redis tem JSON puro, mas DraftState precisa de conversão complexa
             // Para lógica interna, é mais seguro buscar direto do MySQL
-            
+
             log.debug("🔄 [getDraftStateFromRedis] Buscando do MySQL: matchId={}", matchId);
             DraftState state = loadDraftStateFromMySQL(matchId);
-            
+
             if (state != null) {
                 log.debug("✅ [getDraftStateFromRedis] DraftState carregado do MySQL");
                 return state;
             }
-            
+
             log.warn("⚠️ [getDraftStateFromRedis] Draft {} não encontrado no MySQL", matchId);
             return null;
 
@@ -372,14 +372,14 @@ public class DraftFlowService {
             throws Exception {
         @SuppressWarnings("unchecked")
         Map<String, Object> pickBanData = mapper.readValue(cm.getPickBanDataJson(), Map.class);
-        
+
         // ✅ Extrair actions de dentro de teams.blue/red.players[].actions
         List<DraftAction> allActions = new ArrayList<>();
-        
+
         if (pickBanData.containsKey("teams") && pickBanData.get("teams") instanceof Map<?, ?>) {
             @SuppressWarnings("unchecked")
             Map<String, Object> teams = (Map<String, Object>) pickBanData.get("teams");
-            
+
             // Blue team
             if (teams.containsKey("blue") && teams.get("blue") instanceof Map<?, ?>) {
                 @SuppressWarnings("unchecked")
@@ -388,17 +388,19 @@ public class DraftFlowService {
                     @SuppressWarnings("unchecked")
                     List<Map<String, Object>> players = (List<Map<String, Object>>) blueTeam.get("players");
                     for (Map<String, Object> player : players) {
+                        String playerName = (String) player.get("summonerName");
                         if (player.containsKey("actions") && player.get("actions") instanceof List<?>) {
                             @SuppressWarnings("unchecked")
                             List<Map<String, Object>> playerActions = (List<Map<String, Object>>) player.get("actions");
                             for (Map<String, Object> action : playerActions) {
-                                allActions.add(parseDraftAction(action));
+                                // ✅ CRÍTICO: Passar playerName para parseDraftAction
+                                allActions.add(parseDraftAction(action, playerName));
                             }
                         }
                     }
                 }
             }
-            
+
             // Red team
             if (teams.containsKey("red") && teams.get("red") instanceof Map<?, ?>) {
                 @SuppressWarnings("unchecked")
@@ -407,54 +409,60 @@ public class DraftFlowService {
                     @SuppressWarnings("unchecked")
                     List<Map<String, Object>> players = (List<Map<String, Object>>) redTeam.get("players");
                     for (Map<String, Object> player : players) {
+                        String playerName = (String) player.get("summonerName");
                         if (player.containsKey("actions") && player.get("actions") instanceof List<?>) {
                             @SuppressWarnings("unchecked")
                             List<Map<String, Object>> playerActions = (List<Map<String, Object>>) player.get("actions");
                             for (Map<String, Object> action : playerActions) {
-                                allActions.add(parseDraftAction(action));
+                                // ✅ CRÍTICO: Passar playerName para parseDraftAction
+                                allActions.add(parseDraftAction(action, playerName));
                             }
                         }
                     }
                 }
             }
         }
-        
+
         // Ordenar por index
         allActions.sort((a, b) -> Integer.compare(a.index(), b.index()));
-        
+
         // Criar DraftState
         List<String> team1 = parseCSV(cm.getTeam1PlayersJson());
         List<String> team2 = parseCSV(cm.getTeam2PlayersJson());
         DraftState st = new DraftState(matchId, allActions, team1, team2);
-        
+
         // Avançar para currentIndex
         Object currentIdxObj = pickBanData.get("currentIndex");
         int cur = currentIdxObj instanceof Number n ? n.intValue() : 0;
         while (st.getCurrentIndex() < cur && st.getCurrentIndex() < allActions.size()) {
             st.advance();
         }
-        
+
         return st;
     }
-    
+
     /**
-     * ✅ NOVO: Parseia uma action individual
+     * ✅ CORRIGIDO: Parseia uma action individual COM byPlayer
      */
-    private DraftAction parseDraftAction(Map<String, Object> actionMap) {
-        int idx = actionMap.containsKey("index") 
-                ? ((Number) actionMap.get("index")).intValue() 
+    private DraftAction parseDraftAction(Map<String, Object> actionMap, String playerName) {
+        int idx = actionMap.containsKey("index")
+                ? ((Number) actionMap.get("index")).intValue()
                 : 0;
         String type = (String) actionMap.getOrDefault("type", "pick");
         String champId = (String) actionMap.get("championId");
         String champName = (String) actionMap.get("championName");
-        
+
         // Determinar team (1=blue, 2=red) baseado no index
-        // Actions 0-9: alternadas blue/red
-        // Simplificação: usar championId presence para indicar completed
+        // Sequência: Ban Blue, Ban Red, Ban Blue, Ban Red, Ban Blue, Ban Red,
+        // Pick Blue, Pick Red, Pick Red, Pick Blue, Pick Blue, Pick Red,
+        // Ban Red, Ban Blue, Ban Red, Ban Blue,
+        // Pick Red, Pick Blue, Pick Blue, Pick Red
         int team = (idx < 10) ? (idx % 2 == 0 ? 1 : 2) : ((idx / 2) % 2 == 0 ? 2 : 1);
-        
-        String byPlayer = null; // ⚠️ Não temos byPlayer no JSON novo
-        
+
+        // ✅ CRÍTICO: byPlayer agora vem do parâmetro (sabemos qual player tem essa
+        // action!)
+        String byPlayer = playerName;
+
         return new DraftAction(idx, type, team, champId, champName, byPlayer);
     }
 
@@ -470,23 +478,23 @@ public class DraftFlowService {
                 log.warn("⚠️ [syncMySQLtoRedis] Match {} não encontrado", matchId);
                 return;
             }
-            
+
             String pickBanDataJson = matchOpt.get().getPickBanDataJson();
             if (pickBanDataJson == null || pickBanDataJson.isBlank()) {
                 log.warn("⚠️ [syncMySQLtoRedis] pick_ban_data_json NULL/vazio para match {}", matchId);
                 return;
             }
-            
+
             // 2. Salvar STRING JSON DIRETA no Redis (zero conversões!)
             redisDraftFlow.saveDraftStateJson(matchId, pickBanDataJson);
-            log.debug("💾 [syncMySQLtoRedis] JSON puro sincronizado MySQL→Redis: matchId={}, {}chars", 
+            log.debug("💾 [syncMySQLtoRedis] JSON puro sincronizado MySQL→Redis: matchId={}, {}chars",
                     matchId, pickBanDataJson.length());
-                    
+
         } catch (Exception e) {
             log.error("❌ [syncMySQLtoRedis] Erro ao sincronizar: matchId={}", matchId, e);
         }
     }
-    
+
     /**
      * ⚠️ DEPRECATED: Usar syncMySQLtoRedis() ao invés
      */
@@ -592,6 +600,53 @@ public class DraftFlowService {
         log.info("✅ [DraftFlow] startDraft - Broadcast inicial enviado para frontend");
 
         return st;
+    }
+
+    /**
+     * ✅ NOVO: Atribui byPlayer para cada action baseado na ordem do draft
+     * Regra: Cada jogador tem 2 actions (1 ban + 1 pick) na ordem da lane (top,
+     * jungle, mid, bot, support)
+     */
+    private void assignPlayersByDraftOrder(List<DraftAction> actions, List<String> team1Players,
+            List<String> team2Players) {
+        // Sequência do LoL:
+        // Ban: Blue0, Red0, Blue1, Red1, Blue2, Red2 (lanes 0,0,1,1,2,2)
+        // Pick: Blue0, Red0, Red1, Blue1, Blue2, Red2 (lanes 0,0,1,1,2,2)
+        // Ban: Red3, Blue3, Red4, Blue4 (lanes 3,3,4,4)
+        // Pick: Red3, Blue3, Blue4, Red4 (lanes 3,3,4,4)
+
+        int[] laneSequenceBan1 = { 0, 0, 1, 1, 2, 2 }; // Indices 0-5
+        int[] laneSequencePick1 = { 0, 0, 1, 1, 2, 2 }; // Indices 6-11
+        int[] laneSequenceBan2 = { 3, 3, 4, 4 }; // Indices 12-15
+        int[] laneSequencePick2 = { 3, 3, 4, 4 }; // Indices 16-19
+
+        for (int i = 0; i < actions.size(); i++) {
+            DraftAction action = actions.get(i);
+            int lane = -1;
+
+            if (i < 6)
+                lane = laneSequenceBan1[i];
+            else if (i < 12)
+                lane = laneSequencePick1[i - 6];
+            else if (i < 16)
+                lane = laneSequenceBan2[i - 12];
+            else
+                lane = laneSequencePick2[i - 16];
+
+            String playerName = action.team() == 1 ? team1Players.get(lane) : team2Players.get(lane);
+
+            // Substituir action com byPlayer atribuído
+            actions.set(i, new DraftAction(
+                    action.index(),
+                    action.type(),
+                    action.team(),
+                    action.championId(),
+                    action.championName(),
+                    playerName // ✅ byPlayer atribuído!
+            ));
+        }
+
+        log.info("✅ [assignPlayersByDraftOrder] byPlayer atribuído para todas as {} actions", actions.size());
     }
 
     private List<DraftAction> buildDefaultActionSequence() {
@@ -1565,6 +1620,39 @@ public class DraftFlowService {
     }
 
     /**
+     * ✅ NOVO: Retorna os indices de actions para uma lane específica
+     * Lane 0=Top, 1=Jungle, 2=Mid, 3=Bot, 4=Support
+     */
+    private List<Integer> getActionIndicesForLane(int laneIndex, int teamNumber) {
+        // Sequência do LoL draft:
+        // Ban1: Blue[0,2,4], Red[1,3,5] → lanes [0,1,2,0,1,2]
+        // Pick1: Blue[6,9,10], Red[7,8,11] → lanes [0,1,2,1,0,2]
+        // Ban2: Blue[13,15], Red[12,14] → lanes [3,4,3,4]
+        // Pick2: Blue[17,18], Red[16,19] → lanes [3,4,3,4]
+
+        List<Integer> indices = new ArrayList<>();
+
+        if (laneIndex == 0) { // Top
+            indices.add(teamNumber == 1 ? 0 : 1); // Ban
+            indices.add(teamNumber == 1 ? 6 : 7); // Pick
+        } else if (laneIndex == 1) { // Jungle
+            indices.add(teamNumber == 1 ? 2 : 3); // Ban
+            indices.add(teamNumber == 1 ? 9 : 8); // Pick
+        } else if (laneIndex == 2) { // Mid
+            indices.add(teamNumber == 1 ? 4 : 5); // Ban
+            indices.add(teamNumber == 1 ? 10 : 11); // Pick
+        } else if (laneIndex == 3) { // Bot
+            indices.add(teamNumber == 1 ? 13 : 12); // Ban
+            indices.add(teamNumber == 1 ? 17 : 16); // Pick
+        } else if (laneIndex == 4) { // Support
+            indices.add(teamNumber == 1 ? 15 : 14); // Ban
+            indices.add(teamNumber == 1 ? 18 : 19); // Pick
+        }
+
+        return indices;
+    }
+
+    /**
      * ✅ Constrói dados LIMPOS de um time (sem duplicação)
      * Apenas: name, teamNumber, averageMmr, players (com actions)
      */
@@ -1631,21 +1719,35 @@ public class DraftFlowService {
                 cleanPlayer.put("tagLine", "");
             }
 
-            // ✅ Buscar TODAS as ações deste jogador (bans E picks juntos)
-            List<Map<String, Object>> playerActions = actions.stream()
-                    .filter(a -> a.team() == teamNumber)
-                    .filter(a -> playerName.equals(a.byPlayer()))
-                    .map(a -> {
+            // ✅ ESTRATÉGIA: PRESERVAR actions que já existem no player (MySQL é fonte da
+            // verdade!)
+            // Atribuir actions por POSIÇÃO/INDEX (independente de byPlayer)
+            Integer teamIndex = (Integer) player.get("teamIndex");
+            List<Map<String, Object>> playerActions = new ArrayList<>();
+
+            if (teamIndex != null) {
+                int laneIndex = teamIndex % 5; // 0=Top, 1=Jungle, 2=Mid, 3=Bot, 4=Support
+                List<Integer> actionIndices = getActionIndicesForLane(laneIndex, teamNumber);
+
+                // Buscar actions do DraftState pelos indices
+                for (Integer idx : actionIndices) {
+                    if (idx < actions.size()) {
+                        DraftAction action = actions.get(idx);
+
                         Map<String, Object> actionData = new HashMap<>();
-                        actionData.put("index", a.index());
-                        actionData.put("type", a.type());
-                        actionData.put("championId", a.championId());
-                        actionData.put("championName", a.championName());
-                        actionData.put("phase", getPhaseLabel(a.index()));
-                        actionData.put("status", a.championId() == null ? "pending" : "completed");
-                        return actionData;
-                    })
-                    .collect(java.util.stream.Collectors.toList());
+                        actionData.put("index", action.index());
+                        actionData.put("type", action.type());
+                        actionData.put("championId", action.championId());
+                        actionData.put("championName", action.championName());
+                        actionData.put("phase", getPhaseLabel(action.index()));
+                        actionData.put("status", action.championId() == null ? "pending" : "completed");
+                        playerActions.add(actionData);
+                    }
+                }
+
+                log.debug("🔨 [buildCleanTeamData] {} actions atribuídas para {} (teamIndex={}, lane={}, indices={})",
+                        playerActions.size(), playerName, teamIndex, laneIndex, actionIndices);
+            }
 
             cleanPlayer.put("actions", playerActions);
 
@@ -1895,8 +1997,14 @@ public class DraftFlowService {
                 log.warn("⚠️ [DraftFlow] Estado null para match {}", match.getId());
                 continue;
             }
+
+            // ✅ DEBUG CRÍTICO: Logar currentIndex para diagnosticar
+            log.debug("🔍 [Monitor] Match {}: currentIndex={}/{}, matchId do state={}",
+                    match.getId(), st.getCurrentIndex(), st.getActions().size(), st.getMatchId());
+
             if (st.getCurrentIndex() >= st.getActions().size()) {
-                log.info("✅ [DraftFlow] Draft {} completo", match.getId());
+                log.info("✅ [DraftFlow] Draft {} completo (currentIndex={}/{})",
+                        match.getId(), st.getCurrentIndex(), st.getActions().size());
                 continue; // ✅ CORREÇÃO: continue ao invés de return!
             }
 
@@ -2548,15 +2656,16 @@ public class DraftFlowService {
      * 
      * Estrutura do MySQL (pickBanData):
      * {
-     *   "teams": {
-     *     "blue": { "players": [{ "actions": [...] }], "allBans": [...], "allPicks": [...] },
-     *     "red": { ... }
-     *   },
-     *   "currentPhase": "completed",
-     *   "currentIndex": 20,
-     *   "currentActionType": null,
-     *   "team1": [...],
-     *   "team2": [...]
+     * "teams": {
+     * "blue": { "players": [{ "actions": [...] }], "allBans": [...], "allPicks":
+     * [...] },
+     * "red": { ... }
+     * },
+     * "currentPhase": "completed",
+     * "currentIndex": 20,
+     * "currentActionType": null,
+     * "team1": [...],
+     * "team2": [...]
      * }
      */
     public Map<String, Object> getDraftDataForRestore(Long matchId) {
@@ -2587,27 +2696,28 @@ public class DraftFlowService {
                     // ✅ 3.5. COMPATIBILIDADE: Criar 'phases' flat para frontend antigo
                     // Frontend espera array flat com todas as actions
                     List<Map<String, Object>> flatPhases = new ArrayList<>();
-                    
+
                     if (pickBanData.containsKey("teams") && pickBanData.get("teams") instanceof Map<?, ?>) {
                         @SuppressWarnings("unchecked")
                         Map<String, Object> teams = (Map<String, Object>) pickBanData.get("teams");
-                        
+
                         // Extrair actions de blue e red teams
-                        for (String teamSide : new String[]{"blue", "red"}) {
+                        for (String teamSide : new String[] { "blue", "red" }) {
                             Object teamObj = teams.get(teamSide);
                             if (teamObj instanceof Map<?, ?>) {
                                 @SuppressWarnings("unchecked")
                                 Map<String, Object> team = (Map<String, Object>) teamObj;
-                                
+
                                 if (team.containsKey("players") && team.get("players") instanceof List<?>) {
                                     @SuppressWarnings("unchecked")
                                     List<Map<String, Object>> players = (List<Map<String, Object>>) team.get("players");
-                                    
+
                                     for (Map<String, Object> player : players) {
                                         if (player.containsKey("actions") && player.get("actions") instanceof List<?>) {
                                             @SuppressWarnings("unchecked")
-                                            List<Map<String, Object>> playerActions = (List<Map<String, Object>>) player.get("actions");
-                                            
+                                            List<Map<String, Object>> playerActions = (List<Map<String, Object>>) player
+                                                    .get("actions");
+
                                             // Adicionar byPlayer em cada action para compatibilidade
                                             for (Map<String, Object> action : playerActions) {
                                                 Map<String, Object> actionCopy = new HashMap<>(action);
@@ -2621,14 +2731,14 @@ public class DraftFlowService {
                             }
                         }
                     }
-                    
+
                     // Ordenar por index
                     flatPhases.sort((a, b) -> {
                         Integer idxA = (Integer) a.getOrDefault("index", 0);
                         Integer idxB = (Integer) b.getOrDefault("index", 0);
                         return idxA.compareTo(idxB);
                     });
-                    
+
                     result.put("phases", flatPhases);
                     log.info("✅ [getDraftDataForRestore] phases flat criado: {} ações", flatPhases.size());
 
