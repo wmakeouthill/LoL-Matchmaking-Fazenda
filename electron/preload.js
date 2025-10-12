@@ -22,19 +22,34 @@ function sanitizeBody(b) {
   } catch (e) { return String(b); }
 }
 
-// Read lockfile only from the game installation folder (explicit requirement)
+// Read lockfile from the game installation folder with fallback support
 function readLockfile() {
   const fs = require('fs');
-  const path = 'C:/Riot Games/League of Legends/lockfile';
-  if (!fs.existsSync(path)) return null;
-  const content = fs.readFileSync(path, 'utf8');
-  try { appendLogLinePre('[preload] readLockfile content=' + content.replace(/\r?\n/g, ' ')); } catch (e) {}
-  const parts = content.split(':');
-  if (parts.length < 5) return null;
-  const port = parseInt(String(parts[2]).trim(), 10);
-  const password = String(parts[3]).trim();
-  const protocol = String(parts[4]).trim().toLowerCase();
-  return { host: '127.0.0.1', port, protocol, password };
+  const candidates = [
+    'C:/Riot Games/League of Legends/lockfile',
+    'D:/Riot Games/League of Legends/lockfile',
+    'E:/Riot Games/League of Legends/lockfile'
+  ];
+  
+  for (const path of candidates) {
+    if (fs.existsSync(path)) {
+      try {
+        const content = fs.readFileSync(path, 'utf8');
+        try { appendLogLinePre('[preload] readLockfile content=' + content.replace(/\r?\n/g, ' ')); } catch (e) {}
+        const parts = content.split(':');
+        if (parts.length < 5) continue;
+        const port = parseInt(String(parts[2]).trim(), 10);
+        const password = String(parts[3]).trim();
+        const protocol = String(parts[4]).trim().toLowerCase();
+        return { host: '127.0.0.1', port, protocol, password };
+      } catch (e) {
+        // Continue to next candidate if reading fails
+        continue;
+      }
+    }
+  }
+  
+  return null;
 }
 
 async function postJson(url, body, timeoutMs = 5000) {

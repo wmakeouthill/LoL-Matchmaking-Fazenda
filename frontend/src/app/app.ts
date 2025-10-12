@@ -698,23 +698,23 @@ export class App implements OnInit, OnDestroy {
       case 'match_cancelled':
         console.log('❌ [App] Match cancelado:', message);
 
-        // ✅ CORREÇÃO: NÃO resetar se for uma partida restaurada
-        if (this.isRestoredMatch) {
-          console.log('⚠️ [App] Ignorando match_cancelled pois partida foi restaurada');
-          break;
-        }
+        // ✅ SEMPRE processar cancelamento, mesmo se partida foi restaurada!
+        // O cancelamento é um evento crítico que deve SEMPRE limpar o estado
+        console.log('🔄 [App] Processando match_cancelled (matchId: {})', message.matchId || message.data?.matchId);
 
         // Limpar estado de match found
         this.showMatchFound = false;
         this.matchFoundData = null;
 
-        // ✅ NOVO: Limpar estado de draft e game in progress
+        // ✅ CRÍTICO: Limpar estado de draft e game in progress
         if (this.inDraftPhase || this.inGamePhase) {
           console.log('❌ [App] Redirecionando para tela inicial (partida cancelada)');
           this.inDraftPhase = false;
           this.inGamePhase = false;
           this.draftData = null;
           this.gameData = null;
+          this.isRestoredMatch = false; // ✅ LIMPAR flag
+          this.currentView = 'queue'; // ✅ Redirecionar para fila
           alert('Partida cancelada. Você foi redirecionado para a tela inicial.');
         }
 

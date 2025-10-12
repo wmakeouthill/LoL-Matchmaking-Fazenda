@@ -250,6 +250,8 @@ function postConfigToBackend(backendBase, cfg) {
 function startLockfileWatcher(backendBase) {
   const candidates = [
     'C:/Riot Games/League of Legends/lockfile',
+    'D:/Riot Games/League of Legends/lockfile',
+    'E:/Riot Games/League of Legends/lockfile',
     path.join(process.env.LOCALAPPDATA || '', 'Riot Games', 'League of Legends', 'lockfile'),
     path.join(process.env.USERPROFILE || '', 'AppData', 'Local', 'Riot Games', 'League of Legends', 'lockfile')
   ];
@@ -703,6 +705,8 @@ ipcMain.handle('storage:listPlayers', async (_evt) => {
 function readLockfileInfo() {
   const candidates = [
     'C:/Riot Games/League of Legends/lockfile',
+    'D:/Riot Games/League of Legends/lockfile',
+    'E:/Riot Games/League of Legends/lockfile',
     path.join(process.env.LOCALAPPDATA || '', 'Riot Games', 'League of Legends', 'lockfile'),
     path.join(process.env.USERPROFILE || '', 'AppData', 'Local', 'Riot Games', 'League of Legends', 'lockfile')
   ];
