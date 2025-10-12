@@ -440,6 +440,14 @@ public class GameInProgressService {
             redisPlayerMatch.clearMatchPlayers(matchId);
             log.info("✅ [cancelGame] Ownership limpo para match {}", matchId);
 
+            // ✅ CRÍTICO: NOTIFICAR FRONTEND via WebSocket
+            try {
+                broadcastGameCancelled(matchId, allPlayers, reason);
+                log.info("📢 [cancelGame] Evento game_cancelled enviado para {} jogadores", allPlayers.size());
+            } catch (Exception e) {
+                log.error("❌ [cancelGame] Erro ao enviar broadcast de cancelamento", e);
+            }
+
             log.info("✅ Jogo cancelado para partida {}", matchId);
 
         } catch (Exception e) {
@@ -725,6 +733,48 @@ public class GameInProgressService {
 
         } catch (Exception e) {
             log.error("❌ [GameInProgress] Erro ao broadcast game_started", e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Broadcast evento game_cancelled para todos os jogadores
+     */
+    private void broadcastGameCancelled(Long matchId, List<String> allPlayers, String reason) {
+        try {
+            Map<String, Object> payload = Map.of(
+                    "type", "match_cancelled",
+                    "matchId", matchId,
+                    "reason", reason != null ? reason : "Partida cancelada");
+
+            String json = objectMapper.writeValueAsString(payload);
+
+            log.info("📢 [GameInProgress] Enviando game_cancelled para {} jogadores:", allPlayers.size());
+            for (String playerName : allPlayers) {
+                log.info("  ✅ {}", playerName);
+            }
+
+            Collection<org.springframework.web.socket.WebSocketSession> playerSessions = sessionRegistry
+                    .getByPlayers(allPlayers);
+
+            int sentCount = 0;
+            for (org.springframework.web.socket.WebSocketSession ws : playerSessions) {
+                try {
+                    if (ws.isOpen()) {
+                        synchronized (ws) {
+                            ws.sendMessage(new org.springframework.web.socket.TextMessage(json));
+                        }
+                        sentCount++;
+                    }
+                } catch (Exception e) {
+                    log.warn("⚠️ [GameInProgress] Erro ao enviar game_cancelled para sessão", e);
+                }
+            }
+
+            log.info("✅ [GameInProgress] game_cancelled enviado para {}/{} jogadores",
+                    sentCount, allPlayers.size());
+
+        } catch (Exception e) {
+            log.error("❌ [GameInProgress] Erro ao broadcast game_cancelled", e);
         }
     }
 
