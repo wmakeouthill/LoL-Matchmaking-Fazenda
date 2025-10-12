@@ -1273,8 +1273,71 @@ public class QueueManagementService {
 
                     } else if ("in_progress".equalsIgnoreCase(match.getStatus())) {
                         response.put("type", "game");
-                        Object pickBanDataGame = parseJsonSafely(match.getPickBanDataJson());
-                        response.put("pickBanData", pickBanDataGame);
+                        
+                        // ✅ CRÍTICO: Buscar dados COMPLETOS do pick_ban_data (igual ao draft!)
+                        // E EXTRAIR campeões das actions para colocar direto nos players
+                        
+                        if (match.getPickBanDataJson() != null && !match.getPickBanDataJson().isEmpty()) {
+                            try {
+                                @SuppressWarnings("unchecked")
+                                Map<String, Object> pickBanData = objectMapper.readValue(match.getPickBanDataJson(), Map.class);
+                                
+                                // ✅ CRÍTICO: Extrair campeões das actions e adicionar nos players
+                                if (pickBanData.containsKey("teams") && pickBanData.get("teams") instanceof Map<?, ?>) {
+                                    @SuppressWarnings("unchecked")
+                                    Map<String, Object> teams = (Map<String, Object>) pickBanData.get("teams");
+                                    
+                                    // Processar Blue e Red teams
+                                    for (String teamSide : new String[]{"blue", "red"}) {
+                                        Object teamObj = teams.get(teamSide);
+                                        if (teamObj instanceof Map<?, ?>) {
+                                            @SuppressWarnings("unchecked")
+                                            Map<String, Object> team = (Map<String, Object>) teamObj;
+                                            
+                                            if (team.containsKey("players") && team.get("players") instanceof List<?>) {
+                                                @SuppressWarnings("unchecked")
+                                                List<Map<String, Object>> players = (List<Map<String, Object>>) team.get("players");
+                                                
+                                                for (Map<String, Object> player : players) {
+                                                    // Extrair pick das actions do player
+                                                    if (player.containsKey("actions") && player.get("actions") instanceof List<?>) {
+                                                        @SuppressWarnings("unchecked")
+                                                        List<Map<String, Object>> playerActions = (List<Map<String, Object>>) player.get("actions");
+                                                        
+                                                        for (Map<String, Object> action : playerActions) {
+                                                            String actionType = (String) action.get("type");
+                                                            if ("pick".equals(actionType)) {
+                                                                // ✅ ADICIONAR championId e championName DIRETAMENTE no player
+                                                                player.put("championId", action.get("championId"));
+                                                                player.put("championName", action.get("championName"));
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                // ✅ Adicionar TUDO do pick_ban_data (agora com campeões extraídos!)
+                                response.putAll(pickBanData);
+                                
+                                log.info("✅ [getActiveMatch-Redis] Game data do MySQL: {} keys (com campeões extraídos)",
+                                        pickBanData.keySet());
+                                        
+                            } catch (Exception e) {
+                                log.error("❌ [getActiveMatch-Redis] Erro ao parsear pick_ban_data para game", e);
+                                // Fallback: pelo menos adicionar o JSON raw
+                                response.put("pickBanData", match.getPickBanDataJson());
+                            }
+                        } else {
+                            log.warn("⚠️ [getActiveMatch-Redis] pick_ban_data vazio para match {}", match.getId());
+                        }
+                        
+                        // ✅ ADICIONAL: Dados do jogo em progresso
+                        response.put("startTime", match.getCreatedAt());
+                        response.put("gameId", match.getId().toString());
 
                     } else if ("match_found".equalsIgnoreCase(match.getStatus()) ||
                             "accepting".equalsIgnoreCase(match.getStatus()) ||

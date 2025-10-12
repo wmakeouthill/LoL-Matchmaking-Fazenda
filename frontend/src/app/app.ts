@@ -527,7 +527,7 @@ export class App implements OnInit, OnDestroy {
       // Redirecionar baseado no status
       if (activeMatch.status === 'draft') {
         console.log('🎯 [App] Restaurando estado de DRAFT...');
-        
+
         // ✅ CRÍTICO: Se JÁ estamos no draft, NÃO recarregar!
         // Isso evita "expulsar" o jogador do draft ao verificar estado
         if (this.inDraftPhase && this.draftData?.matchId === (activeMatch.matchId || activeMatch.id)) {
@@ -535,7 +535,7 @@ export class App implements OnInit, OnDestroy {
           console.log('🔍 [App] matchId atual:', this.draftData.matchId, '| matchId do backend:', activeMatch.matchId || activeMatch.id);
           return;
         }
-        
+
         this.isRestoredMatch = true; // ✅ MARCAR COMO RESTAURADO
         this.inDraftPhase = true;
         this.inGamePhase = false;
@@ -579,11 +579,16 @@ export class App implements OnInit, OnDestroy {
         console.log('🔍 [App] APÓS FLAGS: inGamePhase =', this.inGamePhase, ', isRestoredMatch =', this.isRestoredMatch);
 
         // Montar dados do game
+        // ✅ CRÍTICO: Usar teams.blue/red.players (estrutura hierárquica) com campeões completos!
+        // Backend já extrai championId/championName das actions e coloca direto no player
+        const team1Players = activeMatch.teams?.blue?.players || activeMatch.team1 || [];
+        const team2Players = activeMatch.teams?.red?.players || activeMatch.team2 || [];
+
         this.gameData = {
           matchId: activeMatch.matchId || activeMatch.id,
-          team1: Array.isArray(activeMatch.team1) ? activeMatch.team1 : [],
-          team2: Array.isArray(activeMatch.team2) ? activeMatch.team2 : [],
-          pickBanData: activeMatch.pickBanData,
+          team1: Array.isArray(team1Players) ? team1Players : [],
+          team2: Array.isArray(team2Players) ? team2Players : [],
+          pickBanData: activeMatch,  // ✅ CRÍTICO: Todo o activeMatch (tem teams, allBans, allPicks)
           sessionId: activeMatch.sessionId || `restored-${activeMatch.id}`,
           gameId: activeMatch.gameId || String(activeMatch.id),
           startTime: activeMatch.startTime ? new Date(activeMatch.startTime) : new Date(),
