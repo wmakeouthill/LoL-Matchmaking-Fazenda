@@ -59,11 +59,16 @@ class DraftFlowServiceTest {
         });
 
         // ✅ NOVO: Adicionar PlayerStateService mock ao construtor
-        br.com.lolmatchmaking.backend.service.lock.PlayerStateService playerStateService = 
-            mock(br.com.lolmatchmaking.backend.service.lock.PlayerStateService.class);
-        
+        br.com.lolmatchmaking.backend.service.lock.PlayerStateService playerStateService = mock(
+                br.com.lolmatchmaking.backend.service.lock.PlayerStateService.class);
+
+        // ✅ NOVO: Adicionar RedisPlayerMatchService mock ao construtor
+        br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatchService = mock(
+                br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService.class);
+
         draftFlowService = new DraftFlowService(customMatchRepository, sessionRegistry, dataDragonService,
-                gameInProgressService, discordService, redisDraftFlowService, playerStateService);
+                gameInProgressService, discordService, redisDraftFlowService, playerStateService,
+                redisPlayerMatchService);
     }
 
     @Test

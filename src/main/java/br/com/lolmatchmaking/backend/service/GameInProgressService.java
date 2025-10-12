@@ -328,6 +328,21 @@ public class GameInProgressService {
             String winningTeam = winnerTeam != null ? "team" + winnerTeam : "draw";
             redisGameMonitoring.finishGame(matchId, winningTeam);
 
+            // ✅ NOVO: Limpar PlayerState de TODOS os jogadores PRIMEIRO
+            List<String> allPlayersForCleanup = new ArrayList<>();
+            allPlayersForCleanup.addAll(parsePlayerList(match.getTeam1PlayersJson()));
+            allPlayersForCleanup.addAll(parsePlayerList(match.getTeam2PlayersJson()));
+
+            for (String playerName : allPlayersForCleanup) {
+                try {
+                    playerStateService.setPlayerState(playerName,
+                            br.com.lolmatchmaking.backend.service.lock.PlayerState.AVAILABLE);
+                    log.info("✅ [finishGame] Estado de {} limpo para AVAILABLE", playerName);
+                } catch (Exception e) {
+                    log.error("❌ [finishGame] Erro ao limpar estado de {}: {}", playerName, e.getMessage());
+                }
+            }
+
             // ✅ CRÍTICO: Limpar ownership de todos os jogadores
             log.info("🗑️ [OWNERSHIP] Limpando ownership de match {}", matchId);
             redisPlayerMatch.clearMatchPlayers(matchId);
@@ -382,6 +397,15 @@ public class GameInProgressService {
         try {
             log.info("❌ Cancelando jogo para partida {}: {}", matchId, reason);
 
+            // ✅ NOVO: Buscar jogadores ANTES de cancelar
+            CustomMatch match = customMatchRepository.findById(matchId).orElse(null);
+            List<String> allPlayers = new ArrayList<>();
+            if (match != null) {
+                allPlayers.addAll(parsePlayerList(match.getTeam1PlayersJson()));
+                allPlayers.addAll(parsePlayerList(match.getTeam2PlayersJson()));
+                log.info("🎯 [cancelGame] {} jogadores para limpar estados", allPlayers.size());
+            }
+
             // ✅ REDIS ONLY: Cancelar no Redis
             redisGameMonitoring.cancelGame(matchId);
             log.info("✅ [cancelGame] Jogo cancelado no Redis para match {}", matchId);
@@ -394,12 +418,27 @@ public class GameInProgressService {
                 log.error("❌ [cancelGame] Erro ao limpar canais Discord: {}", e.getMessage());
             }
 
-            CustomMatch match = customMatchRepository.findById(matchId).orElse(null);
             if (match != null) {
                 match.setStatus("cancelled");
                 match.setUpdatedAt(Instant.now());
                 customMatchRepository.save(match);
             }
+
+            // ✅ NOVO: Limpar PlayerState de TODOS os jogadores
+            for (String playerName : allPlayers) {
+                try {
+                    playerStateService.setPlayerState(playerName,
+                            br.com.lolmatchmaking.backend.service.lock.PlayerState.AVAILABLE);
+                    log.info("✅ [cancelGame] Estado de {} limpo para AVAILABLE", playerName);
+                } catch (Exception e) {
+                    log.error("❌ [cancelGame] Erro ao limpar estado de {}: {}", playerName, e.getMessage());
+                }
+            }
+
+            // ✅ NOVO: Limpar RedisPlayerMatch ownership
+            // Note: clearMatchPlayers valida MySQL antes de limpar
+            redisPlayerMatch.clearMatchPlayers(matchId);
+            log.info("✅ [cancelGame] Ownership limpo para match {}", matchId);
 
             log.info("✅ Jogo cancelado para partida {}", matchId);
 

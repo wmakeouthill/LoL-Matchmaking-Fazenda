@@ -167,17 +167,25 @@ public class QueueManagementService {
                         return false;
                     }
                 } else {
+                    // ✅ Verificar se o estado reflete a realidade do MySQL
                     boolean inActiveMatch = customMatchRepository.findActiveMatchByPlayerPuuid(summonerName)
                             .isPresent();
                     if (inActiveMatch) {
+                        // ✅ MySQL confirma: jogador TEM partida ativa, estado Redis está correto
                         log.error(
                                 "🚨 [addToQueue] Jogador {} está em estado {} e em partida ativa no MySQL. NUNCA limpar estado!",
                                 summonerName, currentState);
                         return false;
                     }
-                    log.warn("❌ [addToQueue] Jogador {} não pode entrar na fila (estado: {})", summonerName,
-                            currentState);
-                    return false;
+
+                    // ❌ ESTADO FANTASMA: Redis diz estado={}, mas MySQL não tem partida ativa!
+                    log.warn(
+                            "🧹 [addToQueue] ESTADO FANTASMA detectado: {} tem estado {} mas NÃO está em partida ativa no MySQL!",
+                            summonerName, currentState);
+                    log.warn("🧹 [addToQueue] Corrigindo Redis para refletir MySQL...");
+                    playerStateService.forceSetPlayerState(summonerName, PlayerState.AVAILABLE);
+                    log.info("✅ [addToQueue] PlayerState FORÇADAMENTE limpo, permitindo entrar na fila agora");
+                    // ✅ Agora pode continuar e adicionar à fila
                 }
             }
 
@@ -1213,7 +1221,8 @@ public class QueueManagementService {
                     } else {
                         // Se não existe no MySQL, pode limpar
                         redisPlayerMatch.clearPlayerMatch(summonerName);
-                        log.info("✅ [getActiveMatch] Ownership limpo para {} (match não existe no MySQL)", summonerName);
+                        log.info("✅ [getActiveMatch] Ownership limpo para {} (match não existe no MySQL)",
+                                summonerName);
                     }
                 }
             }
