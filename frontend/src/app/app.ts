@@ -172,6 +172,30 @@ export class App implements OnInit, OnDestroy {
     // ✅ EXPOR appComponent no window para componentes filhos acessarem
     (window as any).appComponent = this;
 
+    // ✅ CRÍTICO: Verificar se houve reload durante draft (debug)
+    const draftLogs = localStorage.getItem('draft-debug-logs');
+    const criticalEvent = localStorage.getItem('draft-critical-event');
+
+    if (draftLogs || criticalEvent) {
+      console.warn('═════════════════════════════════════════════════════');
+      console.warn('🔍🔍🔍 LOGS SALVOS DO DRAFT ANTERIOR ENCONTRADOS!');
+      console.warn('═════════════════════════════════════════════════════');
+    }
+
+    if (draftLogs) {
+      console.warn('📋 Para ver os logs: localStorage.getItem("draft-debug-logs")');
+      console.warn('📋 Para copiar: copy(localStorage.getItem("draft-debug-logs"))');
+    }
+
+    if (criticalEvent) {
+      console.error('🚨 EVENTO CRÍTICO:', JSON.parse(criticalEvent));
+    }
+
+    if (draftLogs || criticalEvent) {
+      console.warn('🧹 Para limpar: localStorage.clear()');
+      console.warn('═════════════════════════════════════════════════════');
+    }
+
     // ✅ NOVO: Teste inicial da função logApp
     logApp('🚀 [App] === INICIALIZAÇÃO DO APP ===');
     logApp('🚀 [App] Verificando se logApp está funcionando...');
@@ -609,6 +633,30 @@ export class App implements OnInit, OnDestroy {
         console.log('🔄 [App] Chamando detectChanges para forçar atualização da view...');
         this.cdr.detectChanges();
         console.log('✅ [App] detectChanges concluído');
+
+      } else if (activeMatch.status === 'match_found' || activeMatch.status === 'accepting' || activeMatch.status === 'accepted') {
+        console.log('🎯 [App] Match em fase de aceitação:', activeMatch.status);
+        console.log('ℹ️ [App] Aguardando todos aceitarem para iniciar draft...');
+
+        // ✅ Exibir modal de match found se ainda não estiver visível
+        if (!this.showMatchFound) {
+          this.matchFoundData = {
+            ...activeMatch,
+            matchId: activeMatch.matchId || activeMatch.id,
+            id: activeMatch.matchId || activeMatch.id
+          };
+          this.showMatchFound = true;
+          this.inDraftPhase = false;
+          this.inGamePhase = false;
+
+          console.log('✅ [App] Modal de match found exibido (transição para draft)');
+          this.cdr.detectChanges();
+        } else {
+          console.log('ℹ️ [App] Modal de match found já está visível');
+        }
+
+      } else {
+        console.log('⚠️ [App] Status de partida não reconhecido:', activeMatch.status);
       }
 
     } catch (error: any) {
@@ -736,13 +784,48 @@ export class App implements OnInit, OnDestroy {
         break;
 
       case 'draft_updated': // ✅ Picks/Bans/Ações (JSON completo)
-        console.log('📋 [App] draft_updated (AÇÕES) recebido:', message);
-        console.log('📋 [App] Estado atual:', {
+        console.log('📋 [App] ========== DRAFT_UPDATED (AÇÕES) ==========');
+        console.log('📋 [App] draft_updated recebido:', message);
+
+        const debugState = {
+          timestamp: new Date().toISOString(),
           inDraftPhase: this.inDraftPhase,
           hasDraftData: !!this.draftData,
           draftDataMatchId: this.draftData?.matchId,
-          messageMatchId: message.matchId || message.data?.matchId
-        });
+          messageMatchId: message.matchId || message.data?.matchId,
+          currentPhase: message.data?.currentPhase || message.currentPhase,
+          currentIndex: message.data?.currentIndex || message.currentIndex,
+          messageType: message.type
+        };
+
+        console.log('📋 [App] Estado atual:', debugState);
+
+        // ✅ CRÍTICO: Salvar em localStorage para não perder no reload
+        try {
+          const existingLogs = localStorage.getItem('draft-debug-logs') || '';
+          const newLog = `\n[${debugState.timestamp}] draft_updated: ${JSON.stringify(debugState)}`;
+          localStorage.setItem('draft-debug-logs', existingLogs + newLog);
+        } catch (e) {
+          console.error('Erro ao salvar debug log:', e);
+        }
+
+        // ✅ CRÍTICO: Detectar se draft foi marcado como completo
+        const phase = message.data?.currentPhase || message.currentPhase;
+        const status = message.data?.status || message.status;
+        if (phase === 'completed' || status === 'completed' || phase === 'complete') {
+          console.warn('⚠️⚠️⚠️ [App] DRAFT MARCADO COMO COMPLETO!');
+          console.warn('⚠️ currentPhase:', phase);
+          console.warn('⚠️ status:', status);
+          console.warn('⚠️ currentIndex:', message.data?.currentIndex || message.currentIndex);
+          console.warn('⚠️ Este pode ser o motivo do draft fechar prematuramente!');
+
+          // ✅ Salvar evento crítico
+          localStorage.setItem('draft-critical-event', JSON.stringify({
+            timestamp: debugState.timestamp,
+            phase, status,
+            currentIndex: message.data?.currentIndex || message.currentIndex
+          }));
+        }
 
         // ✅ Atualizar draftData com as informações recebidas
         if (this.inDraftPhase && this.draftData) {
