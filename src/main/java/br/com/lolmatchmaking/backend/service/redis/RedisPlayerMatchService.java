@@ -117,11 +117,15 @@ public class RedisPlayerMatchService {
                                 return false; // Match finalizada
                             }
 
-                            // Verificar se player está na partida
+                            // ✅ CORREÇÃO: Verificar com CASE-INSENSITIVE
+                            // MySQL pode ter "FZD Ratoso#fzd" mas summonerName pode estar normalizado
                             String team1 = match.getTeam1PlayersJson();
                             String team2 = match.getTeam2PlayersJson();
-                            return (team1 != null && team1.contains(summonerName)) ||
-                                    (team2 != null && team2.contains(summonerName));
+                            boolean inTeam1 = team1 != null &&
+                                    team1.toLowerCase().contains(summonerName.toLowerCase());
+                            boolean inTeam2 = team2 != null &&
+                                    team2.toLowerCase().contains(summonerName.toLowerCase());
+                            return inTeam1 || inTeam2;
                         })
                         .orElse(false);
 
@@ -161,16 +165,22 @@ public class RedisPlayerMatchService {
                             return false;
                         }
 
-                        // Verificar se player está na partida
+                        // ✅ CORREÇÃO: Verificar com CASE-INSENSITIVE
+                        // MySQL pode ter "FZD Ratoso#fzd" mas summonerName pode estar normalizado
                         String team1 = match.getTeam1PlayersJson();
                         String team2 = match.getTeam2PlayersJson();
-                        boolean isInMatch = (team1 != null && team1.contains(summonerName)) ||
-                                (team2 != null && team2.contains(summonerName));
+                        boolean inTeam1 = team1 != null &&
+                                team1.toLowerCase().contains(summonerName.toLowerCase());
+                        boolean inTeam2 = team2 != null &&
+                                team2.toLowerCase().contains(summonerName.toLowerCase());
+                        boolean isInMatch = inTeam1 || inTeam2;
 
                         if (!isInMatch) {
                             log.warn(
                                     "🧹 [validateOwnership] Jogador {} NÃO está na match {} no MySQL, ownership Redis deve ser limpo!",
                                     normalizedName, matchId);
+                            log.warn("🔍 [validateOwnership] DEBUG: team1={}, team2={}, summonerName={}",
+                                    team1, team2, summonerName);
                         }
 
                         return isInMatch;
