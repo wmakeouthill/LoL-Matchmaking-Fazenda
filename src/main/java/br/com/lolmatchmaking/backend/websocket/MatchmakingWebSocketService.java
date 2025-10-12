@@ -793,7 +793,14 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                 }
 
                 String jsonMessage = objectMapper.writeValueAsString(message);
-                session.sendMessage(new TextMessage(jsonMessage));
+
+                // ✅ CRÍTICO: SINCRONIZAR envio de mensagem WebSocket!
+                // Previne IllegalStateException: TEXT_PARTIAL_WRITING
+                synchronized (session) {
+                    if (session.isOpen()) { // Re-check após adquirir lock
+                        session.sendMessage(new TextMessage(jsonMessage));
+                    }
+                }
 
                 log.debug("📤 Evento enviado: {} → {}", sessionId, type);
 
@@ -1020,7 +1027,13 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         sessions.values().removeIf(session -> {
             try {
                 if (session.isOpen()) {
-                    session.sendMessage(new TextMessage(message));
+                    // ✅ CRÍTICO: SINCRONIZAR envio de mensagem WebSocket!
+                    // Previne IllegalStateException: TEXT_PARTIAL_WRITING
+                    synchronized (session) {
+                        if (session.isOpen()) { // Re-check após adquirir lock
+                            session.sendMessage(new TextMessage(message));
+                        }
+                    }
                     return false;
                 }
             } catch (Exception e) {
@@ -1041,10 +1054,18 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         for (WebSocketSession session : targetSessions) {
             try {
                 if (session != null && session.isOpen()) {
-                    session.sendMessage(new TextMessage(message));
+                    // ✅ CRÍTICO: SINCRONIZAR envio de mensagem WebSocket!
+                    // Previne IllegalStateException: TEXT_PARTIAL_WRITING
+                    synchronized (session) {
+                        if (session.isOpen()) { // Re-check após adquirir lock
+                            session.sendMessage(new TextMessage(message));
+                        }
+                    }
                 }
             } catch (IOException e) {
                 log.error("❌ Erro ao enviar mensagem para sessão {}", session.getId(), e);
+            } catch (IllegalStateException e) {
+                log.warn("⚠️ Sessão {} em estado inválido: {}", session.getId(), e.getMessage());
             }
         }
     }

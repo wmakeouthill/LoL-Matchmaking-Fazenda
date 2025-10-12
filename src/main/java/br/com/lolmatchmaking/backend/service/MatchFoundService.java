@@ -178,10 +178,14 @@ public class MatchFoundService {
                                     return false; // Partida não está mais aceitando
                                 }
 
+                                // ✅ CORREÇÃO: Verificar com CASE-INSENSITIVE
                                 String team1 = match.getTeam1PlayersJson();
                                 String team2 = match.getTeam2PlayersJson();
-                                return (team1 != null && team1.contains(summonerName)) ||
-                                        (team2 != null && team2.contains(summonerName));
+                                boolean inTeam1 = team1 != null
+                                        && team1.toLowerCase().contains(summonerName.toLowerCase());
+                                boolean inTeam2 = team2 != null
+                                        && team2.toLowerCase().contains(summonerName.toLowerCase());
+                                return inTeam1 || inTeam2;
                             })
                             .orElse(false);
 
@@ -270,6 +274,34 @@ public class MatchFoundService {
         }
 
         try {
+            // ✅ VALIDAÇÃO: Verificar se jogador REALMENTE está na partida (MySQL = fonte da
+            // verdade)
+            boolean reallyInMatch = customMatchRepository.findById(matchId)
+                    .map(match -> {
+                        String status = match.getStatus();
+                        if (!"match_found".equalsIgnoreCase(status) &&
+                                !"accepting".equalsIgnoreCase(status)) {
+                            log.warn("⚠️ [declineMatch] Partida {} não está aceitando (status={})", matchId, status);
+                            return false;
+                        }
+
+                        // ✅ CORREÇÃO: Verificar com CASE-INSENSITIVE
+                        String team1 = match.getTeam1PlayersJson();
+                        String team2 = match.getTeam2PlayersJson();
+                        boolean inTeam1 = team1 != null
+                                && team1.toLowerCase().contains(summonerName.toLowerCase());
+                        boolean inTeam2 = team2 != null
+                                && team2.toLowerCase().contains(summonerName.toLowerCase());
+                        return inTeam1 || inTeam2;
+                    })
+                    .orElse(false);
+
+            if (!reallyInMatch) {
+                log.warn("❌ [declineMatch] Jogador {} NÃO está na partida {} ou partida não existe/não está aceitando",
+                        summonerName, matchId);
+                return;
+            }
+
             log.warn("❌ [MatchFound] Jogador {} recusou partida {}", summonerName, matchId);
 
             // ✅ NOVO: Recusar no Redis primeiro (fonte da verdade, com distributed lock)
