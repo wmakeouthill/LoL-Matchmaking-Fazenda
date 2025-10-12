@@ -1438,7 +1438,15 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       return [];
     }
 
-    const teamPlayers = this.isBlueTeam(team) ? this.session.blueTeam : this.session.redTeam;
+    // ✅ PRIORIDADE 1: Usar teams.blue/red.players (estrutura hierárquica MySQL)
+    let teamPlayers: any[];
+    if (this.session.teams?.[team]?.players) {
+      teamPlayers = this.session.teams[team].players;
+    } else {
+      // ✅ FALLBACK: Usar blueTeam/redTeam (estrutura flat - compatibilidade)
+      teamPlayers = this.isBlueTeam(team) ? this.session.blueTeam : this.session.redTeam;
+    }
+
     const sortedPlayers = this.sortPlayersByLane(teamPlayers);
 
     return sortedPlayers;
@@ -1557,17 +1565,47 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   private findPickInActions(foundPlayer: any, team: 'blue' | 'red'): any | null {
-    if (!this.session.phases?.length) return null; // ✅ CORREÇÃO: usar phases (que contém actions)
+    // ✅ PRIORIDADE 1: Buscar em teams.blue/red.players[].actions (estrutura hierárquica MySQL)
+    if (this.session.teams?.[team]?.players) {
+      const player = this.session.teams[team].players.find((p: any) =>
+        p.summonerName === foundPlayer.summonerName ||
+        p.summonerName === foundPlayer.name ||
+        p.summonerName === `${foundPlayer.gameName}#${foundPlayer.tagLine}`
+      );
+
+      if (player?.actions) {
+        // Buscar a ação de pick completada
+        const pickAction = player.actions.find((action: any) =>
+          action.type === 'pick' &&
+          action.championId &&
+          action.status === 'completed'
+        );
+
+        if (pickAction) {
+          const championId = parseInt(pickAction.championId, 10);
+          const champion = this.getChampionFromCache(championId);
+
+          if (champion) {
+            return {
+              id: champion.key,
+              name: champion.name,
+              image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/${champion.id}.png`
+            };
+          }
+        }
+      }
+    }
+
+    // ✅ FALLBACK: Buscar em phases (estrutura flat - compatibilidade)
+    if (!this.session.phases?.length) return null;
 
     const teamNumber = team === 'blue' ? 1 : 2;
 
-    // ✅ CRÍTICO: Buscar na estrutura nova do backend
     const pickAction = this.session.phases.find((action: any) => {
-      const isCorrectTeam = action.team === teamNumber; // ✅ NOVO: team ao invés de teamIndex
-      const isPickAction = action.type === 'pick'; // ✅ NOVO: type ao invés de action
-      const hasChampion = action.championId && action.byPlayer; // ✅ NOVO: championId/byPlayer ao invés de champion/locked
+      const isCorrectTeam = action.team === teamNumber;
+      const isPickAction = action.type === 'pick';
+      const hasChampion = action.championId && action.byPlayer;
 
-      // ✅ CORREÇÃO: Comparar jogador pelo byPlayer (nome do jogador)
       const isCorrectPlayer =
         action.byPlayer === foundPlayer.summonerName ||
         action.byPlayer === foundPlayer.name ||
@@ -1577,7 +1615,6 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     });
 
     if (pickAction) {
-      // ✅ CRÍTICO: Buscar campeão do ChampionService
       const championId = parseInt(pickAction.championId, 10);
       const champion = this.getChampionFromCache(championId);
 

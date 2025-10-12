@@ -327,7 +327,14 @@ public class DraftFlowService {
             DraftState state = loadDraftStateFromMySQL(matchId);
 
             if (state != null) {
-                log.debug("✅ [getDraftStateFromRedis] DraftState carregado do MySQL");
+                log.info(
+                        "✅ [getDraftStateFromRedis] MySQL → DraftState: matchId={}, currentIndex={}/{}, actions={}, team1={}, team2={}",
+                        matchId,
+                        state.getCurrentIndex(),
+                        state.getActions().size(),
+                        state.getActions().size(),
+                        state.getTeam1Players().size(),
+                        state.getTeam2Players().size());
                 return state;
             }
 
@@ -376,6 +383,10 @@ public class DraftFlowService {
         // ✅ Extrair actions de dentro de teams.blue/red.players[].actions
         List<DraftAction> allActions = new ArrayList<>();
 
+        // ✅ CORREÇÃO CRÍTICA: Extrair jogadores diretamente do JSON (não do CSV)
+        List<String> team1Players = new ArrayList<>();
+        List<String> team2Players = new ArrayList<>();
+
         if (pickBanData.containsKey("teams") && pickBanData.get("teams") instanceof Map<?, ?>) {
             @SuppressWarnings("unchecked")
             Map<String, Object> teams = (Map<String, Object>) pickBanData.get("teams");
@@ -389,6 +400,12 @@ public class DraftFlowService {
                     List<Map<String, Object>> players = (List<Map<String, Object>>) blueTeam.get("players");
                     for (Map<String, Object> player : players) {
                         String playerName = (String) player.get("summonerName");
+
+                        // ✅ ADICIONAR jogador ao time 1 (blue)
+                        if (playerName != null && !playerName.isBlank()) {
+                            team1Players.add(playerName);
+                        }
+
                         if (player.containsKey("actions") && player.get("actions") instanceof List<?>) {
                             @SuppressWarnings("unchecked")
                             List<Map<String, Object>> playerActions = (List<Map<String, Object>>) player.get("actions");
@@ -410,6 +427,12 @@ public class DraftFlowService {
                     List<Map<String, Object>> players = (List<Map<String, Object>>) redTeam.get("players");
                     for (Map<String, Object> player : players) {
                         String playerName = (String) player.get("summonerName");
+
+                        // ✅ ADICIONAR jogador ao time 2 (red)
+                        if (playerName != null && !playerName.isBlank()) {
+                            team2Players.add(playerName);
+                        }
+
                         if (player.containsKey("actions") && player.get("actions") instanceof List<?>) {
                             @SuppressWarnings("unchecked")
                             List<Map<String, Object>> playerActions = (List<Map<String, Object>>) player.get("actions");
@@ -426,16 +449,48 @@ public class DraftFlowService {
         // Ordenar por index
         allActions.sort((a, b) -> Integer.compare(a.index(), b.index()));
 
-        // Criar DraftState
-        List<String> team1 = parseCSV(cm.getTeam1PlayersJson());
-        List<String> team2 = parseCSV(cm.getTeam2PlayersJson());
-        DraftState st = new DraftState(matchId, allActions, team1, team2);
+        // ✅ FALLBACK CRÍTICO: Se não encontrou actions no JSON, criar a sequência
+        // padrão
+        if (allActions.isEmpty()) {
+            log.warn("⚠️ [parseDraftStateFromJSON] Actions vazias no JSON! Criando sequência padrão (20 actions)");
+            allActions = buildDefaultActionSequence();
+        }
+
+        log.info("✅ [parseDraftStateFromJSON] Actions carregadas: {} total", allActions.size());
+
+        // ✅ CORREÇÃO: Usar jogadores extraídos do JSON (não do CSV que pode estar
+        // vazio!)
+        // Fallback para CSV apenas se JSON não tiver jogadores
+        if (team1Players.isEmpty()) {
+            team1Players = parseCSV(cm.getTeam1PlayersJson());
+            log.warn("⚠️ [DraftFlow] Jogadores team1 vazios no JSON, usando CSV: {}", team1Players);
+        }
+        if (team2Players.isEmpty()) {
+            team2Players = parseCSV(cm.getTeam2PlayersJson());
+            log.warn("⚠️ [DraftFlow] Jogadores team2 vazios no JSON, usando CSV: {}", team2Players);
+        }
+
+        log.info("✅ [DraftFlow] Jogadores extraídos - Team1: {} jogadores, Team2: {} jogadores",
+                team1Players.size(), team2Players.size());
+
+        DraftState st = new DraftState(matchId, allActions, team1Players, team2Players);
 
         // Avançar para currentIndex
         Object currentIdxObj = pickBanData.get("currentIndex");
         int cur = currentIdxObj instanceof Number n ? n.intValue() : 0;
         while (st.getCurrentIndex() < cur && st.getCurrentIndex() < allActions.size()) {
             st.advance();
+        }
+
+        // ✅ CRÍTICO: Restaurar lastActionStartMs (para timer de bots funcionar!)
+        Object lastActionMs = pickBanData.get("lastActionStartMs");
+        if (lastActionMs instanceof Number) {
+            st.lastActionStartMs = ((Number) lastActionMs).longValue();
+            log.debug("✅ [parseDraftStateFromJSON] lastActionStartMs restaurado: {}", st.lastActionStartMs);
+        } else {
+            // Fallback: usar tempo atual se não existe
+            st.lastActionStartMs = System.currentTimeMillis();
+            log.warn("⚠️ [parseDraftStateFromJSON] lastActionStartMs não encontrado, usando tempo atual");
         }
 
         return st;
@@ -569,6 +624,11 @@ public class DraftFlowService {
      */
     public DraftState startDraft(long matchId, List<String> team1Players, List<String> team2Players) {
         List<DraftAction> actions = buildDefaultActionSequence();
+        
+        // ✅ CRÍTICO: Atribuir byPlayer para cada action ANTES de criar o DraftState!
+        assignPlayersByDraftOrder(actions, team1Players, team2Players);
+        log.info("✅ [startDraft] byPlayer atribuído para todas as {} actions", actions.size());
+        
         DraftState st = new DraftState(matchId, actions, team1Players, team2Players);
 
         // ✅ CORREÇÃO BOTS: Se primeiro jogador é bot, iniciar com tempo no passado
@@ -651,34 +711,39 @@ public class DraftFlowService {
 
     private List<DraftAction> buildDefaultActionSequence() {
         List<DraftAction> list = new ArrayList<>();
-        int i = 0;
 
-        // ✅ CORREÇÃO: Seguir sequência EXATA do draft ranqueado do LoL
+        // ✅ SEQUÊNCIA EXATA DO DRAFT DO LOL (20 ações totais)
+        // Index Team Type Lane
+        // 0 Blue Ban Top
+        // 1 Red Ban Top
+        // 2 Blue Ban Jungle
+        // 3 Red Ban Jungle
+        // 4 Blue Ban Mid
+        // 5 Red Ban Mid
+        // 6 Blue Pick Top
+        // 7 Red Pick Top
+        // 8 Red Pick Jungle
+        // 9 Blue Pick Jungle ← FZD deveria estar aqui!
+        // 10 Blue Pick Mid
+        // 11 Red Pick Mid
+        // 12 Red Ban Bot
+        // 13 Blue Ban Bot
+        // 14 Red Ban Support
+        // 15 Blue Ban Support
+        // 16 Red Pick Bot
+        // 17 Blue Pick Bot
+        // 18 Blue Pick Support (Last pick)
+        // 19 Red Pick Support
 
-        // Ações 0-5: Primeira fase de bans (6 bans - 3 por time)
-        // Ordem: Blue Ban 1, Red Ban 1, Blue Ban 2, Red Ban 2, Blue Ban 3, Red Ban 3
-        int[] firstBanTeams = { 1, 2, 1, 2, 1, 2 };
-        for (int t : firstBanTeams)
-            list.add(new DraftAction(i++, "ban", t, null, null, null)); // ⭐ +1 null para championName
+        int[] teams = { 1, 2, 1, 2, 1, 2, 1, 2, 2, 1, 1, 2, 2, 1, 2, 1, 2, 1, 1, 2 };
+        String[] types = { "ban", "ban", "ban", "ban", "ban", "ban",
+                "pick", "pick", "pick", "pick", "pick", "pick",
+                "ban", "ban", "ban", "ban",
+                "pick", "pick", "pick", "pick" };
 
-        // Ações 6-11: Primeira fase de picks (6 picks - 3 por time)
-        // Ordem: Blue Pick 1, Red Pick 1, Red Pick 2, Blue Pick 2, Blue Pick 3, Red
-        // Pick 3
-        int[] firstPickTeams = { 1, 2, 2, 1, 1, 2 };
-        for (int t : firstPickTeams)
-            list.add(new DraftAction(i++, "pick", t, null, null, null)); // ⭐ +1 null para championName
-
-        // Ações 12-15: Segunda fase de bans (4 bans - 2 por time)
-        // Ordem: Red Ban 4, Blue Ban 4, Red Ban 5, Blue Ban 5
-        int[] secondBanTeams = { 2, 1, 2, 1 };
-        for (int t : secondBanTeams)
-            list.add(new DraftAction(i++, "ban", t, null, null, null)); // ⭐ +1 null para championName
-
-        // Ações 16-19: Segunda fase de picks (4 picks - 2 por time)
-        // Ordem: Red Pick 4, Blue Pick 4, Blue Pick 5, Red Pick 5
-        int[] secondPickTeams = { 2, 1, 1, 2 };
-        for (int t : secondPickTeams)
-            list.add(new DraftAction(i++, "pick", t, null, null, null)); // ⭐ +1 null para championName
+        for (int i = 0; i < 20; i++) {
+            list.add(new DraftAction(i, types[i], teams[i], null, null, null));
+        }
 
         return list;
     }
@@ -1237,12 +1302,61 @@ public class DraftFlowService {
                     finalSnapshot.put("currentTeam", cleanData.get("currentTeam"));
                     finalSnapshot.put("currentActionType", cleanData.get("currentActionType"));
 
-                    cm.setPickBanDataJson(mapper.writeValueAsString(finalSnapshot));
+                    // ✅ CRÍTICO: Salvar lastActionStartMs para timer de bots funcionar!
+                    finalSnapshot.put("lastActionStartMs", st.getLastActionStartMs());
+
+                    // ✅ NOVO: Contar actions completed vs pending para debug
+                    long completedActions = st.getActions().stream()
+                            .filter(a -> a.championId() != null && !SKIPPED.equals(a.championId()))
+                            .count();
+                    long pendingActions = st.getActions().stream()
+                            .filter(a -> a.championId() == null || SKIPPED.equals(a.championId()))
+                            .count();
+
+                    String jsonToSave = mapper.writeValueAsString(finalSnapshot);
+                    cm.setPickBanDataJson(jsonToSave);
                     customMatchRepository.save(cm);
 
-                    log.info(
-                            "✅ [persist] JSON salvo: {} keys (teams LIMPO + team1/team2 compatibilidade)",
+                    log.info("📊 [persist] AÇÕES - Total:{}, Completed:{}, Pending:{}",
+                            st.getActions().size(), completedActions, pendingActions);
+
+                    // ✅ VERIFICAR se teams.blue/red.players[].actions estão sendo salvos
+                    if (finalSnapshot.containsKey("teams") && finalSnapshot.get("teams") instanceof Map) {
+                        Map<?, ?> teams = (Map<?, ?>) finalSnapshot.get("teams");
+                        if (teams.containsKey("blue") && teams.get("blue") instanceof Map) {
+                            Map<?, ?> blue = (Map<?, ?>) teams.get("blue");
+                            if (blue.containsKey("players") && blue.get("players") instanceof List) {
+                                List<?> players = (List<?>) blue.get("players");
+                                log.info("📊 [persist] VERIFICAÇÃO - Blue team tem {} players no JSON", players.size());
+                                if (!players.isEmpty() && players.get(0) instanceof Map) {
+                                    Map<?, ?> firstPlayer = (Map<?, ?>) players.get(0);
+                                    Object actions = firstPlayer.get("actions");
+                                    log.info("📊 [persist] VERIFICAÇÃO - Primeiro player Blue tem actions? {}, size={}",
+                                            actions != null,
+                                            actions instanceof List ? ((List<?>) actions).size() : 0);
+                                }
+                            }
+                        }
+                    }
+
+                    log.info("✅ [persist] JSON salvo: {} keys (teams LIMPO + team1/team2 compatibilidade)",
                             finalSnapshot.keySet().size());
+
+                    // ✅ NOVO: Log detalhado do que foi salvo no MySQL
+                    log.info(
+                            "📊 [persist] MySQL SALVO - Match {}: currentIndex={}/{}, currentPlayer={}, currentPhase={}",
+                            matchId,
+                            finalSnapshot.get("currentIndex"),
+                            st.getActions().size(),
+                            finalSnapshot.get("currentPlayer"),
+                            finalSnapshot.get("currentPhase"));
+
+                    // ✅ NOVO: Log do JSON salvo (primeiros 1000 chars para debug)
+                    if (jsonToSave.length() > 1000) {
+                        log.debug("📄 [persist] JSON (primeiros 1000 chars): {}", jsonToSave.substring(0, 1000));
+                    } else {
+                        log.debug("📄 [persist] JSON completo: {}", jsonToSave);
+                    }
 
                     log.debug("✅ [DraftFlow] Draft state persistido para match {}", matchId);
                 } catch (Exception e) {
@@ -1679,10 +1793,22 @@ public class DraftFlowService {
                 .orElse(0);
         team.put("averageMmr", (int) Math.round(avgMmr));
 
+        // ✅ CRÍTICO: ORDENAR players por teamIndex ANTES de processar!
+        // Isso garante que a posição no array corresponda à lane (0=Top, 1=Jungle, etc)
+        List<Map<String, Object>> sortedPlayers = new ArrayList<>(players);
+        sortedPlayers.sort((a, b) -> {
+            Integer idxA = (Integer) a.getOrDefault("teamIndex", 999);
+            Integer idxB = (Integer) b.getOrDefault("teamIndex", 999);
+            return idxA.compareTo(idxB);
+        });
+        
+        log.debug("🔍 [buildCleanTeamData] Players ordenados por teamIndex: {}", 
+            sortedPlayers.stream().map(p -> p.get("summonerName") + "(" + p.get("teamIndex") + ")").toList());
+
         // ✅ Adicionar APENAS players essenciais com suas ações
         List<Map<String, Object>> cleanPlayers = new ArrayList<>();
 
-        for (Map<String, Object> player : players) {
+        for (Map<String, Object> player : sortedPlayers) {
             String playerName = (String) player.get("summonerName");
 
             if (playerName == null || playerName.isEmpty()) {
@@ -1756,16 +1882,19 @@ public class DraftFlowService {
 
         team.put("players", cleanPlayers);
 
-        // ✅ Adicionar allBans e allPicks para compatibilidade com o frontend
+        // ✅ CRÍTICO: Filtrar allBans e allPicks por INDEX (não por team()!)
+        // A ordem do draft do LoL define qual índice pertence a qual time
+        List<Integer> teamActionIndices = getActionIndicesForTeam(teamNumber);
+
         List<String> allBans = actions.stream()
-                .filter(a -> a.team() == teamNumber && "ban".equals(a.type()))
+                .filter(a -> teamActionIndices.contains(a.index()) && "ban".equals(a.type()))
                 .filter(a -> a.championId() != null && !SKIPPED.equals(a.championId()))
                 .map(DraftAction::championId)
                 .toList();
         team.put("allBans", allBans);
 
         List<String> allPicks = actions.stream()
-                .filter(a -> a.team() == teamNumber && "pick".equals(a.type()))
+                .filter(a -> teamActionIndices.contains(a.index()) && "pick".equals(a.type()))
                 .filter(a -> a.championId() != null && !SKIPPED.equals(a.championId()))
                 .map(DraftAction::championId)
                 .toList();
@@ -1774,6 +1903,21 @@ public class DraftFlowService {
         log.debug("✅ [buildCleanTeamData] Time {} construído: {} players, {} bans, {} picks", teamName,
                 cleanPlayers.size(), allBans.size(), allPicks.size());
         return team;
+    }
+
+    /**
+     * ✅ NOVO: Retorna TODOS os índices de actions que pertencem a um time
+     * Team 1 (Blue): 0, 2, 4, 6, 9, 10, 13, 15, 17, 18
+     * Team 2 (Red): 1, 3, 5, 7, 8, 11, 12, 14, 16, 19
+     */
+    private List<Integer> getActionIndicesForTeam(int teamNumber) {
+        if (teamNumber == 1) {
+            // Blue Team
+            return List.of(0, 2, 4, 6, 9, 10, 13, 15, 17, 18);
+        } else {
+            // Red Team
+            return List.of(1, 3, 5, 7, 8, 11, 12, 14, 16, 19);
+        }
     }
 
     /**

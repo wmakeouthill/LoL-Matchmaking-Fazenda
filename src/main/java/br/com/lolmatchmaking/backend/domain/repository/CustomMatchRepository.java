@@ -25,13 +25,14 @@ public interface CustomMatchRepository extends JpaRepository<CustomMatch, Long> 
 
     // ✅ CORRIGIDO: Buscar partida ativa (TODOS os status ativos) do jogador por
     // summonerName
-    // Status ativos: match_found, accepting, accepted, draft, in_progress
+    // Status ativos: match_found, accepting, accepted, pending, draft, in_progress
     // Os campos team1_players e team2_players contêm comma-separated summonerNames,
     // não PUUIDs
+    // ✅ CASE-INSENSITIVE: usa LOWER() para evitar problemas de case
     @Query("SELECT cm FROM CustomMatch cm " +
-            "WHERE cm.status IN ('match_found', 'accepting', 'accepted', 'draft', 'in_progress') " +
-            "AND (cm.team1PlayersJson LIKE CONCAT('%', :summonerName, '%') " +
-            "     OR cm.team2PlayersJson LIKE CONCAT('%', :summonerName, '%')) " +
+            "WHERE cm.status IN ('match_found', 'accepting', 'accepted', 'pending', 'draft', 'in_progress') " +
+            "AND (LOWER(cm.team1PlayersJson) LIKE LOWER(CONCAT('%', :summonerName, '%')) " +
+            "     OR LOWER(cm.team2PlayersJson) LIKE LOWER(CONCAT('%', :summonerName, '%'))) " +
             "ORDER BY cm.createdAt DESC")
     Optional<CustomMatch> findActiveMatchByPlayerPuuid(String summonerName);
 
