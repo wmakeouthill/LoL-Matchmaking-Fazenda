@@ -23,12 +23,13 @@ public interface CustomMatchRepository extends JpaRepository<CustomMatch, Long> 
     @Query("SELECT cm FROM CustomMatch cm WHERE cm.team1PlayersJson LIKE %:playerName% OR cm.team2PlayersJson LIKE %:playerName%")
     List<CustomMatch> findByPlayerName(String playerName);
 
-    // ✅ CORRIGIDO: Buscar partida ativa (draft ou in_progress) do jogador por
+    // ✅ CORRIGIDO: Buscar partida ativa (TODOS os status ativos) do jogador por
     // summonerName
+    // Status ativos: match_found, accepting, accepted, draft, in_progress
     // Os campos team1_players e team2_players contêm comma-separated summonerNames,
     // não PUUIDs
     @Query("SELECT cm FROM CustomMatch cm " +
-            "WHERE cm.status IN ('draft', 'in_progress') " +
+            "WHERE cm.status IN ('match_found', 'accepting', 'accepted', 'draft', 'in_progress') " +
             "AND (cm.team1PlayersJson LIKE CONCAT('%', :summonerName, '%') " +
             "     OR cm.team2PlayersJson LIKE CONCAT('%', :summonerName, '%')) " +
             "ORDER BY cm.createdAt DESC")

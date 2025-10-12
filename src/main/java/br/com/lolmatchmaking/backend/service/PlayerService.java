@@ -28,7 +28,7 @@ public class PlayerService {
     private final RiotAPIService riotAPIService;
     private final RiotChampionStatsService riotChampionStatsService;
     private final RedisLeaderboardService redisLeaderboard; // ✅ NOVO: Cache Redis para leaderboard
-    
+
     // ✅ NOVO: Lock service para prevenir lost updates em stats
     private final br.com.lolmatchmaking.backend.service.lock.PlayerStatsLockService playerStatsLockService;
 
@@ -519,9 +519,10 @@ public class PlayerService {
      * Determina em qual time o jogador estava
      */
     private int determinePlayerTeam(String summonerName, String team1Json, String team2Json) {
-        if (team1Json != null && team1Json.contains(summonerName)) {
+        // ✅ CORREÇÃO: Verificar com CASE-INSENSITIVE
+        if (team1Json != null && team1Json.toLowerCase().contains(summonerName.toLowerCase())) {
             return 1;
-        } else if (team2Json != null && team2Json.contains(summonerName)) {
+        } else if (team2Json != null && team2Json.toLowerCase().contains(summonerName.toLowerCase())) {
             return 2;
         }
         return 0;

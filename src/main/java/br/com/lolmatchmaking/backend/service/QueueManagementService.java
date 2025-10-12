@@ -757,10 +757,38 @@ public class QueueManagementService {
                     .map(QueuePlayer::getSummonerName)
                     .collect(Collectors.toList());
 
+            // ✅ PROTEÇÃO 0: VERIFICAR SE TODOS AINDA ESTÃO NA FILA (MySQL)
+            // CRÍTICO: Jogador pode ter saído DURANTE o processamento!
+            for (String playerName : playerNames) {
+                Optional<QueuePlayer> stillInQueue = queuePlayerRepository.findBySummonerName(playerName);
+                if (stillInQueue.isEmpty() || !stillInQueue.get().getActive()) {
+                    log.error(
+                            "❌ [CRÍTICO] Jogador {} NÃO está mais na fila! Saiu durante processamento. ABORTANDO criação",
+                            playerName);
+                    // Reverter acceptance_status dos que ainda estão na fila
+                    for (String pn : playerNames) {
+                        queuePlayerRepository.findBySummonerName(pn).ifPresent(qp -> {
+                            qp.setAcceptanceStatus(0); // Voltar para normal
+                            queuePlayerRepository.save(qp);
+                        });
+                    }
+                    return;
+                }
+            }
+
+            log.info("✅ [Validação] Todos os {} jogadores AINDA estão na fila", playerNames.size());
+
             // ✅ PROTEÇÃO 1: Verificar PlayerState
             for (String playerName : playerNames) {
                 if (playerStateService.isInMatch(playerName)) {
                     log.error("❌ [CRÍTICO] Jogador {} já está em partida! ABORTANDO criação", playerName);
+                    // Reverter acceptance_status
+                    for (String pn : playerNames) {
+                        queuePlayerRepository.findBySummonerName(pn).ifPresent(qp -> {
+                            qp.setAcceptanceStatus(0);
+                            queuePlayerRepository.save(qp);
+                        });
+                    }
                     return;
                 }
             }
@@ -807,9 +835,13 @@ public class QueueManagementService {
                         log.error(
                                 "❌ [CRÍTICO] Jogador {} JÁ está registrado em partida {} ATIVA (status={})! ABORTANDO",
                                 playerName, existingMatchId, existingMatch.get().getStatus());
-                        // Reverter estados (FORCE pois pode estar em IN_MATCH_FOUND)
+                        // Reverter estados E acceptance_status
                         for (String pn : playerNames) {
                             playerStateService.forceSetPlayerState(pn, PlayerState.IN_QUEUE);
+                            queuePlayerRepository.findBySummonerName(pn).ifPresent(qp -> {
+                                qp.setAcceptanceStatus(0);
+                                queuePlayerRepository.save(qp);
+                            });
                         }
                         return;
                     }
@@ -846,10 +878,13 @@ public class QueueManagementService {
             for (String playerName : playerNames) {
                 if (!playerStateService.setPlayerState(playerName, PlayerState.IN_MATCH_FOUND)) {
                     log.error("❌ [CRÍTICO] Falha ao atualizar estado de {}, ABORTANDO criação", playerName);
-                    // Rollback: Voltar estados para IN_QUEUE (FORCE pois pode estar em
-                    // IN_MATCH_FOUND)
+                    // Rollback: Voltar estados E acceptance_status
                     for (String pn : playerNames) {
                         playerStateService.forceSetPlayerState(pn, PlayerState.IN_QUEUE);
+                        queuePlayerRepository.findBySummonerName(pn).ifPresent(qp -> {
+                            qp.setAcceptanceStatus(0);
+                            queuePlayerRepository.save(qp);
+                        });
                     }
                     return;
                 }
@@ -1027,6 +1062,16 @@ public class QueueManagementService {
                 .collect(Collectors.joining(","));
     }
 
+    /**
+     * ✅ NOVO: Parseia CSV de nomes de jogadores para List<String>
+     */
+    private List<String> parsePlayersFromJson(String playersJson) {
+        if (playersJson == null || playersJson.trim().isEmpty()) {
+            return Collections.emptyList();
+        }
+        return Arrays.asList(playersJson.split(",\\s*"));
+    }
+
     private QueuePlayerInfoDTO convertToQueuePlayerInfoDTO(QueuePlayer player) {
         return QueuePlayerInfoDTO.builder()
                 .id(player.getId())
@@ -1167,9 +1212,12 @@ public class QueueManagementService {
 
                 Optional<CustomMatch> redisMatch = customMatchRepository.findById(redisMatchId);
                 boolean isRealMatch = redisMatch.isPresent() &&
-                        (redisMatch.get().getStatus().equals("pending") ||
-                                redisMatch.get().getStatus().equals("draft") ||
-                                redisMatch.get().getStatus().equals("in_progress"));
+                        (redisMatch.get().getStatus().equalsIgnoreCase("match_found") ||
+                                redisMatch.get().getStatus().equalsIgnoreCase("accepting") ||
+                                redisMatch.get().getStatus().equalsIgnoreCase("accepted") ||
+                                redisMatch.get().getStatus().equalsIgnoreCase("pending") ||
+                                redisMatch.get().getStatus().equalsIgnoreCase("draft") ||
+                                redisMatch.get().getStatus().equalsIgnoreCase("in_progress"));
 
                 if (isRealMatch) {
                     // ✅ Redis + MySQL concordam: player TEM partida ativa
@@ -1190,13 +1238,16 @@ public class QueueManagementService {
                     response.put("createdAt", match.getCreatedAt());
 
                     // Adicionar dados específicos por status (mesmo código que está abaixo)
-                    if ("draft".equals(match.getStatus())) {
+                    if ("draft".equalsIgnoreCase(match.getStatus())) {
                         response.put("type", "draft");
                         // TODO: adicionar draft data se necessário
-                    } else if ("in_progress".equals(match.getStatus())) {
+                    } else if ("in_progress".equalsIgnoreCase(match.getStatus())) {
                         response.put("type", "game");
                         // TODO: adicionar game data se necessário
-                    } else if ("pending".equals(match.getStatus())) {
+                    } else if ("match_found".equalsIgnoreCase(match.getStatus()) ||
+                            "accepting".equalsIgnoreCase(match.getStatus()) ||
+                            "accepted".equalsIgnoreCase(match.getStatus()) ||
+                            "pending".equalsIgnoreCase(match.getStatus())) {
                         response.put("type", "match_found");
                     }
 
@@ -1234,6 +1285,30 @@ public class QueueManagementService {
 
             if (activeMatchOpt.isEmpty()) {
                 log.debug("✅ Nenhuma partida ativa encontrada para: {}", summonerName);
+
+                // ✅ CLEANUP INTELIGENTE: Se PlayerState indica que jogador está em partida,
+                // mas MySQL não encontrou nada, LIMPAR estado (ghost state)
+                br.com.lolmatchmaking.backend.service.lock.PlayerState currentState = playerStateService
+                        .getPlayerState(summonerName);
+
+                if (currentState != null &&
+                        currentState != br.com.lolmatchmaking.backend.service.lock.PlayerState.AVAILABLE &&
+                        currentState != br.com.lolmatchmaking.backend.service.lock.PlayerState.IN_QUEUE) {
+
+                    log.warn("🧹 [getActiveMatch] ESTADO FANTASMA: {} tem estado {} mas NÃO há partida ativa no MySQL!",
+                            summonerName, currentState);
+                    log.warn("🧹 [getActiveMatch] Limpando PlayerState e RedisPlayerMatch...");
+
+                    // Limpar PlayerState
+                    playerStateService.forceSetPlayerState(summonerName,
+                            br.com.lolmatchmaking.backend.service.lock.PlayerState.AVAILABLE);
+
+                    // Limpar RedisPlayerMatch ownership
+                    redisPlayerMatch.clearPlayerMatch(summonerName);
+
+                    log.info("✅ [getActiveMatch] Estado fantasma limpo para {}", summonerName);
+                }
+
                 return Collections.emptyMap();
             }
 
@@ -1255,15 +1330,34 @@ public class QueueManagementService {
                 response.put("type", "draft");
 
                 Object pickBanData = parseJsonSafely(match.getPickBanDataJson());
-                response.put("draftState", pickBanData);
 
-                // Extrair team1/team2 do pick_ban_data para consistência
+                // ✅ CORREÇÃO: draftState deve ter actions/phases e teams completos
+                Map<String, Object> draftState = new HashMap<>();
                 List<Map<String, Object>> team1Players = new ArrayList<>();
                 List<Map<String, Object>> team2Players = new ArrayList<>();
 
                 if (pickBanData instanceof Map<?, ?>) {
                     @SuppressWarnings("unchecked")
                     Map<String, Object> pickBanMap = (Map<String, Object>) pickBanData;
+
+                    // ✅ Incluir actions/phases no draftState (frontend precisa!)
+                    if (pickBanMap.containsKey("actions")) {
+                        draftState.put("actions", pickBanMap.get("actions"));
+                        draftState.put("phases", pickBanMap.get("actions")); // phases = actions (alias)
+                    }
+
+                    // ✅ Incluir currentAction/currentIndex
+                    if (pickBanMap.containsKey("currentAction")) {
+                        draftState.put("currentAction", pickBanMap.get("currentAction"));
+                    }
+                    if (pickBanMap.containsKey("currentIndex")) {
+                        draftState.put("currentIndex", pickBanMap.get("currentIndex"));
+                    }
+
+                    // ✅ Incluir teams completo
+                    if (pickBanMap.containsKey("teams")) {
+                        draftState.put("teams", pickBanMap.get("teams"));
+                    }
 
                     // Tentar extrair de teams.blue/red primeiro
                     if (pickBanMap.containsKey("teams") && pickBanMap.get("teams") instanceof Map<?, ?>) {
@@ -1312,6 +1406,8 @@ public class QueueManagementService {
                     }
                 }
 
+                // ✅ Retornar draftState completo com tudo que frontend precisa
+                response.put("draftState", draftState);
                 response.put("team1", team1Players);
                 response.put("team2", team2Players);
 
@@ -1392,6 +1488,22 @@ public class QueueManagementService {
 
                 log.info("✅ Retornando game in progress - Team1: {} jogadores, Team2: {} jogadores",
                         team1Players.size(), team2Players.size());
+            } else if ("match_found".equalsIgnoreCase(match.getStatus()) ||
+                    "accepting".equalsIgnoreCase(match.getStatus()) ||
+                    "accepted".equalsIgnoreCase(match.getStatus()) ||
+                    "pending".equalsIgnoreCase(match.getStatus())) {
+                // ✅ MATCH FOUND: Partida aguardando aceitação ou já aceita
+                response.put("type", "match_found");
+
+                // Extrair jogadores dos times
+                List<String> team1Players = parsePlayersFromJson(match.getTeam1PlayersJson());
+                List<String> team2Players = parsePlayersFromJson(match.getTeam2PlayersJson());
+
+                response.put("team1", team1Players);
+                response.put("team2", team2Players);
+
+                log.info("✅ Retornando match found (status={}) - Team1: {} jogadores, Team2: {} jogadores",
+                        match.getStatus(), team1Players.size(), team2Players.size());
             }
 
             return response;

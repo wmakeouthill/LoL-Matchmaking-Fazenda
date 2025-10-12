@@ -70,7 +70,12 @@ public class RedisPlayerMatchService {
 
             CustomMatch match = matchOpt.get();
             String status = match.getStatus();
-            boolean isActiveMatch = "pending".equals(status) || "draft".equals(status) || "in_progress".equals(status);
+            boolean isActiveMatch = "match_found".equalsIgnoreCase(status) ||
+                    "accepting".equalsIgnoreCase(status) ||
+                    "accepted".equalsIgnoreCase(status) ||
+                    "pending".equalsIgnoreCase(status) ||
+                    "draft".equalsIgnoreCase(status) ||
+                    "in_progress".equalsIgnoreCase(status);
 
             if (!isActiveMatch) {
                 log.error(
@@ -113,8 +118,16 @@ public class RedisPlayerMatchService {
                 boolean inMySQLMatch = customMatchRepository.findById(matchId)
                         .map(match -> {
                             String status = match.getStatus();
-                            if (!"pending".equals(status) && !"draft".equals(status) && !"in_progress".equals(status)) {
-                                return false; // Match finalizada
+                            // ✅ Verificar se partida está em status ativo
+                            boolean isActive = "match_found".equalsIgnoreCase(status) ||
+                                    "accepting".equalsIgnoreCase(status) ||
+                                    "accepted".equalsIgnoreCase(status) ||
+                                    "pending".equalsIgnoreCase(status) ||
+                                    "draft".equalsIgnoreCase(status) ||
+                                    "in_progress".equalsIgnoreCase(status);
+
+                            if (!isActive) {
+                                return false; // Match finalizada ou cancelada
                             }
 
                             // ✅ CORREÇÃO: Verificar com CASE-INSENSITIVE

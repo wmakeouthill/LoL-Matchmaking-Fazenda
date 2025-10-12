@@ -3477,8 +3477,9 @@ export class App implements OnInit, OnDestroy {
     try {
       console.log(`🔄 [App] Cancelando partida ${matchId}...`);
 
+      // ✅ CORREÇÃO: Usar ApiService que inclui header X-Summoner-Name
       const response: any = await firstValueFrom(
-        this.http.delete(`${this.apiService.getBaseUrl()}/match/${matchId}/cancel`)
+        this.apiService.cancelMatchInProgress(matchId)
       );
 
       if (response.success) {

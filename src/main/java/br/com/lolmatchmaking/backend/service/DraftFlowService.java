@@ -636,11 +636,12 @@ public class DraftFlowService {
                             return false;
                         }
 
-                        // Verificar se player está na partida
+                        // ✅ CORREÇÃO: Verificar com CASE-INSENSITIVE
                         String team1 = match.getTeam1PlayersJson();
                         String team2 = match.getTeam2PlayersJson();
-                        return (team1 != null && team1.contains(byPlayer)) ||
-                                (team2 != null && team2.contains(byPlayer));
+                        boolean inTeam1 = team1 != null && team1.toLowerCase().contains(byPlayer.toLowerCase());
+                        boolean inTeam2 = team2 != null && team2.toLowerCase().contains(byPlayer.toLowerCase());
+                        return inTeam1 || inTeam2;
                     })
                     .orElse(false);
 
@@ -816,10 +817,12 @@ public class DraftFlowService {
                             return false;
                         }
 
+                        // ✅ CORREÇÃO: Verificar com CASE-INSENSITIVE
                         String team1 = match.getTeam1PlayersJson();
                         String team2 = match.getTeam2PlayersJson();
-                        return (team1 != null && team1.contains(playerId)) ||
-                                (team2 != null && team2.contains(playerId));
+                        boolean inTeam1 = team1 != null && team1.toLowerCase().contains(playerId.toLowerCase());
+                        boolean inTeam2 = team2 != null && team2.toLowerCase().contains(playerId.toLowerCase());
+                        return inTeam1 || inTeam2;
                     })
                     .orElse(false);
 
@@ -2305,29 +2308,27 @@ public class DraftFlowService {
                 allPlayers.addAll(state.getTeam2Players());
                 log.info("🎯 [DraftFlow] {} jogadores para limpar estados", allPlayers.size());
             } else {
-                log.warn("⚠️ [DraftFlow] DraftState null, tentando extrair jogadores do pick_ban_data");
-                // Fallback: tentar extrair do pick_ban_data
-                if (match.getPickBanDataJson() != null) {
-                    try {
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> pickBanData = mapper.readValue(match.getPickBanDataJson(), Map.class);
-                        // Extrair jogadores de team1/team2 ou teams.blue/red
-                        // (implementação simplificada, pode melhorar depois)
-                    } catch (Exception e) {
-                        log.warn("⚠️ [DraftFlow] Erro ao parsear pick_ban_data: {}", e.getMessage());
-                    }
+                log.warn("⚠️ [DraftFlow] DraftState null, tentando extrair jogadores do MySQL");
+                // Fallback: extrair do MySQL (team1_players/team2_players são CSV)
+                String team1 = match.getTeam1PlayersJson();
+                String team2 = match.getTeam2PlayersJson();
+                if (team1 != null && !team1.isEmpty()) {
+                    allPlayers.addAll(Arrays.asList(team1.split(",\\s*")));
                 }
+                if (team2 != null && !team2.isEmpty()) {
+                    allPlayers.addAll(Arrays.asList(team2.split(",\\s*")));
+                }
+                log.info("🎯 [DraftFlow] {} jogadores extraídos do MySQL", allPlayers.size());
             }
 
-            // 2. Limpar Discord (mover jogadores de volta e deletar canais)
-            discordService.deleteMatchChannels(matchId, true);
-            log.info("🧹 [DraftFlow] Canais do Discord limpos e jogadores movidos de volta");
+            // ✅ 2. CRÍTICO: LIMPAR ESTADOS DOS JOGADORES **ANTES** DE DELETAR DO MYSQL!
+            // Se deletarmos primeiro, o RedisPlayerMatch.clearPlayerMatch vai consultar
+            // MySQL,
+            // não vai encontrar a partida, e pode falhar na limpeza!
 
-            // 3. Deletar partida do banco de dados
-            customMatchRepository.deleteById(matchId);
-            log.info("🗑️ [DraftFlow] Partida deletada do banco de dados");
+            log.info("🧹 [DraftFlow] Limpando estados de {} jogadores ANTES de deletar partida", allPlayers.size());
 
-            // ✅ 4. NOVO: Limpar PlayerState de TODOS os jogadores
+            // 2.1. Limpar PlayerState de TODOS os jogadores
             for (String playerName : allPlayers) {
                 try {
                     playerStateService.setPlayerState(playerName,
@@ -2338,10 +2339,9 @@ public class DraftFlowService {
                 }
             }
 
-            // ✅ 5. NOVO: Limpar RedisPlayerMatch ownership
-            // Note: clearPlayerMatch agora valida MySQL antes de limpar, mas como deletamos
-            // a match,
-            // ele vai detectar que não existe e vai limpar corretamente
+            // 2.2. Limpar RedisPlayerMatch ownership
+            // IMPORTANTE: Fazer ANTES de deletar do MySQL, pois clearPlayerMatch valida
+            // contra MySQL!
             for (String playerName : allPlayers) {
                 try {
                     redisPlayerMatch.clearPlayerMatch(playerName);
@@ -2350,6 +2350,14 @@ public class DraftFlowService {
                     log.error("❌ [DraftFlow] Erro ao limpar ownership de {}: {}", playerName, e.getMessage());
                 }
             }
+
+            // 3. Limpar Discord (mover jogadores de volta e deletar canais)
+            discordService.deleteMatchChannels(matchId, true);
+            log.info("🧹 [DraftFlow] Canais do Discord limpos e jogadores movidos de volta");
+
+            // 4. Deletar partida do banco de dados (ÚLTIMO PASSO!)
+            customMatchRepository.deleteById(matchId);
+            log.info("🗑️ [DraftFlow] Partida deletada do banco de dados");
 
             // 6. ✅ REDIS ONLY: Limpar dados do Redis
             redisDraftFlow.clearAllDraftData(matchId);
