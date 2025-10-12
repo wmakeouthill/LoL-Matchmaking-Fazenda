@@ -902,37 +902,31 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
 
   /**
    * ✅ NOVO: Redireciona para a tela correta baseado no status da partida
+   * ⚠️ CRÍTICO: NÃO dá reload! O app.ts gerencia a restauração via checkAndRestoreActiveMatch
    */
   private redirectToActiveMatch(match: any): void {
     const status = match.status?.toUpperCase();
     const matchId = match.id;
 
-    console.log(`🚀 [Queue] Redirecionando para partida ${matchId} (status: ${status})`);
+    console.log(`🚀 [Queue] Partida ativa detectada: ${matchId} (status: ${status})`);
+    console.log('ℹ️ [Queue] A restauração será gerenciada pelo app.ts via my-active-match');
 
     // ✅ Parar verificação (não precisa mais)
     this.stopActiveMatchCheck();
 
-    // ✅ Notificar via WebSocket (se aplicável)
+    // ✅ NÃO dar reload! O app.ts já tem lógica de restauração via:
+    // - identifyCurrentPlayerOnConnect() → checkAndRestoreActiveMatch()
+    // - Isso evita loops de reload e crashes
+
+    // Apenas logar para debug
     if (status === 'MATCH_FOUND' || status === 'ACCEPTING') {
-      console.log('→ [Queue] Match found detectado, aguardando modal de aceitação...');
-      // ✅ O WebSocket deve já ter enviado a notificação
-      // Se não, forçar reload da página principal
-      window.location.reload();
-
+      console.log('→ [Queue] Match found detectado, deixando app.ts gerenciar');
+    } else if (status === 'ACCEPTED') {
+      console.log('→ [Queue] Match aceito, transição para draft em andamento, deixando app.ts gerenciar');
     } else if (status === 'DRAFT' || status === 'DRAFTING') {
-      console.log('→ [Queue] Draft detectado, redirecionando...');
-      // ✅ Redirecionar para draft
-      // TODO: Implementar navegação para draft quando houver roteamento
-      // this.router.navigate(['/draft', matchId]);
-      window.location.reload(); // Temporary: forçar reload para entrar no draft
-
+      console.log('→ [Queue] Draft detectado, deixando app.ts gerenciar');
     } else if (status === 'IN_PROGRESS' || status === 'GAME') {
-      console.log('→ [Queue] Game in progress detectado, redirecionando...');
-      // ✅ Redirecionar para game
-      // TODO: Implementar navegação para game quando houver roteamento
-      // this.router.navigate(['/game', matchId]);
-      window.location.reload(); // Temporary: forçar reload para entrar no game
-
+      console.log('→ [Queue] Game in progress detectado, deixando app.ts gerenciar');
     } else {
       console.warn(`⚠️ [Queue] Status desconhecido: ${status}`);
     }

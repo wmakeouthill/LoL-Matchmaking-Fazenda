@@ -284,6 +284,12 @@ public class DraftFlowService {
                         while (st.getCurrentIndex() < cur && st.getCurrentIndex() < actions.size()) {
                             st.advance();
                         }
+
+                        // ✅ CRÍTICO: RESETAR timer ao restaurar draft após restart do backend
+                        // Isso evita que elapsed seja calculado com timestamp antigo (pré-restart)
+                        st.lastActionStartMs = System.currentTimeMillis();
+                        log.info("🔄 [restoreDraftStates] Timer resetado para ação atual (evita timeout falso)");
+
                         // ✅ Salvar no Redis (não mais em HashMap)
                         saveDraftStateToRedis(cm.getId(), st);
                         log.info("Draft restaurado matchId={} actions={} currentIndex={}", cm.getId(), actions.size(),
