@@ -1159,10 +1159,19 @@ export class App implements OnInit, OnDestroy {
     this.identifyPlayerSafely().catch(() => { });
 
     // ✅ NOVO: Após identificar player, aguardar 5 segundos e verificar partida ativa
+    // MAS APENAS se não estamos em draft/game (para evitar "flicker" desnecessário)
     setTimeout(() => {
-      console.log('⏰ [App] 5 segundos após identificação - verificando partida ativa...');
+      console.log('⏰ [App] 5 segundos após identificação - verificando se precisa restaurar partida...');
       console.log('👤 [App] currentPlayer atual:', this.currentPlayer);
-      this.checkAndRestoreActiveMatch();
+      console.log('🎮 [App] Estado atual: inDraftPhase={}, inGamePhase={}', this.inDraftPhase, this.inGamePhase);
+
+      // ✅ CRÍTICO: Só verificar se NÃO estamos em partida ativa
+      if (!this.inDraftPhase && !this.inGamePhase && !this.showMatchFound) {
+        console.log('✅ [App] Não estamos em partida - verificando my-active-match...');
+        this.checkAndRestoreActiveMatch();
+      } else {
+        console.log('⏭️ [App] JÁ estamos em partida ativa - pulando verificação my-active-match');
+      }
     }, 5000);
   }
 

@@ -30,6 +30,8 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
     isActive: true
   };
   @Input() currentPlayer: Player | null = null;
+  @Input() inDraftPhase: boolean = false; // ✅ NOVO: Evita loops de reload quando em draft
+  @Input() inGamePhase: boolean = false;  // ✅ NOVO: Evita loops de reload quando em game
   @Output() joinQueue = new EventEmitter<QueuePreferences>();
   @Output() leaveQueue = new EventEmitter<void>();
   @Output() joinDiscordQueueWithFullData = new EventEmitter<{ player: Player | null, preferences: QueuePreferences }>();
@@ -122,6 +124,12 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   ngOnChanges(changes: any): void {
+    // ✅ CRÍTICO: Parar verificação de active match se entrar em draft/game
+    if (changes.inDraftPhase?.currentValue === true || changes.inGamePhase?.currentValue === true) {
+      console.log('🛑 [Queue] Jogador entrou em draft/game, parando active match check');
+      this.stopActiveMatchCheck();
+    }
+
     if (changes.currentPlayer?.currentValue) {
       this.handleCurrentPlayerChange(changes.currentPlayer.currentValue);
     }
@@ -805,11 +813,20 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
       return;
     }
 
+    // ✅ CRÍTICO: NÃO iniciar se já estamos em draft/game!
+    if (this.inDraftPhase || this.inGamePhase) {
+      console.log('⏭️ [Queue] JÁ em draft/game, não iniciando active match check');
+      return;
+    }
+
     const summonerName = this.currentPlayer.displayName || this.currentPlayer.summonerName;
     console.log('✅ [Queue] Iniciando verificação de partida ativa (5s) para:', summonerName);
 
-    // ✅ Primeira verificação imediata
-    this.checkForActiveMatch();
+    // ✅ CRÍTICO: DELAY na primeira verificação para garantir que @Input() foram definidos!
+    // Isso evita que o check execute ANTES de inDraftPhase/inGamePhase serem passados do pai
+    setTimeout(() => {
+      this.checkForActiveMatch();
+    }, 500); // 500ms de delay para inputs serem definidos
 
     // ✅ Verificações periódicas
     this.activeMatchCheckInterval = window.setInterval(() => {
@@ -833,6 +850,13 @@ export class QueueComponent implements OnInit, OnDestroy, OnChanges {
    */
   private async checkForActiveMatch(): Promise<void> {
     if (!this.currentPlayer?.displayName && !this.currentPlayer?.summonerName) {
+      return;
+    }
+
+    // ✅ CRÍTICO: NÃO verificar se já estamos em draft/game!
+    // Isso evita loops de reload e crashes quando o componente Queue está em segundo plano
+    if (this.inDraftPhase || this.inGamePhase) {
+      console.debug('⏭️ [Queue] JÁ em draft/game, pulando verificação de active match');
       return;
     }
 
