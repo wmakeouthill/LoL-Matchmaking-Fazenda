@@ -496,30 +496,7 @@ public class DraftFlowService {
         return st;
     }
 
-    /**
-     * ✅ CORRIGIDO: Parseia uma action individual COM byPlayer
-     */
-    private DraftAction parseDraftAction(Map<String, Object> actionMap, String playerName) {
-        int idx = actionMap.containsKey("index")
-                ? ((Number) actionMap.get("index")).intValue()
-                : 0;
-        String type = (String) actionMap.getOrDefault("type", "pick");
-        String champId = (String) actionMap.get("championId");
-        String champName = (String) actionMap.get("championName");
-
-        // Determinar team (1=blue, 2=red) baseado no index
-        // Sequência: Ban Blue, Ban Red, Ban Blue, Ban Red, Ban Blue, Ban Red,
-        // Pick Blue, Pick Red, Pick Red, Pick Blue, Pick Blue, Pick Red,
-        // Ban Red, Ban Blue, Ban Red, Ban Blue,
-        // Pick Red, Pick Blue, Pick Blue, Pick Red
-        int team = (idx < 10) ? (idx % 2 == 0 ? 1 : 2) : ((idx / 2) % 2 == 0 ? 2 : 1);
-
-        // ✅ CRÍTICO: byPlayer agora vem do parâmetro (sabemos qual player tem essa
-        // action!)
-        String byPlayer = playerName;
-
-        return new DraftAction(idx, type, team, champId, champName, byPlayer);
-    }
+    // ✅ REMOVIDO: Método duplicado (versão correta está nas linhas 716-726)
 
     /**
      * ✅ REFATORADO: Sincroniza MySQL → Redis (JSON puro, sem conversões)
@@ -624,11 +601,11 @@ public class DraftFlowService {
      */
     public DraftState startDraft(long matchId, List<String> team1Players, List<String> team2Players) {
         List<DraftAction> actions = buildDefaultActionSequence();
-        
+
         // ✅ CRÍTICO: Atribuir byPlayer para cada action ANTES de criar o DraftState!
         assignPlayersByDraftOrder(actions, team1Players, team2Players);
         log.info("✅ [startDraft] byPlayer atribuído para todas as {} actions", actions.size());
-        
+
         DraftState st = new DraftState(matchId, actions, team1Players, team2Players);
 
         // ✅ CORREÇÃO BOTS: Se primeiro jogador é bot, iniciar com tempo no passado
@@ -669,44 +646,76 @@ public class DraftFlowService {
      */
     private void assignPlayersByDraftOrder(List<DraftAction> actions, List<String> team1Players,
             List<String> team2Players) {
-        // Sequência do LoL:
-        // Ban: Blue0, Red0, Blue1, Red1, Blue2, Red2 (lanes 0,0,1,1,2,2)
-        // Pick: Blue0, Red0, Red1, Blue1, Blue2, Red2 (lanes 0,0,1,1,2,2)
-        // Ban: Red3, Blue3, Red4, Blue4 (lanes 3,3,4,4)
-        // Pick: Red3, Blue3, Blue4, Red4 (lanes 3,3,4,4)
+        // ✅ SEQUÊNCIA EXATA DO LOL DRAFT:
+        // Index 0-5 (Bans): Blue0, Red0, Blue1, Red1, Blue2, Red2
+        // Index 6-11 (Picks): Blue0, Red0, Red1, Blue1, Blue2, Red2
+        // Index 12-15 (Bans): Red3, Blue3, Red4, Blue4
+        // Index 16-19 (Picks): Red3, Blue3, Blue4, Red4
 
-        int[] laneSequenceBan1 = { 0, 0, 1, 1, 2, 2 }; // Indices 0-5
-        int[] laneSequencePick1 = { 0, 0, 1, 1, 2, 2 }; // Indices 6-11
-        int[] laneSequenceBan2 = { 3, 3, 4, 4 }; // Indices 12-15
-        int[] laneSequencePick2 = { 3, 3, 4, 4 }; // Indices 16-19
+        // ✅ MAPEAMENTO POR INDEX → (Team, Lane)
+        int[][] mapping = {
+                // Bans (0-5)
+                { 1, 0 }, { 2, 0 }, { 1, 1 }, { 2, 1 }, { 1, 2 }, { 2, 2 },
+                // Picks (6-11)
+                { 1, 0 }, { 2, 0 }, { 2, 1 }, { 1, 1 }, { 1, 2 }, { 2, 2 },
+                // Bans (12-15)
+                { 2, 3 }, { 1, 3 }, { 2, 4 }, { 1, 4 },
+                // Picks (16-19)
+                { 2, 3 }, { 1, 3 }, { 1, 4 }, { 2, 4 }
+        };
 
         for (int i = 0; i < actions.size(); i++) {
             DraftAction action = actions.get(i);
-            int lane = -1;
+            int expectedTeam = mapping[i][0];
+            int lane = mapping[i][1];
 
-            if (i < 6)
-                lane = laneSequenceBan1[i];
-            else if (i < 12)
-                lane = laneSequencePick1[i - 6];
-            else if (i < 16)
-                lane = laneSequenceBan2[i - 12];
-            else
-                lane = laneSequencePick2[i - 16];
+            // ✅ VERIFICAÇÃO: Se team da action não bate, usar o correto do mapping!
+            if (action.team() != expectedTeam) {
+                log.warn("⚠️ [assignPlayersByDraftOrder] Action {} tem team={} mas deveria ser team={}! Corrigindo...",
+                        i, action.team(), expectedTeam);
+            }
 
-            String playerName = action.team() == 1 ? team1Players.get(lane) : team2Players.get(lane);
+            String playerName = expectedTeam == 1 ? team1Players.get(lane) : team2Players.get(lane);
 
-            // Substituir action com byPlayer atribuído
+            // Substituir action com byPlayer e team corretos!
             actions.set(i, new DraftAction(
                     action.index(),
                     action.type(),
-                    action.team(),
+                    expectedTeam, // ✅ CRÍTICO: Usar team do mapping, não da action!
                     action.championId(),
                     action.championName(),
-                    playerName // ✅ byPlayer atribuído!
-            ));
+                    playerName));
         }
 
         log.info("✅ [assignPlayersByDraftOrder] byPlayer atribuído para todas as {} actions", actions.size());
+    }
+
+    /**
+     * ✅ Converte action do JSON do MySQL para DraftAction
+     * CRÍTICO: O JSON não tem campo "team", então derivamos do index!
+     */
+    private DraftAction parseDraftAction(Map<String, Object> actionMap, String playerName) {
+        int idx = ((Number) actionMap.getOrDefault("index", 0)).intValue();
+        String type = (String) actionMap.getOrDefault("type", "pick");
+        String championId = (String) actionMap.get("championId");
+        String championName = (String) actionMap.get("championName");
+
+        // ✅ CRÍTICO: Derivar team do INDEX (array buildDefaultActionSequence)
+        int team = getTeamForActionIndex(idx);
+
+        return new DraftAction(idx, type, team, championId, championName, playerName);
+    }
+
+    /**
+     * ✅ Retorna qual team (1=Blue, 2=Red) uma action pertence baseado no index
+     */
+    private int getTeamForActionIndex(int index) {
+        // ✅ SEQUÊNCIA EXATA DO DRAFT DO LOL
+        int[] teams = { 1, 2, 1, 2, 1, 2, 1, 2, 2, 1, 1, 2, 2, 1, 2, 1, 2, 1, 1, 2 };
+        if (index >= 0 && index < teams.length) {
+            return teams[index];
+        }
+        return 1; // Fallback
     }
 
     private List<DraftAction> buildDefaultActionSequence() {
@@ -723,7 +732,7 @@ public class DraftFlowService {
         // 6 Blue Pick Top
         // 7 Red Pick Top
         // 8 Red Pick Jungle
-        // 9 Blue Pick Jungle ← FZD deveria estar aqui!
+        // 9 Blue Pick Jungle
         // 10 Blue Pick Mid
         // 11 Red Pick Mid
         // 12 Red Ban Bot
@@ -1801,9 +1810,9 @@ public class DraftFlowService {
             Integer idxB = (Integer) b.getOrDefault("teamIndex", 999);
             return idxA.compareTo(idxB);
         });
-        
-        log.debug("🔍 [buildCleanTeamData] Players ordenados por teamIndex: {}", 
-            sortedPlayers.stream().map(p -> p.get("summonerName") + "(" + p.get("teamIndex") + ")").toList());
+
+        log.info("🔍 [buildCleanTeamData] Players ordenados por teamIndex: {}",
+                sortedPlayers.stream().map(p -> p.get("summonerName") + "(" + p.get("teamIndex") + ")").toList());
 
         // ✅ Adicionar APENAS players essenciais com suas ações
         List<Map<String, Object>> cleanPlayers = new ArrayList<>();
@@ -1871,7 +1880,7 @@ public class DraftFlowService {
                     }
                 }
 
-                log.debug("🔨 [buildCleanTeamData] {} actions atribuídas para {} (teamIndex={}, lane={}, indices={})",
+                log.info("🔨 [buildCleanTeamData] {} actions atribuídas para {} (teamIndex={}, lane={}, indices={})",
                         playerActions.size(), playerName, teamIndex, laneIndex, actionIndices);
             }
 

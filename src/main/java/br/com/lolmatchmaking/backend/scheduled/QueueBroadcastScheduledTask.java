@@ -56,12 +56,16 @@ public class QueueBroadcastScheduledTask {
      * Garante que todos os clientes tenham a fila atualizada em tempo real,
      * mesmo que não haja eventos de entrar/sair.
      * 
+     * ⚠️ IMPORTANTE: Apenas jogadores que estão REALMENTE na fila (não em
+     * draft/game)
+     * 
      * Executado a cada 3 segundos para manter fila sincronizada.
      */
     @Scheduled(fixedRate = 3000) // A cada 3 segundos
     public void broadcastQueueStatusAutomatic() {
         try {
-            // 1. Buscar status da fila
+            // 1. Buscar status da fila (APENAS jogadores que estão aguardando)
+            // getQueueStatus já filtra jogadores que estão em match/draft
             QueueStatusDTO status = queueManagementService.getQueueStatus(null);
 
             if (status == null) {
@@ -69,10 +73,19 @@ public class QueueBroadcastScheduledTask {
                 return;
             }
 
+            // ✅ FILTRO: Não fazer broadcast se não houver jogadores na fila
+            // Isso evita enviar eventos vazios para jogadores em draft/game
+            if (status.getPlayersInQueue() == 0) {
+                log.debug("⏭️ [QueueBroadcast] Fila vazia, pulando broadcast (jogadores podem estar em partida)");
+                return;
+            }
+
             // 2. Cachear no Redis (para performance)
             redisQueueCache.cacheQueueStatus(status);
 
             // 3. Publicar via Pub/Sub (todas instâncias fazem broadcast)
+            // ✅ NOTA: Apenas jogadores na tela de fila receberão este evento
+            // Jogadores em draft/game ignoram este evento
             eventBroadcastService.publishQueueUpdate(status);
 
             log.info("✅ [QueueBroadcast] Broadcast automático executado: {} jogadores em tempo real",
