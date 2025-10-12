@@ -10,7 +10,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 /**
  * ✅ Service Central de Broadcasting via Redis Pub/Sub
@@ -376,14 +379,35 @@ public class EventBroadcastService {
             if (pattern.equals("match:found")) {
                 MatchFoundEvent event = objectMapper.readValue(message, MatchFoundEvent.class);
 
-                // ✅ BROADCAST match_found para os 10 jogadores
+                long startTime = System.currentTimeMillis();
+
+                // ✅ BROADCAST PARALELO match_found para os 10 jogadores SIMULTANEAMENTE
                 // Cada instância envia para os jogadores conectados NELA
+                List<CompletableFuture<Void>> sendFutures = new ArrayList<>();
+
                 for (String playerName : event.getPlayerNames()) {
-                    webSocketService.sendMatchFoundToPlayer(playerName, event.getMatchId());
+                    CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                        webSocketService.sendMatchFoundToPlayer(playerName, event.getMatchId());
+                    });
+                    sendFutures.add(future);
                 }
 
-                log.info("✅ [Pub/Sub] match_found processado: match {} para {} jogadores",
-                        event.getMatchId(), event.getPlayerNames().size());
+                // ✅ AGUARDAR TODOS OS ENVIOS COMPLETAREM
+                try {
+                    CompletableFuture.allOf(sendFutures.toArray(new CompletableFuture[0]))
+                            .get(3, TimeUnit.SECONDS);
+
+                    long elapsed = System.currentTimeMillis() - startTime;
+
+                    log.info("✅ [Pub/Sub PARALELO] match_found processado: match {} para {} jogadores em {}ms",
+                            event.getMatchId(), event.getPlayerNames().size(), elapsed);
+
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    log.error("⚠️ [Pub/Sub] Thread interrompida ao aguardar envios paralelos", e);
+                } catch (Exception e) {
+                    log.error("⚠️ [Pub/Sub] Erro ao aguardar envios paralelos", e);
+                }
 
             } else if (pattern.equals("match:acceptance")) {
                 MatchAcceptanceEvent event = objectMapper.readValue(message, MatchAcceptanceEvent.class);

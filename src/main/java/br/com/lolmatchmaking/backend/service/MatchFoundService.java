@@ -369,25 +369,45 @@ public class MatchFoundService {
             // ✅ CRÍTICO: Salvar dados completos no pick_ban_data ANTES de remover da fila!
             log.info("🎯 [MatchFound] Salvando dados completos no pick_ban_data antes de remover da fila...");
 
-            // Buscar jogadores completos da fila
+            // ✅ CRÍTICO: Buscar jogadores MANTENDO A ORDEM EXATA do matchmaking!
+            // O matchmaking JÁ definiu a ordem correta (Top, Jungle, Mid, Bot, Support)
+            // NÃO devemos reordenar aqui, pois isso bagunça a formação!
+
+            // Buscar jogadores NA ORDEM EXATA dos nomes (direto do banco, sem cache local)
             List<QueuePlayer> team1Players = new ArrayList<>();
-            List<QueuePlayer> team2Players = new ArrayList<>();
-
             for (String playerName : team1Names) {
-                queuePlayerRepository.findBySummonerName(playerName).ifPresent(team1Players::add);
+                Optional<QueuePlayer> playerOpt = queuePlayerRepository.findBySummonerName(playerName);
+                if (playerOpt.isPresent()) {
+                    team1Players.add(playerOpt.get());
+                } else {
+                    log.warn("⚠️ [MatchFound] Jogador {} não encontrado no banco!", playerName);
+                }
             }
 
+            List<QueuePlayer> team2Players = new ArrayList<>();
             for (String playerName : team2Names) {
-                queuePlayerRepository.findBySummonerName(playerName).ifPresent(team2Players::add);
+                Optional<QueuePlayer> playerOpt = queuePlayerRepository.findBySummonerName(playerName);
+                if (playerOpt.isPresent()) {
+                    team2Players.add(playerOpt.get());
+                } else {
+                    log.warn("⚠️ [MatchFound] Jogador {} não encontrado no banco!", playerName);
+                }
             }
 
-            log.info("✅ [MatchFound] Jogadores recuperados (Redis): team1={}, team2={}",
+            log.info("✅ [MatchFound] Jogadores recuperados (MySQL): team1={}, team2={}",
                     team1Players.size(), team2Players.size());
 
-            // Mapeamento de lanes por posição
+            // ✅ LOG: Verificar ordem preservada do matchmaking
+            log.info("🔍 [MatchFound] Team1 order check:");
+            for (int i = 0; i < team1Players.size(); i++) {
+                log.info("  [{}] {} (expected: {})", i, team1Players.get(i).getSummonerName(), team1Names.get(i));
+            }
+
+            // ✅ CRÍTICO: MANTER ordem exata do matchmaking!
+            // As lanes JÁ foram atribuídas corretamente pelo matchmaking
             String[] lanes = { "top", "jungle", "mid", "bot", "support" };
 
-            // Converter para DTOs com lanes e posições
+            // Converter para DTOs com lanes e posições (SEM REORDENAR!)
             List<QueuePlayerInfoDTO> team1DTOs = new ArrayList<>();
             for (int i = 0; i < team1Players.size(); i++) {
                 team1DTOs.add(convertToDTO(team1Players.get(i), lanes[i], i, false));
@@ -398,8 +418,12 @@ public class MatchFoundService {
                 team2DTOs.add(convertToDTO(team2Players.get(i), lanes[i], i + 5, false));
             }
 
-            // ✅ Salvar dados completos dos times no pick_ban_data AGORA
+            // ✅ Salvar dados completos dos times no pick_ban_data AGORA (SÍNCRONO!)
             saveTeamsDataToPickBan(matchId, team1DTOs, team2DTOs);
+
+            // ✅ CRÍTICO: Aguardar flush do JPA para garantir que dados foram persistidos
+            customMatchRepository.flush();
+            log.info("✅ [MatchFound] pick_ban_data FLUSHED para o MySQL - seguro iniciar draft");
 
             // ✅ NOVO: ATUALIZAR ESTADO DE TODOS PARA IN_DRAFT
             List<String> allPlayers = redisAcceptance.getAllPlayers(matchId);
@@ -421,11 +445,9 @@ public class MatchFoundService {
             // Notificar todos os jogadores
             notifyAllPlayersAccepted(matchId);
 
-            // ✅ CORREÇÃO: Iniciar draft IMEDIATAMENTE (sem delay)
-            // Redis Pub/Sub é instantâneo, não há necessidade de esperar
-            CompletableFuture.runAsync(() -> {
-                startDraft(matchId);
-            });
+            // ✅ CORREÇÃO: Iniciar draft SÍNCRONAMENTE (não async!)
+            // O pick_ban_data JÁ foi salvo e flushed, seguro executar
+            startDraft(matchId);
 
             // ✅ REDIS ONLY: Limpar dados do Redis após processar
             redisAcceptance.clearMatch(matchId);
@@ -671,7 +693,22 @@ public class MatchFoundService {
                 log.info("✅ [MatchFound] Dados dos times carregados do pick_ban_data: team1={}, team2={}",
                         team1Data.size(), team2Data.size());
 
-                // Extrair nomes dos jogadores para o DraftFlowService
+                // ✅ CRÍTICO: ORDENAR players por teamIndex ANTES de extrair nomes!
+                // O pick_ban_data tem players com teamIndex, mas podem estar fora de ordem no
+                // JSON
+                team1Data.sort((a, b) -> {
+                    Integer idxA = (Integer) a.getOrDefault("teamIndex", 999);
+                    Integer idxB = (Integer) b.getOrDefault("teamIndex", 999);
+                    return Integer.compare(idxA, idxB);
+                });
+
+                team2Data.sort((a, b) -> {
+                    Integer idxA = (Integer) a.getOrDefault("teamIndex", 999);
+                    Integer idxB = (Integer) b.getOrDefault("teamIndex", 999);
+                    return Integer.compare(idxA, idxB);
+                });
+
+                // Extrair nomes dos jogadores para o DraftFlowService (JÁ ORDENADOS!)
                 List<String> team1Names = team1Data.stream()
                         .map(p -> (String) p.get("summonerName"))
                         .collect(Collectors.toList());
@@ -679,6 +716,10 @@ public class MatchFoundService {
                 List<String> team2Names = team2Data.stream()
                         .map(p -> (String) p.get("summonerName"))
                         .collect(Collectors.toList());
+
+                // ✅ LOG: Verificar ordem dos jogadores
+                log.info("📋 [MatchFound] Team1 (ordenado por lane): {}", team1Names);
+                log.info("📋 [MatchFound] Team2 (ordenado por lane): {}", team2Names);
 
                 // ✅ CORREÇÃO CRÍTICA: Iniciar DraftFlowService PRIMEIRO para criar as 20 ações
                 log.info("🎬 [MatchFound] Iniciando DraftFlowService para criar ações...");
@@ -961,17 +1002,21 @@ public class MatchFoundService {
             allPlayerNames.addAll(team1.stream().map(QueuePlayer::getSummonerName).toList());
             allPlayerNames.addAll(team2.stream().map(QueuePlayer::getSummonerName).toList());
 
-            log.info("🎯 [ENVIO INDIVIDUALIZADO] Enviando match_found APENAS para {} jogadores específicos:",
+            log.info("🎯 [ENVIO PARALELO] Preparando broadcast match_found para {} jogadores SIMULTANEAMENTE:",
                     allPlayerNames.size());
             for (String playerName : allPlayerNames) {
-                log.info("  ✅ {}", playerName);
+                log.info("  🎮 {}", playerName);
             }
 
+            long startTime = System.currentTimeMillis();
             webSocketService.sendToPlayers("match_found", data, allPlayerNames);
+            long elapsed = System.currentTimeMillis() - startTime;
 
-            log.info("╔════════════════════════════════════════════════════════════════╗");
-            log.info("║  ✅ [SUCESSO] MATCH_FOUND ENVIADO PARA 10 JOGADORES ESPECÍFICOS║");
-            log.info("╚════════════════════════════════════════════════════════════════╝");
+            log.info("╔═══════════════════════════════════════════════════════════════════════╗");
+            log.info("║  ✅ [BROADCAST PARALELO] MATCH_FOUND ENVIADO SIMULTANEAMENTE          ║");
+            log.info("║  📊 {} jogadores receberam ao mesmo tempo em {}ms                     ║",
+                    allPlayerNames.size(), elapsed);
+            log.info("╚═══════════════════════════════════════════════════════════════════════╝");
 
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao notificar match found", e);
@@ -1105,6 +1150,22 @@ public class MatchFoundService {
         } catch (Exception e) {
             // Log silencioso para não poluir
         }
+    }
+
+    /**
+     * ✅ NOVO: Retorna índice numérico da lane (para ordenação)
+     */
+    private int getLaneIndex(String lane) {
+        if (lane == null)
+            return 999;
+        return switch (lane.toLowerCase()) {
+            case "top" -> 0;
+            case "jungle" -> 1;
+            case "mid", "middle" -> 2;
+            case "bot", "adc", "bottom" -> 3;
+            case "support", "sup" -> 4;
+            default -> 999;
+        };
     }
 
     private QueuePlayerInfoDTO convertToDTO(QueuePlayer player, String assignedLane, int teamIndex,

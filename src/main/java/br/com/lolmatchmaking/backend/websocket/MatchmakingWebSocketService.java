@@ -998,7 +998,10 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     }
 
     /**
-     * Envia mensagem para jogadores específicos (usado para eventos de partida)
+     * Envia mensagem para jogadores específicos EM PARALELO (usado para eventos de
+     * partida)
+     * 
+     * ✅ BROADCAST SIMULTÂNEO: Todos os jogadores recebem exatamente ao mesmo tempo
      */
     public void sendToPlayers(String messageType, Map<String, Object> data, List<String> summonerNames) {
         try {
@@ -1010,10 +1013,16 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
 
             Collection<WebSocketSession> playerSessions = sessionRegistry.getByPlayers(summonerNames);
 
-            log.debug("📤 [SendToPlayers] Enviando '{}' para {} jogadores (sessões encontradas: {})",
+            log.info(
+                    "📤 [Broadcast Paralelo] Enviando '{}' para {} jogadores SIMULTANEAMENTE (sessões encontradas: {})",
                     messageType, summonerNames.size(), playerSessions.size());
 
+            long startTime = System.currentTimeMillis();
             sendToMultipleSessions(playerSessions, jsonMessage);
+            long elapsed = System.currentTimeMillis() - startTime;
+
+            log.info("⚡ [Broadcast Paralelo] '{}' enviado para {} jogadores em {}ms",
+                    messageType, playerSessions.size(), elapsed);
 
         } catch (Exception e) {
             log.error("❌ Erro ao enviar mensagem para jogadores específicos", e);
@@ -1021,52 +1030,120 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     }
 
     /**
-     * Broadcast para todos os clientes conectados
+     * Broadcast para todos os clientes conectados EM PARALELO
+     * 
+     * ✅ ENVIO SIMULTÂNEO: Todas as sessões recebem ao mesmo tempo
      */
     private void broadcastToAll(String message) {
-        sessions.values().removeIf(session -> {
-            try {
-                if (session.isOpen()) {
-                    // ✅ CRÍTICO: SINCRONIZAR envio de mensagem WebSocket!
-                    // Previne IllegalStateException: TEXT_PARTIAL_WRITING
-                    synchronized (session) {
-                        if (session.isOpen()) { // Re-check após adquirir lock
-                            session.sendMessage(new TextMessage(message));
+        List<WebSocketSession> activeSessions = new ArrayList<>(sessions.values());
+
+        if (activeSessions.isEmpty()) {
+            return;
+        }
+
+        // ✅ ENVIO PARALELO: Criar uma CompletableFuture para cada sessão
+        List<CompletableFuture<Boolean>> sendFutures = new ArrayList<>();
+
+        for (WebSocketSession session : activeSessions) {
+            CompletableFuture<Boolean> future = CompletableFuture.supplyAsync(() -> {
+                try {
+                    if (session.isOpen()) {
+                        // ✅ CRÍTICO: SINCRONIZAR envio de mensagem WebSocket!
+                        // Previne IllegalStateException: TEXT_PARTIAL_WRITING
+                        synchronized (session) {
+                            if (session.isOpen()) { // Re-check após adquirir lock
+                                session.sendMessage(new TextMessage(message));
+                                return false; // Não remover
+                            }
                         }
                     }
-                    return false;
+                } catch (Exception e) {
+                    log.error("❌ Erro ao enviar mensagem para sessão {}", session.getId(), e);
+                    return true; // Marcar para remoção
                 }
-            } catch (Exception e) {
-                log.error("❌ Erro ao enviar mensagem", e);
+                return true; // Remover sessões fechadas
+            });
+
+            sendFutures.add(future);
+        }
+
+        // ✅ AGUARDAR TODOS OS ENVIOS E REMOVER SESSÕES COM ERRO
+        try {
+            CompletableFuture.allOf(sendFutures.toArray(new CompletableFuture[0]))
+                    .get(5, TimeUnit.SECONDS);
+
+            // Remover sessões marcadas para remoção
+            for (int i = 0; i < activeSessions.size(); i++) {
+                if (sendFutures.get(i).join()) { // true = remover
+                    sessions.remove(activeSessions.get(i).getId());
+                }
             }
-            return true; // Remove sessões com erro
-        });
+
+            log.debug("✅ [Broadcast] {} mensagens enviadas em paralelo", activeSessions.size());
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("⚠️ Thread interrompida ao fazer broadcast", e);
+        } catch (TimeoutException e) {
+            log.error("⏱️ Timeout ao fazer broadcast (5s)", e);
+        } catch (Exception e) {
+            log.error("❌ Erro ao aguardar broadcast paralelo", e);
+        }
     }
 
     /**
-     * Envia mensagem para múltiplas sessões específicas
+     * Envia mensagem para múltiplas sessões específicas EM PARALELO
+     * 
+     * ✅ BROADCAST SIMULTÂNEO: Todos os jogadores recebem AO MESMO TEMPO
+     * Usado para match_found, draft_started, etc.
      */
     private void sendToMultipleSessions(Collection<WebSocketSession> targetSessions, String message) {
         if (targetSessions == null || targetSessions.isEmpty()) {
             return;
         }
 
+        // ✅ ENVIO PARALELO: Criar uma CompletableFuture para cada sessão
+        List<CompletableFuture<Void>> sendFutures = new ArrayList<>();
+
         for (WebSocketSession session : targetSessions) {
-            try {
-                if (session != null && session.isOpen()) {
-                    // ✅ CRÍTICO: SINCRONIZAR envio de mensagem WebSocket!
-                    // Previne IllegalStateException: TEXT_PARTIAL_WRITING
-                    synchronized (session) {
-                        if (session.isOpen()) { // Re-check após adquirir lock
-                            session.sendMessage(new TextMessage(message));
+            CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                try {
+                    if (session != null && session.isOpen()) {
+                        // ✅ CRÍTICO: SINCRONIZAR envio de mensagem WebSocket!
+                        // Previne IllegalStateException: TEXT_PARTIAL_WRITING
+                        synchronized (session) {
+                            if (session.isOpen()) { // Re-check após adquirir lock
+                                session.sendMessage(new TextMessage(message));
+                                log.debug("✅ Mensagem enviada para sessão {}", session.getId());
+                            }
                         }
                     }
+                } catch (IOException e) {
+                    log.error("❌ Erro ao enviar mensagem para sessão {}", session.getId(), e);
+                } catch (IllegalStateException e) {
+                    log.warn("⚠️ Sessão {} em estado inválido: {}", session.getId(), e.getMessage());
                 }
-            } catch (IOException e) {
-                log.error("❌ Erro ao enviar mensagem para sessão {}", session.getId(), e);
-            } catch (IllegalStateException e) {
-                log.warn("⚠️ Sessão {} em estado inválido: {}", session.getId(), e.getMessage());
-            }
+            });
+
+            sendFutures.add(future);
+        }
+
+        // ✅ AGUARDAR TODOS OS ENVIOS COMPLETAREM (com timeout de 5 segundos)
+        try {
+            CompletableFuture<Void> allOf = CompletableFuture.allOf(
+                    sendFutures.toArray(new CompletableFuture[0]));
+
+            allOf.get(5, TimeUnit.SECONDS);
+
+            log.debug("✅ [Broadcast Paralelo] {} mensagens enviadas simultaneamente", targetSessions.size());
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("⚠️ Thread interrompida ao enviar mensagens em paralelo", e);
+        } catch (TimeoutException e) {
+            log.error("⏱️ Timeout ao enviar mensagens em paralelo (5s)", e);
+        } catch (Exception e) {
+            log.error("❌ Erro ao aguardar envios paralelos", e);
         }
     }
 
