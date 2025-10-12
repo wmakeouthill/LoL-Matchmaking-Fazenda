@@ -44,6 +44,12 @@ public class MatchFoundService {
     private final br.com.lolmatchmaking.backend.service.lock.AcceptanceStatusLockService acceptanceStatusLockService;
     private final EventBroadcastService eventBroadcastService;
 
+    // ✅ NOVO: RedisTemplate para throttling de retries
+    private final org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
+
+    // ✅ NOVO: SessionRegistry para verificar conectividade
+    private final br.com.lolmatchmaking.backend.websocket.SessionRegistry sessionRegistry;
+
     // Constructor manual para @Lazy
     public MatchFoundService(
             QueuePlayerRepository queuePlayerRepository,
@@ -57,7 +63,9 @@ public class MatchFoundService {
             br.com.lolmatchmaking.backend.service.lock.PlayerStateService playerStateService,
             br.com.lolmatchmaking.backend.service.lock.MatchOperationsLockService matchOpsLockService,
             br.com.lolmatchmaking.backend.service.lock.AcceptanceStatusLockService acceptanceStatusLockService,
-            EventBroadcastService eventBroadcastService) {
+            EventBroadcastService eventBroadcastService,
+            org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate,
+            br.com.lolmatchmaking.backend.websocket.SessionRegistry sessionRegistry) {
         this.queuePlayerRepository = queuePlayerRepository;
         this.customMatchRepository = customMatchRepository;
         this.webSocketService = webSocketService;
@@ -70,6 +78,8 @@ public class MatchFoundService {
         this.matchOpsLockService = matchOpsLockService;
         this.acceptanceStatusLockService = acceptanceStatusLockService;
         this.eventBroadcastService = eventBroadcastService;
+        this.redisTemplate = redisTemplate;
+        this.sessionRegistry = sessionRegistry;
     }
 
     // ✅ REMOVIDO: HashMap local removido
@@ -575,6 +585,10 @@ public class MatchFoundService {
                     log.warn("⏰ [MatchFound] Timeout na partida {}", matchId);
                     handleAcceptanceTimeout(matchId);
                 } else {
+                    // ✅ CRÍTICO: Reenviar match_found para jogadores que não aceitaram
+                    // Isso garante que TODOS vejam o modal, mesmo se houve falha de WebSocket
+                    retryMatchFoundForPendingPlayers(matchId);
+
                     // Atualizar timer
                     int secondsRemaining = ACCEPTANCE_TIMEOUT_SECONDS - (int) secondsElapsed;
                     notifyTimerUpdate(matchId, secondsRemaining);
@@ -1130,6 +1144,177 @@ public class MatchFoundService {
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao notificar cancelamento", e);
         }
+    }
+
+    /**
+     * ✅ NOVO: Reenviar match_found para jogadores que ainda não aceitaram
+     * Garante que TODOS vejam o modal, mesmo se houve falha de WebSocket
+     */
+    private void retryMatchFoundForPendingPlayers(Long matchId) {
+        try {
+            // ✅ Buscar todos os jogadores da partida
+            List<String> allPlayers = redisAcceptance.getAllPlayers(matchId);
+            if (allPlayers == null || allPlayers.isEmpty()) {
+                return;
+            }
+
+            // ✅ Buscar quem JÁ aceitou
+            final Set<String> acceptedPlayers = redisAcceptance.getAcceptedPlayers(matchId) != null
+                    ? redisAcceptance.getAcceptedPlayers(matchId)
+                    : new HashSet<>();
+
+            // ✅ Identificar jogadores PENDENTES (não aceitaram ainda)
+            List<String> pendingPlayers = allPlayers.stream()
+                    .filter(player -> !acceptedPlayers.contains(player))
+                    .toList();
+
+            if (pendingPlayers.isEmpty()) {
+                return; // Todos já aceitaram
+            }
+
+            // ✅ OTIMIZAÇÃO: Verificar se todos os jogadores PENDENTES têm sessão WebSocket
+            // ativa
+            int connectedPendingCount = 0;
+            for (String player : pendingPlayers) {
+                Optional<org.springframework.web.socket.WebSocketSession> session = sessionRegistry.getByPlayer(player);
+                if (session.isPresent()) {
+                    connectedPendingCount++;
+                }
+            }
+
+            // ✅ Se TODOS os pendentes estão conectados, não precisa retry (eles veem o
+            // modal)!
+            if (connectedPendingCount == pendingPlayers.size()) {
+                log.debug("✅ [MatchFound] Todos os {} jogadores pendentes estão conectados - pulando retry",
+                        pendingPlayers.size());
+                return;
+            }
+
+            log.debug("⚠️ [MatchFound] Apenas {}/{} jogadores pendentes conectados - enviando retry",
+                    connectedPendingCount, pendingPlayers.size());
+
+            // ✅ THROTTLE: Reenviar apenas a cada 5 segundos para não spammar
+            String retryKey = "match_found_retry:" + matchId;
+            Long lastRetrySec = redisTemplate.opsForValue()
+                    .get(retryKey) != null ? (Long) redisTemplate.opsForValue().get(retryKey) : null;
+
+            long nowSec = System.currentTimeMillis() / 1000;
+            if (lastRetrySec != null && (nowSec - lastRetrySec) < 5) {
+                return; // Reenviar apenas a cada 5s
+            }
+
+            // ✅ Marcar último retry
+            redisTemplate.opsForValue().set(retryKey, nowSec,
+                    java.time.Duration.ofSeconds(ACCEPTANCE_TIMEOUT_SECONDS + 10));
+
+            // ✅ VALIDAÇÃO: Verificar ownership no MySQL
+            customMatchRepository.findById(matchId).ifPresent(match -> {
+                String status = match.getStatus();
+
+                // Só reenviar se ainda está em fase de aceitação
+                if (!"match_found".equalsIgnoreCase(status) &&
+                        !"accepting".equalsIgnoreCase(status) &&
+                        !"accepted".equalsIgnoreCase(status)) {
+                    log.debug("⏭️ [MatchFound] Match {} não está mais em aceitação (status={}), pulando retry",
+                            matchId, status);
+                    return;
+                }
+
+                // ✅ Verificar ownership de cada jogador pendente
+                List<String> validPendingPlayers = new ArrayList<>();
+                for (String player : pendingPlayers) {
+                    // ✅ CASE-INSENSITIVE ownership check
+                    boolean inTeam1 = match.getTeam1PlayersJson() != null &&
+                            match.getTeam1PlayersJson().toLowerCase().contains(player.toLowerCase());
+                    boolean inTeam2 = match.getTeam2PlayersJson() != null &&
+                            match.getTeam2PlayersJson().toLowerCase().contains(player.toLowerCase());
+
+                    if (inTeam1 || inTeam2) {
+                        validPendingPlayers.add(player);
+                    } else {
+                        log.warn("⚠️ [MatchFound] Jogador {} não pertence à partida {} (ownership fail)",
+                                player, matchId);
+                    }
+                }
+
+                if (!validPendingPlayers.isEmpty()) {
+                    // ✅ Buscar dados completos da partida para reenviar
+                    List<String> team1Names = redisAcceptance.getTeam1Players(matchId);
+                    List<String> team2Names = redisAcceptance.getTeam2Players(matchId);
+
+                    // Montar payload igual ao original
+                    Map<String, Object> matchFoundData = buildMatchFoundPayload(
+                            matchId, match, team1Names, team2Names);
+
+                    log.info("🔄 [MatchFound] RETRY: Reenviando match_found para {} jogadores pendentes da partida {}",
+                            validPendingPlayers.size(), matchId);
+                    for (String player : validPendingPlayers) {
+                        log.info("  📤 {}", player);
+                    }
+
+                    // ✅ BROADCAST PARALELO para jogadores pendentes
+                    webSocketService.sendToPlayers("match_found", matchFoundData, validPendingPlayers);
+
+                    log.info("✅ [MatchFound] RETRY enviado para {} jogadores", validPendingPlayers.size());
+                }
+            });
+
+        } catch (Exception e) {
+            log.debug("❌ [MatchFound] Erro ao retry match_found", e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Constrói o payload completo do match_found para retry
+     */
+    private Map<String, Object> buildMatchFoundPayload(
+            Long matchId,
+            CustomMatch match,
+            List<String> team1Names,
+            List<String> team2Names) {
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("matchId", matchId);
+        data.put("averageMmrTeam1", match.getAverageMmrTeam1());
+        data.put("averageMmrTeam2", match.getAverageMmrTeam2());
+        data.put("timeoutSeconds", ACCEPTANCE_TIMEOUT_SECONDS);
+
+        // ✅ Buscar dados dos jogadores do banco (para ter MMR, lanes, etc)
+        List<QueuePlayerInfoDTO> team1DTOs = new ArrayList<>();
+        List<QueuePlayerInfoDTO> team2DTOs = new ArrayList<>();
+
+        String[] lanes = { "top", "jungle", "mid", "bot", "support" };
+
+        // Team 1
+        for (int i = 0; i < team1Names.size() && i < 5; i++) {
+            String playerName = team1Names.get(i);
+            Optional<QueuePlayer> playerOpt = queuePlayerRepository.findBySummonerName(playerName);
+
+            if (playerOpt.isPresent()) {
+                QueuePlayer player = playerOpt.get();
+                String assignedLane = lanes[i];
+                boolean isAutofill = determineIfAutofill(player, assignedLane);
+                team1DTOs.add(convertToDTO(player, assignedLane, i, isAutofill));
+            }
+        }
+
+        // Team 2
+        for (int i = 0; i < team2Names.size() && i < 5; i++) {
+            String playerName = team2Names.get(i);
+            Optional<QueuePlayer> playerOpt = queuePlayerRepository.findBySummonerName(playerName);
+
+            if (playerOpt.isPresent()) {
+                QueuePlayer player = playerOpt.get();
+                String assignedLane = lanes[i];
+                boolean isAutofill = determineIfAutofill(player, assignedLane);
+                team2DTOs.add(convertToDTO(player, assignedLane, i + 5, isAutofill));
+            }
+        }
+
+        data.put("team1", team1DTOs);
+        data.put("team2", team2DTOs);
+
+        return data;
     }
 
     private void notifyTimerUpdate(Long matchId, int secondsRemaining) {

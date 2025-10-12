@@ -36,6 +36,9 @@ public class DraftFlowService {
     // ✅ NOVO: RedisPlayerMatchService para cleanup de ownership
     private final br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch;
 
+    // ✅ NOVO: RedisTemplate para throttling de retries
+    private final org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
+
     @Value("${app.draft.action-timeout-ms:30000}")
     private long configuredActionTimeoutMs;
 
@@ -2198,6 +2201,13 @@ public class DraftFlowService {
                 return;
             }
 
+            // ✅ CRÍTICO: RETRY draft_updated para jogadores que podem ter perdido conexão
+            // A cada 3 segundos, reenviar o estado completo para TODOS os jogadores da
+            // partida
+            if (elapsed > 0 && elapsed % 3000 < 1000) { // A cada 3s (com margem de 1s)
+                retryDraftUpdateForAllPlayers(st);
+            }
+
             if (isBot(currentPlayer) && elapsed >= 2000) { // 2 segundos para bots
                 log.info("🤖 [DraftFlow] Match {} - Bot {} fazendo ação automática (ação {}, {}) - elapsed={}ms",
                         st.getMatchId(), currentPlayer, currentIdx, currentAction.type(), elapsed);
@@ -2232,6 +2242,86 @@ public class DraftFlowService {
                     broadcastDraftCompleted(st);
                 }
             }
+        }
+    }
+
+    /**
+     * ✅ NOVO: Reenviar draft_updated para TODOS os jogadores (retry para
+     * desconectados)
+     */
+    private void retryDraftUpdateForAllPlayers(DraftState st) {
+        try {
+            Long matchId = st.getMatchId();
+
+            // ✅ THROTTLE: Reenviar apenas a cada 3 segundos
+            String retryKey = "draft_retry:" + matchId;
+            Long lastRetrySec = redisTemplate.opsForValue()
+                    .get(retryKey) != null ? (Long) redisTemplate.opsForValue().get(retryKey) : null;
+
+            long nowSec = System.currentTimeMillis() / 1000;
+            if (lastRetrySec != null && (nowSec - lastRetrySec) < 3) {
+                return; // Já reenviou recentemente
+            }
+
+            // ✅ Marcar último retry
+            redisTemplate.opsForValue().set(retryKey, nowSec, java.time.Duration.ofMinutes(5));
+
+            // ✅ VALIDAÇÃO: Buscar todos os jogadores do MySQL (ownership)
+            customMatchRepository.findById(matchId).ifPresent(match -> {
+                // Validar status
+                if (!"draft".equalsIgnoreCase(match.getStatus())) {
+                    return;
+                }
+
+                // ✅ Buscar todos os jogadores (team1 + team2)
+                List<String> allPlayers = new ArrayList<>();
+                allPlayers.addAll(st.getTeam1Players());
+                allPlayers.addAll(st.getTeam2Players());
+
+                // ✅ OTIMIZAÇÃO: Verificar quantos jogadores TÊM sessão WebSocket ativa
+                int connectedCount = 0;
+                for (String player : allPlayers) {
+                    Optional<org.springframework.web.socket.WebSocketSession> session = sessionRegistry
+                            .getByPlayer(player);
+                    if (session.isPresent()) {
+                        connectedCount++;
+                    }
+                }
+
+                // ✅ Se TODOS estão conectados, não precisa retry!
+                if (connectedCount == allPlayers.size()) {
+                    log.debug("✅ [DraftFlow] Todos os {} jogadores estão conectados - pulando retry",
+                            allPlayers.size());
+                    return;
+                }
+
+                log.debug("⚠️ [DraftFlow] Apenas {}/{} jogadores conectados - enviando retry",
+                        connectedCount, allPlayers.size());
+
+                // ✅ Validar ownership case-insensitive
+                List<String> validPlayers = new ArrayList<>();
+                for (String player : allPlayers) {
+                    boolean inTeam1 = match.getTeam1PlayersJson() != null &&
+                            match.getTeam1PlayersJson().toLowerCase().contains(player.toLowerCase());
+                    boolean inTeam2 = match.getTeam2PlayersJson() != null &&
+                            match.getTeam2PlayersJson().toLowerCase().contains(player.toLowerCase());
+
+                    if (inTeam1 || inTeam2) {
+                        validPlayers.add(player);
+                    }
+                }
+
+                if (!validPlayers.isEmpty()) {
+                    log.debug("🔄 [DraftFlow] RETRY: Reenviando draft_updated para {} jogadores da partida {}",
+                            validPlayers.size(), matchId);
+
+                    // ✅ BROADCAST completo (sem confirmationOnly)
+                    broadcastUpdate(st, false);
+                }
+            });
+
+        } catch (Exception e) {
+            log.debug("❌ [DraftFlow] Erro ao retry draft_updated", e);
         }
     }
 

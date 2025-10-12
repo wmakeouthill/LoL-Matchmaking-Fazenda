@@ -5,17 +5,9 @@ import { firstValueFrom } from 'rxjs';
 import { ChampionService } from '../../services/champion.service';
 import { ApiService } from '../../services/api';
 
+// ✅ DESABILITADO: Salvamento de logs em arquivo (por solicitação do usuário)
 function logConfirmationModal(...args: any[]) {
-  const fs = (window as any).electronAPI?.fs;
-  const path = (window as any).electronAPI?.path;
-  const process = (window as any).electronAPI?.process;
-  const logPath = path && process ? path.join(process.cwd(), 'confirmation-modal.log') : '';
-  const logLine = `[${new Date().toISOString()}] [ConfirmationModal] ` + args.map(arg => (typeof arg === 'object' ? JSON.stringify(arg) : arg)).join(' ') + '\n';
-  if (fs && logPath) {
-    fs.appendFile(logPath, logLine, (err: any) => {
-      if (err) console.error('Erro ao escrever log:', err);
-    });
-  }
+  // Apenas console.log para debug no DevTools
   console.log('[ConfirmationModal]', ...args);
 }
 

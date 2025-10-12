@@ -66,9 +66,14 @@ class DraftFlowServiceTest {
         br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatchService = mock(
                 br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService.class);
 
+        // ✅ NOVO: Adicionar RedisTemplate mock ao construtor
+        @SuppressWarnings("unchecked")
+        org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate = mock(
+                org.springframework.data.redis.core.RedisTemplate.class);
+
         draftFlowService = new DraftFlowService(customMatchRepository, sessionRegistry, dataDragonService,
                 gameInProgressService, discordService, redisDraftFlowService, playerStateService,
-                redisPlayerMatchService);
+                redisPlayerMatchService, redisTemplate);
     }
 
     @Test

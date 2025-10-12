@@ -1024,7 +1024,8 @@ export class App implements OnInit, OnDestroy {
         // Entrar no draft
         this.inDraftPhase = true;
         this.draftTimer = 30; // ✅ RESETAR timer ao iniciar draft
-        this.matchFoundData = null; // Agora sim limpar
+        this.showMatchFound = false; // ✅ CRÍTICO: Destruir componente MatchFound
+        this.matchFoundData = null; // Limpar dados
         this.cdr.detectChanges();
         break;
       case 'acceptance_timer':
@@ -1101,6 +1102,14 @@ export class App implements OnInit, OnDestroy {
     const data = message.data || message;
 
     console.log('🎯 [App] matchId recebido:', data.matchId);
+
+    // ✅ CRÍTICO: Não duplicar modal se já estiver sendo exibido para o MESMO matchId
+    if (this.showMatchFound && this.matchFoundData?.matchId === data.matchId) {
+      console.log('⏭️ [App] Match found JÁ está sendo exibido para matchId:', data.matchId);
+      console.log('⏭️ [App] Ignorando evento duplicado (retry do backend)');
+      return;
+    }
+
     console.log('🎯 [App] team1:', data.team1?.length, 'jogadores');
     console.log('🎯 [App] team2:', data.team2?.length, 'jogadores');
 

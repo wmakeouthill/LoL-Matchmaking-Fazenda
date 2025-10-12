@@ -58,10 +58,12 @@ public class RedisConfig {
                 .setPassword(redisPassword.isEmpty() ? null : redisPassword)
                 .setConnectionMinimumIdleSize(2)
                 .setConnectionPoolSize(8)
-                .setTimeout(3000)
-                .setRetryAttempts(3)
-                .setRetryInterval(1500)
-                .setKeepAlive(true);
+                .setTimeout(10000) // ✅ AUMENTADO: 3s → 10s (Upstash pode ter latência)
+                .setRetryAttempts(5) // ✅ AUMENTADO: 3 → 5 tentativas
+                .setRetryInterval(2000) // ✅ AUMENTADO: 1.5s → 2s entre tentativas
+                .setKeepAlive(true)
+                .setPingConnectionInterval(5000) // ✅ NOVO: Ping a cada 5s para manter vivo
+                .setConnectTimeout(10000); // ✅ NOVO: 10s para estabelecer conexão inicial
 
         RedissonClient client = Redisson.create(config);
 
