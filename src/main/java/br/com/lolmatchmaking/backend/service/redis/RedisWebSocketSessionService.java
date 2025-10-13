@@ -60,8 +60,12 @@ public class RedisWebSocketSessionService {
     private final RedissonClient redisson;
     private final ObjectMapper objectMapper;
 
-    // TTL para sessões WebSocket (6 horas - conexões normalmente < 2h)
-    private static final long SESSION_TTL_SECONDS = 21600; // 6 horas
+    // ✅ CORRIGIDO: TTL de 1h30min (duração típica de sessão)
+    // CRÍTICO: Sessão não deve persistir além da necessidade real
+    // Sessão típica: < 1h, margem 30min = 1h30min total
+    // Heartbeat estende TTL continuamente enquanto ativo
+    // Monitor detecta desconexão em 30s (não espera TTL)
+    private static final long SESSION_TTL_SECONDS = 5400; // 1h30min (90min)
 
     // Prefixos de chaves
     private static final String SESSION_KEY_PREFIX = "ws:session:"; // sessionId → summonerName

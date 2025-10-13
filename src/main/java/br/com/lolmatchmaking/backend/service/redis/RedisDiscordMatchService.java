@@ -37,7 +37,10 @@ public class RedisDiscordMatchService {
     private final RedisTemplate<String, Object> redisTemplate;
 
     private static final String MATCH_PREFIX = "discord:match:";
-    private static final Duration TTL = Duration.ofHours(3);
+    // ✅ CORRIGIDO: TTL de 24 horas (vínculos Discord semi-permanentes)
+    // CRÍTICO: Links Discord não mudam frequentemente
+    // Cleanup explícito ao deletar canais/vínculos
+    private static final Duration TTL = Duration.ofHours(24);
 
     /**
      * ✅ Registra uma partida Discord ativa

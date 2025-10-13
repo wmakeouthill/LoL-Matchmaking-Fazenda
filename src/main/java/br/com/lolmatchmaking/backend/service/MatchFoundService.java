@@ -443,10 +443,16 @@ public class MatchFoundService {
                 log.info("✅ [Estado] Jogador {} → IN_DRAFT", playerName);
             }
 
-            // Remover todos os jogadores da fila (agora vão para o draft)
+            // ✅ Remover todos os jogadores da fila (APENAS MySQL, SEM atualizar
+            // PlayerState!)
             for (String playerName : allPlayers) {
-                queueManagementService.removeFromQueue(playerName);
-                log.info("🗑️ [MatchFound] Jogador {} removido da fila - indo para draft", playerName);
+                // ✅ CRÍTICO: Deletar APENAS do MySQL, sem chamar removeFromQueue()
+                // removeFromQueue() faria setPlayerState(AVAILABLE) e sobrescreveria IN_DRAFT!
+                queuePlayerRepository.findBySummonerName(playerName).ifPresent(player -> {
+                    queuePlayerRepository.delete(player);
+                    log.info("🗑️ [MatchFound] Jogador {} removido da fila MySQL (PlayerState permanece IN_DRAFT)",
+                            playerName);
+                });
             }
 
             // ✅ NOVO: PUBLICAR draft_started VIA REDIS PUB/SUB

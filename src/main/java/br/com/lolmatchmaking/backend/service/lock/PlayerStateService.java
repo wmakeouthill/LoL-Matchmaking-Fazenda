@@ -46,11 +46,12 @@ public class PlayerStateService {
     private static final String STATE_PREFIX = "state:player:";
     private static final String STATE_LOCK_PREFIX = "lock:state:";
 
-    // ✅ CORRIGIDO: TTL de 4 horas (ALINHADO com PlayerLock)
-    // CRÍTICO: Deve ser >= PlayerLock TTL para evitar estado expirar antes da
-    // sessão
-    // Player pode ficar conectado por horas (draft longo + game longo)
-    private static final Duration STATE_TTL = Duration.ofHours(4);
+    // ✅ CORRIGIDO: TTL de 10 minutos (REAL-TIME)
+    // CRÍTICO: PlayerState deve expirar RÁPIDO para liberar jogador
+    // Fluxo típico: Fila (1min) + Match (30s) + Draft (5min) + Game (1h)
+    // Heartbeat renova TTL a cada 30s - Nunca expira se ativo
+    // Se sem heartbeat > 10min → Cliente morto → Expirar estado
+    private static final Duration STATE_TTL = Duration.ofMinutes(10);
 
     // TTL do lock de mudança de estado: 5 segundos (tempo para processar mudança)
     private static final Duration STATE_LOCK_TTL = Duration.ofSeconds(5);
@@ -76,8 +77,10 @@ public class PlayerStateService {
      *         </pre>
      */
     public boolean setPlayerState(String summonerName, PlayerState newState) {
-        String stateKey = STATE_PREFIX + summonerName;
-        String lockKey = STATE_LOCK_PREFIX + summonerName;
+        // ✅ NORMALIZAR: Case-insensitive (alinhado com SessionRegistry)
+        String normalizedName = normalizePlayerName(summonerName);
+        String stateKey = STATE_PREFIX + normalizedName;
+        String lockKey = STATE_LOCK_PREFIX + normalizedName;
 
         // ✅ LOCK: Apenas uma thread pode mudar estado por vez
         Boolean lockAcquired = redisTemplate.opsForValue()
@@ -123,7 +126,9 @@ public class PlayerStateService {
      * @return Estado atual (AVAILABLE se não há estado definido)
      */
     public PlayerState getPlayerState(String summonerName) {
-        String key = STATE_PREFIX + summonerName;
+        // ✅ NORMALIZAR: Case-insensitive (alinhado com SessionRegistry)
+        String normalizedName = normalizePlayerName(summonerName);
+        String key = STATE_PREFIX + normalizedName;
 
         try {
             Object stateObj = redisTemplate.opsForValue().get(key);
@@ -231,7 +236,9 @@ public class PlayerStateService {
      * @return true se conseguiu forçar mudança, false caso contrário
      */
     public boolean forceSetPlayerState(String summonerName, PlayerState newState) {
-        String key = STATE_PREFIX + summonerName;
+        // ✅ NORMALIZAR: Case-insensitive (alinhado com SessionRegistry)
+        String normalizedName = normalizePlayerName(summonerName);
+        String key = STATE_PREFIX + normalizedName;
 
         try {
             redisTemplate.opsForValue().set(key, newState.name(), STATE_TTL);
@@ -251,7 +258,9 @@ public class PlayerStateService {
      * @param summonerName Nome do jogador
      */
     public void clearPlayerState(String summonerName) {
-        String key = STATE_PREFIX + summonerName;
+        // ✅ NORMALIZAR: Case-insensitive (alinhado com SessionRegistry)
+        String normalizedName = normalizePlayerName(summonerName);
+        String key = STATE_PREFIX + normalizedName;
 
         try {
             Boolean deleted = redisTemplate.delete(key);
@@ -274,7 +283,9 @@ public class PlayerStateService {
      * @return true se conseguiu renovar, false caso contrário
      */
     public boolean renewPlayerState(String summonerName) {
-        String key = STATE_PREFIX + summonerName;
+        // ✅ NORMALIZAR: Case-insensitive (alinhado com SessionRegistry)
+        String normalizedName = normalizePlayerName(summonerName);
+        String key = STATE_PREFIX + normalizedName;
 
         try {
             Boolean renewed = redisTemplate.expire(key, STATE_TTL);
@@ -299,7 +310,9 @@ public class PlayerStateService {
      * @return TTL em segundos, ou -1 se não há estado
      */
     public long getPlayerStateTtl(String summonerName) {
-        String key = STATE_PREFIX + summonerName;
+        // ✅ NORMALIZAR: Case-insensitive (alinhado com SessionRegistry)
+        String normalizedName = normalizePlayerName(summonerName);
+        String key = STATE_PREFIX + normalizedName;
 
         try {
             Long ttl = redisTemplate.getExpire(key);
@@ -344,5 +357,21 @@ public class PlayerStateService {
         log.error("❌ [PlayerState] Falha após {} tentativas para {}: {}",
                 maxRetries, summonerName, newState);
         return false;
+    }
+
+    /**
+     * ✅ Normaliza nome do jogador (lowercase + trim)
+     * 
+     * CRÍTICO: TODOS os métodos DEVEM usar esta normalização para garantir
+     * consistência com SessionRegistry, RedisPlayerMatchService, etc.
+     * 
+     * @param summonerName Nome do jogador (pode ter case variado)
+     * @return Nome normalizado (lowercase, trimmed)
+     */
+    private String normalizePlayerName(String summonerName) {
+        if (summonerName == null) {
+            return "";
+        }
+        return summonerName.trim().toLowerCase();
     }
 }

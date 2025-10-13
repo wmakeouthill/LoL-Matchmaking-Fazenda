@@ -58,45 +58,22 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     // Cache local (WebSocketSession não é serializável)
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
 
-    // ✅ DEPRECIADO: Migrado para Redis
-    /**
-     * @deprecated Substituído por RedisWebSocketSessionService (chave:
-     *             ws:client:{sessionId})
-     */
-    @Deprecated(forRemoval = true)
-    private final Map<String, ClientInfo> clientInfo = new ConcurrentHashMap<>();
-
-    /**
-     * @deprecated Substituído por RedisWebSocketSessionService.updateHeartbeat()
-     */
-    @Deprecated(forRemoval = true)
-    private final Map<String, Instant> lastHeartbeat = new ConcurrentHashMap<>();
-
-    // Heartbeat tasks (não precisam persistir)
+    // ✅ Cache local APENAS para objetos não-serializáveis
+    // WebSocketSession e ScheduledFuture não podem ser salvos no Redis
     private final Map<String, ScheduledFuture<?>> heartbeatTasks = new ConcurrentHashMap<>();
-
-    /**
-     * @deprecated Substituído por RedisWebSocketEventService (chave:
-     *             ws:pending:{sessionId})
-     */
-    @Deprecated(forRemoval = true)
-    private final Map<String, List<String>> pendingEvents = new ConcurrentHashMap<>();
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
 
-    /**
-     * @deprecated Substituído por RedisWebSocketEventService (chave:
-     *             ws:lcu_request:{requestId})
-     */
-    @Deprecated(forRemoval = true)
+    // ⚠️ EXCEÇÃO: CompletableFuture não é serializável
+    // Mantido para LCU requests (perdidos em restart, mas aceitável)
+    // Cliente faz retry automático se request não retornar
     private final Map<String, CompletableFuture<JsonNode>> pendingLcuRequests = new ConcurrentHashMap<>();
-
-    /**
-     * @deprecated Substituído por RedisWebSocketEventService (chave:
-     *             ws:lcu_request:{requestId})
-     */
-    @Deprecated(forRemoval = true)
     private final Map<String, String> lcuRequestSession = new ConcurrentHashMap<>();
+
+    // ✅ REMOVIDOS: HashMaps deprecated migrados para Redis
+    // - clientInfo → RedisWebSocketSessionService.getSummonerBySession()
+    // - lastHeartbeat → RedisWebSocketSessionService.updateHeartbeat()
+    // - pendingEvents → RedisWebSocketEventService.getPendingEvents()
 
     /**
      * Obtém o LCUService quando necessário para evitar dependência circular
@@ -216,7 +193,8 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                     break;
                 case "pong":
                     // Client acknowledges a server ping; treat as heartbeat
-                    lastHeartbeat.put(sessionId, Instant.now());
+                    // ✅ Atualizar heartbeat no Redis
+                    redisWSSession.updateHeartbeat(sessionId);
                     break;
                 case "identify":
                     handleIdentify(sessionId, jsonMessage);
@@ -276,21 +254,20 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             JsonNode body = data.has("body") ? data.get("body") : null;
 
             if (status == 200) {
-                ClientInfo info = clientInfo.get(sessionId);
-                if (info != null && info.getLcuHost() != null && info.getLcuPort() > 0) {
-                    String summonerId = null;
-                    try {
-                        summonerId = extractSummonerId(body);
-                    } catch (Exception ignored) {
-                    }
-                    log.info("LCU status from gateway session={} summonerId={}", sessionId, summonerId);
-                    getLcuService().markConnectedFromGateway(info.getLcuHost(), info.getLcuPort(),
-                            info.getLcuProtocol(),
-                            info.getLcuPassword(), summonerId);
-                    sendMessage(sessionId, "lcu_status_ack", Map.of("success", true));
-                    log.info("LCU status accepted from gateway session={}", sessionId);
-                    return;
+                // ✅ LCU info aceito - por ora não validamos contra Redis
+                // TODO: Implementar storage de LCU info no Redis se necessário
+                String summonerId = null;
+                try {
+                    summonerId = extractSummonerId(body);
+                } catch (Exception ignored) {
                 }
+
+                if (summonerId != null) {
+                    log.info("LCU status accepted from gateway session={} summonerId={}", sessionId, summonerId);
+                }
+
+                sendMessage(sessionId, "lcu_status_ack", Map.of("success", true));
+                return;
             }
 
             sendMessage(sessionId, "lcu_status_ack", Map.of("success", false));
@@ -328,8 +305,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                 resp.set("body", body);
             fut.complete(resp);
 
-            // If successful response, mark backend LCU as connected using client-provided
-            // lockfile info
+            // ✅ LCU response completed successfully
             try {
                 int code = -1;
                 if (status != null && status.isInt())
@@ -337,22 +313,20 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                 if (code == 200) {
                     String sess = lcuRequestSession.remove(id);
                     if (sess != null) {
-                        ClientInfo info = clientInfo.get(sess);
-                        if (info != null && info.getLcuHost() != null) {
-                            String summonerId = null;
-                            try {
-                                summonerId = extractSummonerId(body);
-                            } catch (Exception ignored) {
-                            }
-                            log.info("LCU response from session={} id={} summonerId={}", sess, id, summonerId);
-                            getLcuService().markConnectedFromGateway(info.getLcuHost(), info.getLcuPort(),
-                                    info.getLcuProtocol(), info.getLcuPassword(), summonerId);
+                        String summonerId = null;
+                        try {
+                            summonerId = extractSummonerId(body);
+                        } catch (Exception ignored) {
+                        }
+                        if (summonerId != null) {
+                            log.info("✅ LCU response from session={} id={} summonerId={}", sess, id, summonerId);
                         }
                     }
                 }
             } catch (Exception e) {
-                log.debug("Erro marcando LCU conectado via gateway: {}", e.getMessage());
+                log.debug("Erro processando LCU response: {}", e.getMessage());
             }
+
         } catch (Exception e) {
             log.error("Erro ao processar lcu_response", e);
         }
@@ -475,17 +449,14 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                 summonerName = data.get("data").get("summonerName").asText(null);
             }
 
-            ClientInfo info = clientInfo.get(sessionId);
-            if (info != null) {
-                if (playerId != null)
-                    info.setPlayerId(playerId);
-                if (summonerName != null)
-                    info.setSummonerName(summonerName);
-                info.setIdentified(true);
+            // ✅ Identificar jogador no Redis
+            if (summonerName != null && !summonerName.isBlank()) {
+                // Registrar no SessionRegistry (que usa Redis)
+                sessionRegistry.registerPlayer(summonerName, sessionId);
+                log.info("✅ [Identify] Jogador {} registrado no Redis para sessão {}", summonerName, sessionId);
 
-                // If identify included lockfile data, capture it for later.
-                // Accept multiple shapes: message.data.lockfile, message.data.data.lockfile,
-                // or message.lockfile (less common).
+                // ✅ Lockfile data processamento (se necessário no futuro)
+                // TODO: Implementar storage de LCU lockfile info no Redis se necessário
                 try {
                     JsonNode lf = null;
                     if (data.has("data") && data.get("data") != null) {
@@ -498,27 +469,23 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                     if (lf == null && data.has("lockfile"))
                         lf = data.get("lockfile");
 
-                    if (lf != null) {
-                        if (lf.has("host"))
-                            info.setLcuHost(lf.get("host").asText(null));
-                        if (lf.has("port"))
-                            info.setLcuPort(lf.get("port").asInt(0));
-                        if (lf.has("protocol"))
-                            info.setLcuProtocol(lf.get("protocol").asText(null));
-                        if (lf.has("password"))
-                            info.setLcuPassword(lf.get("password").asText(null));
-                        // Debug: log parsed lockfile info
-                        log.debug("handleIdentify: parsed lockfile for session={} host={} port={} protocol={}",
-                                sessionId, info.getLcuHost(), info.getLcuPort(), info.getLcuProtocol());
+                    if (lf != null && summonerName != null) {
+                        String lcuHost = lf.has("host") ? lf.get("host").asText(null) : null;
+                        int lcuPort = lf.has("port") ? lf.get("port").asInt(0) : 0;
+                        String lcuProtocol = lf.has("protocol") ? lf.get("protocol").asText("https") : "https";
+                        String lcuPassword = lf.has("password") ? lf.get("password").asText(null) : null;
 
-                        // ✅ NOVO: Configurar LCU no banco de dados para este jogador
-                        if (summonerName != null && info.getLcuPort() != 0) {
+                        log.debug("handleIdentify: parsed lockfile for session={} host={} port={} protocol={}",
+                                sessionId, lcuHost, lcuPort, lcuProtocol);
+
+                        // ✅ Configurar LCU no banco de dados para este jogador
+                        if (lcuPort != 0) {
                             try {
                                 getLcuService().configureLCUForPlayer(
                                         summonerName,
-                                        info.getLcuPort(),
-                                        info.getLcuProtocol() != null ? info.getLcuProtocol() : "https",
-                                        info.getLcuPassword());
+                                        lcuPort,
+                                        lcuProtocol,
+                                        lcuPassword);
                                 log.info("✅ [WebSocket] LCU configurado para {} na tabela players", summonerName);
                             } catch (Exception ex) {
                                 log.error("❌ [WebSocket] Erro ao configurar LCU no banco para {}: {}",
@@ -529,13 +496,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                 } catch (Exception ignored) {
                 }
 
-                log.info("🆔 Cliente identificado: {} ({})", info.getSummonerName(), info.getPlayerId());
-
-                // ✅ NOVO: Registrar jogador no SessionRegistry para envio específico
-                if (summonerName != null) {
-                    sessionRegistry.registerPlayer(summonerName, sessionId);
-                    log.info("✅ [WebSocket] Jogador {} registrado na sessão {}", summonerName, sessionId);
-                }
+                log.info("🆔 Cliente identificado: {} (playerId: {})", summonerName, playerId);
 
                 sendMessage(sessionId, "identified", Map.of("success", true));
             }
@@ -582,14 +543,15 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
      */
     private void handleAcceptMatch(String sessionId, JsonNode data) {
         try {
-            ClientInfo info = clientInfo.get(sessionId);
-            if (info == null || info.getSummonerName() == null) {
-                log.warn("⚠️ [Accept Match] Sessão {} não identificada", sessionId);
+            // ✅ Buscar summonerName no Redis
+            Optional<String> summonerOpt = redisWSSession.getSummonerBySession(sessionId);
+            if (summonerOpt.isEmpty()) {
+                log.warn("⚠️ [Accept Match] Sessão {} não identificada no Redis", sessionId);
                 sendError(sessionId, "NOT_IDENTIFIED", "Cliente não identificado");
                 return;
             }
 
-            String summonerName = info.getSummonerName();
+            String summonerName = summonerOpt.get();
 
             // Extrair matchId do payload
             Long matchId = null;
@@ -628,14 +590,15 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
      */
     private void handleDeclineMatch(String sessionId, JsonNode data) {
         try {
-            ClientInfo info = clientInfo.get(sessionId);
-            if (info == null || info.getSummonerName() == null) {
-                log.warn("⚠️ [Decline Match] Sessão {} não identificada", sessionId);
+            // ✅ Buscar summonerName no Redis
+            Optional<String> summonerOpt = redisWSSession.getSummonerBySession(sessionId);
+            if (summonerOpt.isEmpty()) {
+                log.warn("⚠️ [Decline Match] Sessão {} não identificada no Redis", sessionId);
                 sendError(sessionId, "NOT_IDENTIFIED", "Cliente não identificado");
                 return;
             }
 
-            String summonerName = info.getSummonerName();
+            String summonerName = summonerOpt.get();
 
             // Extrair matchId do payload
             Long matchId = null;
@@ -703,19 +666,23 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     private void startHeartbeatMonitoring(String sessionId) {
         ScheduledFuture<?> future = scheduler.scheduleAtFixedRate(() -> {
             try {
-                Instant lastHeartbeatTime = lastHeartbeat.get(sessionId);
-                if (lastHeartbeatTime != null &&
-                        Instant.now().minusMillis(HEARTBEAT_TIMEOUT).isAfter(lastHeartbeatTime)) {
-
-                    log.warn("💔 Heartbeat timeout para cliente: {}", sessionId);
-                    closeSession(sessionId);
-                } else {
-                    // Probe client with a ping to elicit a pong/heartbeat response
-                    try {
-                        sendMessage(sessionId, "ping", Map.of("ts", System.currentTimeMillis()));
-                    } catch (Exception e) {
-                        log.debug("⚠️ Falha ao enviar ping para {}: {}", sessionId, e.getMessage());
+                // ✅ Buscar último heartbeat no Redis
+                Optional<RedisWebSocketSessionService.ClientInfo> clientInfoOpt = redisWSSession
+                        .getClientInfo(sessionId);
+                if (clientInfoOpt.isPresent()) {
+                    Instant lastActivity = clientInfoOpt.get().getLastActivity();
+                    if (Instant.now().minusMillis(HEARTBEAT_TIMEOUT).isAfter(lastActivity)) {
+                        log.warn("💔 Heartbeat timeout para cliente: {}", sessionId);
+                        closeSession(sessionId);
+                        return;
                     }
+                }
+
+                // Probe client with a ping to elicit a pong/heartbeat response
+                try {
+                    sendMessage(sessionId, "ping", Map.of("ts", System.currentTimeMillis()));
+                } catch (Exception e) {
+                    log.debug("⚠️ Falha ao enviar ping para {}: {}", sessionId, e.getMessage());
                 }
             } catch (Exception e) {
                 log.error("❌ Erro no monitoramento de heartbeat", e);
@@ -730,25 +697,35 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
      * Envia eventos pendentes para um cliente
      */
     private void sendPendingEvents(String sessionId) {
-        List<String> events = pendingEvents.get(sessionId);
+        // ✅ Buscar eventos pendentes no Redis
+        List<br.com.lolmatchmaking.backend.service.redis.RedisWebSocketEventService.PendingEvent> events = redisWSEvent
+                .getPendingEvents(sessionId);
         if (events != null && !events.isEmpty()) {
-            for (String event : events) {
-                sendMessage(sessionId, event, null);
+            for (br.com.lolmatchmaking.backend.service.redis.RedisWebSocketEventService.PendingEvent event : events) {
+                // Processar cada evento pendente
+                try {
+                    String eventType = event.getEventType();
+                    Map<String, Object> payload = event.getPayload();
+
+                    sendMessage(sessionId, eventType, payload);
+                } catch (Exception e) {
+                    log.warn("❌ Erro ao processar evento pendente: {}", e.getMessage());
+                }
             }
-            events.clear();
+            // ✅ Limpar eventos após enviar
+            redisWSEvent.clearPendingEvents(sessionId);
         }
     }
 
     /**
      * Adiciona evento pendente
      */
-    private void addPendingEvent(String sessionId, String event) {
-        List<String> events = pendingEvents.get(sessionId);
-        if (events != null) {
-            if (events.size() >= MAX_PENDING_EVENTS) {
-                events.remove(0); // Remove o mais antigo
-            }
-            events.add(event);
+    private void addPendingEvent(String sessionId, String eventType) {
+        // ✅ Adicionar evento pendente no Redis
+        try {
+            redisWSEvent.queueEvent(sessionId, eventType, Collections.emptyMap());
+        } catch (Exception e) {
+            log.warn("❌ Erro ao adicionar evento pendente ao Redis: {}", e.getMessage());
         }
     }
 
@@ -931,21 +908,42 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     }
 
     /**
-     * ✅ NOVO: Busca sessionId por summonerName
+     * ✅ CORRIGIDO: Busca sessionId por summonerName usando Redis
      * 
-     * Helper para encontrar sessão de um jogador pelo nome.
+     * CORREÇÃO CRÍTICA:
+     * - ANTES: Usava HashMap local clientInfo (pode estar vazio após reinício)
+     * - DEPOIS: Usa RedisWebSocketSessionService (fonte da verdade)
+     * - Case-insensitive: Normaliza nome para lowercase
      * 
      * @param summonerName Nome do jogador
      * @return sessionId ou null se não encontrado
      */
     private String findSessionBySummonerName(String summonerName) {
-        // Iterar sobre clientInfo para encontrar sessão
-        for (Map.Entry<String, ClientInfo> entry : clientInfo.entrySet()) {
-            ClientInfo info = entry.getValue();
-            if (info.getSummonerName() != null && info.getSummonerName().equals(summonerName)) {
-                return entry.getKey();
+        if (summonerName == null || summonerName.isBlank()) {
+            return null;
+        }
+
+        // ✅ USAR REDIS: Fonte da verdade para mapeamentos
+        // Redis normaliza para lowercase automaticamente
+        Optional<String> sessionIdOpt = redisWSSession.getSessionBySummoner(summonerName.toLowerCase().trim());
+
+        if (sessionIdOpt.isPresent()) {
+            String sessionId = sessionIdOpt.get();
+
+            // Verificar se sessão ainda existe localmente
+            if (sessions.containsKey(sessionId)) {
+                log.debug("✅ [WebSocket] Sessão encontrada via Redis: {} → {}", summonerName, sessionId);
+                return sessionId;
+            } else {
+                log.warn("⚠️ [WebSocket] SessionId {} encontrado no Redis mas sessão local não existe para {}",
+                        sessionId, summonerName);
+                // Limpar entrada inválida
+                redisWSSession.removeSession(sessionId);
+                return null;
             }
         }
+
+        log.warn("⚠️ [WebSocket] Sessão NÃO encontrada no Redis para: {}", summonerName);
         return null;
     }
 
@@ -1153,10 +1151,12 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     public Map<String, Object> getWebSocketStats() {
         Map<String, Object> stats = new HashMap<>();
         stats.put("totalConnections", sessions.size());
-        stats.put("identifiedClients", clientInfo.values().stream()
-                .mapToInt(info -> info.isIdentified() ? 1 : 0)
-                .sum());
-        stats.put("lastHeartbeat", lastHeartbeat);
+
+        // ✅ Contar sessões identificadas via Redis
+        Map<String, String> activeSessions = redisWSSession.getAllActiveSessions();
+        stats.put("identifiedClients", activeSessions.size());
+        stats.put("activeSessionsInRedis", activeSessions);
+
         return stats;
     }
 
@@ -1242,21 +1242,15 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         // Se summonerName fornecido, tentar encontrar sessão específica primeiro
         if (summonerName != null && !summonerName.isEmpty()) {
             String normalizedName = summonerName.toLowerCase();
-            for (Map.Entry<String, WebSocketSession> e : sessions.entrySet()) {
-                try {
-                    WebSocketSession s = e.getValue();
-                    if (s != null && s.isOpen()) {
-                        ClientInfo info = clientInfo.get(e.getKey());
-                        if (info != null && info.getSummonerName() != null
-                                && info.getSummonerName().toLowerCase().equals(normalizedName)
-                                && info.getLcuHost() != null && info.getLcuPort() > 0) {
-                            log.info(
-                                    "pickGatewaySessionId: selecting session {} for specific summoner '{}' (host={} port={})",
-                                    e.getKey(), summonerName, info.getLcuHost(), info.getLcuPort());
-                            return e.getKey();
-                        }
-                    }
-                } catch (Exception ignored) {
+            // ✅ Buscar sessão no Redis
+            Optional<String> sessionIdOpt = redisWSSession.getSessionBySummoner(normalizedName);
+            if (sessionIdOpt.isPresent()) {
+                String sessionId = sessionIdOpt.get();
+                WebSocketSession s = sessions.get(sessionId);
+                if (s != null && s.isOpen()) {
+                    log.info("pickGatewaySessionId: selecting session {} for specific summoner '{}'",
+                            sessionId, summonerName);
+                    return sessionId;
                 }
             }
             log.warn("⚠️ pickGatewaySessionId: summoner '{}' não encontrado, usando fallback", summonerName);
@@ -1264,50 +1258,30 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
 
         // Debug: list available sessions and their clientInfo so we can diagnose why
         // no gateway client is selected.
+        // ✅ Debug: listar sessões do Redis
         try {
-            for (Map.Entry<String, WebSocketSession> e : sessions.entrySet()) {
-                try {
-                    String sid = e.getKey();
-                    WebSocketSession s = e.getValue();
-                    ClientInfo info = clientInfo.get(sid);
-                    if (info == null) {
-                        log.info("pickGatewaySessionId: session={} open={} info=null", sid, s != null && s.isOpen());
-                    } else {
-                        log.info("pickGatewaySessionId: session={} open={} info={}/{}:{} protocol={} identified={}",
-                                sid, s != null && s.isOpen(), info.getPlayerId(), info.getSummonerName(),
-                                info.getLcuPort(), info.getLcuHost(), info.isIdentified());
-                    }
-                } catch (Exception ex) {
-                    log.info("pickGatewaySessionId: failed to inspect session {}: {}", e.getKey(), ex.getMessage());
-                }
+            Map<String, String> activeSessions = redisWSSession.getAllActiveSessions();
+            log.debug("pickGatewaySessionId: {} active sessions in Redis", activeSessions.size());
+            for (Map.Entry<String, String> entry : activeSessions.entrySet()) {
+                String summoner = entry.getKey(); // Renamed to avoid conflict
+                String sid = entry.getValue();
+                WebSocketSession s = sessions.get(sid);
+                log.debug("  - summoner={} sessionId={} open={}", summoner, sid,
+                        (s != null && s.isOpen()));
             }
         } catch (Exception ex) {
             log.info("pickGatewaySessionId: introspection failed: {}", ex.getMessage());
         }
 
+        // ✅ Fallback: pick any open session with summonerName in Redis
         for (Map.Entry<String, WebSocketSession> e : sessions.entrySet()) {
             try {
                 WebSocketSession s = e.getValue();
                 if (s != null && s.isOpen()) {
-                    ClientInfo info = clientInfo.get(e.getKey());
-                    if (info != null && info.getLcuHost() != null && info.getLcuPort() > 0) {
-                        log.info("pickGatewaySessionId: selecting session {} (host={} port={})", e.getKey(),
-                                info.getLcuHost(), info.getLcuPort());
-                        return e.getKey();
-                    }
-                }
-            } catch (Exception ignored) {
-            }
-        }
-        // Fallback: if no client advertised lockfile info, pick any identified client
-        for (Map.Entry<String, WebSocketSession> e : sessions.entrySet()) {
-            try {
-                WebSocketSession s = e.getValue();
-                if (s != null && s.isOpen()) {
-                    ClientInfo info = clientInfo.get(e.getKey());
-                    if (info != null && info.isIdentified()) {
-                        log.info("pickGatewaySessionId: no lockfile clients found, selecting identified session {}",
-                                e.getKey());
+                    Optional<String> summonerOpt = redisWSSession.getSummonerBySession(e.getKey());
+                    if (summonerOpt.isPresent()) {
+                        log.info("pickGatewaySessionId: selecting identified session {} (summoner={})",
+                                e.getKey(), summonerOpt.get());
                         return e.getKey();
                     }
                 }
