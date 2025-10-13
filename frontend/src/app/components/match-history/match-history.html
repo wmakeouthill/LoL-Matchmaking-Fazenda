@@ -157,15 +157,15 @@
         <div class="champion-info">
           <div class="champion-icon">
             <img
-              *ngIf="getChampionImageUrl(match.playerStats?.championId || match.playerStats?.champion)"
-              [src]="getChampionImageUrl(match.playerStats?.championId || match.playerStats?.champion)"
+              *ngIf="getChampionImageUrl(match.playerStats?.championId || match.playerStats?.championName || match.playerStats?.champion)"
+              [src]="getChampionImageUrl(match.playerStats?.championId || match.playerStats?.championName || match.playerStats?.champion)"
               [alt]="match.playerStats?.championName || match.playerStats?.champion"
               class="champion-img"
               onerror="this.style.display='none'; this.nextElementSibling.style.display='block'"
             />
             <div
               class="champion-placeholder"
-              [style.display]="getChampionImageUrl(match.playerStats?.championId || match.playerStats?.champion) ? 'none' : 'flex'"
+              [style.display]="getChampionImageUrl(match.playerStats?.championId || match.playerStats?.championName || match.playerStats?.champion) ? 'none' : 'flex'"
             >
               {{ (match.playerStats?.championName ||
               match.playerStats?.champion)?.charAt(0) || '?' }}
@@ -176,8 +176,12 @@
               {{ match.playerStats?.championName || match.playerStats?.champion
               }}
             </div>
-            <div class="lane-name" *ngIf="match.playerStats?.lane || match.playerStats?.assignedLane">
-              {{ getLaneName(match.playerStats?.lane || match.playerStats?.assignedLane || '') }}
+            <div
+              class="lane-name"
+              *ngIf="match.playerStats?.lane || match.playerStats?.assignedLane"
+            >
+              {{ getLaneName(match.playerStats?.lane ||
+              match.playerStats?.assignedLane || '') }}
             </div>
             <div class="champion-level">
               Nível {{ match.playerStats?.championLevel || 'N/A' }}
@@ -350,7 +354,10 @@
                               [class.positive]="getParticipantLpChange(match, participant.summonerName) > 0"
                               [class.negative]="getParticipantLpChange(match, participant.summonerName) < 0"
                             >
-                              {{ getParticipantLpChange(match, participant.summonerName) > 0 ? '+' : '' }}{{ getParticipantLpChange(match, participant.summonerName) }}
+                              {{ getParticipantLpChange(match,
+                              participant.summonerName) > 0 ? '+' : '' }}{{
+                              getParticipantLpChange(match,
+                              participant.summonerName) }}
                             </span>
                           </div>
                           <div class="champion-info">
@@ -531,7 +538,10 @@
                               [class.positive]="getParticipantLpChange(match, participant.summonerName) > 0"
                               [class.negative]="getParticipantLpChange(match, participant.summonerName) < 0"
                             >
-                              {{ getParticipantLpChange(match, participant.summonerName) > 0 ? '+' : '' }}{{ getParticipantLpChange(match, participant.summonerName) }}
+                              {{ getParticipantLpChange(match,
+                              participant.summonerName) > 0 ? '+' : '' }}{{
+                              getParticipantLpChange(match,
+                              participant.summonerName) }}
                             </span>
                           </div>
                           <div class="champion-info">

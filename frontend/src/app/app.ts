@@ -2022,6 +2022,10 @@ export class App implements OnInit, OnDestroy {
           console.error('❌ [App] Não foi possível extrair summonerName do player:', player);
         }
 
+        // ✅ GARANTIR: Atualizar CurrentSummonerService explicitamente
+        this.updateCurrentSummonerService();
+        console.log('✅ [App] CurrentSummonerService atualizado após carregar do LCU');
+
         this.savePlayerData(player).catch(err => console.error('Erro ao salvar dados:', err));
         this.updateSettingsForm();
 
@@ -2204,6 +2208,10 @@ export class App implements OnInit, OnDestroy {
         console.log(`✅ [App] SummonerName configurado no ApiService (getCurrentPlayerDetails): ${displayName}`);
       }
 
+      // ✅ GARANTIR: Atualizar CurrentSummonerService explicitamente
+      this.updateCurrentSummonerService();
+      console.log('✅ [App] CurrentSummonerService atualizado após getCurrentPlayerDetails');
+
       // ❌ REMOVIDO: localStorage causa race condition com Redis locks
       // localStorage.setItem('currentPlayer', JSON.stringify(player));
 
@@ -2296,6 +2304,10 @@ export class App implements OnInit, OnDestroy {
               console.log('🔧 [App] DisplayName definido como summonerName:', this.currentPlayer.displayName);
             }
           }
+
+          // ✅ GARANTIR: Atualizar CurrentSummonerService explicitamente
+          this.updateCurrentSummonerService();
+          console.log('✅ [App] CurrentSummonerService atualizado após carregar do Electron storage');
 
           console.log(`✅ [Electron] Dados do jogador carregados: ${summonerName}`, result.path);
 

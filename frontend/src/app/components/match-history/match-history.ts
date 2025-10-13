@@ -1040,19 +1040,21 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
       'CLASSIC': 'Clássica'
     };
     return modes[gameMode || ''] || 'Desconhecido';
-  } getChampionImageUrl(championName?: string): string {
+  } getChampionImageUrl(championName?: string | number): string {
     if (!championName) return '';
 
+    // Converter para string se necessário
+    const championValue = championName.toString();
+
     // Se championName é um número (championId), usar o serviço de campeões
-    const championId = parseInt(championName);
+    const championId = parseInt(championValue);
     if (!isNaN(championId)) {
       return this.championService.getChampionImageUrl(championId);
     }
 
-    // Se championName é uma string, tentar encontrar o campeão pelo nome
-    // Para compatibilidade com dados antigos
-    const version = '15.19.1';
-    return `https://ddragon.leagueoflegends.com/cdn/${version}/img/champion/${championName}.png`;
+    // Se championName é uma string, usar o método correto do serviço de campeões
+    // que normaliza os nomes e busca no cache (ex: "Master Yi" -> "MasterYi.png")
+    return this.championService.getChampionImageUrlByName(championValue);
   }
 
   getItemImageUrl(itemId: number): string {

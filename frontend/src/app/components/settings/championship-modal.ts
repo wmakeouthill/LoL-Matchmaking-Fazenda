@@ -109,13 +109,28 @@ export class ChampionshipModalComponent implements OnInit, OnChanges {
       this.errorMessage = '';
       this.successMessage = '';
 
+      // ✅ CORREÇÃO: Validar que temos headers autenticados antes de fazer a requisição
+      const headers = this.apiService.getAuthenticatedHeaders();
+      console.log('🔐 [ChampionshipModal] Headers para requisição:', headers);
+
+      if (!headers['X-Summoner-Name']) {
+        throw new Error('Você precisa estar logado para premiar jogadores. Por favor, reconecte ao League of Legends.');
+      }
+
+      console.log('🏆 [ChampionshipModal] Premiando jogador:', {
+        summonerName: this.selectedPlayer,
+        championshipTitle: this.selectedChampionship.name,
+        lpBonus: this.customLpBonus,
+        requestingPlayer: headers['X-Summoner-Name']
+      });
+
       const response: any = await firstValueFrom(
         this.http.post(`${this.baseUrl}/admin/award-championship`, {
           summonerName: this.selectedPlayer,
           championshipTitle: this.selectedChampionship.name,
           lpBonus: this.customLpBonus
         }, {
-          headers: this.apiService.getAuthenticatedHeaders()
+          headers: headers
         })
       );
 
@@ -131,8 +146,26 @@ export class ChampionshipModalComponent implements OnInit, OnChanges {
         this.errorMessage = response.message || 'Erro ao premiar jogador';
       }
     } catch (error: any) {
-      console.error('Erro ao premiar jogador:', error);
-      this.errorMessage = error.error?.message || 'Erro ao premiar jogador com título';
+      console.error('❌ [ChampionshipModal] Erro ao premiar jogador:', error);
+      console.error('❌ [ChampionshipModal] Erro completo:', {
+        status: error.status,
+        statusText: error.statusText,
+        message: error.message,
+        error: error.error
+      });
+
+      // ✅ CORREÇÃO: Exibir mensagem de erro mais detalhada
+      if (error?.message?.includes('logado')) {
+        this.errorMessage = error.message;
+      } else if (error.error?.message) {
+        this.errorMessage = error.error.message;
+      } else if (error.status === 400 && error.error) {
+        this.errorMessage = error.error.message || 'Erro de validação. Verifique os dados e tente novamente.';
+      } else if (error.status === 403) {
+        this.errorMessage = 'Você não tem permissão para premiar jogadores.';
+      } else {
+        this.errorMessage = error.message || 'Erro ao premiar jogador com título';
+      }
     } finally {
       this.loading = false;
     }

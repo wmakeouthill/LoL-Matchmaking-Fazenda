@@ -23,6 +23,9 @@ public interface PlayerRepository extends JpaRepository<Player, Long> {
 
     List<Player> findByOrderByCustomLpDesc();
 
+    // ✅ NOVO: Ordenação com critério de desempate (customLp DESC, customMmr DESC)
+    List<Player> findByOrderByCustomLpDescCustomMmrDesc();
+
     List<Player> findTop10ByOrderByCurrentMmrDesc();
 
     List<Player> findTop10ByOrderByCreatedAtDesc();

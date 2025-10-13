@@ -170,10 +170,12 @@ public class RedisLeaderboardService {
 
     /**
      * Busca leaderboard do SQL (fallback)
+     * ✅ ORDENAÇÃO: customLp DESC, customMmr DESC (critério de desempate)
      */
     private List<PlayerDTO> getLeaderboardFromSQL(int page, int limit) {
         try {
-            PageRequest pageRequest = PageRequest.of(page, limit, Sort.by("customLp").descending());
+            PageRequest pageRequest = PageRequest.of(page, limit, 
+                Sort.by(Sort.Order.desc("customLp"), Sort.Order.desc("customMmr")));
             List<Player> players = playerRepository.findAll(pageRequest).getContent();
 
             int rank = page * limit + 1;

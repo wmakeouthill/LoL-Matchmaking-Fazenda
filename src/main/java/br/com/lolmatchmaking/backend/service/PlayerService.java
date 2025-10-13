@@ -373,7 +373,8 @@ public class PlayerService {
             // Cache MISS: Buscar do SQL
             log.info("⚠️ [REDIS] Leaderboard cache MISS. Buscando do SQL...");
 
-            List<Player> playersFromDb = playerRepository.findByOrderByCustomLpDesc();
+            // ✅ CORREÇÃO: Ordenar por customLp DESC, customMmr DESC (critério de desempate)
+            List<Player> playersFromDb = playerRepository.findByOrderByCustomLpDescCustomMmrDesc();
             List<PlayerDTO> playerDTOs = playersFromDb.stream()
                     .map(playerMapper::toDTO)
                     .toList();
