@@ -2839,7 +2839,13 @@ public class DraftFlowService {
                 try {
                     playerStateService.setPlayerState(playerName,
                             br.com.lolmatchmaking.backend.service.lock.PlayerState.AVAILABLE);
-                    log.info("✅ [DraftFlow] Estado de {} limpo para AVAILABLE", playerName);
+                    
+                    // ✅ NOVO: Log específico para bots
+                    if (isBotPlayer(playerName)) {
+                        log.info("🤖 [DraftFlow] Estado de BOT {} limpo para AVAILABLE", playerName);
+                    } else {
+                        log.info("✅ [DraftFlow] Estado de {} limpo para AVAILABLE", playerName);
+                    }
                 } catch (Exception e) {
                     log.error("❌ [DraftFlow] Erro ao limpar estado de {}: {}", playerName, e.getMessage());
                 }
@@ -3095,5 +3101,24 @@ public class DraftFlowService {
             log.error("❌ [getDraftDataForRestore] Erro ao buscar dados do draft", e);
             return result;
         }
+    }
+
+    /**
+     * ✅ NOVO: Verifica se um jogador é bot
+     */
+    private boolean isBotPlayer(String summonerName) {
+        if (summonerName == null || summonerName.isEmpty()) {
+            return false;
+        }
+        
+        String normalizedName = summonerName.toLowerCase().trim();
+        
+        // ✅ Padrões de nomes de bots conhecidos
+        return normalizedName.startsWith("bot") || 
+               normalizedName.startsWith("ai_") || 
+               normalizedName.endsWith("_bot") ||
+               normalizedName.contains("bot_") ||
+               normalizedName.equals("bot") ||
+               normalizedName.matches(".*bot\\d+.*"); // bot1, bot2, etc.
     }
 }

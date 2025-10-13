@@ -1,9 +1,11 @@
 package br.com.lolmatchmaking.backend.websocket;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 import org.slf4j.Logger;
@@ -23,6 +25,7 @@ import br.com.lolmatchmaking.backend.service.DraftFlowService;
 import br.com.lolmatchmaking.backend.service.LCUConnectionRegistry;
 import br.com.lolmatchmaking.backend.service.RedisLCUConnectionService;
 import br.com.lolmatchmaking.backend.service.redis.RedisWebSocketSessionService;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.lang.NonNull;
 import lombok.RequiredArgsConstructor;
 
@@ -95,6 +98,13 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         String type = root.path("type").asText();
         switch (type) {
             case "identify_player" -> handleIdentify(session, root);
+            case "electron_identify" -> handleElectronIdentify(session, root);
+            case "identity_confirmed" -> webSocketService.handleIdentityConfirmed(session.getId(), root);
+            case "identity_confirmation_failed" ->
+                webSocketService.handleIdentityConfirmationFailed(session.getId(), root);
+            case "identity_confirmed_critical" ->
+                webSocketService.handleCriticalIdentityConfirmed(session.getId(), root);
+            case "request_critical_identity_confirmation" -> handleRequestCriticalIdentityConfirmation(session, root);
             case "ping" -> session.sendMessage(new TextMessage("{\"type\":\"pong\"}"));
             case "join_queue" -> handleJoinQueue(session, root);
             case "leave_queue" -> handleLeaveQueue(session, root);
@@ -412,6 +422,84 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
 
     private static final String FIELD_CUSTOM_LP = "customLp";
 
+    // ✅ NOVO: Handler para identificação automática do Electron
+    private void handleElectronIdentify(WebSocketSession session, JsonNode root) throws IOException {
+        try {
+            log.info("🔍 [CoreWS] Recebendo electron_identify de sessionId={}", session.getId());
+
+            // ✅ Validar fonte
+            String source = root.path("source").asText("");
+            if (!"electron_main".equals(source)) {
+                log.warn("⚠️ [CoreWS] Identificação NÃO veio do Electron main! Source: {}", source);
+                // Aceitar mas marcar como não-verificado
+            }
+
+            // ✅ Extrair dados
+            String summonerName = root.path("summonerName").asText(null);
+            String puuid = root.path("puuid").asText(null);
+            String gameName = root.path("gameName").asText(null);
+            String tagLine = root.path("tagLine").asText(null);
+            String summonerId = root.path("summonerId").asText(null);
+
+            if (summonerName == null || puuid == null) {
+                log.error("❌ [CoreWS] Identificação incompleta! summonerName={}, puuid={}", summonerName, puuid);
+                session.sendMessage(new TextMessage(
+                        "{\"type\":\"electron_identified\",\"success\":false,\"error\":\"Dados incompletos\"}"));
+                return;
+            }
+
+            // ✅ CRÍTICO: Validar constraint PUUID único via RedisPlayerMatchService
+            if (!redisPlayerMatch.validatePuuidConstraint(summonerName, puuid)) {
+                log.error("🚨 [CoreWS] PUUID CONFLITO! {} não pode ser vinculado ao PUUID {}", summonerName, puuid);
+                session.sendMessage(new TextMessage(
+                        "{\"type\":\"electron_identified\",\"success\":false,\"error\":\"PUUID já vinculado a outro jogador\"}"));
+                return;
+            }
+
+            // ✅ REGISTRAR com VERIFICAÇÃO
+            sessionRegistry.registerPlayer(summonerName, session.getId());
+
+            // ✅ ARMAZENAR PUUID constraint no Redis (para validação futura)
+            redisPlayerMatch.registerPuuidConstraint(summonerName, puuid);
+
+            // ✅ Armazenar LCU info se fornecido
+            JsonNode lcuInfo = root.path("lcuInfo");
+            if (!lcuInfo.isMissingNode()) {
+                redisLCUConnection.storeLcuConnection(
+                        summonerName,
+                        lcuInfo.path("host").asText(),
+                        lcuInfo.path("port").asInt(),
+                        lcuInfo.path("protocol").asText(),
+                        lcuInfo.path("authToken").asText());
+                log.info("✅ [CoreWS] LCU info armazenada para {}", summonerName);
+            }
+
+            // ✅ Armazenar player info completo no Redis
+            Map<String, Object> playerInfo = new HashMap<>();
+            playerInfo.put("summonerName", summonerName);
+            playerInfo.put("gameName", gameName);
+            playerInfo.put("tagLine", tagLine);
+            playerInfo.put("puuid", puuid);
+            playerInfo.put("summonerId", summonerId);
+            playerInfo.put("source", source);
+            playerInfo.put("timestamp", root.path("timestamp").asLong());
+
+            String playerInfoJson = mapper.writeValueAsString(playerInfo);
+            redisWSSession.storePlayerInfo(session.getId(), playerInfoJson);
+
+            log.info("✅ [CoreWS] {} identificado via Electron (PUUID: {}...)",
+                    summonerName, puuid.substring(0, Math.min(8, puuid.length())));
+
+            // Responder
+            session.sendMessage(new TextMessage("{\"type\":\"electron_identified\",\"success\":true}"));
+
+        } catch (Exception e) {
+            log.error("❌ [CoreWS] Erro ao processar electron_identify", e);
+            session.sendMessage(
+                    new TextMessage("{\"type\":\"electron_identified\",\"success\":false,\"error\":\"Erro interno\"}"));
+        }
+    }
+
     private void handleIdentify(WebSocketSession session, JsonNode root) throws IOException {
         JsonNode playerData = root.path("playerData");
         if (playerData.isMissingNode()) {
@@ -623,6 +711,71 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         queueService.leaveQueue(summonerName);
         session.sendMessage(new TextMessage("{\"type\":\"leave_queue_result\",\"success\":true}"));
         broadcastQueueUpdate();
+    }
+
+    /**
+     * ✅ NOVO: Handler para solicitação de confirmação crítica de identidade
+     */
+    private void handleRequestCriticalIdentityConfirmation(WebSocketSession session, JsonNode root) throws IOException {
+        try {
+            log.info("🔍 [CoreWS] Recebendo request_critical_identity_confirmation de sessionId={}", session.getId());
+
+            String requestId = root.path("requestId").asText(null);
+            String actionType = root.path("actionType").asText("unknown");
+
+            if (requestId == null) {
+                log.error("❌ [CoreWS] requestId ausente na solicitação de confirmação crítica");
+                session.sendMessage(new TextMessage(
+                        "{\"type\":\"critical_identity_confirmation_failed\",\"error\":\"requestId ausente\"}"));
+                return;
+            }
+
+            // ✅ Buscar summonerName da sessão
+            String summonerName = sessionRegistry.getSummonerBySession(session.getId());
+            if (summonerName == null || summonerName.isEmpty()) {
+                log.error("❌ [CoreWS] Sessão não identificada para confirmação crítica: {}", session.getId());
+                session.sendMessage(
+                        new TextMessage("{\"type\":\"critical_identity_confirmation_failed\",\"requestId\":\""
+                                + requestId + "\",\"error\":\"Sessão não identificada\"}"));
+                return;
+            }
+
+            // ✅ Solicitar confirmação crítica via MatchmakingWebSocketService
+            CompletableFuture<Boolean> confirmationFuture = webSocketService
+                    .requestCriticalActionConfirmation(summonerName, actionType);
+
+            // ✅ Aguardar resultado e responder
+            confirmationFuture.whenComplete((confirmed, throwable) -> {
+                try {
+                    if (throwable != null) {
+                        log.error("❌ [CoreWS] Erro na confirmação crítica: {}", throwable.getMessage());
+                        session.sendMessage(
+                                new TextMessage("{\"type\":\"critical_identity_confirmation_failed\",\"requestId\":\""
+                                        + requestId + "\",\"error\":\"Erro interno\"}"));
+                    } else if (confirmed) {
+                        log.info("✅ [CoreWS] Confirmação crítica aceita: {} (ação: {})", summonerName, actionType);
+                        session.sendMessage(new TextMessage("{\"type\":\"critical_identity_confirmed\",\"requestId\":\""
+                                + requestId + "\",\"actionType\":\"" + actionType + "\"}"));
+                    } else {
+                        log.warn("⚠️ [CoreWS] Confirmação crítica rejeitada: {} (ação: {})", summonerName, actionType);
+                        session.sendMessage(
+                                new TextMessage("{\"type\":\"critical_identity_confirmation_failed\",\"requestId\":\""
+                                        + requestId + "\",\"error\":\"Confirmação rejeitada\"}"));
+                    }
+                } catch (IOException e) {
+                    log.error("❌ [CoreWS] Erro ao enviar resposta de confirmação crítica", e);
+                }
+            });
+
+        } catch (Exception e) {
+            log.error("❌ [CoreWS] Erro ao processar solicitação de confirmação crítica", e);
+            try {
+                session.sendMessage(new TextMessage(
+                        "{\"type\":\"critical_identity_confirmation_failed\",\"error\":\"Erro interno\"}"));
+            } catch (IOException ioException) {
+                log.error("❌ [CoreWS] Erro ao enviar erro de confirmação crítica", ioException);
+            }
+        }
     }
 
     private void handleAcceptDecline(WebSocketSession session, JsonNode root, boolean accept) throws IOException {

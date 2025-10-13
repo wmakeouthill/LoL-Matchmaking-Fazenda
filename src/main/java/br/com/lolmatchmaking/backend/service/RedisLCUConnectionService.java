@@ -421,6 +421,47 @@ public class RedisLCUConnectionService {
     }
 
     /**
+     * ✅ NOVO: Armazena informações completas da conexão LCU do jogador.
+     * 
+     * @param summonerName Nome do invocador
+     * @param host         Host do LCU (ex: 127.0.0.1)
+     * @param port         Porta do LCU (ex: 58472)
+     * @param protocol     Protocolo (https)
+     * @param authToken    Token de autenticação Base64
+     * @return true se armazenou com sucesso, false caso contrário
+     */
+    public boolean storeLcuConnection(String summonerName, String host, int port, String protocol, String authToken) {
+        try {
+            if (summonerName == null || host == null || protocol == null || authToken == null) {
+                log.warn("⚠️ [RedisLCU] Dados inválidos para storeLcuConnection");
+                return false;
+            }
+
+            String normalizedSummoner = summonerName.toLowerCase().trim();
+            String connectionKey = CONNECTION_PREFIX + normalizedSummoner;
+
+            // Criar dados da conexão
+            Map<String, Object> connectionData = new HashMap<>();
+            connectionData.put("host", host);
+            connectionData.put("port", port);
+            connectionData.put("protocol", protocol);
+            connectionData.put("authToken", authToken);
+            connectionData.put("registeredAt", System.currentTimeMillis());
+
+            // Armazenar no Redis com TTL
+            redisTemplate.opsForHash().putAll(connectionKey, connectionData);
+            redisTemplate.expire(connectionKey, TTL_SECONDS, TimeUnit.SECONDS);
+
+            log.debug("✅ [RedisLCU] Conexão LCU armazenada: {} → {}:{}", normalizedSummoner, host, port);
+            return true;
+
+        } catch (Exception e) {
+            log.error("❌ [RedisLCU] Erro ao armazenar conexão LCU: {}", summonerName, e);
+            return false;
+        }
+    }
+
+    /**
      * Armazena último status LCU do jogador (lcu_status event).
      * 
      * Inclui: estado da conexão (conectado/desconectado), versão do LCU, etc.

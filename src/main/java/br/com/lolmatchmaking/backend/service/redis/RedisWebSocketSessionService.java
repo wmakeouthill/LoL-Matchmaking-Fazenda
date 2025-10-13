@@ -339,6 +339,54 @@ public class RedisWebSocketSessionService {
     }
 
     /**
+     * ✅ NOVO: Lista todas as informações de clientes ativos.
+     * Útil para confirmação de identidade.
+     * 
+     * @return Map de sessionId → ClientInfo
+     */
+    public Map<String, Object> getAllClientInfo() {
+        try {
+            Map<String, Object> allClients = new HashMap<>();
+
+            // Buscar todas as chaves ws:client:*
+            Iterable<String> keys = redisson.getKeys().getKeysByPattern(CLIENT_KEY_PREFIX + "*");
+
+            for (String key : keys) {
+                String sessionId = key.substring(CLIENT_KEY_PREFIX.length());
+
+                // Buscar summonerName para esta sessão
+                String summonerKey = SESSION_KEY_PREFIX + sessionId;
+                RBucket<String> summonerBucket = redisson.getBucket(summonerKey);
+                String summonerName = summonerBucket.get();
+
+                // Buscar ClientInfo
+                Optional<ClientInfo> clientInfoOpt = getClientInfo(sessionId);
+
+                if (clientInfoOpt.isPresent() && summonerName != null) {
+                    ClientInfo clientInfo = clientInfoOpt.get();
+
+                    // Criar Map com informações do cliente
+                    Map<String, Object> clientData = new HashMap<>();
+                    clientData.put("summonerName", summonerName);
+                    clientData.put("ip", clientInfo.getIpAddress());
+                    clientData.put("connectedAt", clientInfo.getConnectedAt());
+                    clientData.put("lastActivity", clientInfo.getLastActivity());
+                    clientData.put("userAgent", clientInfo.getUserAgent());
+
+                    allClients.put(sessionId, clientData);
+                }
+            }
+
+            log.debug("✅ [RedisWSSession] {} clientes ativos listados", allClients.size());
+            return allClients;
+
+        } catch (Exception e) {
+            log.error("❌ [RedisWSSession] Erro ao listar todos os clientes", e);
+            return new HashMap<>();
+        }
+    }
+
+    /**
      * Lista todas as sessões ativas.
      * Útil para broadcast e monitoramento.
      * 
@@ -510,5 +558,36 @@ public class RedisWebSocketSessionService {
             return "";
         }
         return summonerName.trim().toLowerCase();
+    }
+
+    /**
+     * ✅ NOVO: Atualiza timestamp da última confirmação de identidade
+     */
+    public void updateIdentityConfirmation(String sessionId) {
+        try {
+            String clientKey = CLIENT_KEY_PREFIX + sessionId;
+            RBucket<ClientInfo> clientBucket = redisson.getBucket(clientKey);
+
+            Optional<ClientInfo> clientInfoOpt = Optional.ofNullable(clientBucket.get());
+            if (clientInfoOpt.isPresent()) {
+                ClientInfo clientInfo = clientInfoOpt.get();
+
+                // Atualizar timestamp
+                ClientInfo updatedClientInfo = ClientInfo.builder()
+                        .sessionId(clientInfo.getSessionId())
+                        .summonerName(clientInfo.getSummonerName())
+                        .ipAddress(clientInfo.getIpAddress())
+                        .connectedAt(clientInfo.getConnectedAt())
+                        .lastActivity(Instant.now()) // lastActivity atualizado
+                        .userAgent(clientInfo.getUserAgent())
+                        .build();
+
+                clientBucket.set(updatedClientInfo, SESSION_TTL_SECONDS, TimeUnit.SECONDS);
+                log.debug("✅ [RedisWSSession] Timestamp de confirmação atualizado: {}", sessionId);
+            }
+
+        } catch (Exception e) {
+            log.error("❌ [RedisWSSession] Erro ao atualizar timestamp de confirmação: {}", sessionId, e);
+        }
     }
 }
