@@ -1,5 +1,6 @@
 package br.com.lolmatchmaking.backend.service;
 
+import br.com.lolmatchmaking.backend.domain.entity.CustomMatch;
 import br.com.lolmatchmaking.backend.domain.repository.CustomMatchRepository;
 import br.com.lolmatchmaking.backend.websocket.SessionRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -29,6 +30,9 @@ public class DraftFlowService {
 
     // ✅ NOVO: Redis para performance e resiliência
     private final RedisDraftFlowService redisDraftFlow;
+
+    // ✅ NOVO: WebSocketService para retry de draft_starting
+    private final br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService webSocketService;
 
     // ✅ NOVO: PlayerStateService para cleanup inteligente
     private final br.com.lolmatchmaking.backend.service.lock.PlayerStateService playerStateService;
@@ -2266,62 +2270,131 @@ public class DraftFlowService {
             // ✅ Marcar último retry
             redisTemplate.opsForValue().set(retryKey, nowSec, java.time.Duration.ofMinutes(5));
 
-            // ✅ VALIDAÇÃO: Buscar todos os jogadores do MySQL (ownership)
-            customMatchRepository.findById(matchId).ifPresent(match -> {
-                // Validar status
-                if (!"draft".equalsIgnoreCase(match.getStatus())) {
-                    return;
+            // ✅ CRÍTICO: VALIDAR COM MYSQL ANTES DE RETRY
+            Optional<CustomMatch> matchOpt = customMatchRepository.findById(matchId);
+
+            if (matchOpt.isEmpty()) {
+                log.warn("🧹 [CLEANUP] Match {} não existe no MySQL! Limpando Redis fantasma...", matchId);
+                redisDraftFlow.clearAllDraftData(matchId);
+                log.info("✅ [CLEANUP] Draft fantasma {} removida do Redis", matchId);
+                return; // ABORTAR retry
+            }
+
+            CustomMatch match = matchOpt.get();
+
+            // Validar status
+            if (!"draft".equalsIgnoreCase(match.getStatus())) {
+                log.warn("🧹 [CLEANUP] Match {} não está em draft no MySQL (status: {})! Limpando Redis...",
+                        matchId, match.getStatus());
+                redisDraftFlow.clearAllDraftData(matchId);
+                log.info("✅ [CLEANUP] Draft {} removida do Redis (status MySQL: {})", matchId, match.getStatus());
+                return;
+            }
+
+            log.info("✅ [Validação MySQL] Match {} confirmada como 'draft' - prosseguindo retry", matchId);
+
+            // ✅ Buscar todos os jogadores (team1 + team2)
+            List<String> allPlayers = new ArrayList<>();
+            allPlayers.addAll(st.getTeam1Players());
+            allPlayers.addAll(st.getTeam2Players());
+
+            // ✅ CRÍTICO: NÃO parar retry apenas porque está "conectado"!
+            // Estar conectado ≠ Estar vendo o draft (evento pode ter sido perdido)
+            // SEMPRE continuar enviando (com throttle 3s) até que o draft termine
+            log.debug("🔄 [DraftFlow] {} jogadores na partida - enviando retry (throttle 3s)",
+                    allPlayers.size());
+
+            // ✅ Validar ownership case-insensitive + verificar acknowledgment
+            List<String> validPlayers = new ArrayList<>();
+            for (String player : allPlayers) {
+                // ✅ OTIMIZAÇÃO: Verificar se jogador JÁ acknowledgou (já viu o draft)
+                String ackKey = "draft_ack:" + matchId + ":" + player.toLowerCase();
+                Boolean hasAcked = (Boolean) redisTemplate.opsForValue().get(ackKey);
+                if (Boolean.TRUE.equals(hasAcked)) {
+                    log.debug("✅ [DraftFlow] Jogador {} já acknowledged - pulando retry", player);
+                    continue; // Pula este jogador
                 }
 
-                // ✅ Buscar todos os jogadores (team1 + team2)
-                List<String> allPlayers = new ArrayList<>();
-                allPlayers.addAll(st.getTeam1Players());
-                allPlayers.addAll(st.getTeam2Players());
+                boolean inTeam1 = match.getTeam1PlayersJson() != null &&
+                        match.getTeam1PlayersJson().toLowerCase().contains(player.toLowerCase());
+                boolean inTeam2 = match.getTeam2PlayersJson() != null &&
+                        match.getTeam2PlayersJson().toLowerCase().contains(player.toLowerCase());
 
-                // ✅ OTIMIZAÇÃO: Verificar quantos jogadores TÊM sessão WebSocket ativa
-                int connectedCount = 0;
-                for (String player : allPlayers) {
-                    Optional<org.springframework.web.socket.WebSocketSession> session = sessionRegistry
-                            .getByPlayer(player);
-                    if (session.isPresent()) {
-                        connectedCount++;
-                    }
+                if (inTeam1 || inTeam2) {
+                    validPlayers.add(player);
                 }
+            }
 
-                // ✅ Se TODOS estão conectados, não precisa retry!
-                if (connectedCount == allPlayers.size()) {
-                    log.debug("✅ [DraftFlow] Todos os {} jogadores estão conectados - pulando retry",
-                            allPlayers.size());
-                    return;
-                }
+            if (!validPlayers.isEmpty()) {
+                log.debug("🔄 [DraftFlow] RETRY: Reenviando draft state para {} jogadores da partida {}",
+                        validPlayers.size(), matchId);
 
-                log.debug("⚠️ [DraftFlow] Apenas {}/{} jogadores conectados - enviando retry",
-                        connectedCount, allPlayers.size());
+                // ✅ CRÍTICO: Enviar EVENTO INICIAL (draft_starting) para jogadores
+                // desconectados
+                // Isso garante que quem perdeu o evento inicial vê o draft completo
+                retryDraftStartingForPlayers(matchId, validPlayers);
 
-                // ✅ Validar ownership case-insensitive
-                List<String> validPlayers = new ArrayList<>();
-                for (String player : allPlayers) {
-                    boolean inTeam1 = match.getTeam1PlayersJson() != null &&
-                            match.getTeam1PlayersJson().toLowerCase().contains(player.toLowerCase());
-                    boolean inTeam2 = match.getTeam2PlayersJson() != null &&
-                            match.getTeam2PlayersJson().toLowerCase().contains(player.toLowerCase());
-
-                    if (inTeam1 || inTeam2) {
-                        validPlayers.add(player);
-                    }
-                }
-
-                if (!validPlayers.isEmpty()) {
-                    log.debug("🔄 [DraftFlow] RETRY: Reenviando draft_updated para {} jogadores da partida {}",
-                            validPlayers.size(), matchId);
-
-                    // ✅ BROADCAST completo (sem confirmationOnly)
-                    broadcastUpdate(st, false);
-                }
-            });
+                // ✅ Também enviar update normal (para quem já está no draft)
+                broadcastUpdate(st, false);
+            }
 
         } catch (Exception e) {
             log.debug("❌ [DraftFlow] Erro ao retry draft_updated", e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Reenviar draft_starting para jogadores que perderam o evento inicial
+     * Garante que TODOS vejam o draft, mesmo com latência/desconexão em produção
+     */
+    private void retryDraftStartingForPlayers(Long matchId, List<String> players) {
+        try {
+            // ✅ CRÍTICO: VALIDAR COM MYSQL ANTES DE RETRY
+            // Previne loops infinitos de retry para matches fantasma
+            Optional<CustomMatch> matchOpt = customMatchRepository.findById(matchId);
+
+            if (matchOpt.isEmpty()) {
+                log.warn("🧹 [CLEANUP] Match {} não existe no MySQL! Limpando Redis fantasma...", matchId);
+                redisDraftFlow.clearAllDraftData(matchId);
+                log.info("✅ [CLEANUP] Draft fantasma {} removida do Redis", matchId);
+                return; // ABORTAR retry
+            }
+
+            CustomMatch match = matchOpt.get();
+            String status = match.getStatus();
+
+            // Se não está em draft, limpar Redis
+            if (!"draft".equalsIgnoreCase(status)) {
+                log.warn("🧹 [CLEANUP] Match {} não está em draft no MySQL (status: {})! Limpando Redis...",
+                        matchId, status);
+                redisDraftFlow.clearAllDraftData(matchId);
+                log.info("✅ [CLEANUP] Draft {} removida do Redis (status MySQL: {})", matchId, status);
+                return; // ABORTAR retry
+            }
+
+            log.info("✅ [Validação MySQL] Match {} confirmada como 'draft' - prosseguindo retry", matchId);
+
+            // Buscar dados completos do MySQL para montar draft_starting
+            Map<String, Object> draftData = getDraftDataForRestore(matchId);
+
+            draftData.put("matchId", matchId);
+            draftData.put("id", matchId);
+            draftData.put("timeRemaining", 30);
+
+            log.info("🔄 [DraftFlow] RETRY: Enviando draft_starting para {} jogadores",
+                    players.size());
+            for (String player : players) {
+                log.info("  📤 {}", player);
+            }
+
+            // ✅ BROADCAST PARALELO usando webSocketService (mesmo padrão do
+            // MatchFoundService)
+            webSocketService.sendToPlayers("draft_starting", draftData, players);
+
+            log.info("✅ [DraftFlow] RETRY: draft_starting enviado para {} jogadores", players.size());
+
+        } catch (Exception e) {
+            log.error("❌ [DraftFlow] Erro ao retry draft_starting", e);
         }
     }
 

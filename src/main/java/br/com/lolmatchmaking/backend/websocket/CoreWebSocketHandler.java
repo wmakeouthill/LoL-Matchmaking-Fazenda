@@ -74,6 +74,9 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
     // ✅ NOVO: Lock services
     private final br.com.lolmatchmaking.backend.service.lock.PlayerLockService playerLockService;
 
+    // ✅ NOVO: RedisTemplate para acknowledgments
+    private final org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
+
     // ✅ DEPRECIADO: Migrado para Redis (backward compatibility)
     // ✅ REMOVIDO: identifiedPlayers e lastLcuStatus - Redis é fonte única da
     // verdade
@@ -105,6 +108,9 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             case "lcu_status" -> handleLcuStatus(session, root);
             case "register_lcu_connection" -> handleRegisterLcuConnection(session, root);
             case "lcu_response" -> handleLcuResponse(session, root);
+            case "match_found_acknowledged" -> handleMatchFoundAcknowledged(session, root);
+            case "draft_acknowledged" -> handleDraftAcknowledged(session, root);
+            case "game_acknowledged" -> handleGameAcknowledged(session, root);
             default -> session.sendMessage(new TextMessage("{\"error\":\"unknown_type\"}"));
         }
     }
@@ -472,6 +478,60 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
 
         log.info("Cliente desconectado: {} - status {}", session.getId(), status);
         // NÃO remover da fila aqui (mesma regra do Node)
+    }
+
+    /**
+     * ✅ NOVO: Handler para acknowledgment de match_found (jogador VIU o modal)
+     */
+    private void handleMatchFoundAcknowledged(WebSocketSession session, JsonNode root) {
+        try {
+            long matchId = root.path("matchId").asLong();
+            String playerName = root.path("playerName").asText();
+
+            // Salvar no Redis que este jogador JÁ recebeu o match_found
+            String ackKey = "match_found_ack:" + matchId + ":" + playerName.toLowerCase();
+            redisTemplate.opsForValue().set(ackKey, "true", java.time.Duration.ofMinutes(5));
+
+            log.debug("✅ [ACK] Match found acknowledged: matchId={}, player={}", matchId, playerName);
+        } catch (Exception e) {
+            log.warn("⚠️ [ACK] Erro ao processar match_found_acknowledged", e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Handler para acknowledgment de draft (jogador VIU o draft)
+     */
+    private void handleDraftAcknowledged(WebSocketSession session, JsonNode root) {
+        try {
+            long matchId = root.path("matchId").asLong();
+            String playerName = root.path("playerName").asText();
+
+            // Salvar no Redis que este jogador JÁ recebeu o draft
+            String ackKey = "draft_ack:" + matchId + ":" + playerName.toLowerCase();
+            redisTemplate.opsForValue().set(ackKey, "true", java.time.Duration.ofMinutes(10));
+
+            log.debug("✅ [ACK] Draft acknowledged: matchId={}, player={}", matchId, playerName);
+        } catch (Exception e) {
+            log.warn("⚠️ [ACK] Erro ao processar draft_acknowledged", e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Handler para acknowledgment de game (jogador VIU o game)
+     */
+    private void handleGameAcknowledged(WebSocketSession session, JsonNode root) {
+        try {
+            long matchId = root.path("matchId").asLong();
+            String playerName = root.path("playerName").asText();
+
+            // Salvar no Redis que este jogador JÁ recebeu o game
+            String ackKey = "game_ack:" + matchId + ":" + playerName.toLowerCase();
+            redisTemplate.opsForValue().set(ackKey, "true", java.time.Duration.ofHours(1));
+
+            log.debug("✅ [ACK] Game acknowledged: matchId={}, player={}", matchId, playerName);
+        } catch (Exception e) {
+            log.warn("⚠️ [ACK] Erro ao processar game_acknowledged", e);
+        }
     }
 
     /**

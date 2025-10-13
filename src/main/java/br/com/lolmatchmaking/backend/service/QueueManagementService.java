@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -44,6 +45,7 @@ public class QueueManagementService {
     private final br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch;
     private final RedisDraftFlowService redisDraftFlow;
     private final DraftFlowService draftFlowService;
+    private final br.com.lolmatchmaking.backend.websocket.SessionRegistry sessionRegistry;
 
     // ✅ Construtor com injeção de dependências
     public QueueManagementService(
@@ -63,7 +65,8 @@ public class QueueManagementService {
             EventBroadcastService eventBroadcastService,
             br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatchService,
             RedisDraftFlowService redisDraftFlowService,
-            @Lazy DraftFlowService draftFlowService) {
+            @Lazy DraftFlowService draftFlowService,
+            br.com.lolmatchmaking.backend.websocket.SessionRegistry sessionRegistry) {
         this.queuePlayerRepository = queuePlayerRepository;
         this.playerRepository = playerRepository;
         this.customMatchRepository = customMatchRepository;
@@ -81,6 +84,7 @@ public class QueueManagementService {
         this.redisPlayerMatch = redisPlayerMatchService;
         this.redisDraftFlow = redisDraftFlowService;
         this.draftFlowService = draftFlowService;
+        this.sessionRegistry = sessionRegistry;
     }
 
     // ✅ REMOVIDO: HashMaps locais removidos - SQL é fonte da verdade
@@ -277,6 +281,24 @@ public class QueueManagementService {
             eventBroadcastService.publishQueueUpdate(status);
 
             log.info("✅ {} entrou na fila EM TEMPO REAL (posição: {})", summonerName, queuePlayer.getQueuePosition());
+
+            // ✅ CRÍTICO: Se fila chegou a 10+ jogadores, processar IMEDIATAMENTE!
+            // Não esperar os 5 segundos do @Scheduled
+            // Recarregar fila para ter contagem atualizada
+            int queueSize = queuePlayerRepository.findByActiveTrueOrderByJoinTimeAsc().size();
+            if (queueSize >= MATCH_SIZE) {
+                log.info("🎯 [TRIGGER IMEDIATO] Fila chegou a {} jogadores - processando partida AGORA!", 
+                        queueSize);
+                // ✅ Chamar processQueue de forma assíncrona para não bloquear a resposta HTTP
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        processQueue();
+                    } catch (Exception e) {
+                        log.error("❌ Erro ao processar fila imediatamente", e);
+                    }
+                });
+            }
+
             return true;
 
         } catch (Exception e) {
@@ -880,6 +902,58 @@ public class QueueManagementService {
                 return;
             }
 
+            // ✅ CRÍTICO: VALIDAR SESSÕES WEBSOCKET ANTES DE CRIAR MATCH
+            // MySQL é fonte da verdade, mas sem sessão = broadcast impossível
+            // ⚠️ BOTS são exceção: não têm sessão WebSocket (são do backend)
+            log.info("🔍 [Validação] Verificando se JOGADORES HUMANOS têm sessão WebSocket ativa...");
+            int sessionsFound = 0;
+            int botsFound = 0;
+            List<String> humanPlayersWithoutSession = new ArrayList<>();
+            
+            for (String playerName : playerNames) {
+                // ✅ BOTS não precisam de sessão WebSocket (auto-accept via backend)
+                if (playerName.startsWith("Bot")) {
+                    botsFound++;
+                    log.debug("  🤖 {} é bot - não precisa de sessão", playerName);
+                    continue;
+                }
+                
+                Optional<org.springframework.web.socket.WebSocketSession> sessionOpt = 
+                        sessionRegistry.getByPlayer(playerName);
+                if (sessionOpt.isPresent()) {
+                    sessionsFound++;
+                    log.debug("  ✅ {} tem sessão ativa", playerName);
+                } else {
+                    humanPlayersWithoutSession.add(playerName);
+                    log.warn("  ❌ {} (HUMANO) NÃO tem sessão WebSocket ativa!", playerName);
+                }
+            }
+            
+            log.info("📊 [Validação Sessões] Humanos: {}/{} com sessão | Bots: {}/{}", 
+                    sessionsFound, playerNames.size() - botsFound, botsFound, playerNames.size());
+            
+            // Se ALGUM jogador HUMANO não tem sessão, ABORTAR criação
+            if (!humanPlayersWithoutSession.isEmpty()) {
+                log.error("❌ [CRÍTICO] {} jogadores HUMANOS SEM sessão WebSocket! ABORTANDO criação de match", 
+                        humanPlayersWithoutSession.size());
+                log.error("  Jogadores humanos sem sessão: {}", humanPlayersWithoutSession);
+                log.error("  ⚠️ MySQL não será poluído com match que falharia no broadcast!");
+                
+                // Reverter acceptance_status para permitir novo matchmaking
+                for (String pn : playerNames) {
+                    queuePlayerRepository.findBySummonerName(pn).ifPresent(qp -> {
+                        qp.setAcceptanceStatus(0); // Voltar para disponível
+                        queuePlayerRepository.save(qp);
+                    });
+                }
+                queuePlayerRepository.flush();
+                
+                log.info("✅ Jogadores revertidos para disponíveis - aguardando reconexão");
+                return; // ABORTAR
+            }
+            
+            log.info("✅ [Validação] Todos os jogadores HUMANOS têm sessão WebSocket ativa - PROSSEGUINDO");
+
             // ✅ NOVO: ATUALIZAR ESTADO DE TODOS PARA IN_MATCH_FOUND
             for (String playerName : playerNames) {
                 if (!playerStateService.setPlayerState(playerName, PlayerState.IN_MATCH_FOUND)) {
@@ -1273,41 +1347,46 @@ public class QueueManagementService {
 
                     } else if ("in_progress".equalsIgnoreCase(match.getStatus())) {
                         response.put("type", "game");
-                        
+
                         // ✅ CRÍTICO: Buscar dados COMPLETOS do pick_ban_data (igual ao draft!)
                         // E EXTRAIR campeões das actions para colocar direto nos players
-                        
+
                         if (match.getPickBanDataJson() != null && !match.getPickBanDataJson().isEmpty()) {
                             try {
                                 @SuppressWarnings("unchecked")
-                                Map<String, Object> pickBanData = objectMapper.readValue(match.getPickBanDataJson(), Map.class);
-                                
+                                Map<String, Object> pickBanData = objectMapper.readValue(match.getPickBanDataJson(),
+                                        Map.class);
+
                                 // ✅ CRÍTICO: Extrair campeões das actions e adicionar nos players
                                 if (pickBanData.containsKey("teams") && pickBanData.get("teams") instanceof Map<?, ?>) {
                                     @SuppressWarnings("unchecked")
                                     Map<String, Object> teams = (Map<String, Object>) pickBanData.get("teams");
-                                    
+
                                     // Processar Blue e Red teams
-                                    for (String teamSide : new String[]{"blue", "red"}) {
+                                    for (String teamSide : new String[] { "blue", "red" }) {
                                         Object teamObj = teams.get(teamSide);
                                         if (teamObj instanceof Map<?, ?>) {
                                             @SuppressWarnings("unchecked")
                                             Map<String, Object> team = (Map<String, Object>) teamObj;
-                                            
+
                                             if (team.containsKey("players") && team.get("players") instanceof List<?>) {
                                                 @SuppressWarnings("unchecked")
-                                                List<Map<String, Object>> players = (List<Map<String, Object>>) team.get("players");
-                                                
+                                                List<Map<String, Object>> players = (List<Map<String, Object>>) team
+                                                        .get("players");
+
                                                 for (Map<String, Object> player : players) {
                                                     // Extrair pick das actions do player
-                                                    if (player.containsKey("actions") && player.get("actions") instanceof List<?>) {
+                                                    if (player.containsKey("actions")
+                                                            && player.get("actions") instanceof List<?>) {
                                                         @SuppressWarnings("unchecked")
-                                                        List<Map<String, Object>> playerActions = (List<Map<String, Object>>) player.get("actions");
-                                                        
+                                                        List<Map<String, Object>> playerActions = (List<Map<String, Object>>) player
+                                                                .get("actions");
+
                                                         for (Map<String, Object> action : playerActions) {
                                                             String actionType = (String) action.get("type");
                                                             if ("pick".equals(actionType)) {
-                                                                // ✅ ADICIONAR championId e championName DIRETAMENTE no player
+                                                                // ✅ ADICIONAR championId e championName DIRETAMENTE no
+                                                                // player
                                                                 player.put("championId", action.get("championId"));
                                                                 player.put("championName", action.get("championName"));
                                                                 break;
@@ -1319,13 +1398,14 @@ public class QueueManagementService {
                                         }
                                     }
                                 }
-                                
+
                                 // ✅ Adicionar TUDO do pick_ban_data (agora com campeões extraídos!)
                                 response.putAll(pickBanData);
-                                
-                                log.info("✅ [getActiveMatch-Redis] Game data do MySQL: {} keys (com campeões extraídos)",
+
+                                log.info(
+                                        "✅ [getActiveMatch-Redis] Game data do MySQL: {} keys (com campeões extraídos)",
                                         pickBanData.keySet());
-                                        
+
                             } catch (Exception e) {
                                 log.error("❌ [getActiveMatch-Redis] Erro ao parsear pick_ban_data para game", e);
                                 // Fallback: pelo menos adicionar o JSON raw
@@ -1334,7 +1414,7 @@ public class QueueManagementService {
                         } else {
                             log.warn("⚠️ [getActiveMatch-Redis] pick_ban_data vazio para match {}", match.getId());
                         }
-                        
+
                         // ✅ ADICIONAL: Dados do jogo em progresso
                         response.put("startTime", match.getCreatedAt());
                         response.put("gameId", match.getId().toString());
