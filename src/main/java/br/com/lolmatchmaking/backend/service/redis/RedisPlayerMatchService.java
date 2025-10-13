@@ -44,10 +44,11 @@ public class RedisPlayerMatchService {
 
     private static final String PLAYER_MATCH_PREFIX = "player:current_match:";
     private static final String MATCH_PLAYERS_PREFIX = "match:players:";
-    // ✅ CORRIGIDO: TTL de 4 horas (ALINHADO com PlayerLock)
-    // CRÍTICO: Ownership não pode expirar antes da sessão do player
-    // Player pode estar em game longo (1-2h) + aguardando resultado
-    private static final Duration TTL = Duration.ofHours(4);
+    // ✅ CORRIGIDO: TTL de 1h30min (duração máxima de partida + margem)
+    // CRÍTICO: Ownership não deve persistir além da duração real
+    // Partida típica: 30-60min, margem 30min = 1h30min total
+    // Cleanup explícito prioritário em finish/cancel
+    private static final Duration TTL = Duration.ofMinutes(90);
 
     /**
      * ✅ Registra que um jogador está em uma partida específica

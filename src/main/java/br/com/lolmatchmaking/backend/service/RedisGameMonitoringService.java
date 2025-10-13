@@ -27,7 +27,10 @@ public class RedisGameMonitoringService {
 
     private final RedisTemplate<String, Object> redisTemplate;
 
-    private static final Duration GAME_TTL = Duration.ofHours(2);
+    // ✅ CORRIGIDO: TTL de 1h10min (duração máxima de game)
+    // CRÍTICO: Game típico: 30-60min, margem 10min = 1h10min total
+    // Cleanup explícito em finishGame/cancelGame (não depende de TTL)
+    private static final Duration GAME_TTL = Duration.ofMinutes(70);
     private static final String GAME_PREFIX = "game:";
     private static final String ACTIVE_GAMES_KEY = "active:games";
 
@@ -259,7 +262,7 @@ public class RedisGameMonitoringService {
         stats.put("status", data.getStatus());
         stats.put("startedAt", data.getStartTime() != null ? data.getStartTime().toEpochMilli() : null);
         stats.put("lastCheck", data.getLastCheck() != null ? data.getLastCheck().toEpochMilli() : null);
-        
+
         // Se gameStats existir, incluir os dados nele
         if (data.getGameStats() != null) {
             stats.putAll(data.getGameStats());

@@ -202,6 +202,28 @@ public class QueueManagementService {
             // ✅ SQL ONLY: Buscar fila do banco
             List<QueuePlayer> currentQueue = queuePlayerRepository.findByActiveTrueOrderByJoinTimeAsc();
 
+            // 🧹 CLEANUP CRÍTICO: GARANTIR que player só tem UMA entrada na fila
+            List<QueuePlayer> duplicates = currentQueue.stream()
+                    .filter(qp -> qp.getSummonerName().equalsIgnoreCase(summonerName))
+                    .toList();
+
+            if (duplicates.size() > 1) {
+                log.error("🚨 [addToQueue] DUPLICAÇÃO DETECTADA! {} tem {} entradas na fila!",
+                        summonerName, duplicates.size());
+
+                // LIMPAR TODAS as entradas duplicadas
+                for (QueuePlayer dupe : duplicates) {
+                    queuePlayerRepository.delete(dupe);
+                }
+                queuePlayerRepository.flush();
+
+                log.info("🧹 [addToQueue] Todas as {} entradas duplicadas removidas para {}",
+                        duplicates.size(), summonerName);
+
+                // Recarregar fila após limpeza
+                currentQueue = queuePlayerRepository.findByActiveTrueOrderByJoinTimeAsc();
+            }
+
             log.info("➕ [addToQueue] Adicionando jogador à fila: {} (fila atual: {} jogadores)",
                     summonerName, currentQueue.size());
 
@@ -287,7 +309,7 @@ public class QueueManagementService {
             // Recarregar fila para ter contagem atualizada
             int queueSize = queuePlayerRepository.findByActiveTrueOrderByJoinTimeAsc().size();
             if (queueSize >= MATCH_SIZE) {
-                log.info("🎯 [TRIGGER IMEDIATO] Fila chegou a {} jogadores - processando partida AGORA!", 
+                log.info("🎯 [TRIGGER IMEDIATO] Fila chegou a {} jogadores - processando partida AGORA!",
                         queueSize);
                 // ✅ Chamar processQueue de forma assíncrona para não bloquear a resposta HTTP
                 CompletableFuture.runAsync(() -> {
@@ -909,7 +931,7 @@ public class QueueManagementService {
             int sessionsFound = 0;
             int botsFound = 0;
             List<String> humanPlayersWithoutSession = new ArrayList<>();
-            
+
             for (String playerName : playerNames) {
                 // ✅ BOTS não precisam de sessão WebSocket (auto-accept via backend)
                 if (playerName.startsWith("Bot")) {
@@ -917,9 +939,9 @@ public class QueueManagementService {
                     log.debug("  🤖 {} é bot - não precisa de sessão", playerName);
                     continue;
                 }
-                
-                Optional<org.springframework.web.socket.WebSocketSession> sessionOpt = 
-                        sessionRegistry.getByPlayer(playerName);
+
+                Optional<org.springframework.web.socket.WebSocketSession> sessionOpt = sessionRegistry
+                        .getByPlayer(playerName);
                 if (sessionOpt.isPresent()) {
                     sessionsFound++;
                     log.debug("  ✅ {} tem sessão ativa", playerName);
@@ -928,17 +950,17 @@ public class QueueManagementService {
                     log.warn("  ❌ {} (HUMANO) NÃO tem sessão WebSocket ativa!", playerName);
                 }
             }
-            
-            log.info("📊 [Validação Sessões] Humanos: {}/{} com sessão | Bots: {}/{}", 
+
+            log.info("📊 [Validação Sessões] Humanos: {}/{} com sessão | Bots: {}/{}",
                     sessionsFound, playerNames.size() - botsFound, botsFound, playerNames.size());
-            
+
             // Se ALGUM jogador HUMANO não tem sessão, ABORTAR criação
             if (!humanPlayersWithoutSession.isEmpty()) {
-                log.error("❌ [CRÍTICO] {} jogadores HUMANOS SEM sessão WebSocket! ABORTANDO criação de match", 
+                log.error("❌ [CRÍTICO] {} jogadores HUMANOS SEM sessão WebSocket! ABORTANDO criação de match",
                         humanPlayersWithoutSession.size());
                 log.error("  Jogadores humanos sem sessão: {}", humanPlayersWithoutSession);
                 log.error("  ⚠️ MySQL não será poluído com match que falharia no broadcast!");
-                
+
                 // Reverter acceptance_status para permitir novo matchmaking
                 for (String pn : playerNames) {
                     queuePlayerRepository.findBySummonerName(pn).ifPresent(qp -> {
@@ -947,11 +969,11 @@ public class QueueManagementService {
                     });
                 }
                 queuePlayerRepository.flush();
-                
+
                 log.info("✅ Jogadores revertidos para disponíveis - aguardando reconexão");
                 return; // ABORTAR
             }
-            
+
             log.info("✅ [Validação] Todos os jogadores HUMANOS têm sessão WebSocket ativa - PROSSEGUINDO");
 
             // ✅ NOVO: ATUALIZAR ESTADO DE TODOS PARA IN_MATCH_FOUND

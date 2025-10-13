@@ -32,7 +32,10 @@ public class RedisMatchAcceptanceService {
     private final RedisTemplate<String, Object> redisTemplate;
     private final RedissonClient redissonClient;
 
-    private static final Duration ACCEPTANCE_TTL = Duration.ofSeconds(30);
+    // ✅ CORRIGIDO: TTL de 1 minuto (timeout de aceitação)
+    // CRÍTICO: Match found timeout é 30-60s, cache não precisa > 1min
+    // Cleanup explícito em < 60s (não depende de TTL)
+    private static final Duration ACCEPTANCE_TTL = Duration.ofMinutes(1);
     private static final String MATCH_PREFIX = "match:";
 
     /**
