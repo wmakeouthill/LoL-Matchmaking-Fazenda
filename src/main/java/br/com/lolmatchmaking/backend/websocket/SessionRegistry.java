@@ -119,6 +119,34 @@ public class SessionRegistry {
         log.info("🗑️ [SessionRegistry] Sessão removida: {}", id);
     }
 
+    /**
+     * ✅ NOVO: Remove sessão por summonerName (para limpeza de conflitos PUUID)
+     */
+    public void removeBySummoner(String summonerName) {
+        if (summonerName == null || summonerName.isEmpty()) {
+            return;
+        }
+        
+        String normalizedName = summonerName.toLowerCase();
+        
+        // Buscar sessionId no Redis
+        Optional<String> sessionIdOpt = redisWSSession.getSessionBySummoner(normalizedName);
+        if (sessionIdOpt.isPresent()) {
+            String sessionId = sessionIdOpt.get();
+            
+            // Remover do Redis
+            redisWSSession.removeSession(sessionId);
+            
+            // Remover do cache local
+            sessions.remove(sessionId);
+            
+            log.info("🗑️ [SessionRegistry] Sessão removida por summoner: {} → sessionId={}", 
+                normalizedName, sessionId);
+        } else {
+            log.debug("🔍 [SessionRegistry] Nenhuma sessão encontrada para summoner: {}", normalizedName);
+        }
+    }
+
     public WebSocketSession get(String id) {
         return sessions.get(id);
     }
@@ -220,6 +248,38 @@ public class SessionRegistry {
             return false;
         }
         return redisWSSession.isPlayerOnline(summonerName.toLowerCase());
+    }
+
+    /**
+     * ✅ NOVO: Retorna o número de sessões WebSocket ativas.
+     * 
+     * Usado para verificar se há jogadores conectados antes de executar
+     * processamento desnecessário (ex: @Scheduled tasks).
+     * 
+     * @return Número de sessões ativas
+     */
+    public int getActiveSessionCount() {
+        try {
+            // Contar sessões no cache local (WebSocketSession ativas)
+            int localSessions = sessions.size();
+            
+            // Verificar se há sessões identificadas no Redis
+            Map<String, Object> allClientInfo = redisWSSession.getAllClientInfo();
+            int identifiedSessions = allClientInfo.size();
+            
+            // Retornar o maior valor (pode haver sessões não identificadas)
+            int totalSessions = Math.max(localSessions, identifiedSessions);
+            
+            log.debug("📊 [SessionRegistry] Sessões ativas: {} (local: {}, identificadas: {})", 
+                totalSessions, localSessions, identifiedSessions);
+            
+            return totalSessions;
+            
+        } catch (Exception e) {
+            log.error("❌ [SessionRegistry] Erro ao contar sessões ativas", e);
+            // Em caso de erro, retornar contagem local como fallback
+            return sessions.size();
+        }
     }
 
     /**

@@ -4,6 +4,7 @@ import br.com.lolmatchmaking.backend.dto.QueueStatusDTO;
 import br.com.lolmatchmaking.backend.service.EventBroadcastService;
 import br.com.lolmatchmaking.backend.service.QueueManagementService;
 import br.com.lolmatchmaking.backend.service.redis.RedisQueueCacheService;
+import br.com.lolmatchmaking.backend.websocket.SessionRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -49,6 +50,7 @@ public class QueueBroadcastScheduledTask {
     private final QueueManagementService queueManagementService;
     private final EventBroadcastService eventBroadcastService;
     private final RedisQueueCacheService redisQueueCache;
+    private final SessionRegistry sessionRegistry;
 
     /**
      * ✅ BROADCAST AUTOMÁTICO DA FILA A CADA 3 SEGUNDOS
@@ -64,6 +66,12 @@ public class QueueBroadcastScheduledTask {
     @Scheduled(fixedRate = 3000) // A cada 3 segundos
     public void broadcastQueueStatusAutomatic() {
         try {
+            // ✅ NOVO: VERIFICAR SE HÁ SESSÕES ATIVAS ANTES DE FAZER BROADCAST
+            if (!hasActiveSessions()) {
+                log.debug("⏭️ [QueueBroadcast] Nenhuma sessão ativa, pulando broadcast...");
+                return;
+            }
+
             // 1. Buscar status da fila (APENAS jogadores que estão aguardando)
             // getQueueStatus já filtra jogadores que estão em match/draft
             QueueStatusDTO status = queueManagementService.getQueueStatus(null);
@@ -121,6 +129,12 @@ public class QueueBroadcastScheduledTask {
     @Scheduled(fixedRate = 60000) // A cada 1 minuto
     public void logSystemStats() {
         try {
+            // ✅ NOVO: VERIFICAR SE HÁ SESSÕES ATIVAS ANTES DE FAZER LOG
+            if (!hasActiveSessions()) {
+                log.debug("⏭️ [QueueBroadcast] Nenhuma sessão ativa, pulando log de estatísticas...");
+                return;
+            }
+
             QueueStatusDTO status = queueManagementService.getQueueStatus(null);
 
             if (status != null) {
@@ -130,6 +144,31 @@ public class QueueBroadcastScheduledTask {
 
         } catch (Exception e) {
             log.error("❌ [QueueBroadcast] Erro ao coletar estatísticas", e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Verifica se há sessões WebSocket ativas
+     * 
+     * Evita processamento desnecessário quando não há jogadores conectados
+     */
+    private boolean hasActiveSessions() {
+        try {
+            // Verificar se há sessões WebSocket ativas
+            int activeSessions = sessionRegistry.getActiveSessionCount();
+            
+            if (activeSessions > 0) {
+                log.debug("✅ [QueueBroadcast] {} sessões ativas encontradas", activeSessions);
+                return true;
+            }
+            
+            log.debug("⏭️ [QueueBroadcast] Nenhuma sessão ativa");
+            return false;
+            
+        } catch (Exception e) {
+            log.error("❌ [QueueBroadcast] Erro ao verificar sessões ativas", e);
+            // Em caso de erro, assumir que há sessões (comportamento seguro)
+            return true;
         }
     }
 }

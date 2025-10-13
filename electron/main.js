@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, Menu, dialog } = require('electron');
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
@@ -143,6 +143,9 @@ function createWindow(startUrl, isDev) {
     }
   });
 
+  // ✅ NOVO: Criar menu em português
+  createMenu(win);
+
   win.webContents.on('did-finish-load', () => safeLog('did-finish-load ->', win.webContents.getURL()));
   win.webContents.on('did-fail-load', (_e, errorCode, errorDesc, validatedURL) => safeLog('did-fail-load', errorCode, errorDesc, validatedURL));
   win.webContents.on('render-process-gone', (_e, details) => safeLog('render-process-gone', details));
@@ -156,12 +159,331 @@ function createWindow(startUrl, isDev) {
     const html = `<!doctype html><html><body><h2>Application could not reach backend</h2><p>Attempted: ${startUrl}</p><p>Open devtools for details.</p></body></html>`;
     win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
   });
+
+  return win;
+}
+
+// ✅ NOVO: Menu em português com funcionalidades avançadas
+function createMenu(mainWindow) {
+  const template = [
+    {
+      label: 'Arquivo',
+      submenu: [
+        {
+          label: 'Sair',
+          accelerator: 'CmdOrCtrl+Q',
+          click: () => {
+            app.quit();
+          }
+        }
+      ]
+    },
+    {
+      label: 'Ações',
+      submenu: [
+        {
+          label: 'Atualizar',
+          accelerator: 'CmdOrCtrl+R',
+          click: () => {
+            mainWindow.reload();
+          }
+        },
+        {
+          label: 'Limpar Cache Local',
+          accelerator: 'CmdOrCtrl+Shift+L',
+          click: () => {
+            performLocalCacheCleanup(mainWindow);
+          }
+        },
+        {
+          label: 'Atualizar + Limpeza Completa',
+          accelerator: 'CmdOrCtrl+Shift+R',
+          click: () => {
+            performCompleteRefresh(mainWindow);
+          }
+        },
+        {
+          type: 'separator'
+        },
+        {
+          label: 'Configurar Pasta do League of Legends',
+          click: () => {
+            selectLeagueInstallationPath(mainWindow);
+          }
+        }
+      ]
+    },
+    {
+      label: 'Desenvolvedor',
+      submenu: [
+        {
+          label: 'Ferramentas de Desenvolvedor',
+          accelerator: 'F12',
+          click: () => {
+            mainWindow.webContents.openDevTools();
+          }
+        },
+        {
+          label: 'Recarregar',
+          accelerator: 'CmdOrCtrl+Shift+R',
+          click: () => {
+            mainWindow.reload();
+          }
+        }
+      ]
+    }
+  ];
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+}
+
+// ✅ NOVO: Seleção manual da pasta do League of Legends
+async function selectLeagueInstallationPath(mainWindow) {
+  try {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Selecionar Pasta do League of Legends',
+      message: 'Escolha a pasta onde está instalado o League of Legends',
+      properties: ['openDirectory'],
+      defaultPath: 'C:/Riot Games/League of Legends'
+    });
+
+    if (!result.canceled && result.filePaths.length > 0) {
+      const selectedPath = result.filePaths[0];
+      const lockfilePath = path.join(selectedPath, 'lockfile');
+      
+      // Verificar se o lockfile existe
+      if (fs.existsSync(lockfilePath)) {
+        // ✅ SALVAR no diretório do usuário (mais apropriado)
+        const userDataPath = app.getPath('userData');
+        const configDir = path.join(userDataPath, 'lol-config');
+        
+        // Criar diretório se não existir
+        if (!fs.existsSync(configDir)) {
+          fs.mkdirSync(configDir, { recursive: true });
+        }
+        
+        const configPath = path.join(configDir, 'league-config.json');
+        const config = {
+          customLeaguePath: selectedPath,
+          lockfilePath: lockfilePath,
+          lastUpdated: new Date().toISOString(),
+          userId: process.env.USERNAME || 'unknown'
+        };
+        
+        fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+        
+        // Atualizar lista de candidatos
+        updateLockfileCandidates(selectedPath);
+        
+        safeLog('✅ [Electron] Pasta do League configurada:', selectedPath);
+        
+        // Mostrar confirmação
+        dialog.showMessageBox(mainWindow, {
+          type: 'info',
+          title: 'Configuração Salva',
+          message: 'Pasta do League of Legends configurada com sucesso!',
+          detail: `Caminho: ${selectedPath}\nLockfile: ${lockfilePath}`
+        });
+        
+        // Tentar reconectar se LCU estiver ativo
+        if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+          safeLog('🔄 [Electron] Tentando reconectar com novo caminho...');
+          setTimeout(() => {
+            checkLockfileAndConnect();
+          }, 1000);
+        }
+        
+      } else {
+        dialog.showErrorBox(
+          'Erro',
+          'Lockfile não encontrado na pasta selecionada!\n\nVerifique se o League of Legends está instalado corretamente nesta pasta.'
+        );
+      }
+    }
+  } catch (error) {
+    safeLog('❌ [Electron] Erro ao selecionar pasta do League:', error);
+    dialog.showErrorBox('Erro', 'Erro ao configurar pasta do League of Legends');
+  }
+}
+
+// ✅ NOVO: Atualizar lista de candidatos com caminho personalizado
+function updateLockfileCandidates(customPath) {
+  const customLockfile = path.join(customPath, 'lockfile');
+  
+  // Remover duplicatas e adicionar caminho personalizado no início
+  const allCandidates = [
+    customLockfile,
+    'C:/Riot Games/League of Legends/lockfile',
+    'D:/Riot Games/League of Legends/lockfile',
+    'E:/Riot Games/League of Legends/lockfile',
+    'F:/Riot Games/League of Legends/lockfile',
+    'G:/Riot Games/League of Legends/lockfile'
+  ];
+  
+  // Remover duplicatas mantendo ordem
+  const uniqueCandidates = [...new Set(allCandidates)];
+  
+  // Atualizar variável global
+  lockfileCandidates = uniqueCandidates;
+  
+  safeLog('✅ [Electron] Candidatos de lockfile atualizados:', uniqueCandidates);
+}
+
+// ✅ NOVO: Limpeza apenas do cache local
+async function performLocalCacheCleanup(mainWindow) {
+  try {
+    safeLog('🧹 [Electron] Iniciando limpeza de cache local...');
+    
+    // Limpar cache do frontend
+    await mainWindow.webContents.executeJavaScript(`
+      // Limpar localStorage
+      localStorage.clear();
+      
+      // Limpar sessionStorage
+      sessionStorage.clear();
+      
+      // Limpar cache do navegador
+      if ('caches' in window) {
+        caches.keys().then(names => {
+          names.forEach(name => {
+            caches.delete(name);
+          });
+        });
+      }
+      
+      console.log('🧹 [Frontend] Cache local limpo');
+    `);
+    
+    // Limpar cache do Electron (dados do usuário se necessário)
+    try {
+      const userDataPath = app.getPath('userData');
+      const tempDir = path.join(userDataPath, 'temp');
+      if (fs.existsSync(tempDir)) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        safeLog('🧹 [Electron] Cache temporário do Electron limpo');
+      }
+    } catch (error) {
+      safeLog('⚠️ [Electron] Erro ao limpar cache do Electron:', error);
+    }
+    
+    safeLog('✅ [Electron] Limpeza de cache local concluída');
+    
+    // Mostrar confirmação
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'Cache Limpo',
+      message: 'Cache local limpo com sucesso!',
+      detail: 'localStorage, sessionStorage e cache do navegador foram limpos.'
+    });
+    
+  } catch (error) {
+    safeLog('❌ [Electron] Erro durante limpeza de cache local:', error);
+    dialog.showErrorBox('Erro', 'Erro ao limpar cache local');
+  }
+}
+
+// ✅ NOVO: Limpeza completa + revinculação
+async function performCompleteRefresh(mainWindow) {
+  try {
+    safeLog('🧹 [Electron] Iniciando limpeza completa...');
+    
+    // 1. Parar monitor de identidade
+    stopIdentityMonitor();
+    
+    // 2. Limpar cache local primeiro
+    await performLocalCacheCleanup(mainWindow);
+    
+    // 3. Solicitar limpeza de estado Redis do backend
+    if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+      const cleanupRequest = {
+        type: 'clear_player_state',
+        source: 'electron_main',
+        timestamp: Date.now(),
+        reason: 'complete_refresh'
+      };
+      
+      wsClient.send(JSON.stringify(cleanupRequest));
+      safeLog('🧹 [Electron] Solicitação de limpeza Redis enviada');
+    }
+    
+    // 4. Aguardar um pouco para limpeza
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    // 5. Recarregar página
+    mainWindow.reload();
+    
+    // 6. Aguardar carregamento e reestabelecer conexão
+    setTimeout(async () => {
+      if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+        safeLog('🔄 [Electron] Reestabelecendo vinculação...');
+        
+        // Reenviar identificação
+        const lockfileInfo = readLockfileInfo();
+        if (lockfileInfo) {
+          await identifyPlayerToBackend(lockfileInfo);
+        }
+        
+        // Reiniciar monitor de identidade
+        startIdentityMonitor();
+        
+        safeLog('✅ [Electron] Limpeza completa e revinculação concluídas');
+      }
+    }, 3000);
+    
+  } catch (error) {
+    safeLog('❌ [Electron] Erro durante limpeza completa:', error);
+  }
+}
+
+// ✅ NOVO: Carregar configuração personalizada do League
+function loadLeagueConfig() {
+  try {
+    // ✅ CARREGAR do diretório do usuário
+    const userDataPath = app.getPath('userData');
+    const configDir = path.join(userDataPath, 'lol-config');
+    const configPath = path.join(configDir, 'league-config.json');
+    
+    if (fs.existsSync(configPath)) {
+      const configData = fs.readFileSync(configPath, 'utf8');
+      const config = JSON.parse(configData);
+      
+      if (config.customLeaguePath) {
+        safeLog('✅ [Electron] Configuração personalizada carregada:', config.customLeaguePath);
+        safeLog('✅ [Electron] Configuração salva em:', configPath);
+        updateLockfileCandidates(config.customLeaguePath);
+        return config.customLeaguePath;
+      }
+    } else {
+      safeLog('ℹ️ [Electron] Nenhuma configuração personalizada encontrada em:', configPath);
+    }
+  } catch (error) {
+    safeLog('⚠️ [Electron] Erro ao carregar configuração personalizada:', error);
+  }
+  return null;
+}
+
+// ✅ NOVO: Função auxiliar para verificar lockfile e conectar
+function checkLockfileAndConnect() {
+  try {
+    const lockfileInfo = readLockfileInfo();
+    if (lockfileInfo) {
+      safeLog('🔄 [Electron] Lockfile detectado, reconectando...');
+      // Aqui você pode adicionar lógica adicional de reconexão se necessário
+    }
+  } catch (error) {
+    safeLog('❌ [Electron] Erro ao verificar lockfile:', error);
+  }
 }
 
 app.whenReady().then(async () => {
   console.log('[electron] ========== APP READY ==========');
   const isDev = process.argv.includes('--dev') || process.env.ELECTRON_DEV === '1';
   console.log('[electron] isDev:', isDev);
+  
+  // ✅ NOVO: Carregar configuração personalizada do League
+  loadLeagueConfig();
+  
   const startUrl = await pickBackendUrl();
   console.log('[electron] Backend URL:', startUrl);
   createWindow(startUrl, isDev);
@@ -270,6 +592,12 @@ function startLockfileWatcher(backendBase) {
         if (parsed) {
           safeLog('lockfile parsed', parsed);
           postConfigToBackend(backendBase, parsed);
+          
+          // ✅ NOVO: Identificar jogador automaticamente quando lockfile é detectado
+          setTimeout(() => {
+            identifyPlayerToBackend(parsed);
+          }, 2000); // Aguardar 2s para garantir que LCU está pronto
+          
         } else {
           safeLog('lockfile found but could not parse', p);
         }
@@ -500,6 +828,66 @@ function startWebSocketGateway(backendBase) {
             wsClient.send(JSON.stringify(resp));
           }
         }
+        // ✅ NOVO: Handle identity confirmation requests
+        else if (json.type === 'confirm_identity') {
+          safeLog('ws gateway received confirm_identity');
+          try {
+            // ✅ Buscar summoner ATUAL do LCU
+            const summoner = await performLcuRequest('GET', '/lol-summoner/v1/current-summoner');
+            
+            const response = {
+              type: 'identity_confirmed',
+              requestId: json.id,
+              summonerName: `${summoner.gameName}#${summoner.tagLine}`,
+              puuid: summoner.puuid,
+              summonerId: summoner.summonerId,
+              timestamp: Date.now()
+            };
+            
+            wsClient.send(JSON.stringify(response));
+            safeLog('✅ [Electron] Identidade confirmada:', response.summonerName);
+            
+          } catch (err) {
+            safeLog('❌ [Electron] Erro ao confirmar identidade:', err);
+            
+            // ✅ Enviar erro ao backend (LCU desconectado)
+            wsClient.send(JSON.stringify({
+              type: 'identity_confirmation_failed',
+              requestId: json.id,
+              error: 'LCU_DISCONNECTED'
+            }));
+          }
+        }
+        else if (json.type === 'confirm_identity_critical') {
+          safeLog('ws gateway received confirm_identity_critical - ação crítica:', json.actionType);
+          try {
+            // ✅ Buscar summoner ATUAL do LCU
+            const summoner = await performLcuRequest('GET', '/lol-summoner/v1/current-summoner');
+            
+            const response = {
+              type: 'identity_confirmed_critical',
+              requestId: json.id,
+              summonerName: `${summoner.gameName}#${summoner.tagLine}`,
+              puuid: summoner.puuid,
+              summonerId: summoner.summonerId,
+              actionType: json.actionType,
+              timestamp: Date.now()
+            };
+            
+            wsClient.send(JSON.stringify(response));
+            safeLog('✅ [Electron] Identidade CRÍTICA confirmada:', response.summonerName, 'para ação:', json.actionType);
+            
+          } catch (err) {
+            safeLog('❌ [Electron] Erro ao confirmar identidade CRÍTICA:', err);
+            
+            // ✅ Enviar erro ao backend (LCU desconectado)
+            wsClient.send(JSON.stringify({
+              type: 'identity_confirmation_failed',
+              requestId: json.id,
+              error: 'LCU_DISCONNECTED'
+            }));
+          }
+        }
       } catch (e) {
         safeLog('ws gateway message error', String(e));
       }
@@ -508,6 +896,7 @@ function startWebSocketGateway(backendBase) {
     wsClient.on('close', (code, reason) => { 
       safeLog('⚠️ [ELECTRON MAIN] WebSocket gateway fechado - code:', code, 'reason:', reason && reason.toString()); 
       stopWebSocketHeartbeat(); // Parar heartbeat
+      stopIdentityMonitor(); // ✅ NOVO: Parar monitor de identidade
       wsClient = null; 
       scheduleWebSocketReconnect(backendBase);
     });
@@ -531,11 +920,132 @@ const WS_BASE_BACKOFF_MS = 2000; // 2 segundos
 const WS_MAX_BACKOFF_MS = 60000; // 1 minuto
 const WS_HEARTBEAT_INTERVAL = 60000; // 60 segundos
 
+// ✅ NOVO: Variáveis para identificação automática
+let lastKnownPuuid = null;
+let lastKnownSummoner = null;
+let identityMonitorTimer = null;
+
+// ✅ NOVO: Variáveis para configuração personalizada do League
+let lockfileCandidates = [
+  'C:/Riot Games/League of Legends/lockfile',
+  'D:/Riot Games/League of Legends/lockfile',
+  'E:/Riot Games/League of Legends/lockfile',
+  path.join(process.env.LOCALAPPDATA || '', 'Riot Games', 'League of Legends', 'lockfile'),
+  path.join(process.env.USERPROFILE || '', 'AppData', 'Local', 'Riot Games', 'League of Legends', 'lockfile')
+];
+
 // Discord integration
 let discordBot = null;
 let discordChannelId = null;
 let discordUsers = [];
 let discordStatus = { isConnected: false, botUsername: null, channelName: null };
+
+// ✅ NOVO: Função para identificar jogador automaticamente ao backend
+async function identifyPlayerToBackend(lockfileInfo) {
+  try {
+    safeLog('🔍 [Electron] Identificando jogador automaticamente...');
+    
+    // 1. Buscar summoner do LCU
+    const summoner = await performLcuRequest('GET', '/lol-summoner/v1/current-summoner');
+    
+    if (!summoner || !summoner.gameName || !summoner.tagLine) {
+      safeLog('⚠️ [Electron] Summoner não disponível no LCU ainda');
+      return;
+    }
+    
+    // 2. Buscar ranked info (opcional, mas útil)
+    const ranked = await performLcuRequest('GET', '/lol-ranked/v1/current-ranked-stats')
+      .catch(() => null);
+    
+    // 3. Construir payload COMPLETO
+    const fullName = `${summoner.gameName}#${summoner.tagLine}`;
+    
+    const payload = {
+      type: 'electron_identify',
+      source: 'electron_main',  // ✅ Fonte confiável!
+      timestamp: Date.now(),
+      
+      // Dados do summoner
+      summonerName: fullName,
+      gameName: summoner.gameName,
+      tagLine: summoner.tagLine,
+      puuid: summoner.puuid,  // ✅ CRÍTICO para validação!
+      summonerId: summoner.summonerId,
+      profileIconId: summoner.profileIconId,
+      summonerLevel: summoner.summonerLevel,
+      
+      // Dados de ranked (opcional)
+      tier: ranked?.queueMap?.RANKED_SOLO_5x5?.tier,
+      division: ranked?.queueMap?.RANKED_SOLO_5x5?.division,
+      
+      // LCU connection info
+      lcuInfo: lockfileInfo ? {
+        host: lockfileInfo.host || '127.0.0.1',
+        port: lockfileInfo.port,
+        protocol: lockfileInfo.protocol || 'https',
+        authToken: btoa(`riot:${lockfileInfo.password}`)
+      } : null
+    };
+    
+    // 4. ✅ ENVIAR ao backend
+    if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+      wsClient.send(JSON.stringify(payload));
+      safeLog('✅ [Electron] Identificação automática enviada:', fullName);
+      
+      // Armazenar PUUID localmente para detectar mudanças
+      lastKnownPuuid = summoner.puuid;
+      lastKnownSummoner = fullName;
+    } else {
+      safeLog('❌ [Electron] WebSocket não está conectado, não foi possível enviar identificação');
+    }
+    
+  } catch (err) {
+    safeLog('❌ [Electron] Erro ao identificar player:', err);
+  }
+}
+
+// ✅ NOVO: Monitor de mudanças de summoner (a cada 30s)
+function startIdentityMonitor() {
+  if (identityMonitorTimer) {
+    clearInterval(identityMonitorTimer);
+  }
+  
+  identityMonitorTimer = setInterval(async () => {
+    try {
+      const summoner = await performLcuRequest('GET', '/lol-summoner/v1/current-summoner');
+      
+      if (summoner && summoner.puuid !== lastKnownPuuid) {
+        // 🚨 SUMMONER MUDOU!
+        safeLog('🔄 [Electron] Summoner mudou! Antigo:', lastKnownPuuid, 'Novo:', summoner.puuid);
+        lastKnownPuuid = summoner.puuid;
+        
+        // ✅ Reenviar identificação
+        const lockfileInfo = readLockfileInfo();
+        if (lockfileInfo) {
+          await identifyPlayerToBackend(lockfileInfo);
+        }
+      }
+    } catch (e) {
+      // LCU desconectado ou erro
+      if (lastKnownPuuid !== null) {
+        safeLog('⚠️ [Electron] LCU desconectado, limpando identificação');
+        lastKnownPuuid = null;
+        lastKnownSummoner = null;
+      }
+    }
+  }, 30000); // A cada 30s
+  
+  safeLog('✅ [Electron] Monitor de identidade iniciado (30s)');
+}
+
+// ✅ NOVO: Parar monitor de identidade
+function stopIdentityMonitor() {
+  if (identityMonitorTimer) {
+    clearInterval(identityMonitorTimer);
+    identityMonitorTimer = null;
+    safeLog('🛑 [Electron] Monitor de identidade parado');
+  }
+}
 
 // Função de reconexão inteligente com backoff exponencial
 function scheduleWebSocketReconnect(backendBase) {
@@ -703,24 +1213,22 @@ ipcMain.handle('storage:listPlayers', async (_evt) => {
 });
 
 function readLockfileInfo() {
-  const candidates = [
-    'C:/Riot Games/League of Legends/lockfile',
-    'D:/Riot Games/League of Legends/lockfile',
-    'E:/Riot Games/League of Legends/lockfile',
-    path.join(process.env.LOCALAPPDATA || '', 'Riot Games', 'League of Legends', 'lockfile'),
-    path.join(process.env.USERPROFILE || '', 'AppData', 'Local', 'Riot Games', 'League of Legends', 'lockfile')
-  ];
-  for (const p of candidates) {
+  // ✅ NOVO: Usar lista de candidatos atualizada (inclui caminho personalizado)
+  for (const p of lockfileCandidates) {
     try {
       if (p && fs.existsSync(p)) {
         const content = fs.readFileSync(p, 'utf8');
         const parsed = parseLockfileContent(content);
-        if (parsed) return { host: '127.0.0.1', port: parsed.port, protocol: parsed.protocol, password: parsed.password };
+        if (parsed) {
+          safeLog('✅ [Electron] Lockfile encontrado em:', p);
+          return { host: '127.0.0.1', port: parsed.port, protocol: parsed.protocol, password: parsed.password };
+        }
       }
     } catch (err) {
       safeLog('readLockfileInfo error', String(err));
     }
   }
+  safeLog('⚠️ [Electron] Nenhum lockfile encontrado nos candidatos:', lockfileCandidates);
   return null;
 }
 

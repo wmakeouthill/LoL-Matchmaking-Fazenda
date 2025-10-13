@@ -400,8 +400,8 @@ export class BotService {
         console.log('🤖 [BotService] Tipo de ação:', phase.action);
         console.log('🤖 [BotService] currentAction:', session.currentAction);
 
-        // ✅ CORREÇÃO: Reduzir delay para bots agirem mais rapidamente
-        const delay = Math.random() * 1000 + 500; // 0.5-1.5 segundos
+        // ✅ CORREÇÃO: Delay de 5 segundos para bots (como solicitado)
+        const delay = 5000; // 5 segundos fixos
         console.log(`🤖 [BotService] Delay agendado: ${delay}ms`);
 
         const timerId = setTimeout(() => {

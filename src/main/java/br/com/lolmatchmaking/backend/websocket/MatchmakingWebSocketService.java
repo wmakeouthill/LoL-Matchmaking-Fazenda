@@ -4,11 +4,15 @@ import br.com.lolmatchmaking.backend.dto.MatchInfoDTO;
 import br.com.lolmatchmaking.backend.dto.QueuePlayerInfoDTO;
 import br.com.lolmatchmaking.backend.service.redis.RedisWebSocketEventService;
 import br.com.lolmatchmaking.backend.service.redis.RedisWebSocketSessionService;
+import br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService;
+import br.com.lolmatchmaking.backend.service.lock.PlayerState;
+import br.com.lolmatchmaking.backend.service.lock.PlayerStateService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.*;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
@@ -16,6 +20,7 @@ import br.com.lolmatchmaking.backend.service.LCUService;
 import org.springframework.context.ApplicationContext;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
@@ -53,7 +58,10 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
 
     // ✅ NOVO: Redis services
     private final RedisWebSocketSessionService redisWSSession;
+    private final org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
     private final RedisWebSocketEventService redisWSEvent;
+    private final RedisPlayerMatchService redisPlayerMatch;
+    private final PlayerStateService playerStateService;
 
     // Cache local (WebSocketSession não é serializável)
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
@@ -1468,6 +1476,349 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         } catch (Exception e) {
             log.error("❌ [WebSocket] Erro ao obter usuários Discord", e);
             sendMessage(sessionId, "discord_users", Collections.emptyList());
+        }
+    }
+
+    // ✅ NOVO: Confirmação periódica de identidade DINÂMICA baseada no estado
+    @Scheduled(fixedRate = 30000) // 30 segundos (verifica estado de todos)
+    public void requestIdentityConfirmation() {
+        log.debug("🔍 [WebSocket] Solicitando confirmação de identidade...");
+
+        try {
+            // Para CADA sessão identificada
+            Map<String, Object> allClientInfo = redisWSSession.getAllClientInfo();
+
+            for (String sessionId : allClientInfo.keySet()) {
+                Map<String, Object> info = (Map<String, Object>) allClientInfo.get(sessionId);
+                String summonerName = (String) info.get("summonerName");
+
+                if (summonerName == null || summonerName.isEmpty()) {
+                    continue; // Sessão não identificada
+                }
+
+                // ✅ NOVO: Verificar estado do jogador para determinar intervalo
+                long lastConfirmation = (Long) info.getOrDefault("lastIdentityConfirmation", 0L);
+                long currentTime = System.currentTimeMillis();
+                long timeSinceLastConfirmation = currentTime - lastConfirmation;
+
+                // ✅ CONFIRMAÇÃO DINÂMICA baseada no estado
+                long requiredInterval = getRequiredConfirmationInterval(summonerName);
+
+                if (timeSinceLastConfirmation < requiredInterval) {
+                    continue; // Ainda não é hora de confirmar
+                }
+
+                // ✅ SOLICITAR confirmação
+                String requestId = UUID.randomUUID().toString();
+
+                Map<String, Object> request = Map.of(
+                        "type", "confirm_identity",
+                        "id", requestId,
+                        "expectedSummoner", summonerName,
+                        "timestamp", currentTime);
+
+                // Armazenar request pendente
+                String pendingKey = "identity:confirm:pending:" + requestId;
+                redisTemplate.opsForValue().set(pendingKey, sessionId, Duration.ofSeconds(30));
+
+                // Enviar via WebSocket
+                WebSocketSession session = sessions.get(sessionId);
+                if (session != null && session.isOpen()) {
+                    sendMessage(sessionId, "confirm_identity", request);
+                    log.debug("🔍 [WebSocket] Confirmação solicitada: {} (session: {}) - intervalo: {}ms",
+                            summonerName, sessionId, requiredInterval);
+                } else {
+                    // Sessão não existe mais, limpar Redis
+                    redisWSSession.removeSession(sessionId);
+                    log.debug("🧹 [WebSocket] Sessão removida (não existe): {}", sessionId);
+                }
+            }
+
+            log.debug("✅ [WebSocket] Verificação de confirmação concluída para {} sessões",
+                    allClientInfo.size());
+
+        } catch (Exception e) {
+            log.error("❌ [WebSocket] Erro ao solicitar confirmação de identidade", e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Determina intervalo de confirmação baseado no estado do jogador
+     */
+    private long getRequiredConfirmationInterval(String summonerName) {
+        try {
+            // Verificar estado atual do jogador
+            PlayerState currentState = playerStateService.getPlayerState(summonerName);
+
+            switch (currentState) {
+                case IN_QUEUE:
+                    // ✅ Na fila: confirmação a cada 30 segundos
+                    return 30_000; // 30 segundos
+
+                case IN_MATCH_FOUND:
+                    // ✅ Match found: confirmação a cada 15 segundos (crítico)
+                    return 15_000; // 15 segundos
+
+                case IN_DRAFT:
+                    // ✅ No draft: confirmação a cada 20 segundos (como solicitado)
+                    return 20_000; // 20 segundos
+
+                case IN_GAME:
+                    // ✅ No jogo: confirmação a cada 30 segundos
+                    return 30_000; // 30 segundos
+
+                case AVAILABLE:
+                default:
+                    // ✅ Disponível: confirmação a cada 2 minutos (menos crítico)
+                    return 120_000; // 2 minutos
+            }
+        } catch (Exception e) {
+            log.error("❌ [WebSocket] Erro ao verificar estado do jogador: {}", summonerName, e);
+            // Em caso de erro, usar intervalo padrão (seguro)
+            return 60_000; // 1 minuto
+        }
+    }
+
+    /**
+     * ✅ NOVO: Confirmação OBRIGATÓRIA antes de ações críticas
+     * Usado antes de votação de winner, ações de draft críticas, etc.
+     */
+    public CompletableFuture<Boolean> requestCriticalActionConfirmation(String summonerName, String actionType) {
+        CompletableFuture<Boolean> future = new CompletableFuture<>();
+
+        try {
+            // ✅ NOVO: Bypass para bots - não precisam de confirmação de identidade
+            if (isBotPlayer(summonerName)) {
+                log.debug("🤖 [WebSocket] Bot {} - bypass de confirmação de identidade para ação: {}",
+                        summonerName, actionType);
+                future.complete(true);
+                return future;
+            }
+
+            // Buscar sessão do jogador
+            Optional<WebSocketSession> sessionOpt = sessionRegistry.getByPlayer(summonerName);
+            if (sessionOpt.isEmpty()) {
+                log.error("❌ [WebSocket] Jogador {} não tem sessão ativa para ação crítica: {}",
+                        summonerName, actionType);
+                future.complete(false);
+                return future;
+            }
+
+            WebSocketSession session = sessionOpt.get();
+            String sessionId = session.getId();
+
+            // ✅ SOLICITAR confirmação OBRIGATÓRIA
+            String requestId = UUID.randomUUID().toString();
+
+            Map<String, Object> request = Map.of(
+                    "type", "confirm_identity_critical",
+                    "id", requestId,
+                    "expectedSummoner", summonerName,
+                    "actionType", actionType,
+                    "timestamp", System.currentTimeMillis());
+
+            // Armazenar request pendente com timeout maior (10s)
+            String pendingKey = "identity:confirm:critical:" + requestId;
+            redisTemplate.opsForValue().set(pendingKey, sessionId, Duration.ofSeconds(10));
+
+            // Armazenar future para resposta
+            String futureKey = "identity:future:" + requestId;
+            redisTemplate.opsForValue().set(futureKey, future, Duration.ofSeconds(10));
+
+            // Enviar via WebSocket
+            sendMessage(sessionId, "confirm_identity_critical", request);
+
+            log.info("🔍 [WebSocket] Confirmação OBRIGATÓRIA solicitada: {} para ação: {}",
+                    summonerName, actionType);
+
+            // Timeout após 8 segundos
+            CompletableFuture.delayedExecutor(8, TimeUnit.SECONDS).execute(() -> {
+                if (!future.isDone()) {
+                    log.warn("⚠️ [WebSocket] Timeout na confirmação crítica: {} (ação: {})",
+                            summonerName, actionType);
+                    future.complete(false);
+
+                    // Limpar Redis
+                    redisTemplate.delete(pendingKey);
+                    redisTemplate.delete(futureKey);
+                }
+            });
+
+        } catch (Exception e) {
+            log.error("❌ [WebSocket] Erro ao solicitar confirmação crítica: {}", summonerName, e);
+            future.complete(false);
+        }
+
+        return future;
+    }
+
+    /**
+     * ✅ NOVO: Verifica se um jogador é bot
+     */
+    private boolean isBotPlayer(String summonerName) {
+        if (summonerName == null || summonerName.isEmpty()) {
+            return false;
+        }
+
+        String normalizedName = summonerName.toLowerCase().trim();
+
+        // ✅ Padrões de nomes de bots conhecidos
+        return normalizedName.startsWith("bot") ||
+                normalizedName.startsWith("ai_") ||
+                normalizedName.endsWith("_bot") ||
+                normalizedName.contains("bot_") ||
+                normalizedName.equals("bot") ||
+                normalizedName.matches(".*bot\\d+.*"); // bot1, bot2, etc.
+    }
+
+    /**
+     * ✅ NOVO: Handler para confirmação de identidade recebida do Electron
+     */
+    public void handleIdentityConfirmed(String sessionId, JsonNode data) {
+        try {
+            String requestId = data.path("requestId").asText();
+            String confirmedSummoner = data.path("summonerName").asText();
+            String confirmedPuuid = data.path("puuid").asText();
+
+            log.debug("🔍 [WebSocket] Processando confirmação de identidade: {} (PUUID: {}...)",
+                    confirmedSummoner, confirmedPuuid.substring(0, Math.min(8, confirmedPuuid.length())));
+
+            // 1. Buscar PUUID armazenado
+            String puuidKey = "ws:player:puuid:" + confirmedSummoner.toLowerCase();
+            String storedPuuid = (String) redisTemplate.opsForValue().get(puuidKey);
+
+            if (storedPuuid == null) {
+                // Primeira confirmação
+                redisTemplate.opsForValue().set(puuidKey, confirmedPuuid, Duration.ofMinutes(90));
+                log.info("✅ [WebSocket] PUUID confirmado primeira vez: {}", confirmedSummoner);
+
+            } else if (!storedPuuid.equals(confirmedPuuid)) {
+                // 🚨 PUUID MUDOU! Jogador trocou de conta!
+                log.error("🚨 [WebSocket] PUUID MUDOU! {} tinha {} agora tem {}",
+                        confirmedSummoner, storedPuuid, confirmedPuuid);
+
+                // 🧹 LIMPAR vinculação antiga
+                String oldSummoner = redisWSSession.getSummonerBySession(sessionId).orElse(null);
+
+                if (oldSummoner != null && !oldSummoner.equals(confirmedSummoner)) {
+                    sessionRegistry.removeBySummoner(oldSummoner);
+                    log.warn("🧹 [WebSocket] Vinculação antiga removida: {}", oldSummoner);
+                }
+
+                // ✅ Criar nova vinculação
+                sessionRegistry.registerPlayer(confirmedSummoner, sessionId);
+                redisTemplate.opsForValue().set(puuidKey, confirmedPuuid, Duration.ofMinutes(90));
+
+                log.info("✅ [WebSocket] Nova vinculação criada: {} (PUUID: {})",
+                        confirmedSummoner, confirmedPuuid.substring(0, Math.min(8, confirmedPuuid.length())));
+
+            } else {
+                // ✅ PUUID igual: Tudo OK!
+                log.debug("✅ [WebSocket] Identidade confirmada: {}", confirmedSummoner);
+                redisWSSession.updateHeartbeat(sessionId);
+            }
+
+            // Limpar request pendente
+            String pendingKey = "identity:confirm:pending:" + requestId;
+            redisTemplate.delete(pendingKey);
+
+        } catch (Exception e) {
+            log.error("❌ [WebSocket] Erro ao processar confirmação de identidade", e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Handler para confirmação CRÍTICA de identidade
+     */
+    public void handleCriticalIdentityConfirmed(String sessionId, JsonNode data) {
+        try {
+            String requestId = data.path("requestId").asText();
+            String confirmedSummoner = data.path("summonerName").asText();
+            String confirmedPuuid = data.path("puuid").asText();
+
+            log.info("🔍 [WebSocket] Processando confirmação CRÍTICA de identidade: {} (PUUID: {}...)",
+                    confirmedSummoner, confirmedPuuid.substring(0, Math.min(8, confirmedPuuid.length())));
+
+            // 1. Validar constraint PUUID
+            if (!redisPlayerMatch.validatePuuidConstraint(confirmedSummoner, confirmedPuuid)) {
+                log.error("🚨 [WebSocket] PUUID CONFLITO na confirmação crítica: {} → {}",
+                        confirmedSummoner, confirmedPuuid);
+
+                // Completar future como false
+                String futureKey = "identity:future:" + requestId;
+                CompletableFuture<Boolean> future = (CompletableFuture<Boolean>) redisTemplate.opsForValue()
+                        .get(futureKey);
+                if (future != null && !future.isDone()) {
+                    future.complete(false);
+                }
+
+                // Limpar Redis
+                redisTemplate.delete("identity:confirm:critical:" + requestId);
+                redisTemplate.delete(futureKey);
+                return;
+            }
+
+            // 2. ✅ CONFIRMAÇÃO VÁLIDA - Completar future como true
+            String futureKey = "identity:future:" + requestId;
+            CompletableFuture<Boolean> future = (CompletableFuture<Boolean>) redisTemplate.opsForValue().get(futureKey);
+            if (future != null && !future.isDone()) {
+                future.complete(true);
+                log.info("✅ [WebSocket] Confirmação CRÍTICA aceita: {}", confirmedSummoner);
+            }
+
+            // 3. Limpar Redis
+            redisTemplate.delete("identity:confirm:critical:" + requestId);
+            redisTemplate.delete(futureKey);
+
+            // 4. Atualizar timestamp
+            redisWSSession.updateIdentityConfirmation(sessionId);
+
+        } catch (Exception e) {
+            log.error("❌ [WebSocket] Erro ao processar confirmação crítica de identidade", e);
+
+            // Em caso de erro, completar future como false
+            try {
+                String requestId = data.path("requestId").asText();
+                String futureKey = "identity:future:" + requestId;
+                CompletableFuture<Boolean> future = (CompletableFuture<Boolean>) redisTemplate.opsForValue()
+                        .get(futureKey);
+                if (future != null && !future.isDone()) {
+                    future.complete(false);
+                }
+                redisTemplate.delete("identity:confirm:critical:" + requestId);
+                redisTemplate.delete(futureKey);
+            } catch (Exception cleanupError) {
+                log.error("❌ [WebSocket] Erro no cleanup após falha de confirmação crítica", cleanupError);
+            }
+        }
+    }
+
+    /**
+     * ✅ NOVO: Handler para falha na confirmação de identidade
+     */
+    public void handleIdentityConfirmationFailed(String sessionId, JsonNode data) {
+        try {
+            String requestId = data.path("requestId").asText();
+            String error = data.path("error").asText();
+
+            log.warn("⚠️ [WebSocket] Confirmação de identidade falhou para session {}: {}",
+                    sessionId, error);
+
+            // Se LCU desconectado, marcar sessão como não-verificada
+            if ("LCU_DISCONNECTED".equals(error)) {
+                String summonerName = redisWSSession.getSummonerBySession(sessionId).orElse(null);
+                if (summonerName != null) {
+                    log.info("🧹 [WebSocket] LCU desconectado, marcando {} como não-verificado", summonerName);
+                    // Pode implementar flag de não-verificado se necessário
+                }
+            }
+
+            // Limpar request pendente
+            String pendingKey = "identity:confirm:pending:" + requestId;
+            redisTemplate.delete(pendingKey);
+
+        } catch (Exception e) {
+            log.error("❌ [WebSocket] Erro ao processar falha de confirmação", e);
         }
     }
 }

@@ -455,6 +455,12 @@ public class QueueManagementService {
      */
     @Scheduled(fixedRate = 5000) // Executa a cada 5 segundos
     public void processQueue() {
+        // ✅ NOVO: VERIFICAR SE HÁ SESSÕES ATIVAS ANTES DE PROCESSAR
+        if (!hasActiveSessions()) {
+            log.debug("⏭️ [Scheduled] Nenhuma sessão ativa, pulando processamento da fila...");
+            return;
+        }
+
         // ✅ NOVO: ADQUIRIR LOCK DISTRIBUÍDO
         // Previne múltiplas instâncias processarem fila simultaneamente
         if (!matchmakingLockService.acquireProcessLock()) {
@@ -1191,6 +1197,31 @@ public class QueueManagementService {
     private void startQueueMonitoring() {
         // O monitoramento é feito via @Scheduled no método processQueue()
         log.info("🔄 Monitoramento da fila iniciado");
+    }
+
+    /**
+     * ✅ NOVO: Verifica se há sessões WebSocket ativas
+     * 
+     * Evita processamento desnecessário quando não há jogadores conectados
+     */
+    private boolean hasActiveSessions() {
+        try {
+            // Verificar se há sessões WebSocket ativas
+            int activeSessions = sessionRegistry.getActiveSessionCount();
+            
+            if (activeSessions > 0) {
+                log.debug("✅ [QueueManagement] {} sessões ativas encontradas", activeSessions);
+                return true;
+            }
+            
+            log.debug("⏭️ [QueueManagement] Nenhuma sessão ativa");
+            return false;
+            
+        } catch (Exception e) {
+            log.error("❌ [QueueManagement] Erro ao verificar sessões ativas", e);
+            // Em caso de erro, assumir que há sessões (comportamento seguro)
+            return true;
+        }
     }
 
     private void broadcastQueueUpdate() {

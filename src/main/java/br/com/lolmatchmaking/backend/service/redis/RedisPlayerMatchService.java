@@ -44,6 +44,7 @@ public class RedisPlayerMatchService {
 
     private static final String PLAYER_MATCH_PREFIX = "player:current_match:";
     private static final String MATCH_PLAYERS_PREFIX = "match:players:";
+    private static final String PUUID_TO_PLAYER_PREFIX = "ws:puuid:to:player:";
     // ✅ CORRIGIDO: TTL de 1h30min (duração máxima de partida + margem)
     // CRÍTICO: Ownership não deve persistir além da duração real
     // Partida típica: 30-60min, margem 30min = 1h30min total
@@ -105,6 +106,90 @@ public class RedisPlayerMatchService {
      * @param matchId      ID da partida
      * @return true se o jogador pertence à partida, false caso contrário
      */
+    
+    /**
+     * ✅ NOVO: Valida constraint PUUID único
+     */
+    public boolean validatePuuidConstraint(String summonerName, String puuid) {
+        try {
+            String puuidKey = PUUID_TO_PLAYER_PREFIX + puuid;
+            String existingPlayer = (String) redisTemplate.opsForValue().get(puuidKey);
+            
+            if (existingPlayer == null) {
+                // PUUID não está vinculado a nenhum jogador
+                return true;
+            }
+            
+            if (existingPlayer.equals(summonerName.toLowerCase())) {
+                // PUUID já está vinculado ao mesmo jogador
+                return true;
+            }
+            
+            // 🚨 CONFLITO: PUUID já vinculado a outro jogador
+            log.error("🚨 [RedisPlayerMatch] PUUID CONFLITO! PUUID {} já vinculado a {} mas tentativa de vincular a {}", 
+                puuid, existingPlayer, summonerName);
+            
+            return false;
+            
+        } catch (Exception e) {
+            log.error("❌ [RedisPlayerMatch] Erro ao validar constraint PUUID", e);
+            return false;
+        }
+    }
+
+    /**
+     * ✅ NOVO: Registra vinculação PUUID → summonerName
+     */
+    public void registerPuuidConstraint(String summonerName, String puuid) {
+        try {
+            String puuidKey = PUUID_TO_PLAYER_PREFIX + puuid;
+            String normalizedName = summonerName.toLowerCase();
+            
+            redisTemplate.opsForValue().set(puuidKey, normalizedName, TTL);
+            log.debug("✅ [RedisPlayerMatch] PUUID constraint registrado: {} → {}", puuid, normalizedName);
+            
+        } catch (Exception e) {
+            log.error("❌ [RedisPlayerMatch] Erro ao registrar PUUID constraint", e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Remove vinculação PUUID → summonerName
+     */
+    public void clearPuuidConstraint(String puuid) {
+        try {
+            String puuidKey = PUUID_TO_PLAYER_PREFIX + puuid;
+            redisTemplate.delete(puuidKey);
+            log.debug("✅ [RedisPlayerMatch] PUUID constraint removido: {}", puuid);
+            
+        } catch (Exception e) {
+            log.error("❌ [RedisPlayerMatch] Erro ao remover PUUID constraint", e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Validação de ownership com PUUID (mais rigorosa)
+     */
+    public boolean validateOwnership(String summonerName, Long matchId, String puuid) {
+        try {
+            // 1. Validar constraint PUUID primeiro
+            if (puuid != null && !puuid.isEmpty()) {
+                boolean puuidValid = validatePuuidConstraint(summonerName, puuid);
+                if (!puuidValid) {
+                    log.error("❌ [RedisPlayerMatch] PUUID inválido para ownership: {} → {}", summonerName, puuid);
+                    return false;
+                }
+            }
+            
+            // 2. Validar ownership normal
+            return validateOwnership(summonerName, matchId);
+            
+        } catch (Exception e) {
+            log.error("❌ [RedisPlayerMatch] Erro ao validar ownership com PUUID", e);
+            return false;
+        }
+    }
+
     public boolean validateOwnership(String summonerName, Long matchId) {
         try {
             String normalizedName = normalizePlayerName(summonerName);
