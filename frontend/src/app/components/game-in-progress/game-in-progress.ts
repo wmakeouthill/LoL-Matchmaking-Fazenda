@@ -154,6 +154,10 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     // ✅ CORREÇÃO: Só inicializar se temos gameData
     if (this.gameData) {
       this.initializeGame();
+
+      // ✅ NOVO: Notificar backend que este jogador JÁ ESTÁ vendo o game
+      // Isso permite que o backend PARE de enviar retry desnecessário
+      this.sendGameAcknowledgment();
     } else {
       logGameInProgress('⏳ [GameInProgress] Aguardando gameData...');
     }
@@ -2119,6 +2123,39 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   closeSpectatorsModal(): void {
     console.log('[GameInProgress] Fechando modal de espectadores');
     this.showSpectatorsModal = false;
+  }
+
+  /**
+   * ✅ NOVO: Envia acknowledgment ao backend que o jogador JÁ ESTÁ vendo o game
+   * Permite que o backend pare de enviar retry para este jogador
+   */
+  private sendGameAcknowledgment(): void {
+    try {
+      if (!this.gameData?.matchId && !this.gameData?.id) {
+        logGameInProgress('⚠️ Sem matchId para enviar acknowledgment');
+        return;
+      }
+
+      const matchId = this.gameData.matchId || this.gameData.id;
+      const playerName = this.summonerName;
+
+      if (!playerName) {
+        logGameInProgress('⚠️ Sem playerName para enviar acknowledgment');
+        return;
+      }
+
+      const ackData = {
+        type: 'game_acknowledged',
+        matchId: matchId,
+        playerName: playerName
+      };
+
+      logGameInProgress('📤 [GameInProgress] Enviando acknowledgment:', ackData);
+      this.apiService.sendWebSocketMessage(ackData);
+
+    } catch (error) {
+      logGameInProgress('❌ Erro ao enviar game acknowledgment:', error);
+    }
   }
 }
 

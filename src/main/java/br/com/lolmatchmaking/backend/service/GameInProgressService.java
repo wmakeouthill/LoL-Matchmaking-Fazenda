@@ -558,10 +558,41 @@ public class GameInProgressService {
 
     private void cancelExpiredMatch(Long matchId) {
         try {
-            GameInProgressService proxy = applicationContext.getBean(GameInProgressService.class);
-            proxy.cancelGame(matchId, "Jogo expirado por timeout");
+            // ✅ CRÍTICO: VALIDAR COM MYSQL ANTES DE CANCELAR
+            // Previne loops infinitos de cancelamento de jogos fantasma
+            Optional<CustomMatch> matchOpt = customMatchRepository.findById(matchId);
+
+            if (matchOpt.isEmpty()) {
+                log.warn("🧹 [CLEANUP] Jogo {} não existe no MySQL! Limpando Redis fantasma...", matchId);
+                redisGameMonitoring.cancelGame(matchId);
+                log.info("✅ [CLEANUP] Jogo fantasma {} removido do Redis", matchId);
+                return; // NÃO chamar cancelGame completo
+            }
+
+            CustomMatch match = matchOpt.get();
+            String status = match.getStatus();
+
+            // Se já está cancelado/completado no MySQL, apenas limpar Redis
+            if ("cancelled".equalsIgnoreCase(status) || "completed".equalsIgnoreCase(status)) {
+                log.warn("🧹 [CLEANUP] Jogo {} já está {} no MySQL! Limpando Redis...", matchId, status);
+                redisGameMonitoring.cancelGame(matchId);
+                log.info("✅ [CLEANUP] Jogo {} removido do Redis (já {} no MySQL)", matchId, status);
+                return; // NÃO reprocessar
+            }
+
+            // Se está realmente "in_progress" no MySQL, aí sim cancelar
+            if ("in_progress".equalsIgnoreCase(status)) {
+                log.info("✅ [Validação MySQL] Jogo {} confirmado como in_progress - prosseguindo cancelamento",
+                        matchId);
+                GameInProgressService proxy = applicationContext.getBean(GameInProgressService.class);
+                proxy.cancelGame(matchId, "Jogo expirado por timeout");
+            } else {
+                log.warn("⚠️ [CLEANUP] Jogo {} tem status inesperado no MySQL: {} - limpando Redis", matchId, status);
+                redisGameMonitoring.cancelGame(matchId);
+            }
+
         } catch (Exception e) {
-            log.error("❌ Erro ao cancelar jogo expirado: {}", matchId, e);
+            log.error("❌ Erro ao processar jogo expirado: {}", matchId, e);
         }
     }
 
@@ -607,29 +638,23 @@ public class GameInProgressService {
                     continue;
                 }
 
-                // ✅ OTIMIZAÇÃO: Verificar quantos jogadores TÊM sessão WebSocket ativa
-                int connectedCount = 0;
-                for (String player : allPlayers) {
-                    Optional<org.springframework.web.socket.WebSocketSession> session = sessionRegistry
-                            .getByPlayer(player);
-                    if (session.isPresent()) {
-                        connectedCount++;
-                    }
-                }
+                // ✅ CRÍTICO: NÃO parar retry apenas porque está "conectado"!
+                // Estar conectado ≠ Estar vendo o game (evento pode ter sido perdido)
+                // SEMPRE continuar enviando (com throttle 5s) até que o jogo termine
+                log.debug("🔄 [GameInProgress] {} jogadores na partida - enviando retry (throttle 5s)",
+                        allPlayers.size());
 
-                // ✅ Se TODOS estão conectados, não precisa retry!
-                if (connectedCount == allPlayers.size()) {
-                    log.debug("✅ [GameInProgress] Todos os {} jogadores estão conectados - pulando retry",
-                            allPlayers.size());
-                    continue;
-                }
-
-                log.debug("⚠️ [GameInProgress] Apenas {}/{} jogadores conectados - enviando retry",
-                        connectedCount, allPlayers.size());
-
-                // ✅ Validar ownership case-insensitive
+                // ✅ Validar ownership case-insensitive + verificar acknowledgment
                 List<String> validPlayers = new ArrayList<>();
                 for (String player : allPlayers) {
+                    // ✅ OTIMIZAÇÃO: Verificar se jogador JÁ acknowledgou (já viu o game)
+                    String ackKey = "game_ack:" + matchId + ":" + player.toLowerCase();
+                    Boolean hasAcked = (Boolean) redisTemplate.opsForValue().get(ackKey);
+                    if (Boolean.TRUE.equals(hasAcked)) {
+                        log.debug("✅ [GameInProgress] Jogador {} já acknowledged - pulando retry", player);
+                        continue; // Pula este jogador
+                    }
+
                     boolean inTeam1 = match.getTeam1PlayersJson() != null &&
                             match.getTeam1PlayersJson().toLowerCase().contains(player.toLowerCase());
                     boolean inTeam2 = match.getTeam2PlayersJson() != null &&

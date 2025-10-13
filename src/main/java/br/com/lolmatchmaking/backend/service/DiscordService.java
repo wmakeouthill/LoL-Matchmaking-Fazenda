@@ -48,6 +48,12 @@ public class DiscordService extends ListenerAdapter {
     // ✅ NOVO: Lock service para prevenir race conditions
     private final br.com.lolmatchmaking.backend.service.lock.DiscordLockService discordLockService;
 
+    // ✅ NOVO: Repository para limpar fila
+    private final br.com.lolmatchmaking.backend.domain.repository.QueuePlayerRepository queuePlayerRepository;
+
+    // ✅ NOVO: PlayerStateService para limpar estados
+    private final br.com.lolmatchmaking.backend.service.lock.PlayerStateService playerStateService;
+
     private JDA jda;
     private String discordToken;
     private String discordChannelName; // Mudança: usar nome do canal em vez de ID
@@ -747,21 +753,56 @@ public class DiscordService extends ListenerAdapter {
     }
 
     /**
-     * ✅ REFATORADO: Clear queue não usa discordQueue (Discord não gerencia fila)
+     * ✅ NOVO: Limpa TODA a fila do MySQL + Estados do Redis
+     * Comando de emergência para resolver bugs
      */
     private void handleClearQueueCommand(SlashCommandInteractionEvent event) {
         try {
-            // ❌ REMOVIDO: discordQueue.clear()
-            // A fila é gerenciada pelo QueueManagementService via MySQL
+            log.warn("🧹 [DiscordService] COMANDO /clear_queue EXECUTADO por {}",
+                    event.getUser().getName());
 
-            event.reply("ℹ️ Use o painel de administração do app para limpar a fila.\n" +
-                    "A fila é gerenciada via MySQL, não Discord.").setEphemeral(true).queue();
+            // ✅ CRÍTICO: Buscar TODOS os jogadores na fila ANTES de deletar
+            List<br.com.lolmatchmaking.backend.domain.entity.QueuePlayer> allPlayers = queuePlayerRepository.findAll();
 
-            log.info("📊 [DiscordService] Comando /clear_queue executado (redirecionado para app)");
+            if (allPlayers.isEmpty()) {
+                event.reply("✅ A fila já está vazia!").setEphemeral(true).queue();
+                log.info("✅ [DiscordService] Fila já estava vazia");
+                return;
+            }
+
+            log.warn("🧹 [clear_queue] Limpando {} jogadores da fila:", allPlayers.size());
+            for (br.com.lolmatchmaking.backend.domain.entity.QueuePlayer player : allPlayers) {
+                log.warn("  🗑️ {}", player.getSummonerName());
+            }
+
+            // ✅ PASSO 1: Limpar estados do Redis (PlayerState) para TODOS
+            for (br.com.lolmatchmaking.backend.domain.entity.QueuePlayer player : allPlayers) {
+                try {
+                    playerStateService.forceSetPlayerState(
+                            player.getSummonerName(),
+                            br.com.lolmatchmaking.backend.service.lock.PlayerState.AVAILABLE);
+                    log.info("  ✅ Estado resetado: {}", player.getSummonerName());
+                } catch (Exception e) {
+                    log.warn("  ⚠️ Erro ao resetar estado de {}: {}",
+                            player.getSummonerName(), e.getMessage());
+                }
+            }
+
+            // ✅ PASSO 2: Deletar TODOS os jogadores do MySQL
+            queuePlayerRepository.deleteAll();
+            queuePlayerRepository.flush();
+
+            log.warn("✅ [clear_queue] {} jogadores removidos do MySQL", allPlayers.size());
+            log.warn("✅ [clear_queue] Estados Redis resetados para AVAILABLE");
+
+            event.reply("✅ **Fila Limpa com Sucesso!**\n\n" +
+                    "🗑️ **" + allPlayers.size() + " jogadores** removidos do MySQL\n" +
+                    "🔄 Estados Redis resetados para **AVAILABLE**\n\n" +
+                    "Todos podem entrar na fila novamente!").setEphemeral(true).queue();
 
         } catch (Exception e) {
             log.error("❌ [DiscordService] Erro ao processar comando /clear_queue", e);
-            event.reply("❌ Erro ao processar comando").setEphemeral(true).queue();
+            event.reply("❌ Erro ao limpar fila: " + e.getMessage()).setEphemeral(true).queue();
         }
     }
 

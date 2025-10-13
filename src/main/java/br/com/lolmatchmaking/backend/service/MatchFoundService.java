@@ -572,6 +572,8 @@ public class MatchFoundService {
                 return;
             }
 
+            log.debug("🔍 [MatchFound] Monitorando {} matches em aceitação", pendingMatchIds.size());
+
             Instant now = Instant.now();
 
             for (Long matchId : pendingMatchIds) {
@@ -587,6 +589,8 @@ public class MatchFoundService {
                 } else {
                     // ✅ CRÍTICO: Reenviar match_found para jogadores que não aceitaram
                     // Isso garante que TODOS vejam o modal, mesmo se houve falha de WebSocket
+                    log.debug("🔄 [MatchFound] Match {} - {}s decorridos, verificando retry...",
+                            matchId, secondsElapsed);
                     retryMatchFoundForPendingPlayers(matchId);
 
                     // Atualizar timer
@@ -1169,29 +1173,15 @@ public class MatchFoundService {
                     .toList();
 
             if (pendingPlayers.isEmpty()) {
+                log.debug("✅ [MatchFound-Retry] Match {} - todos aceitaram, sem retry necessário", matchId);
                 return; // Todos já aceitaram
             }
 
-            // ✅ OTIMIZAÇÃO: Verificar se todos os jogadores PENDENTES têm sessão WebSocket
-            // ativa
-            int connectedPendingCount = 0;
-            for (String player : pendingPlayers) {
-                Optional<org.springframework.web.socket.WebSocketSession> session = sessionRegistry.getByPlayer(player);
-                if (session.isPresent()) {
-                    connectedPendingCount++;
-                }
-            }
-
-            // ✅ Se TODOS os pendentes estão conectados, não precisa retry (eles veem o
-            // modal)!
-            if (connectedPendingCount == pendingPlayers.size()) {
-                log.debug("✅ [MatchFound] Todos os {} jogadores pendentes estão conectados - pulando retry",
-                        pendingPlayers.size());
-                return;
-            }
-
-            log.debug("⚠️ [MatchFound] Apenas {}/{} jogadores pendentes conectados - enviando retry",
-                    connectedPendingCount, pendingPlayers.size());
+            // ✅ LOG INFO: Importante para debug em produção!
+            log.info("🔍 [MatchFound-Retry] Match {}: {}/{} jogadores pendentes",
+                    matchId, pendingPlayers.size(), allPlayers.size());
+            log.info("  📋 Pendentes: {}", pendingPlayers);
+            log.info("  ✅ Aceitaram: {}", acceptedPlayers);
 
             // ✅ THROTTLE: Reenviar apenas a cada 5 segundos para não spammar
             String retryKey = "match_found_retry:" + matchId;
@@ -1207,57 +1197,83 @@ public class MatchFoundService {
             redisTemplate.opsForValue().set(retryKey, nowSec,
                     java.time.Duration.ofSeconds(ACCEPTANCE_TIMEOUT_SECONDS + 10));
 
-            // ✅ VALIDAÇÃO: Verificar ownership no MySQL
-            customMatchRepository.findById(matchId).ifPresent(match -> {
-                String status = match.getStatus();
+            // ✅ CRÍTICO: VALIDAR COM MYSQL ANTES DE RETRY
+            // Previne loops infinitos de retry para matches fantasma
+            Optional<CustomMatch> matchOpt = customMatchRepository.findById(matchId);
 
-                // Só reenviar se ainda está em fase de aceitação
-                if (!"match_found".equalsIgnoreCase(status) &&
-                        !"accepting".equalsIgnoreCase(status) &&
-                        !"accepted".equalsIgnoreCase(status)) {
-                    log.debug("⏭️ [MatchFound] Match {} não está mais em aceitação (status={}), pulando retry",
-                            matchId, status);
-                    return;
+            if (matchOpt.isEmpty()) {
+                log.warn("🧹 [CLEANUP] Match {} não existe no MySQL! Limpando Redis fantasma...", matchId);
+                redisAcceptance.clearMatch(matchId);
+                log.info("✅ [CLEANUP] Match fantasma {} removida do Redis", matchId);
+                return; // ABORTAR retry
+            }
+
+            CustomMatch match = matchOpt.get();
+            String status = match.getStatus();
+
+            // Se já foi cancelada/completada no MySQL, limpar Redis
+            if ("cancelled".equalsIgnoreCase(status) || "completed".equalsIgnoreCase(status) ||
+                    "in_progress".equalsIgnoreCase(status) || "draft".equalsIgnoreCase(status)) {
+                log.warn("🧹 [CLEANUP] Match {} já está em '{}' no MySQL! Limpando Redis de aceitação...",
+                        matchId, status);
+                redisAcceptance.clearMatch(matchId);
+                log.info("✅ [CLEANUP] Match {} removida do Redis de aceitação", matchId);
+                return; // ABORTAR retry
+            }
+
+            // ✅ Verificar ownership + acknowledgment de cada jogador pendente
+            List<String> validPendingPlayers = new ArrayList<>();
+            for (String player : pendingPlayers) {
+                // ✅ OTIMIZAÇÃO: Verificar se jogador JÁ acknowledgou (já viu o modal)
+                String ackKey = "match_found_ack:" + matchId + ":" + player.toLowerCase();
+                Boolean hasAcked = (Boolean) redisTemplate.opsForValue().get(ackKey);
+                if (Boolean.TRUE.equals(hasAcked)) {
+                    log.debug("✅ [MatchFound] Jogador {} já acknowledged - pulando retry", player);
+                    continue; // Pula este jogador
                 }
 
-                // ✅ Verificar ownership de cada jogador pendente
-                List<String> validPendingPlayers = new ArrayList<>();
-                for (String player : pendingPlayers) {
-                    // ✅ CASE-INSENSITIVE ownership check
-                    boolean inTeam1 = match.getTeam1PlayersJson() != null &&
-                            match.getTeam1PlayersJson().toLowerCase().contains(player.toLowerCase());
-                    boolean inTeam2 = match.getTeam2PlayersJson() != null &&
-                            match.getTeam2PlayersJson().toLowerCase().contains(player.toLowerCase());
+                // ✅ CASE-INSENSITIVE ownership check
+                boolean inTeam1 = match.getTeam1PlayersJson() != null &&
+                        match.getTeam1PlayersJson().toLowerCase().contains(player.toLowerCase());
+                boolean inTeam2 = match.getTeam2PlayersJson() != null &&
+                        match.getTeam2PlayersJson().toLowerCase().contains(player.toLowerCase());
 
-                    if (inTeam1 || inTeam2) {
-                        validPendingPlayers.add(player);
-                    } else {
-                        log.warn("⚠️ [MatchFound] Jogador {} não pertence à partida {} (ownership fail)",
-                                player, matchId);
-                    }
+                if (inTeam1 || inTeam2) {
+                    validPendingPlayers.add(player);
+                } else {
+                    log.warn("⚠️ [MatchFound] Jogador {} não pertence à partida {} (ownership fail)",
+                            player, matchId);
                 }
+            }
 
-                if (!validPendingPlayers.isEmpty()) {
-                    // ✅ Buscar dados completos da partida para reenviar
-                    List<String> team1Names = redisAcceptance.getTeam1Players(matchId);
-                    List<String> team2Names = redisAcceptance.getTeam2Players(matchId);
+            if (validPendingPlayers.isEmpty()) {
+                log.info("⏭️ [MatchFound-Retry] Match {} - Todos os pendentes já acknowledged ou sem ownership",
+                        matchId);
+                return;
+            }
 
-                    // Montar payload igual ao original
-                    Map<String, Object> matchFoundData = buildMatchFoundPayload(
-                            matchId, match, team1Names, team2Names);
+            // ✅ Buscar dados completos da partida para reenviar
+            List<String> team1Names = redisAcceptance.getTeam1Players(matchId);
+            List<String> team2Names = redisAcceptance.getTeam2Players(matchId);
 
-                    log.info("🔄 [MatchFound] RETRY: Reenviando match_found para {} jogadores pendentes da partida {}",
-                            validPendingPlayers.size(), matchId);
-                    for (String player : validPendingPlayers) {
-                        log.info("  📤 {}", player);
-                    }
+            // Montar payload igual ao original
+            Map<String, Object> matchFoundData = buildMatchFoundPayload(
+                    matchId, match, team1Names, team2Names);
 
-                    // ✅ BROADCAST PARALELO para jogadores pendentes
-                    webSocketService.sendToPlayers("match_found", matchFoundData, validPendingPlayers);
+            log.info("╔═══════════════════════════════════════════════════════════════════════╗");
+            log.info("║  🔄 [RETRY] REENVIANDO MATCH_FOUND                                    ║");
+            log.info("╚═══════════════════════════════════════════════════════════════════════╝");
+            log.info("🔄 [MatchFound-Retry] Match {}: {} jogadores pendentes receberão match_found",
+                    matchId, validPendingPlayers.size());
+            for (String player : validPendingPlayers) {
+                log.info("  📤 {}", player);
+            }
 
-                    log.info("✅ [MatchFound] RETRY enviado para {} jogadores", validPendingPlayers.size());
-                }
-            });
+            // ✅ BROADCAST PARALELO para jogadores pendentes
+            webSocketService.sendToPlayers("match_found", matchFoundData, validPendingPlayers);
+
+            log.info("✅ [MatchFound-Retry] ENVIADO para {} jogadores", validPendingPlayers.size());
+            log.info("╚═══════════════════════════════════════════════════════════════════════╝");
 
         } catch (Exception e) {
             log.debug("❌ [MatchFound] Erro ao retry match_found", e);

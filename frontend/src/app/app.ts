@@ -727,6 +727,14 @@ export class App implements OnInit, OnDestroy {
 
       case 'backend_connection_success':
         console.log('🔌 [App] Backend conectado');
+        // ✅ CRÍTICO: Reenviar identify_player após reconexão do WebSocket
+        // para restabelecer vínculo Redis (player → sessionId)
+        if (this.currentPlayer) {
+          console.log('🔗 [App] Reconexão detectada - reenviando identify_player...');
+          this.identifyCurrentPlayerOnConnect();
+        } else {
+          console.warn('⚠️ [App] Reconexão mas currentPlayer não disponível ainda');
+        }
         break;
       case 'match_found':
         console.log('🎮 [App] Match found recebido:', message);
@@ -1027,6 +1035,9 @@ export class App implements OnInit, OnDestroy {
         this.showMatchFound = false; // ✅ CRÍTICO: Destruir componente MatchFound
         this.matchFoundData = null; // Limpar dados
         this.cdr.detectChanges();
+
+        // ✅ NOVO: Enviar acknowledgment ao backend (para de retry desnecessário)
+        this.sendDraftAcknowledgment(effectiveMatchId);
         break;
       case 'acceptance_timer':
         // Atualizar timer do MatchFoundComponent
@@ -1175,6 +1186,51 @@ export class App implements OnInit, OnDestroy {
     this.cdr.detectChanges();
 
     console.log('✅ [App] Modal Match Found exibido (showMatchFound =', this.showMatchFound, ')');
+
+    // ✅ NOVO: Enviar acknowledgment ao backend (para de retry desnecessário)
+    this.sendMatchFoundAcknowledgment(data.matchId);
+  }
+
+  /**
+   * ✅ NOVO: Envia acknowledgment ao backend que o jogador VIU o match_found
+   */
+  private sendMatchFoundAcknowledgment(matchId: number): void {
+    try {
+      const playerName = this.currentPlayer?.displayName || this.currentPlayer?.summonerName;
+      if (!playerName || !matchId) return;
+
+      const ackData = {
+        type: 'match_found_acknowledged',
+        matchId: matchId,
+        playerName: playerName
+      };
+
+      console.log('📤 [App] Enviando match_found acknowledgment:', ackData);
+      this.apiService.sendWebSocketMessage(ackData);
+    } catch (error) {
+      console.error('❌ Erro ao enviar match_found acknowledgment:', error);
+    }
+  }
+
+  /**
+   * ✅ NOVO: Envia acknowledgment ao backend que o jogador VIU o draft
+   */
+  private sendDraftAcknowledgment(matchId: number): void {
+    try {
+      const playerName = this.currentPlayer?.displayName || this.currentPlayer?.summonerName;
+      if (!playerName || !matchId) return;
+
+      const ackData = {
+        type: 'draft_acknowledged',
+        matchId: matchId,
+        playerName: playerName
+      };
+
+      console.log('📤 [App] Enviando draft acknowledgment:', ackData);
+      this.apiService.sendWebSocketMessage(ackData);
+    } catch (error) {
+      console.error('❌ Erro ao enviar draft acknowledgment:', error);
+    }
   }
 
   private stopDraftPolling(): void {
@@ -1969,7 +2025,8 @@ export class App implements OnInit, OnDestroy {
         this.savePlayerData(player).catch(err => console.error('Erro ao salvar dados:', err));
         this.updateSettingsForm();
 
-        // ✅ NOVO: Identificar jogador no WebSocket após carregar dados
+        // ✅ CRÍTICO: Identificar jogador no backend (registrar sessionId no Redis)
+        console.log('🔗 [App] Identificando jogador no backend após carregar do LCU...');
         this.identifyCurrentPlayerOnConnect();
 
         this.addNotification('success', 'Dados Carregados', 'Dados do jogador carregados do League of Legends');
@@ -2153,6 +2210,10 @@ export class App implements OnInit, OnDestroy {
       // ✅ ADICIONADO: Atualizar formulário de configurações
       this.updateSettingsForm();
 
+      // ✅ CRÍTICO: Identificar jogador no backend após carregar via API
+      console.log('🔗 [App] Identificando jogador no backend após carregar via API...');
+      this.identifyCurrentPlayerOnConnect();
+
       console.log('✅ [App] Dados do jogador mapeados com sucesso:', player.summonerName, 'displayName:', player.displayName);
       console.log('📊 [DEBUG] currentPlayer after assignment:', JSON.stringify(this.currentPlayer, null, 2));
 
@@ -2237,6 +2298,11 @@ export class App implements OnInit, OnDestroy {
           }
 
           console.log(`✅ [Electron] Dados do jogador carregados: ${summonerName}`, result.path);
+
+          // ✅ CRÍTICO: Identificar jogador no backend após carregar do Electron
+          console.log('🔗 [App] Identificando jogador no backend após carregar do Electron storage...');
+          this.identifyCurrentPlayerOnConnect();
+
           return;
         } else {
           console.log(`ℹ️ [Electron] Nenhum dado salvo encontrado para: ${summonerName}`);
@@ -3041,6 +3107,13 @@ export class App implements OnInit, OnDestroy {
       return; // Sem jogador identificado
     }
 
+    // 🛡️ PROTEÇÃO CRÍTICA: NÃO executar polling durante partida ativa
+    // O polling pode retornar dados desatualizados e causar limpeza indevida
+    if (this.inDraftPhase || this.inGamePhase || this.showMatchFound) {
+      console.log('⏭️ [App] Polling pausado - em partida ativa (draft/game/match_found)');
+      return;
+    }
+
     // ✅ NOVO: Verificar se há ação recente do backend
     const now = Date.now();
     const timeSinceLastBackendAction = now - this.lastBackendAction;
@@ -3501,19 +3574,22 @@ export class App implements OnInit, OnDestroy {
   private async handleNoStatusFromPolling(): Promise<void> {
     console.log('🔄 [App] Status "none" detectado via polling');
 
-    // 🛡️ PROTEÇÃO: Não limpar estados se for uma partida restaurada
-    if (this.isRestoredMatch && (this.inDraftPhase || this.inGamePhase)) {
-      console.log('🛡️ [App] Partida restaurada detectada - ignorando status "none" do polling');
+    // 🛡️ PROTEÇÃO CRÍTICA: NUNCA limpar estados se estamos em draft/game
+    // Não importa se é restaurado ou não - se estamos ATIVAMENTE em partida, manter!
+    if (this.inDraftPhase || this.inGamePhase || this.showMatchFound) {
+      console.log('🛡️ [App] EM PARTIDA ATIVA - ignorando status "none" do polling');
       console.log('🛡️ [App] Estado preservado:', {
+        showMatchFound: this.showMatchFound,
         inDraftPhase: this.inDraftPhase,
         inGamePhase: this.inGamePhase,
         isRestoredMatch: this.isRestoredMatch
       });
+      console.log('ℹ️ [App] O polling pode estar desatualizado. Use my-active-match como fonte de verdade.');
       return;
     }
 
     if (this.hasActiveStates()) {
-      console.log('🔄 [App] Estados ativos detectados, verificando se devem ser limpos...');
+      console.log('🔄 [App] Estados ativos detectados (mas não em partida ativa), verificando...');
 
       const shouldContinueCleanup = await this.waitAndVerifyStatusIfNeeded();
       if (!shouldContinueCleanup) {
