@@ -2,6 +2,7 @@ package br.com.lolmatchmaking.backend.websocket;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -105,6 +106,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             case "identity_confirmed_critical" ->
                 webSocketService.handleCriticalIdentityConfirmed(session.getId(), root);
             case "request_critical_identity_confirmation" -> handleRequestCriticalIdentityConfirmation(session, root);
+            case "get_active_sessions" -> handleGetActiveSessions(session, root);
             case "ping" -> session.sendMessage(new TextMessage("{\"type\":\"pong\"}"));
             case "join_queue" -> handleJoinQueue(session, root);
             case "leave_queue" -> handleLeaveQueue(session, root);
@@ -423,6 +425,77 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
     private static final String FIELD_CUSTOM_LP = "customLp";
 
     // ✅ NOVO: Handler para identificação automática do Electron
+    /**
+     * ✅ NOVO: Handler para solicitação de sessões ativas
+     */
+    private void handleGetActiveSessions(WebSocketSession session, JsonNode root) throws IOException {
+        try {
+            log.info("📋 [CoreWS] Solicitando lista de sessões ativas de sessionId={}", session.getId());
+
+            // Buscar informações das sessões ativas
+            Map<String, Object> allClientInfo = redisWSSession.getAllClientInfo();
+
+            // Preparar resposta com detalhes das sessões
+            List<Map<String, Object>> sessionsList = new ArrayList<>();
+
+            for (Map.Entry<String, Object> entry : allClientInfo.entrySet()) {
+                String sessionId = entry.getKey();
+                Map<String, Object> clientInfo = (Map<String, Object>) entry.getValue();
+
+                Map<String, Object> sessionDetails = new HashMap<>();
+                sessionDetails.put("sessionId", sessionId);
+                sessionDetails.put("summonerName", clientInfo.get("summonerName"));
+                sessionDetails.put("connectedAt", clientInfo.get("connectedAt"));
+                sessionDetails.put("lastActivity", clientInfo.get("lastActivity"));
+                sessionDetails.put("ip", clientInfo.get("ip"));
+                sessionDetails.put("userAgent", clientInfo.get("userAgent"));
+
+                // Buscar PUUID se disponível
+                try {
+                    String playerInfoJson = redisWSSession.getPlayerInfo(sessionId);
+                    if (playerInfoJson != null && !playerInfoJson.isEmpty()) {
+                        JsonNode playerInfo = mapper.readTree(playerInfoJson);
+                        sessionDetails.put("puuid", playerInfo.path("puuid").asText(null));
+                        sessionDetails.put("summonerId", playerInfo.path("summonerId").asText(null));
+                        sessionDetails.put("profileIconId", playerInfo.path("profileIconId").asText(null));
+                    }
+                } catch (Exception e) {
+                    log.debug("Erro ao buscar PUUID para sessão {}: {}", sessionId, e.getMessage());
+                }
+
+                sessionsList.add(sessionDetails);
+            }
+
+            // Criar resposta
+            Map<String, Object> response = new HashMap<>();
+            response.put("type", "active_sessions_list");
+            response.put("totalSessions", sessionsList.size());
+            response.put("identifiedSessions", sessionsList.size());
+            response.put("localSessions", sessionRegistry.all().size());
+            response.put("sessions", sessionsList);
+            response.put("timestamp", System.currentTimeMillis());
+
+            String responseJson = mapper.writeValueAsString(response);
+            session.sendMessage(new TextMessage(responseJson));
+
+            log.info("✅ [CoreWS] Lista de {} sessões ativas enviada para sessionId={}",
+                    sessionsList.size(), session.getId());
+
+        } catch (Exception e) {
+            log.error("❌ [CoreWS] Erro ao buscar sessões ativas", e);
+            try {
+                Map<String, Object> errorResponse = Map.of(
+                        "type", "active_sessions_list",
+                        "error", "Erro interno",
+                        "totalSessions", 0,
+                        "sessions", new ArrayList<>());
+                session.sendMessage(new TextMessage(mapper.writeValueAsString(errorResponse)));
+            } catch (IOException ioException) {
+                log.error("❌ [CoreWS] Erro ao enviar resposta de erro", ioException);
+            }
+        }
+    }
+
     private void handleElectronIdentify(WebSocketSession session, JsonNode root) throws IOException {
         try {
             log.info("🔍 [CoreWS] Recebendo electron_identify de sessionId={}", session.getId());
