@@ -1089,6 +1089,32 @@ export class App implements OnInit, OnDestroy {
 
         this.addNotification('success', 'Jogo Iniciado!', 'A partida está em andamento');
         break;
+
+      case 'active_sessions_list':
+        // ✅ NOVO: Processar lista de sessões ativas
+        console.log('📋 [Player-Sessions] ===== LISTA DE SESSÕES ATIVAS RECEBIDA =====');
+        console.log('📋 [Player-Sessions] Total de sessões:', message.totalSessions);
+        console.log('📋 [Player-Sessions] Sessões identificadas:', message.identifiedSessions);
+        console.log('📋 [Player-Sessions] Sessões locais:', message.localSessions);
+
+        if (message.sessions && message.sessions.length > 0) {
+          console.log('📋 [Player-Sessions] === DETALHES DAS SESSÕES ===');
+          message.sessions.forEach((session: any, index: number) => {
+            console.log(`📋 [Player-Sessions] Sessão ${index + 1}:`);
+            console.log(`📋 [Player-Sessions]   - Session ID: ${session.sessionId}`);
+            console.log(`📋 [Player-Sessions]   - Summoner: ${session.summonerName || 'N/A'}`);
+            console.log(`📋 [Player-Sessions]   - PUUID: ${session.puuid || 'N/A'}`);
+            console.log(`📋 [Player-Sessions]   - Conectado em: ${session.connectedAt || 'N/A'}`);
+            console.log(`📋 [Player-Sessions]   - Última atividade: ${session.lastActivity || 'N/A'}`);
+            console.log(`📋 [Player-Sessions]   - IP: ${session.ip || 'N/A'}`);
+            console.log(`📋 [Player-Sessions]   - User Agent: ${session.userAgent || 'N/A'}`);
+          });
+        } else {
+          console.log('📋 [Player-Sessions] Nenhuma sessão identificada encontrada');
+        }
+        console.log('📋 [Player-Sessions] ================================================');
+        break;
+
       default:
         // outras mensagens tratadas por componentes específicos
         break;
@@ -1549,9 +1575,27 @@ export class App implements OnInit, OnDestroy {
       return;
     }
 
+    // ✅ NOVO: LOG DETALHADO DA VINCULAÇÃO PLAYER-SESSÃO AO ENTRAR NA FILA (FRONTEND → BACKEND)
+    console.log('🔗 [Player-Sessions] ===== FRONTEND → BACKEND: ENTRADA NA FILA =====');
+    console.log('🔗 [Player-Sessions] [FRONTEND] Summoner:', this.currentPlayer.displayName || this.currentPlayer.summonerName);
+    console.log('🔗 [Player-Sessions] [FRONTEND] GameName:', this.currentPlayer.gameName);
+    console.log('🔗 [Player-Sessions] [FRONTEND] TagLine:', this.currentPlayer.tagLine);
+    console.log('🔗 [Player-Sessions] [FRONTEND] PUUID:', this.currentPlayer.puuid);
+    console.log('🔗 [Player-Sessions] [FRONTEND] Summoner ID:', this.currentPlayer.summonerId);
+    console.log('🔗 [Player-Sessions] [FRONTEND] Profile Icon:', this.currentPlayer.profileIconId);
+    console.log('🔗 [Player-Sessions] [FRONTEND] Level:', this.currentPlayer.summonerLevel);
+    console.log('🔗 [Player-Sessions] [FRONTEND] Preferences:', preferences);
+    console.log('🔗 [Player-Sessions] [FRONTEND] WebSocket Status:', this.apiService.isWebSocketConnected() ? 'CONECTADO' : 'DESCONECTADO');
+    console.log('🔗 [Player-Sessions] ======================================================');
+
+    // ✅ REMOVIDO: Backend agora comunica diretamente com Electron via WebSocket
+
     try {
       await firstValueFrom(this.apiService.joinQueue(this.currentPlayer, preferences));
       console.log('✅ [App] Solicitação de entrada na fila enviada');
+
+      // ✅ NOVO: Solicitar lista de sessões ativas após entrar na fila
+      this.requestActiveSessionsList();
 
       // ✅ NOVO: Atualizar imediatamente o estado local para mostrar entrada na fila
       this.isInQueue = true;
@@ -3841,6 +3885,44 @@ export class App implements OnInit, OnDestroy {
 
     this.lastRefreshTime = now;
     this.refreshQueueStatus();
+  }
+
+  /**
+   * ✅ NOVO: Solicita lista de sessões ativas do backend
+   *
+   * Usado para debug e verificação de vinculação player-sessão
+   */
+  private requestActiveSessionsList(): void {
+    try {
+      console.log('📋 [Player-Sessions] Solicitando lista de sessões ativas...');
+
+      // Enviar mensagem via WebSocket para o backend
+      this.apiService.sendWebSocketMessage({
+        type: 'get_active_sessions'
+      });
+      console.log('📋 [Player-Sessions] Mensagem get_active_sessions enviada via WebSocket');
+    } catch (error) {
+      console.error('❌ [Player-Sessions] Erro ao solicitar sessões ativas:', error);
+    }
+  }
+
+  // ✅ NOVO: Notificar Electron sobre entrada na fila (PROATIVO)
+  private notifyElectronQueueEntry(): void {
+    try {
+      console.log('🔗 [Player-Sessions] [FRONTEND] Notificando Electron sobre entrada na fila...');
+
+      // Enviar mensagem via WebSocket para o Electron (via backend)
+      this.apiService.sendWebSocketMessage({
+        type: 'queue_entry_requested',
+        timestamp: Date.now(),
+        summonerName: this.currentPlayer?.displayName || this.currentPlayer?.summonerName,
+        reason: 'frontend_queue_request'
+      });
+      
+      console.log('✅ [Player-Sessions] [FRONTEND] Electron notificado sobre entrada na fila');
+    } catch (error) {
+      console.error('❌ [Player-Sessions] [FRONTEND] Erro ao notificar Electron:', error);
+    }
   }
 }
 

@@ -6,7 +6,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 import org.slf4j.Logger;
@@ -19,6 +18,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import br.com.lolmatchmaking.backend.service.QueueService;
 import br.com.lolmatchmaking.backend.service.AcceptanceService;
 import br.com.lolmatchmaking.backend.service.MatchmakingOrchestrator;
@@ -54,7 +54,7 @@ import lombok.RequiredArgsConstructor;
 public class CoreWebSocketHandler extends TextWebSocketHandler {
 
     private static final Logger log = LoggerFactory.getLogger(CoreWebSocketHandler.class);
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
     private static final String FIELD_SUMMONER_NAME = "summonerName";
     private static final String FIELD_STATUS = "status";
@@ -75,11 +75,14 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
     private final RedisLCUConnectionService redisLCUConnection;
     private final br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatch;
 
+    // ✅ NOVO: Unified Log Service
+    private final br.com.lolmatchmaking.backend.service.UnifiedLogService unifiedLogService;
+
     // ✅ NOVO: Lock services
     private final br.com.lolmatchmaking.backend.service.lock.PlayerLockService playerLockService;
 
     // ✅ NOVO: RedisTemplate para acknowledgments
-    private final org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
+    private final RedisTemplate<String, Object> redisTemplate;
 
     // ✅ DEPRECIADO: Migrado para Redis (backward compatibility)
     // ✅ REMOVIDO: identifiedPlayers e lastLcuStatus - Redis é fonte única da
@@ -107,6 +110,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                 webSocketService.handleCriticalIdentityConfirmed(session.getId(), root);
             case "request_critical_identity_confirmation" -> handleRequestCriticalIdentityConfirmation(session, root);
             case "get_active_sessions" -> handleGetActiveSessions(session, root);
+            case "enable_unified_logs" -> handleEnableUnifiedLogs(session, root); // ✅ NOVO
             case "ping" -> session.sendMessage(new TextMessage("{\"type\":\"pong\"}"));
             case "join_queue" -> handleJoinQueue(session, root);
             case "leave_queue" -> handleLeaveQueue(session, root);
@@ -233,7 +237,11 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         // ✅ CRÍTICO: Registrar jogador no SessionRegistry para que receba broadcasts
         sessionRegistry.registerPlayer(summonerName, session.getId());
 
-        log.info("✅ [WS] Conexão LCU registrada: '{}' (session: {}, {}:{})",
+        // ✅ NOVO: Invalidar cache via Redis (evita dependência circular)
+        sessionRegistry.invalidateSessionCache();
+
+        log.info(
+                "✅ [Player-Sessions] [ELECTRON→BACKEND] Conexão LCU registrada: '{}' (session: {}, {}:{}) - cache invalidado",
                 summonerName, session.getId(), host, port);
 
         // ✅ NOVO: Buscar dados de ranked e salvar MMR no banco IMEDIATAMENTE
@@ -478,7 +486,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             String responseJson = mapper.writeValueAsString(response);
             session.sendMessage(new TextMessage(responseJson));
 
-            log.info("✅ [CoreWS] Lista de {} sessões ativas enviada para sessionId={}",
+            log.info("✅ [Player-Sessions] Lista de {} sessões ativas enviada para sessionId={}",
                     sessionsList.size(), session.getId());
 
         } catch (Exception e) {
@@ -492,6 +500,48 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                 session.sendMessage(new TextMessage(mapper.writeValueAsString(errorResponse)));
             } catch (IOException ioException) {
                 log.error("❌ [CoreWS] Erro ao enviar resposta de erro", ioException);
+            }
+        }
+    }
+
+    /**
+     * ✅ NOVO: Handler para habilitar logs unificados no Electron
+     * 
+     * Permite que o Electron receba logs do backend via WebSocket
+     */
+    private void handleEnableUnifiedLogs(WebSocketSession session, JsonNode root) throws IOException {
+        try {
+            log.info("📋 [Player-Sessions] [UNIFIED-LOGS] Electron {} solicitou logs player-sessions", session.getId());
+
+            // ✅ Registrar esta sessão para receber logs [Player-Sessions]
+            unifiedLogService.registerPlayerSessionLogSession(session.getId());
+
+            Map<String, Object> response = Map.of(
+                    "type", "player_session_logs_enabled",
+                    "sessionId", session.getId(),
+                    "timestamp", System.currentTimeMillis(),
+                    "message", "Logs [Player-Sessions] habilitados para esta sessão");
+
+            String responseJson = mapper.writeValueAsString(response);
+            session.sendMessage(new TextMessage(responseJson));
+
+            log.info("✅ [Player-Sessions] [UNIFIED-LOGS] Logs [Player-Sessions] habilitados para sessionId={}",
+                    session.getId());
+
+            // ✅ Enviar log de teste para confirmar funcionamento
+            unifiedLogService.sendPlayerSessionInfoLog("[Player-Sessions] [UNIFIED-LOGS]",
+                    "Logs [Player-Sessions] habilitados para sessionId=%s", session.getId());
+
+        } catch (Exception e) {
+            log.error("❌ [Player-Sessions] [UNIFIED-LOGS] Erro ao habilitar logs unificados", e);
+            try {
+                Map<String, Object> errorResponse = Map.of(
+                        "type", "unified_logs_error",
+                        "error", "Erro interno",
+                        "timestamp", System.currentTimeMillis());
+                session.sendMessage(new TextMessage(mapper.writeValueAsString(errorResponse)));
+            } catch (IOException ioException) {
+                log.error("❌ [Player-Sessions] [UNIFIED-LOGS] Erro ao enviar resposta de erro", ioException);
             }
         }
     }
@@ -651,7 +701,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
 
             // Salvar no Redis que este jogador JÁ recebeu o match_found
             String ackKey = "match_found_ack:" + matchId + ":" + playerName.toLowerCase();
-            redisTemplate.opsForValue().set(ackKey, "true", java.time.Duration.ofMinutes(5));
+            redisTemplate.opsForValue().set(ackKey, "true", Duration.ofMinutes(5));
 
             log.debug("✅ [ACK] Match found acknowledged: matchId={}, player={}", matchId, playerName);
         } catch (Exception e) {
@@ -669,7 +719,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
 
             // Salvar no Redis que este jogador JÁ recebeu o draft
             String ackKey = "draft_ack:" + matchId + ":" + playerName.toLowerCase();
-            redisTemplate.opsForValue().set(ackKey, "true", java.time.Duration.ofMinutes(10));
+            redisTemplate.opsForValue().set(ackKey, "true", Duration.ofMinutes(10));
 
             log.debug("✅ [ACK] Draft acknowledged: matchId={}, player={}", matchId, playerName);
         } catch (Exception e) {
@@ -687,7 +737,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
 
             // Salvar no Redis que este jogador JÁ recebeu o game
             String ackKey = "game_ack:" + matchId + ":" + playerName.toLowerCase();
-            redisTemplate.opsForValue().set(ackKey, "true", java.time.Duration.ofHours(1));
+            redisTemplate.opsForValue().set(ackKey, "true", Duration.ofHours(1));
 
             log.debug("✅ [ACK] Game acknowledged: matchId={}, player={}", matchId, playerName);
         } catch (Exception e) {

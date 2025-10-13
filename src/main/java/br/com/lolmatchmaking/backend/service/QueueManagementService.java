@@ -9,6 +9,7 @@ import br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -19,6 +20,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
+import java.time.Duration;
 
 @Slf4j
 @Service
@@ -46,6 +48,7 @@ public class QueueManagementService {
     private final RedisDraftFlowService redisDraftFlow;
     private final DraftFlowService draftFlowService;
     private final br.com.lolmatchmaking.backend.websocket.SessionRegistry sessionRegistry;
+    private final RedisTemplate<String, Object> redisTemplate;
 
     // ✅ Construtor com injeção de dependências
     public QueueManagementService(
@@ -66,7 +69,8 @@ public class QueueManagementService {
             br.com.lolmatchmaking.backend.service.redis.RedisPlayerMatchService redisPlayerMatchService,
             RedisDraftFlowService redisDraftFlowService,
             @Lazy DraftFlowService draftFlowService,
-            br.com.lolmatchmaking.backend.websocket.SessionRegistry sessionRegistry) {
+            br.com.lolmatchmaking.backend.websocket.SessionRegistry sessionRegistry,
+            RedisTemplate<String, Object> redisTemplate) {
         this.queuePlayerRepository = queuePlayerRepository;
         this.playerRepository = playerRepository;
         this.customMatchRepository = customMatchRepository;
@@ -85,6 +89,7 @@ public class QueueManagementService {
         this.redisDraftFlow = redisDraftFlowService;
         this.draftFlowService = draftFlowService;
         this.sessionRegistry = sessionRegistry;
+        this.redisTemplate = redisTemplate;
     }
 
     // ✅ REMOVIDO: HashMaps locais removidos - SQL é fonte da verdade
@@ -141,7 +146,42 @@ public class QueueManagementService {
     }
 
     /**
-     * Adiciona jogador à fila
+     * Adiciona jogador à fila COM informações da sessão Electron
+     */
+    @Transactional
+    public boolean addToQueueWithSession(String summonerName, String region, Long playerId,
+            Integer customLp, String primaryLane, String secondaryLane,
+            String sessionId, String puuid, Map<String, Object> lcuData) {
+
+        log.info(
+                "🔗 [Player-Sessions] [QUEUE] Adicionando jogador à fila COM sessão Electron: {} (sessionId: {}, puuid: {})",
+                summonerName, sessionId, puuid);
+
+        // ✅ NOVO: Validar se sessão Electron está ativa
+        if (sessionId == null || sessionId.isEmpty()) {
+            log.error("❌ [Player-Sessions] [QUEUE] SessionId é obrigatório para entrada na fila: {}", summonerName);
+            return false;
+        }
+
+        if (puuid == null || puuid.isEmpty()) {
+            log.error("❌ [Player-Sessions] [QUEUE] PUUID é obrigatório para entrada na fila: {}", summonerName);
+            return false;
+        }
+
+        // ✅ NOVO: Log dos dados LCU recebidos
+        if (lcuData != null && !lcuData.isEmpty()) {
+            log.info("🔗 [Player-Sessions] [QUEUE] Dados LCU recebidos para {}: {}", summonerName, lcuData.keySet());
+        }
+
+        // ✅ NOVO: Armazenar informações da sessão no Redis para validação futura
+        storeSessionInfoInRedis(summonerName, sessionId, puuid, lcuData);
+
+        // Chamar método original com validações adicionais
+        return addToQueue(summonerName, region, playerId, customLp, primaryLane, secondaryLane);
+    }
+
+    /**
+     * Adiciona jogador à fila (método original)
      */
     @Transactional
     public boolean addToQueue(String summonerName, String region, Long playerId,
@@ -1199,28 +1239,72 @@ public class QueueManagementService {
         log.info("🔄 Monitoramento da fila iniciado");
     }
 
+    // ✅ NOVO: Cache infinito - só invalida quando alguém conecta
+    private volatile boolean hasActiveSessionsCache = false;
+    private volatile boolean cacheInitialized = false;
+    private volatile long lastCacheInvalidationCheck = 0;
+
     /**
-     * ✅ NOVO: Verifica se há sessões WebSocket ativas
+     * ✅ NOVO: Verifica se há sessões WebSocket ativas com cache infinito
      * 
-     * Evita processamento desnecessário quando não há jogadores conectados
+     * Cache infinito: se não tem sessões, não verifica mais até alguém conectar
+     * Só verifica novamente quando cache é invalidado via Redis
      */
     private boolean hasActiveSessions() {
         try {
-            // Verificar se há sessões WebSocket ativas
+            // ✅ VERIFICAR REDIS: Se cache foi invalidado por nova conexão
+            boolean cacheInvalidated = checkRedisCacheInvalidation();
+
+            // ✅ CACHE INFINITO: Se já verificou e não havia sessões, não verificar mais
+            if (cacheInitialized && !hasActiveSessionsCache && !cacheInvalidated) {
+                return false; // Retorna cache (sem log, sem verificação)
+            }
+
+            // Verificar se há sessões WebSocket ativas (primeira vez ou após invalidação)
             int activeSessions = sessionRegistry.getActiveSessionCount();
-            
+
+            // Atualizar cache
+            cacheInitialized = true;
+            hasActiveSessionsCache = (activeSessions > 0);
+
             if (activeSessions > 0) {
-                log.debug("✅ [QueueManagement] {} sessões ativas encontradas", activeSessions);
+                log.info("✅ [QueueManagement] {} sessões ativas encontradas - sistema acordou", activeSessions);
                 return true;
             }
-            
-            log.debug("⏭️ [QueueManagement] Nenhuma sessão ativa");
+
+            // ✅ Log apenas uma vez quando sistema "dorme"
+            log.info("💤 [Cloud Run] Sistema dormindo - 0 sessões ativas (instância pode hibernar)");
             return false;
-            
+
         } catch (Exception e) {
             log.error("❌ [QueueManagement] Erro ao verificar sessões ativas", e);
             // Em caso de erro, assumir que há sessões (comportamento seguro)
             return true;
+        }
+    }
+
+    /**
+     * ✅ NOVO: Verifica se cache foi invalidado via Redis
+     * 
+     * @return true se cache foi invalidado por nova conexão
+     */
+    private boolean checkRedisCacheInvalidation() {
+        try {
+            String cacheInvalidationKey = "cache:session_invalidation";
+            Object invalidationTimestamp = redisTemplate.opsForValue().get(cacheInvalidationKey);
+
+            if (invalidationTimestamp != null) {
+                long timestamp = Long.parseLong(invalidationTimestamp.toString());
+                if (timestamp > lastCacheInvalidationCheck) {
+                    lastCacheInvalidationCheck = timestamp;
+                    log.debug("🔄 [QueueManagement] Cache invalidado via Redis (timestamp: {})", timestamp);
+                    return true;
+                }
+            }
+            return false;
+        } catch (Exception e) {
+            log.debug("Erro ao verificar invalidação de cache via Redis: {}", e.getMessage());
+            return false;
         }
     }
 
@@ -1704,6 +1788,35 @@ public class QueueManagementService {
         } catch (JsonProcessingException e) {
             log.warn("⚠️ Erro ao parsear JSON: {}", e.getMessage());
             return json; // Retorna string original em caso de erro
+        }
+    }
+
+    /**
+     * ✅ NOVO: Armazenar informações da sessão Electron no Redis
+     */
+    private void storeSessionInfoInRedis(String summonerName, String sessionId, String puuid,
+            Map<String, Object> lcuData) {
+        try {
+            String normalizedName = summonerName.toLowerCase().trim();
+
+            // Armazenar informações da sessão no Redis
+            String sessionInfoKey = "queue_session_info:" + normalizedName;
+            Map<String, Object> sessionInfo = Map.of(
+                    "sessionId", sessionId,
+                    "puuid", puuid,
+                    "lcuData", lcuData != null ? lcuData : Collections.emptyMap(),
+                    "timestamp", System.currentTimeMillis(),
+                    "summonerName", summonerName);
+
+            // Armazenar no Redis com TTL de 30 minutos
+            redisTemplate.opsForValue().set(sessionInfoKey, sessionInfo, Duration.ofMinutes(30));
+
+            log.info("✅ [Player-Sessions] [QUEUE] Informações da sessão armazenadas no Redis: {} (key: {})",
+                    summonerName, sessionInfoKey);
+
+        } catch (Exception e) {
+            log.error("❌ [Player-Sessions] [QUEUE] Erro ao armazenar informações da sessão no Redis para {}",
+                    summonerName, e);
         }
     }
 }

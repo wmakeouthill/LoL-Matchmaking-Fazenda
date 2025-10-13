@@ -6,6 +6,15 @@ const path = require('path');
 const WebSocket = require('ws');
 const { ipcMain } = require('electron');
 
+// ✅ NOVO: Redis opcional para logs unificados
+let Redis = null;
+try {
+  Redis = require('redis');
+  safeLog('✅ [Player-Sessions] [UNIFIED-LOGS] Redis disponível para logs unificados');
+} catch (error) {
+  safeLog('⚠️ [Player-Sessions] [UNIFIED-LOGS] Redis não disponível - logs unificados desabilitados');
+}
+
 // ⚠️ LOGS DESABILITADOS EM PRODUÇÃO - Não salvar arquivos de log
 let LOG_FILE = null; // Mantido como null para desabilitar logs em arquivo
 
@@ -604,6 +613,11 @@ function startLockfileWatcher(backendBase) {
             identifyPlayerToBackend(parsed);
           }, 2000); // Aguardar 2s para garantir que LCU está pronto
           
+          // ✅ NOVO: Inicializar monitoramento proativo
+          setTimeout(() => {
+            initializeProactiveMonitoring();
+          }, 3000); // Aguardar 3s para garantir que identificação foi enviada
+          
         } else {
           safeLog('lockfile found but could not parse', p);
         }
@@ -628,7 +642,17 @@ function startLockfileWatcher(backendBase) {
   const iv = setInterval(probeOnce, 5000);
 
   // stop when app quits
-  app.on('will-quit', () => { clearInterval(iv); });
+  app.on('will-quit', () => { 
+    clearInterval(iv); 
+    
+    // ✅ NOVO: Limpar conexão Redis e desabilitar logs unificados
+    if (redisSubscriber) {
+      redisSubscriber.quit();
+      safeLog('📋 [Player-Sessions] [UNIFIED-LOGS] Conexão Redis encerrada');
+    }
+    unifiedLogsEnabled = false;
+    safeLog('📋 [Player-Sessions] [UNIFIED-LOGS] Logs unificados desabilitados');
+  });
 
   safeLog('lockfile watcher started, probing candidates', candidates);
 }
@@ -896,27 +920,74 @@ function startWebSocketGateway(backendBase) {
         }
         // ✅ NOVO: Handler para lista de sessões ativas
         else if (json.type === 'active_sessions_list') {
-          safeLog('📋 [Electron] ===== LISTA DE SESSÕES ATIVAS =====');
-          safeLog('📋 [Electron] Total de sessões:', json.totalSessions);
-          safeLog('📋 [Electron] Sessões identificadas:', json.identifiedSessions);
-          safeLog('📋 [Electron] Sessões locais:', json.localSessions);
+          safeLog('📋 [Player-Sessions] ===== LISTA DE SESSÕES ATIVAS =====');
+          safeLog('📋 [Player-Sessions] Total de sessões:', json.totalSessions);
+          safeLog('📋 [Player-Sessions] Sessões identificadas:', json.identifiedSessions);
+          safeLog('📋 [Player-Sessions] Sessões locais:', json.localSessions);
           
           if (json.sessions && json.sessions.length > 0) {
-            safeLog('📋 [Electron] === DETALHES DAS SESSÕES ===');
+            safeLog('📋 [Player-Sessions] === DETALHES DAS SESSÕES ===');
             json.sessions.forEach((session, index) => {
-              safeLog(`📋 [Electron] Sessão ${index + 1}:`);
-              safeLog(`📋 [Electron]   - Session ID: ${session.sessionId}`);
-              safeLog(`📋 [Electron]   - Summoner: ${session.summonerName || 'N/A'}`);
-              safeLog(`📋 [Electron]   - PUUID: ${session.puuid || 'N/A'}`);
-              safeLog(`📋 [Electron]   - Conectado em: ${session.connectedAt || 'N/A'}`);
-              safeLog(`📋 [Electron]   - Última atividade: ${session.lastActivity || 'N/A'}`);
-              safeLog(`📋 [Electron]   - IP: ${session.ip || 'N/A'}`);
-              safeLog(`📋 [Electron]   - User Agent: ${session.userAgent || 'N/A'}`);
+              safeLog(`📋 [Player-Sessions] Sessão ${index + 1}:`);
+              safeLog(`📋 [Player-Sessions]   - Session ID: ${session.sessionId}`);
+              safeLog(`📋 [Player-Sessions]   - Summoner: ${session.summonerName || 'N/A'}`);
+              safeLog(`📋 [Player-Sessions]   - PUUID: ${session.puuid || 'N/A'}`);
+              safeLog(`📋 [Player-Sessions]   - Conectado em: ${session.connectedAt || 'N/A'}`);
+              safeLog(`📋 [Player-Sessions]   - Última atividade: ${session.lastActivity || 'N/A'}`);
+              safeLog(`📋 [Player-Sessions]   - IP: ${session.ip || 'N/A'}`);
+              safeLog(`📋 [Player-Sessions]   - User Agent: ${session.userAgent || 'N/A'}`);
             });
           } else {
-            safeLog('📋 [Electron] Nenhuma sessão identificada encontrada');
+            safeLog('📋 [Player-Sessions] Nenhuma sessão identificada encontrada');
           }
-          safeLog('📋 [Electron] ===================================');
+          safeLog('📋 [Player-Sessions] ===================================');
+        }
+        // ✅ NOVO: Handler para logs unificados [Player-Sessions]
+        else if (json.type === 'player_session_log') {
+          displayUnifiedLog(json);
+        }
+        // ✅ NOVO: Handler para confirmação de logs habilitados
+        else if (json.type === 'player_session_logs_enabled') {
+          safeLog('✅ [Player-Sessions] [UNIFIED-LOGS] Logs [Player-Sessions] habilitados com sucesso!');
+          safeLog(`✅ [Player-Sessions] [UNIFIED-LOGS] SessionId: ${json.sessionId}`);
+        }
+        // ✅ NOVO: Handler para erro nos logs unificados
+        else if (json.type === 'player_session_logs_error') {
+          safeLog('❌ [Player-Sessions] [UNIFIED-LOGS] Erro ao habilitar logs unificados:', json.error);
+        }
+        // ✅ NOVO: Handler para solicitação de identificação LCU
+        else if (json.type === 'request_identity_confirmation') {
+          safeLog('🔗 [Player-Sessions] [BACKEND→ELECTRON] Solicitação de identificação LCU recebida');
+          safeLog(`🔗 [Player-Sessions] [BACKEND→ELECTRON] Summoner: ${json.summonerName}`);
+          safeLog(`🔗 [Player-Sessions] [BACKEND→ELECTRON] Motivo: ${json.reason}`);
+          
+          // ✅ PROATIVO: Enviar identificação LCU imediatamente
+          await sendProactiveIdentification(json.reason);
+        }
+        // ✅ NOVO: Handler para entrada na fila (detectar via frontend)
+        else if (json.type === 'queue_entry_requested') {
+          safeLog('🔗 [Player-Sessions] [FRONTEND→ELECTRON] Entrada na fila solicitada - enviando identificação proativa');
+          
+          // ✅ PROATIVO: Enviar identificação LCU antes do backend solicitar
+          await sendProactiveIdentification('queue_entry_proactive');
+        }
+        // ✅ NOVO: Handler para solicitação direta do backend (COMUNICAÇÃO DIRETA VIA REDIS)
+        else if (json.type === 'queue_entry_request') {
+          safeLog('🔗 [Player-Sessions] [BACKEND→ELECTRON] Solicitação direta de entrada na fila recebida via Redis');
+          safeLog(`🔗 [Player-Sessions] [BACKEND→ELECTRON] Summoner: ${json.summonerName}`);
+          safeLog(`🔗 [Player-Sessions] [BACKEND→ELECTRON] Motivo: ${json.reason}`);
+          safeLog(`🔗 [Player-Sessions] [BACKEND→ELECTRON] Redis Key: ${json.redisKey}`);
+          
+          // ✅ PROATIVO: Enviar identificação LCU imediatamente (comunicação direta via Redis)
+          await sendProactiveIdentification('backend_direct_request_redis');
+          
+          // ✅ NOVO: Log dos dados completos do Redis
+          safeLog(`🔗 [Player-Sessions] [BACKEND→ELECTRON] Dados completos disponíveis no Redis: ${json.redisKey}`);
+        }
+        // ✅ NOVO: Monitoramento proativo - qualquer mensagem que mencione summoner atual
+        else {
+          // Verificar se a mensagem menciona o summoner atual e revincular
+          checkAndRebindOnSummonerEvent(json.type || 'unknown', json);
         }
       } catch (e) {
         safeLog('ws gateway message error', String(e));
@@ -943,6 +1014,10 @@ function startWebSocketGateway(backendBase) {
 let wsClient = null;
 let lastRendererIdentify = null;
 let wsReconnectAttempts = 0;
+
+// ✅ NOVO: Flag para logs unificados habilitados
+let unifiedLogsEnabled = false;
+let redisSubscriber = null;
 let wsReconnectTimer = null;
 let wsHeartbeatTimer = null;
 const WS_MAX_RECONNECT_ATTEMPTS = 10;
@@ -969,6 +1044,98 @@ let discordBot = null;
 let discordChannelId = null;
 let discordUsers = [];
 let discordStatus = { isConnected: false, botUsername: null, channelName: null };
+
+// ✅ NOVO: Função proativa para enviar identificação LCU
+async function sendProactiveIdentification(reason) {
+  try {
+    safeLog('🔗 [Player-Sessions] [ELECTRON] Enviando identificação proativa (motivo: ' + reason + ')');
+    
+    const lockfileInfo = readLockfileInfo();
+    if (lockfileInfo) {
+      await identifyPlayerToBackend(lockfileInfo);
+      safeLog('✅ [Player-Sessions] [ELECTRON] Identificação proativa enviada com sucesso');
+    } else {
+      safeLog('❌ [Player-Sessions] [ELECTRON] Lockfile não encontrado para identificação proativa');
+    }
+  } catch (error) {
+    safeLog('❌ [Player-Sessions] [ELECTRON] Erro na identificação proativa:', error);
+  }
+}
+
+// ✅ NOVO: Sistema de monitoramento proativo de eventos summonerName#tagline
+let currentSummonerInfo = null;
+let proactiveMonitoringEnabled = false;
+
+// ✅ NOVO: Inicializar monitoramento proativo
+function initializeProactiveMonitoring() {
+  try {
+    safeLog('🔗 [Player-Sessions] [ELECTRON] Inicializando monitoramento proativo...');
+    
+    // Buscar informações do summoner atual
+    const lockfileInfo = readLockfileInfo();
+    if (lockfileInfo) {
+      performLcuRequest('GET', '/lol-summoner/v1/current-summoner')
+        .then(summoner => {
+          currentSummonerInfo = {
+            summonerName: summoner.displayName,
+            gameName: summoner.gameName,
+            tagLine: summoner.tagLine,
+            puuid: summoner.puuid,
+            summonerId: summoner.summonerId
+          };
+          
+          safeLog('🔗 [Player-Sessions] [ELECTRON] Monitoramento proativo ativo para: ' + currentSummonerInfo.summonerName);
+          proactiveMonitoringEnabled = true;
+        })
+        .catch(error => {
+          safeLog('❌ [Player-Sessions] [ELECTRON] Erro ao inicializar monitoramento proativo:', error);
+        });
+    }
+  } catch (error) {
+    safeLog('❌ [Player-Sessions] [ELECTRON] Erro ao inicializar monitoramento proativo:', error);
+  }
+}
+
+// ✅ NOVO: Verificar se evento envolve summoner atual e revincular
+function checkAndRebindOnSummonerEvent(eventType, eventData) {
+  if (!proactiveMonitoringEnabled || !currentSummonerInfo) {
+    return false;
+  }
+  
+  try {
+    // Verificar se o evento menciona o summoner atual
+    const summonerMentioned = checkSummonerMention(eventData);
+    
+    if (summonerMentioned) {
+      safeLog('🔗 [Player-Sessions] [ELECTRON] Evento ' + eventType + ' menciona summoner atual - revinculando...');
+      sendProactiveIdentification('event_' + eventType);
+      return true;
+    }
+  } catch (error) {
+    safeLog('❌ [Player-Sessions] [ELECTRON] Erro ao verificar evento summoner:', error);
+  }
+  
+  return false;
+}
+
+// ✅ NOVO: Verificar se dados mencionam o summoner atual
+function checkSummonerMention(data) {
+  if (!data || !currentSummonerInfo) {
+    return false;
+  }
+  
+  try {
+    const dataStr = JSON.stringify(data).toLowerCase();
+    const summonerName = currentSummonerInfo.summonerName.toLowerCase();
+    const gameName = currentSummonerInfo.gameName.toLowerCase();
+    
+    return dataStr.includes(summonerName) || 
+           dataStr.includes(gameName) ||
+           dataStr.includes(currentSummonerInfo.puuid.toLowerCase());
+  } catch (error) {
+    return false;
+  }
+}
 
 // ✅ NOVO: Função para identificar jogador automaticamente ao backend
 async function identifyPlayerToBackend(lockfileInfo) {
@@ -1017,18 +1184,18 @@ async function identifyPlayerToBackend(lockfileInfo) {
       } : null
     };
     
-    // ✅ NOVO: LOG DETALHADO DA VINCULAÇÃO PLAYER-SESSÃO
-    safeLog('🔗 [Electron] ===== VINCULAÇÃO PLAYER-SESSÃO =====');
-    safeLog('🔗 [Electron] Summoner:', fullName);
-    safeLog('🔗 [Electron] PUUID:', summoner.puuid);
-    safeLog('🔗 [Electron] Summoner ID:', summoner.summonerId);
-    safeLog('🔗 [Electron] Profile Icon:', summoner.profileIconId);
-    safeLog('🔗 [Electron] Level:', summoner.summonerLevel);
-    safeLog('🔗 [Electron] Ranked:', ranked?.queueMap?.RANKED_SOLO_5x5?.tier, ranked?.queueMap?.RANKED_SOLO_5x5?.division);
-    safeLog('🔗 [Electron] LCU Host:', lockfileInfo?.host || '127.0.0.1');
-    safeLog('🔗 [Electron] LCU Port:', lockfileInfo?.port);
-    safeLog('🔗 [Electron] WebSocket Session ID:', wsClient?.readyState === WebSocket.OPEN ? 'CONECTADO' : 'DESCONECTADO');
-    safeLog('🔗 [Electron] ===================================');
+        // ✅ NOVO: LOG DETALHADO DA VINCULAÇÃO PLAYER-SESSÃO (ELECTRON → BACKEND)
+        safeLog('🔗 [Player-Sessions] ===== ELECTRON → BACKEND: IDENTIFICAÇÃO LCU =====');
+        safeLog('🔗 [Player-Sessions] [ELECTRON] Summoner:', fullName);
+        safeLog('🔗 [Player-Sessions] [ELECTRON] PUUID:', summoner.puuid);
+        safeLog('🔗 [Player-Sessions] [ELECTRON] Summoner ID:', summoner.summonerId);
+        safeLog('🔗 [Player-Sessions] [ELECTRON] Profile Icon:', summoner.profileIconId);
+        safeLog('🔗 [Player-Sessions] [ELECTRON] Level:', summoner.summonerLevel);
+        safeLog('🔗 [Player-Sessions] [ELECTRON] Ranked:', ranked?.queueMap?.RANKED_SOLO_5x5?.tier, ranked?.queueMap?.RANKED_SOLO_5x5?.division);
+        safeLog('🔗 [Player-Sessions] [ELECTRON] LCU Host:', lockfileInfo?.host || '127.0.0.1');
+        safeLog('🔗 [Player-Sessions] [ELECTRON] LCU Port:', lockfileInfo?.port);
+        safeLog('🔗 [Player-Sessions] [ELECTRON] WebSocket Session ID:', wsClient?.readyState === WebSocket.OPEN ? 'CONECTADO' : 'DESCONECTADO');
+        safeLog('🔗 [Player-Sessions] ======================================================');
     
     // 4. ✅ ENVIAR ao backend
     if (wsClient && wsClient.readyState === WebSocket.OPEN) {
@@ -1042,6 +1209,8 @@ async function identifyPlayerToBackend(lockfileInfo) {
       // ✅ NOVO: SOLICITAR LISTA DE SESSÕES ATIVAS APÓS IDENTIFICAÇÃO
       setTimeout(() => {
         requestActiveSessionsList();
+        // ✅ NOVO: Habilitar logs unificados [Player-Sessions]
+        enableUnifiedLogs();
       }, 2000); // Aguardar 2s para backend processar
       
     } else {
@@ -1073,6 +1242,11 @@ function startIdentityMonitor() {
         if (lockfileInfo) {
           await identifyPlayerToBackend(lockfileInfo);
         }
+        
+        // ✅ NOVO: Reinicializar monitoramento proativo após reconexão
+        setTimeout(() => {
+          initializeProactiveMonitoring();
+        }, 2000);
       }
     } catch (e) {
       // LCU desconectado ou erro
@@ -1112,6 +1286,119 @@ function requestActiveSessionsList() {
     }
   } catch (error) {
     safeLog('❌ [Electron] Erro ao solicitar sessões ativas:', error);
+  }
+}
+
+// ✅ NOVO: Habilitar logs unificados [Player-Sessions]
+function enableUnifiedLogs() {
+  try {
+    if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+      const request = {
+        type: 'enable_unified_logs',
+        timestamp: Date.now()
+      };
+      
+      wsClient.send(JSON.stringify(request));
+      safeLog('📋 [Player-Sessions] [UNIFIED-LOGS] Habilitando logs unificados...');
+      
+      // ✅ NOVO: Desabilitar Redis temporariamente (logs unificados opcionais)
+      safeLog('⚠️ [Player-Sessions] [UNIFIED-LOGS] Redis desabilitado - usando apenas WebSocket');
+      unifiedLogsEnabled = true;
+    } else {
+      safeLog('❌ [Player-Sessions] [UNIFIED-LOGS] WebSocket não conectado para habilitar logs unificados');
+    }
+  } catch (error) {
+    safeLog('❌ [Player-Sessions] [UNIFIED-LOGS] Erro ao habilitar logs unificados:', error);
+  }
+}
+
+// ✅ NOVO: Conectar ao Redis para receber logs unificados (se disponível)
+function connectToRedisForUnifiedLogs() {
+  if (!Redis) {
+    safeLog('❌ [Player-Sessions] [UNIFIED-LOGS] Redis não disponível');
+    return;
+  }
+  
+  try {
+    // Configuração do Redis (ajustar conforme necessário)
+    const redisConfig = {
+      socket: {
+        host: 'localhost', // ou IP do servidor Redis
+        port: 6379
+      },
+      retryDelayOnFailover: 100,
+      maxRetriesPerRequest: 3
+    };
+    
+    // Criar subscriber para logs unificados
+    redisSubscriber = Redis.createClient(redisConfig);
+    
+    redisSubscriber.on('connect', () => {
+      safeLog('✅ [Player-Sessions] [UNIFIED-LOGS] Conectado ao Redis para logs unificados');
+      
+      // Subscrever ao canal de logs player-sessions
+      redisSubscriber.subscribe('player_session_logs');
+      safeLog('📋 [Player-Sessions] [UNIFIED-LOGS] Inscrito no canal player_session_logs');
+      unifiedLogsEnabled = true;
+    });
+    
+    redisSubscriber.on('message', (channel, message) => {
+      try {
+        const logData = JSON.parse(message);
+        displayUnifiedLog(logData);
+      } catch (error) {
+        safeLog('❌ [Player-Sessions] [UNIFIED-LOGS] Erro ao processar log do Redis:', error);
+      }
+    });
+    
+    redisSubscriber.on('error', (error) => {
+      safeLog('❌ [Player-Sessions] [UNIFIED-LOGS] Erro no Redis:', error);
+      unifiedLogsEnabled = false;
+    });
+    
+    redisSubscriber.on('end', () => {
+      safeLog('📋 [Player-Sessions] [UNIFIED-LOGS] Conexão Redis encerrada');
+      unifiedLogsEnabled = false;
+    });
+    
+    // Conectar
+    redisSubscriber.connect().catch(error => {
+      safeLog('❌ [Player-Sessions] [UNIFIED-LOGS] Erro ao conectar ao Redis:', error);
+      unifiedLogsEnabled = false;
+    });
+    
+  } catch (error) {
+    safeLog('❌ [Player-Sessions] [UNIFIED-LOGS] Erro ao configurar Redis:', error);
+    unifiedLogsEnabled = false;
+  }
+}
+
+// ✅ NOVO: Função para exibir logs unificados no console do Electron
+function displayUnifiedLog(logData) {
+  try {
+    if (logData.type === 'player_session_log') {
+      const timestamp = new Date(logData.timestamp).toLocaleTimeString();
+      const level = logData.level.toUpperCase();
+      const tag = logData.tag || '[Player-Sessions]';
+      const message = logData.message || '';
+      
+      // Formatar log com timestamp e nível
+      const logMessage = `[${timestamp}] ${level} ${tag} ${message}`;
+      
+      // Exibir no console do Electron
+      safeLog(logMessage);
+      
+      // ✅ NOVO: Também exibir no console do DevTools se estiver aberto
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.executeJavaScript(`
+          console.log('${logMessage.replace(/'/g, "\\'")}');
+        `).catch(err => {
+          // Ignorar erros se DevTools não estiver aberto
+        });
+      }
+    }
+  } catch (error) {
+    safeLog('❌ [Player-Sessions] [UNIFIED-LOGS] Erro ao processar log unificado:', error);
   }
 }
 

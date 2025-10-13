@@ -30,6 +30,7 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.HashMap;
 
 @Slf4j
 @Service
@@ -1334,6 +1335,71 @@ public class LCUService {
             }
         } catch (Exception e) {
             log.debug("Lockfile do LCU não encontrado: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * ✅ NOVO: Obter PUUID do summoner via Redis (vinculação sessão-player)
+     */
+    public Optional<String> getPuuidForSummoner(String summonerName) {
+        try {
+            String normalizedName = summonerName.toLowerCase().trim();
+
+            // Buscar conexão LCU do summoner via LCUConnectionRegistry
+            Optional<LCUConnectionRegistry.LCUConnectionInfo> connectionOpt = lcuConnectionRegistry.getConnection(normalizedName);
+            
+            if (connectionOpt.isPresent()) {
+                LCUConnectionRegistry.LCUConnectionInfo connection = connectionOpt.get();
+                // Por enquanto, retornar sessionId como identificador único
+                // TODO: Implementar armazenamento de PUUID no LCUConnectionInfo
+                String sessionId = connection.getSessionId();
+                if (sessionId != null && !sessionId.isEmpty()) {
+                    log.debug("🔗 [Player-Sessions] [LCU] SessionId encontrado para {}: {}", summonerName, sessionId);
+                    return Optional.of(sessionId); // Usar sessionId como identificador temporário
+                }
+            }
+
+            log.debug("⚠️ [Player-Sessions] [LCU] PUUID não encontrado para {}", summonerName);
+            return Optional.empty();
+
+        } catch (Exception e) {
+            log.error("❌ [Player-Sessions] [LCU] Erro ao obter PUUID para {}", summonerName, e);
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * ✅ NOVO: Obter dados completos do LCU do summoner via Redis
+     */
+    public Optional<Map<String, Object>> getLcuDataForSummoner(String summonerName) {
+        try {
+            String normalizedName = summonerName.toLowerCase().trim();
+
+            // Buscar conexão LCU do summoner via LCUConnectionRegistry
+            Optional<LCUConnectionRegistry.LCUConnectionInfo> connectionOpt = lcuConnectionRegistry.getConnection(normalizedName);
+            
+            if (connectionOpt.isPresent()) {
+                LCUConnectionRegistry.LCUConnectionInfo connection = connectionOpt.get();
+                
+                // Converter LCUConnectionInfo para Map
+                Map<String, Object> lcuData = new HashMap<>();
+                lcuData.put("sessionId", connection.getSessionId());
+                lcuData.put("host", connection.getHost());
+                lcuData.put("port", connection.getPort());
+                lcuData.put("authToken", connection.getAuthToken());
+                lcuData.put("registeredAt", connection.getRegisteredAt());
+                lcuData.put("lastActivityAt", connection.getLastActivityAt());
+                
+                log.debug("🔗 [Player-Sessions] [LCU] Dados LCU encontrados para {}: {}", summonerName, lcuData.keySet());
+                return Optional.of(lcuData);
+            }
+
+            log.debug("⚠️ [Player-Sessions] [LCU] Dados LCU não encontrados para {}", summonerName);
+            return Optional.empty();
+
+        } catch (Exception e) {
+            log.error("❌ [Player-Sessions] [LCU] Erro ao obter dados LCU para {}", summonerName, e);
+            return Optional.empty();
         }
     }
 }
