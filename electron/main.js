@@ -210,6 +210,12 @@ function createMenu(mainWindow) {
           click: () => {
             selectLeagueInstallationPath(mainWindow);
           }
+        },
+        {
+          label: 'Mostrar Sessões Ativas',
+          click: () => {
+            requestActiveSessionsList();
+          }
         }
       ]
     },
@@ -888,6 +894,30 @@ function startWebSocketGateway(backendBase) {
             }));
           }
         }
+        // ✅ NOVO: Handler para lista de sessões ativas
+        else if (json.type === 'active_sessions_list') {
+          safeLog('📋 [Electron] ===== LISTA DE SESSÕES ATIVAS =====');
+          safeLog('📋 [Electron] Total de sessões:', json.totalSessions);
+          safeLog('📋 [Electron] Sessões identificadas:', json.identifiedSessions);
+          safeLog('📋 [Electron] Sessões locais:', json.localSessions);
+          
+          if (json.sessions && json.sessions.length > 0) {
+            safeLog('📋 [Electron] === DETALHES DAS SESSÕES ===');
+            json.sessions.forEach((session, index) => {
+              safeLog(`📋 [Electron] Sessão ${index + 1}:`);
+              safeLog(`📋 [Electron]   - Session ID: ${session.sessionId}`);
+              safeLog(`📋 [Electron]   - Summoner: ${session.summonerName || 'N/A'}`);
+              safeLog(`📋 [Electron]   - PUUID: ${session.puuid || 'N/A'}`);
+              safeLog(`📋 [Electron]   - Conectado em: ${session.connectedAt || 'N/A'}`);
+              safeLog(`📋 [Electron]   - Última atividade: ${session.lastActivity || 'N/A'}`);
+              safeLog(`📋 [Electron]   - IP: ${session.ip || 'N/A'}`);
+              safeLog(`📋 [Electron]   - User Agent: ${session.userAgent || 'N/A'}`);
+            });
+          } else {
+            safeLog('📋 [Electron] Nenhuma sessão identificada encontrada');
+          }
+          safeLog('📋 [Electron] ===================================');
+        }
       } catch (e) {
         safeLog('ws gateway message error', String(e));
       }
@@ -987,6 +1017,19 @@ async function identifyPlayerToBackend(lockfileInfo) {
       } : null
     };
     
+    // ✅ NOVO: LOG DETALHADO DA VINCULAÇÃO PLAYER-SESSÃO
+    safeLog('🔗 [Electron] ===== VINCULAÇÃO PLAYER-SESSÃO =====');
+    safeLog('🔗 [Electron] Summoner:', fullName);
+    safeLog('🔗 [Electron] PUUID:', summoner.puuid);
+    safeLog('🔗 [Electron] Summoner ID:', summoner.summonerId);
+    safeLog('🔗 [Electron] Profile Icon:', summoner.profileIconId);
+    safeLog('🔗 [Electron] Level:', summoner.summonerLevel);
+    safeLog('🔗 [Electron] Ranked:', ranked?.queueMap?.RANKED_SOLO_5x5?.tier, ranked?.queueMap?.RANKED_SOLO_5x5?.division);
+    safeLog('🔗 [Electron] LCU Host:', lockfileInfo?.host || '127.0.0.1');
+    safeLog('🔗 [Electron] LCU Port:', lockfileInfo?.port);
+    safeLog('🔗 [Electron] WebSocket Session ID:', wsClient?.readyState === WebSocket.OPEN ? 'CONECTADO' : 'DESCONECTADO');
+    safeLog('🔗 [Electron] ===================================');
+    
     // 4. ✅ ENVIAR ao backend
     if (wsClient && wsClient.readyState === WebSocket.OPEN) {
       wsClient.send(JSON.stringify(payload));
@@ -995,6 +1038,12 @@ async function identifyPlayerToBackend(lockfileInfo) {
       // Armazenar PUUID localmente para detectar mudanças
       lastKnownPuuid = summoner.puuid;
       lastKnownSummoner = fullName;
+      
+      // ✅ NOVO: SOLICITAR LISTA DE SESSÕES ATIVAS APÓS IDENTIFICAÇÃO
+      setTimeout(() => {
+        requestActiveSessionsList();
+      }, 2000); // Aguardar 2s para backend processar
+      
     } else {
       safeLog('❌ [Electron] WebSocket não está conectado, não foi possível enviar identificação');
     }
@@ -1044,6 +1093,25 @@ function stopIdentityMonitor() {
     clearInterval(identityMonitorTimer);
     identityMonitorTimer = null;
     safeLog('🛑 [Electron] Monitor de identidade parado');
+  }
+}
+
+// ✅ NOVO: Solicitar lista de sessões ativas do backend
+function requestActiveSessionsList() {
+  try {
+    if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+      const request = {
+        type: 'get_active_sessions',
+        timestamp: Date.now()
+      };
+      
+      wsClient.send(JSON.stringify(request));
+      safeLog('📋 [Electron] Solicitando lista de sessões ativas...');
+    } else {
+      safeLog('❌ [Electron] WebSocket não conectado para solicitar sessões ativas');
+    }
+  } catch (error) {
+    safeLog('❌ [Electron] Erro ao solicitar sessões ativas:', error);
   }
 }
 
