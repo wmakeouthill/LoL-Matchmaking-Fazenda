@@ -11,10 +11,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.socket.WebSocketSession;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Slf4j
 @RestController
@@ -24,6 +26,13 @@ public class QueueController {
 
     private final QueueManagementService queueManagementService;
     private final ObjectMapper objectMapper;
+    private final br.com.lolmatchmaking.backend.service.UnifiedLogService unifiedLogService;
+    private final br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService webSocketService;
+    private final br.com.lolmatchmaking.backend.websocket.SessionRegistry sessionRegistry;
+
+    // ✅ NOVO: Dependências Redis para obter informações da sessão
+    private final br.com.lolmatchmaking.backend.service.redis.RedisWebSocketSessionService redisWSSession;
+    private final br.com.lolmatchmaking.backend.service.LCUService lcuService;
 
     /**
      * GET /api/queue/status
@@ -67,6 +76,37 @@ public class QueueController {
             String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
             log.info("➕ [{}] Jogador entrando na fila: {}", authenticatedSummoner, request.getSummonerName());
 
+            // ✅ NOVO: LOG DETALHADO DA VINCULAÇÃO PLAYER-SESSÃO (FRONTEND → BACKEND)
+            log.info("🔗 [Player-Sessions] ===== FRONTEND → BACKEND: ENTRADA NA FILA =====");
+            log.info("🔗 [Player-Sessions] [BACKEND] Summoner: {}", request.getSummonerName());
+            log.info("🔗 [Player-Sessions] [BACKEND] Region: {}", request.getRegion());
+            log.info("🔗 [Player-Sessions] [BACKEND] GameName: {}", request.getGameName());
+            log.info("🔗 [Player-Sessions] [BACKEND] TagLine: {}", request.getTagLine());
+            log.info("🔗 [Player-Sessions] [BACKEND] PUUID: {}", request.getPuuid());
+            log.info("🔗 [Player-Sessions] [BACKEND] Summoner ID: {}", request.getSummonerId());
+            log.info("🔗 [Player-Sessions] [BACKEND] Profile Icon: {}", request.getProfileIconId());
+            log.info("🔗 [Player-Sessions] [BACKEND] Level: {}", request.getSummonerLevel());
+            log.info("🔗 [Player-Sessions] [BACKEND] Primary Lane: {}", request.getPrimaryLane());
+            log.info("🔗 [Player-Sessions] [BACKEND] Secondary Lane: {}", request.getSecondaryLane());
+            log.info("🔗 [Player-Sessions] [BACKEND] Custom LP: {}", request.getCustomLp());
+            log.info("🔗 [Player-Sessions] [BACKEND] Client IP: {}", httpRequest.getRemoteAddr());
+            log.info("🔗 [Player-Sessions] [BACKEND] User Agent: {}", httpRequest.getHeader("User-Agent"));
+            log.info("🔗 [Player-Sessions] ======================================================");
+
+            // ✅ NOVO: Enviar log para Electron se houver sessões registradas
+            if (unifiedLogService.hasRegisteredPlayerSessionLogSessions()) {
+                unifiedLogService.sendPlayerSessionInfoLog("[Player-Sessions] [FRONTEND→BACKEND]",
+                        "===== FRONTEND → BACKEND: ENTRADA NA FILA =====");
+                unifiedLogService.sendPlayerSessionInfoLog("[Player-Sessions] [FRONTEND→BACKEND]",
+                        "Summoner: %s | Region: %s | PUUID: %s",
+                        request.getSummonerName(), request.getRegion(), request.getPuuid());
+                unifiedLogService.sendPlayerSessionInfoLog("[Player-Sessions] [FRONTEND→BACKEND]",
+                        "GameName: %s | TagLine: %s | Level: %s",
+                        request.getGameName(), request.getTagLine(), request.getSummonerLevel());
+                unifiedLogService.sendPlayerSessionInfoLog("[Player-Sessions] [FRONTEND→BACKEND]",
+                        "======================================================");
+            }
+
             // ✅ Validar se summonerName do body corresponde ao header
             if (!authenticatedSummoner.equalsIgnoreCase(request.getSummonerName())) {
                 log.warn("⚠️ Tentativa de entrar na fila com summonerName diferente do autenticado: {} != {}",
@@ -94,14 +134,44 @@ public class QueueController {
                                 "Não é possível entrar na fila. Verifique se o LCU está conectado, o Discord bot está ativo e você está no canal monitorado"));
             }
 
-            // Entrar na fila
-            boolean success = queueManagementService.addToQueue(
+            // ✅ NOVO: Enviar diretamente para Electron via WebSocket (COMUNICAÇÃO DIRETA)
+            log.info("🔗 [Player-Sessions] [BACKEND] Enviando solicitação direta para Electron via WebSocket...");
+            // ✅ CORRIGIDO: Usar apenas Redis (sem HashMap local)
+            // Enviar dados via Redis para comunicação segura e distribuída
+            webSocketService.sendDirectToElectronViaRedis("queue_entry_request", request.getSummonerName(),
+                    "queue_entry", request);
+
+            // ✅ NOVO: Aguardar vinculação (Electron proativo responde)
+            boolean sessionBound = waitForSessionBinding(request.getSummonerName(), 3000); // 3 segundos timeout
+
+            if (!sessionBound) {
+                log.error("❌ [Player-Sessions] [BACKEND] Electron não respondeu à solicitação direta para {}",
+                        request.getSummonerName());
+                return ResponseEntity.badRequest()
+                        .body(Map.of("success", false, "error",
+                                "Electron não respondeu. Verifique se o Electron está conectado e o LCU está ativo."));
+            }
+
+            // ✅ NOVO: Obter informações da sessão Electron vinculada
+            String sessionId = getSessionIdForPlayer(request.getSummonerName());
+            String puuid = getPuuidForPlayer(request.getSummonerName());
+            Map<String, Object> lcuData = getLcuDataForPlayer(request.getSummonerName());
+
+            log.info(
+                    "✅ [Player-Sessions] [BACKEND] Electron respondeu e vinculação confirmada para {} (sessionId: {}, puuid: {})",
+                    request.getSummonerName(), sessionId, puuid);
+
+            // ✅ CORRIGIDO: Entrar na fila COM informações da sessão Electron
+            boolean success = queueManagementService.addToQueueWithSession(
                     request.getSummonerName(),
                     request.getRegion(),
                     request.getPlayerId(),
                     request.getCustomLp(),
                     request.getPrimaryLane(),
-                    request.getSecondaryLane());
+                    request.getSecondaryLane(),
+                    sessionId, // ✅ Sessão Electron vinculada
+                    puuid, // ✅ PUUID da sessão LCU
+                    lcuData); // ✅ Dados completos do LCU
 
             if (success) {
                 return ResponseEntity.ok(Map.of(
@@ -357,6 +427,45 @@ public class QueueController {
         }
     }
 
+    /**
+     * ✅ NOVO: Aguarda vinculação player-sessão com timeout
+     */
+    private boolean waitForSessionBinding(String summonerName, long timeoutMs) {
+        try {
+            String normalizedName = summonerName.toLowerCase().trim();
+            long startTime = System.currentTimeMillis();
+
+            while (System.currentTimeMillis() - startTime < timeoutMs) {
+                // Verificar se há uma sessão vinculada para este jogador
+                Optional<WebSocketSession> sessionOpt = sessionRegistry.getByPlayer(normalizedName);
+
+                if (sessionOpt.isPresent()) {
+                    WebSocketSession session = sessionOpt.get();
+
+                    if (session != null && session.isOpen()) {
+                        log.info("✅ [Player-Sessions] [BACKEND] Vinculação encontrada: {} → {}", normalizedName,
+                                session.getId());
+                        return true;
+                    }
+                }
+
+                // Aguardar 100ms antes da próxima verificação
+                Thread.sleep(100);
+            }
+
+            log.warn("⚠️ [Player-Sessions] [BACKEND] Timeout aguardando vinculação para {}", normalizedName);
+            return false;
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("❌ [Player-Sessions] [BACKEND] Interrompido aguardando vinculação para {}", summonerName, e);
+            return false;
+        } catch (Exception e) {
+            log.error("❌ [Player-Sessions] [BACKEND] Erro aguardando vinculação para {}", summonerName, e);
+            return false;
+        }
+    }
+
     // DTOs
     @Data
     public static class JoinQueueRequest {
@@ -366,11 +475,63 @@ public class QueueController {
         private Integer customLp;
         private String primaryLane;
         private String secondaryLane;
+
+        // ✅ NOVO: Campos adicionais para logs detalhados
+        private String gameName;
+        private String tagLine;
+        private String puuid;
+        private String summonerId;
+        private String profileIconId;
+        private Integer summonerLevel;
     }
 
     @Data
     public static class LeaveQueueRequest {
         private Long playerId;
         private String summonerName;
+    }
+
+    /**
+     * ✅ NOVO: Obter sessionId da sessão Electron vinculada
+     */
+    private String getSessionIdForPlayer(String summonerName) {
+        try {
+            String normalizedName = summonerName.toLowerCase().trim();
+            Optional<String> sessionIdOpt = redisWSSession.getSessionBySummoner(normalizedName);
+            return sessionIdOpt.orElse(null);
+        } catch (Exception e) {
+            log.error("❌ [Player-Sessions] [BACKEND] Erro ao obter sessionId para {}", summonerName, e);
+            return null;
+        }
+    }
+
+    /**
+     * ✅ NOVO: Obter PUUID da sessão LCU vinculada via LCUService
+     */
+    private String getPuuidForPlayer(String summonerName) {
+        try {
+            String normalizedName = summonerName.toLowerCase().trim();
+            // Buscar PUUID via LCUService (que tem acesso ao Redis)
+            Optional<String> puuidOpt = lcuService.getPuuidForSummoner(normalizedName);
+            return puuidOpt.orElse(null);
+        } catch (Exception e) {
+            log.error("❌ [Player-Sessions] [BACKEND] Erro ao obter PUUID para {}", summonerName, e);
+            return null;
+        }
+    }
+
+    /**
+     * ✅ NOVO: Obter dados completos do LCU da sessão vinculada via LCUService
+     */
+    private Map<String, Object> getLcuDataForPlayer(String summonerName) {
+        try {
+            String normalizedName = summonerName.toLowerCase().trim();
+            // Buscar dados completos do LCU via LCUService
+            Optional<Map<String, Object>> lcuDataOpt = lcuService.getLcuDataForSummoner(normalizedName);
+            return lcuDataOpt.orElse(Collections.emptyMap());
+        } catch (Exception e) {
+            log.error("❌ [Player-Sessions] [BACKEND] Erro ao obter dados LCU para {}", summonerName, e);
+            return Collections.emptyMap();
+        }
     }
 }

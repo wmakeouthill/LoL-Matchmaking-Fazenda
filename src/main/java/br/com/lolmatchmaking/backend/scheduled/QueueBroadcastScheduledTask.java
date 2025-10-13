@@ -7,6 +7,7 @@ import br.com.lolmatchmaking.backend.service.redis.RedisQueueCacheService;
 import br.com.lolmatchmaking.backend.websocket.SessionRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -51,6 +52,7 @@ public class QueueBroadcastScheduledTask {
     private final EventBroadcastService eventBroadcastService;
     private final RedisQueueCacheService redisQueueCache;
     private final SessionRegistry sessionRegistry;
+    private final RedisTemplate<String, Object> redisTemplate;
 
     /**
      * ✅ BROADCAST AUTOMÁTICO DA FILA A CADA 3 SEGUNDOS
@@ -147,28 +149,72 @@ public class QueueBroadcastScheduledTask {
         }
     }
 
+    // ✅ NOVO: Cache infinito - só invalida quando alguém conecta
+    private volatile boolean hasActiveSessionsCache = false;
+    private volatile boolean cacheInitialized = false;
+    private volatile long lastCacheInvalidationCheck = 0;
+
     /**
-     * ✅ NOVO: Verifica se há sessões WebSocket ativas
+     * ✅ NOVO: Verifica se há sessões WebSocket ativas com cache infinito
      * 
-     * Evita processamento desnecessário quando não há jogadores conectados
+     * Cache infinito: se não tem sessões, não verifica mais até alguém conectar
+     * Só verifica novamente quando cache é invalidado via Redis
      */
     private boolean hasActiveSessions() {
         try {
-            // Verificar se há sessões WebSocket ativas
+            // ✅ VERIFICAR REDIS: Se cache foi invalidado por nova conexão
+            boolean cacheInvalidated = checkRedisCacheInvalidation();
+
+            // ✅ CACHE INFINITO: Se já verificou e não havia sessões, não verificar mais
+            if (cacheInitialized && !hasActiveSessionsCache && !cacheInvalidated) {
+                return false; // Retorna cache (sem log, sem verificação)
+            }
+
+            // Verificar se há sessões WebSocket ativas (primeira vez ou após invalidação)
             int activeSessions = sessionRegistry.getActiveSessionCount();
-            
+
+            // Atualizar cache
+            cacheInitialized = true;
+            hasActiveSessionsCache = (activeSessions > 0);
+
             if (activeSessions > 0) {
-                log.debug("✅ [QueueBroadcast] {} sessões ativas encontradas", activeSessions);
+                log.info("✅ [QueueBroadcast] {} sessões ativas encontradas - sistema acordou", activeSessions);
                 return true;
             }
-            
-            log.debug("⏭️ [QueueBroadcast] Nenhuma sessão ativa");
+
+            // ✅ Log apenas uma vez quando sistema "dorme"
+            log.info("💤 [Cloud Run] Sistema dormindo - 0 sessões ativas (instância pode hibernar)");
             return false;
-            
+
         } catch (Exception e) {
             log.error("❌ [QueueBroadcast] Erro ao verificar sessões ativas", e);
             // Em caso de erro, assumir que há sessões (comportamento seguro)
             return true;
+        }
+    }
+
+    /**
+     * ✅ NOVO: Verifica se cache foi invalidado via Redis
+     * 
+     * @return true se cache foi invalidado por nova conexão
+     */
+    private boolean checkRedisCacheInvalidation() {
+        try {
+            String cacheInvalidationKey = "cache:session_invalidation";
+            Object invalidationTimestamp = redisTemplate.opsForValue().get(cacheInvalidationKey);
+
+            if (invalidationTimestamp != null) {
+                long timestamp = Long.parseLong(invalidationTimestamp.toString());
+                if (timestamp > lastCacheInvalidationCheck) {
+                    lastCacheInvalidationCheck = timestamp;
+                    log.debug("🔄 [QueueBroadcast] Cache invalidado via Redis (timestamp: {})", timestamp);
+                    return true;
+                }
+            }
+            return false;
+        } catch (Exception e) {
+            log.debug("Erro ao verificar invalidação de cache via Redis: {}", e.getMessage());
+            return false;
         }
     }
 }

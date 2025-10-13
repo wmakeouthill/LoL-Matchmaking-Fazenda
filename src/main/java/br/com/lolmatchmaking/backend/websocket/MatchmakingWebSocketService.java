@@ -25,6 +25,7 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
+import org.springframework.data.redis.core.RedisTemplate;
 
 /**
  * ⚠️ MIGRAÇÃO PARCIAL PARA REDIS - EM PROGRESSO
@@ -62,6 +63,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     private final RedisWebSocketEventService redisWSEvent;
     private final RedisPlayerMatchService redisPlayerMatch;
     private final PlayerStateService playerStateService;
+    private final br.com.lolmatchmaking.backend.service.UnifiedLogService unifiedLogService;
 
     // Cache local (WebSocketSession não é serializável)
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
@@ -461,7 +463,12 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             if (summonerName != null && !summonerName.isBlank()) {
                 // Registrar no SessionRegistry (que usa Redis)
                 sessionRegistry.registerPlayer(summonerName, sessionId);
-                log.info("✅ [Identify] Jogador {} registrado no Redis para sessão {}", summonerName, sessionId);
+
+                // ✅ NOVO: Invalidar cache via Redis (evita dependência circular)
+                sessionRegistry.invalidateSessionCache();
+
+                log.info("✅ [Player-Sessions] [ELECTRON→BACKEND] Jogador {} registrado no Redis para sessão {} - cache invalidado", summonerName,
+                        sessionId);
 
                 // ✅ Lockfile data processamento (se necessário no futuro)
                 // TODO: Implementar storage de LCU lockfile info no Redis se necessário
@@ -1479,6 +1486,102 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         }
     }
 
+    /**
+     * ✅ NOVO: Solicitar identificação LCU para um jogador específico (ex: entrada na fila)
+     */
+    public void requestIdentityConfirmation(String summonerName, String reason) {
+        log.info("🔗 [Player-Sessions] [BACKEND] Solicitando identificação LCU para {} (motivo: {})", summonerName, reason);
+        
+        try {
+            // Buscar sessão WebSocket do jogador
+            Optional<String> sessionIdOpt = redisWSSession.getSessionBySummoner(summonerName.toLowerCase().trim());
+            
+            if (sessionIdOpt.isEmpty()) {
+                log.warn("⚠️ [Player-Sessions] [BACKEND] Nenhuma sessão WebSocket encontrada para {}", summonerName);
+                return;
+            }
+            
+            String sessionId = sessionIdOpt.get();
+            WebSocketSession session = sessionRegistry.get(sessionId);
+            
+            if (session == null || !session.isOpen()) {
+                log.warn("⚠️ [Player-Sessions] [BACKEND] Sessão WebSocket {} não está ativa para {}", sessionId, summonerName);
+                return;
+            }
+            
+            // Enviar solicitação de identificação
+            Map<String, Object> identityRequest = Map.of(
+                "type", "request_identity_confirmation",
+                "summonerName", summonerName,
+                "reason", reason,
+                "timestamp", System.currentTimeMillis()
+            );
+            
+            String message = objectMapper.writeValueAsString(identityRequest);
+            session.sendMessage(new TextMessage(message));
+            
+            log.info("✅ [Player-Sessions] [BACKEND] Solicitação de identificação enviada para {} (sessionId: {})", summonerName, sessionId);
+            
+            // ✅ NOVO: Enviar log para Electron se houver sessões registradas
+            if (unifiedLogService.hasRegisteredPlayerSessionLogSessions()) {
+                unifiedLogService.sendPlayerSessionInfoLog("[Player-Sessions] [BACKEND]", 
+                    "Solicitando identificação LCU para %s (motivo: %s, sessionId: %s)", 
+                    summonerName, reason, sessionId);
+            }
+            
+        } catch (Exception e) {
+            log.error("❌ [Player-Sessions] [BACKEND] Erro ao solicitar identificação para {}", summonerName, e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Enviar mensagem diretamente para Electron via Redis (COMUNICAÇÃO SEGURA E DISTRIBUÍDA)
+     */
+    public void sendDirectToElectronViaRedis(String messageType, String summonerName, String reason, Object requestData) {
+        log.info("🔗 [Player-Sessions] [BACKEND] Enviando mensagem direta para Electron via Redis: {} (summoner: {}, motivo: {})", 
+                messageType, summonerName, reason);
+        
+        try {
+            // Buscar sessão WebSocket do jogador via Redis
+            Optional<String> sessionIdOpt = redisWSSession.getSessionBySummoner(summonerName.toLowerCase().trim());
+            
+            if (sessionIdOpt.isEmpty()) {
+                log.warn("⚠️ [Player-Sessions] [BACKEND] Nenhuma sessão WebSocket encontrada no Redis para {}", summonerName);
+                return;
+            }
+            
+            String sessionId = sessionIdOpt.get();
+            WebSocketSession session = sessionRegistry.get(sessionId);
+            
+            if (session == null || !session.isOpen()) {
+                log.warn("⚠️ [Player-Sessions] [BACKEND] Sessão WebSocket {} não está ativa para {}", sessionId, summonerName);
+                return;
+            }
+            
+            // ✅ USAR REDIS: Armazenar dados da requisição no Redis (seguro e distribuído)
+            String redisKey = "queue_entry_request:" + summonerName.toLowerCase().trim() + ":" + System.currentTimeMillis();
+            redisTemplate.opsForValue().set(redisKey, requestData, Duration.ofMinutes(5)); // TTL 5 minutos
+            
+            // Criar mensagem com referência ao Redis
+            Map<String, Object> message = Map.of(
+                "type", messageType,
+                "summonerName", summonerName,
+                "reason", reason,
+                "timestamp", System.currentTimeMillis(),
+                "redisKey", redisKey
+            );
+            
+            String messageJson = objectMapper.writeValueAsString(message);
+            session.sendMessage(new TextMessage(messageJson));
+            
+            log.info("✅ [Player-Sessions] [BACKEND] Mensagem direta enviada para Electron via Redis: {} → {} (sessionId: {}, redisKey: {})", 
+                    messageType, summonerName, sessionId, redisKey);
+            
+        } catch (Exception e) {
+            log.error("❌ [Player-Sessions] [BACKEND] Erro ao enviar mensagem direta para Electron via Redis: {}", messageType, e);
+        }
+    }
+
     // ✅ NOVO: Confirmação periódica de identidade DINÂMICA baseada no estado
     @Scheduled(fixedRate = 30000) // 30 segundos (verifica estado de todos)
     public void requestIdentityConfirmation() {
@@ -1707,6 +1810,10 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
 
                 // ✅ Criar nova vinculação
                 sessionRegistry.registerPlayer(confirmedSummoner, sessionId);
+
+                // ✅ NOVO: Invalidar cache via Redis (evita dependência circular)
+                sessionRegistry.invalidateSessionCache();
+
                 redisTemplate.opsForValue().set(puuidKey, confirmedPuuid, Duration.ofMinutes(90));
 
                 log.info("✅ [WebSocket] Nova vinculação criada: {} (PUUID: {})",
