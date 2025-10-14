@@ -1795,72 +1795,34 @@ public class QueueManagementService {
     }
 
     /**
-     * ✅ NOVO: Armazenar informações da sessão Electron no Redis
-     * ✅ CORREÇÃO: Garantir apenas UMA chave por summonerName (constraint)
+     * ✅ CORREÇÃO: REMOVIDO - Chaves queue_session_info desnecessárias
+     * ✅ SISTEMA CENTRALIZADO: Usar apenas ws:client_info:{sessionId} e
+     * ws:session:{sessionId}
+     * 
+     * As informações de sessão já são armazenadas pelas chaves centralizadas:
+     * - ws:client_info:{sessionId} → ClientInfo completo (sessionId, summonerName,
+     * puuid, etc.)
+     * - ws:session:{sessionId} → summonerName (lookup por sessionId)
+     * - ws:player:{summonerName} → sessionId (lookup reverso)
+     * 
+     * Não precisamos de chaves duplicadas!
      */
     private void storeSessionInfoInRedis(String summonerName, String sessionId, String puuid,
             Map<String, Object> lcuData) {
-        try {
-            String normalizedName = summonerName.toLowerCase().trim();
-
-            // ✅ CRÍTICO: Verificar se já existe chave para este summoner
-            String sessionInfoKey = "queue_session_info:" + normalizedName;
-
-            // ✅ VERIFICAR: Se já existe chave anterior
-            Object existingSessionInfo = redisTemplate.opsForValue().get(sessionInfoKey);
-            if (existingSessionInfo != null) {
-                log.info("🔄 [Player-Sessions] [QUEUE] Atualizando sessão existente para {} (key: {})",
-                        summonerName, sessionInfoKey);
-            } else {
-                log.info("🆕 [Player-Sessions] [QUEUE] Criando nova sessão para {} (key: {})",
-                        summonerName, sessionInfoKey);
-            }
-
-            // ✅ CRÍTICO: Constraint - apenas UMA chave por summonerName
-            // O Redis SET sobrescreve automaticamente a chave existente
-            Map<String, Object> sessionInfo = Map.of(
-                    "sessionId", sessionId,
-                    "puuid", puuid,
-                    "lcuData", lcuData != null ? lcuData : Collections.emptyMap(),
-                    "timestamp", System.currentTimeMillis(),
-                    "summonerName", summonerName);
-
-            // ✅ CORREÇÃO: SET sobrescreve chave existente (garante constraint 1:1)
-            redisTemplate.opsForValue().set(sessionInfoKey, sessionInfo, Duration.ofMinutes(30));
-
-            log.info("✅ [Player-Sessions] [QUEUE] Informações da sessão {} armazenadas no Redis: {} (key: {})",
-                    existingSessionInfo != null ? "ATUALIZADAS" : "CRIADAS", summonerName, sessionInfoKey);
-
-        } catch (Exception e) {
-            log.error("❌ [Player-Sessions] [QUEUE] Erro ao armazenar informações da sessão no Redis para {}",
-                    summonerName, e);
-        }
+        // ✅ CORREÇÃO: Não criar chaves duplicadas - usar sistema centralizado
+        log.debug("ℹ️ [Player-Sessions] [QUEUE] Sessão {} já registrada no sistema centralizado (ws:client_info:{})",
+                summonerName, sessionId);
     }
 
     /**
-     * ✅ NOVO: Limpar informações da sessão Electron do Redis
-     * ✅ CORREÇÃO: Remove chave quando jogador sai da fila (cleanup)
+     * ✅ CORREÇÃO: REMOVIDO - Não precisamos limpar chaves queue_session_info
+     * ✅ SISTEMA CENTRALIZADO: Limpeza é feita automaticamente pelo
+     * RedisWebSocketSessionService
      */
     private void clearSessionInfoFromRedis(String summonerName) {
-        try {
-            String normalizedName = summonerName.toLowerCase().trim();
-            String sessionInfoKey = "queue_session_info:" + normalizedName;
-
-            // ✅ VERIFICAR: Se chave existe antes de tentar remover
-            Object existingSessionInfo = redisTemplate.opsForValue().get(sessionInfoKey);
-            if (existingSessionInfo != null) {
-                // ✅ REMOVER: Chave de sessão do Redis
-                redisTemplate.delete(sessionInfoKey);
-                log.info("🗑️ [Player-Sessions] [QUEUE] Sessão removida do Redis: {} (key: {})",
-                        summonerName, sessionInfoKey);
-            } else {
-                log.debug("ℹ️ [Player-Sessions] [QUEUE] Nenhuma sessão encontrada para remover: {} (key: {})",
-                        summonerName, sessionInfoKey);
-            }
-
-        } catch (Exception e) {
-            log.error("❌ [Player-Sessions] [QUEUE] Erro ao limpar informações da sessão no Redis para {}",
-                    summonerName, e);
-        }
+        // ✅ CORREÇÃO: Não precisamos limpar chaves duplicadas - sistema centralizado
+        // cuida disso
+        log.debug("ℹ️ [Player-Sessions] [QUEUE] Limpeza de sessão {} delegada ao sistema centralizado",
+                summonerName);
     }
 }

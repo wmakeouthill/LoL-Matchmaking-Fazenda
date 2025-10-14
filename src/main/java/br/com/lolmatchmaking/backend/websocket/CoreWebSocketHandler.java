@@ -730,11 +730,30 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             playerInfo.put("source", source);
             playerInfo.put("timestamp", root.path("timestamp").asLong());
 
-            String playerInfoJson = mapper.writeValueAsString(playerInfo);
-            redisWSSession.storePlayerInfo(session.getId(), playerInfoJson);
+            // ✅ CORREÇÃO CRÍTICA: Usar registerSession() para validação de duplicação
+            String ipAddress = "unknown";
+            String userAgent = "unknown";
 
-            log.info("✅ [CoreWS] {} identificado via Electron (PUUID: {}...)",
-                    summonerName, puuid.substring(0, Math.min(8, puuid.length())));
+            if (session.getRemoteAddress() != null) {
+                ipAddress = session.getRemoteAddress().getAddress().getHostAddress();
+            }
+            if (session.getHandshakeHeaders() != null) {
+                userAgent = session.getHandshakeHeaders().getFirst("User-Agent");
+                if (userAgent == null)
+                    userAgent = "unknown";
+            }
+
+            // ✅ CRÍTICO: Usar registerSession() em vez de storePlayerInfo() direto
+            boolean success = redisWSSession.registerSession(session.getId(), summonerName, ipAddress, userAgent);
+
+            if (success) {
+                log.info("✅ [CoreWS] {} identificado via Electron (PUUID: {}...) - Sessão registrada com validação",
+                        summonerName, puuid.substring(0, Math.min(8, puuid.length())));
+            } else {
+                log.warn(
+                        "⚠️ [CoreWS] {} identificado via Electron mas falha na validação de sessão (duplicação detectada)",
+                        summonerName);
+            }
 
             // Responder
             session.sendMessage(new TextMessage("{\"type\":\"electron_identified\",\"success\":true}"));
@@ -754,14 +773,39 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             return;
         }
 
-        // ✅ REDIS ONLY: Armazena identificação completa no Redis (fonte única da
-        // verdade)
+        // ✅ CORREÇÃO CRÍTICA: Usar registerSession() para validação de duplicação
         try {
-            String playerInfoJson = mapper.writeValueAsString(playerData);
-            redisWSSession.storePlayerInfo(session.getId(), playerInfoJson);
-            log.debug("✅ [CoreWS] Player info armazenado no Redis: sessionId={}", session.getId());
+            String summonerName = playerData.path(FIELD_SUMMONER_NAME).asText(null);
+
+            if (summonerName != null && !summonerName.isEmpty()) {
+                String ipAddress = "unknown";
+                String userAgent = "unknown";
+
+                if (session.getRemoteAddress() != null) {
+                    ipAddress = session.getRemoteAddress().getAddress().getHostAddress();
+                }
+                if (session.getHandshakeHeaders() != null) {
+                    userAgent = session.getHandshakeHeaders().getFirst("User-Agent");
+                    if (userAgent == null)
+                        userAgent = "unknown";
+                }
+
+                // ✅ CRÍTICO: Usar registerSession() em vez de storePlayerInfo() direto
+                boolean success = redisWSSession.registerSession(session.getId(), summonerName, ipAddress, userAgent);
+
+                if (success) {
+                    log.info("✅ [CoreWS] Player info registrado no Redis com validação: sessionId={}, summoner={}",
+                            session.getId(), summonerName);
+                } else {
+                    log.warn(
+                            "⚠️ [CoreWS] Player info falhou na validação (duplicação detectada): sessionId={}, summoner={}",
+                            session.getId(), summonerName);
+                }
+            } else {
+                log.warn("⚠️ [CoreWS] SummonerName vazio - pulando registro de sessão: sessionId={}", session.getId());
+            }
         } catch (Exception e) {
-            log.error("❌ [CoreWS] Erro ao armazenar player info no Redis: sessionId={}", session.getId(), e);
+            log.error("❌ [CoreWS] Erro ao registrar player info no Redis: sessionId={}", session.getId(), e);
         }
 
         // ✅ CRÍTICO: Registrar jogador no SessionRegistry para que receba broadcasts
