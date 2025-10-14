@@ -191,8 +191,23 @@ export class App implements OnInit, OnDestroy {
     this.electronEvents.draftStarted$.subscribe(draftData => {
       if (draftData) {
         console.log('🎯 [App] draft-started recebido do Electron:', draftData);
+        console.log('🎯 [App] MatchId:', draftData.matchId);
+        console.log('🎯 [App] Teams:', draftData.teams);
+        console.log('🎯 [App] Team1:', draftData.team1);
+        console.log('🎯 [App] Team2:', draftData.team2);
+
+        // ✅ CRÍTICO: Esconder modal de match_found
+        this.showMatchFound = false;
+
+        // ✅ CRÍTICO: Ir para fase de draft
         this.inDraftPhase = true;
+
+        // ✅ CRÍTICO: Forçar detecção de mudanças
         this.cdr.detectChanges();
+
+        console.log('🎯 [App] ✅ Transição para draft concluída!');
+        console.log('🎯 [App] showMatchFound:', this.showMatchFound);
+        console.log('🎯 [App] inDraftPhase:', this.inDraftPhase);
       }
     });
 
@@ -216,7 +231,251 @@ export class App implements OnInit, OnDestroy {
       }
     });
 
+    // ✅ DRAFT_CANCELLED: Voltar para fila
+    this.electronEvents.draftCancelled$.subscribe(cancelData => {
+      if (cancelData) {
+        console.log('🎯 [App] draft-cancelled recebido do Electron:', cancelData);
+        this.showMatchFound = false;
+        this.inDraftPhase = false;
+        this.inGamePhase = false;
+        this.cdr.detectChanges();
+      }
+    });
+
+    // ✅ GAME_CANCELLED: Voltar para fila
+    this.electronEvents.gameCancelled$.subscribe(cancelData => {
+      if (cancelData) {
+        console.log('🎯 [App] game-cancelled recebido do Electron:', cancelData);
+        this.showMatchFound = false;
+        this.inDraftPhase = false;
+        this.inGamePhase = false;
+        this.cdr.detectChanges();
+      }
+    });
+
+    // ✅ ACCEPTANCE_TIMER: Atualizar timer de aceitação
+    this.electronEvents.acceptanceTimer$.subscribe(timerData => {
+      if (timerData) {
+        console.log('🎯 [App] acceptance-timer recebido do Electron:', timerData);
+        this.updateAcceptanceTimer(timerData);
+      }
+    });
+
+    // ✅ ACCEPTANCE_PROGRESS: Atualizar progresso de aceitação
+    this.electronEvents.acceptanceProgress$.subscribe(progressData => {
+      if (progressData) {
+        console.log('🎯 [App] acceptance-progress recebido do Electron:', progressData);
+        this.updateAcceptanceProgress(progressData);
+      }
+    });
+
+    // ✅ DRAFT EVENTS
+    this.electronEvents.draftTimer$.subscribe(timerData => {
+      if (timerData) {
+        console.log('🎯 [App] draft-timer recebido do Electron:', timerData);
+        this.updateDraftTimer(timerData);
+      }
+    });
+
+    this.electronEvents.draftUpdate$.subscribe(updateData => {
+      if (updateData) {
+        console.log('🎯 [App] draft-update recebido do Electron:', updateData);
+        this.updateDraftUpdate(updateData);
+      }
+    });
+
+    this.electronEvents.draftUpdated$.subscribe(updatedData => {
+      if (updatedData) {
+        console.log('🎯 [App] draft-updated recebido do Electron:', updatedData);
+        this.updateDraftUpdated(updatedData);
+      }
+    });
+
+    this.electronEvents.pickChampion$.subscribe(pickData => {
+      if (pickData) {
+        console.log('🎯 [App] pick-champion recebido do Electron:', pickData);
+        this.updatePickChampion(pickData);
+      }
+    });
+
+    this.electronEvents.banChampion$.subscribe(banData => {
+      if (banData) {
+        console.log('🎯 [App] ban-champion recebido do Electron:', banData);
+        this.updateBanChampion(banData);
+      }
+    });
+
+    this.electronEvents.draftConfirmed$.subscribe(confirmedData => {
+      if (confirmedData) {
+        console.log('🎯 [App] draft-confirmed recebido do Electron:', confirmedData);
+        this.handleDraftConfirmed(confirmedData);
+      }
+    });
+
+    // ✅ GAME EVENTS
+    this.electronEvents.gameStarted$.subscribe(gameData => {
+      if (gameData) {
+        console.log('🎯 [App] game-started recebido do Electron:', gameData);
+        this.handleGameStarted(gameData);
+      }
+    });
+
+    this.electronEvents.winnerModal$.subscribe(winnerData => {
+      if (winnerData) {
+        console.log('🎯 [App] winner-modal recebido do Electron:', winnerData);
+        this.showWinnerModal(winnerData);
+      }
+    });
+
+    this.electronEvents.voteWinner$.subscribe(voteData => {
+      if (voteData) {
+        console.log('🎯 [App] vote-winner recebido do Electron:', voteData);
+        this.updateVoteWinner(voteData);
+      }
+    });
+
+    // ✅ SPECTATOR EVENTS
+    this.electronEvents.spectatorMuted$.subscribe(muteData => {
+      if (muteData) {
+        console.log('🎯 [App] spectator-muted recebido do Electron:', muteData);
+        this.updateSpectatorMuted(muteData);
+      }
+    });
+
+    this.electronEvents.spectatorUnmuted$.subscribe(unmuteData => {
+      if (unmuteData) {
+        console.log('🎯 [App] spectator-unmuted recebido do Electron:', unmuteData);
+        this.updateSpectatorUnmuted(unmuteData);
+      }
+    });
+
     console.log('✅ [App] Listeners de eventos do Electron configurados!');
+  }
+
+  /**
+   * ✅ NOVO: Atualizar timer de aceitação
+   */
+  private updateAcceptanceTimer(timerData: any) {
+    console.log('⏰ [App] updateAcceptanceTimer chamado:', timerData);
+    console.log('⏰ [App] matchFoundData:', this.matchFoundData);
+    console.log('⏰ [App] timerData.matchId:', timerData.matchId);
+    console.log('⏰ [App] matchFoundData?.matchId:', this.matchFoundData?.matchId);
+
+    if (this.matchFoundData && this.matchFoundData.matchId === timerData.matchId) {
+      console.log('⏰ [App] ✅ MatchIds coincidem - atualizando timer');
+      this.matchFoundData.acceptanceTimer = timerData.secondsRemaining;
+      this.cdr.detectChanges();
+      console.log('⏰ [App] Timer de aceitação atualizado:', timerData.secondsRemaining);
+    } else {
+      console.log('⏰ [App] ❌ MatchIds não coincidem ou matchFoundData não existe');
+      console.log('⏰ [App] matchFoundData existe:', !!this.matchFoundData);
+      if (this.matchFoundData) {
+        console.log('⏰ [App] matchFoundData.matchId:', this.matchFoundData.matchId);
+      }
+    }
+  }
+
+  /**
+   * ✅ NOVO: Atualizar progresso de aceitação
+   */
+  private updateAcceptanceProgress(progressData: any) {
+    if (this.matchFoundData && this.matchFoundData.matchId === progressData.matchId) {
+      this.matchFoundData.acceptedCount = progressData.acceptedCount;
+      this.matchFoundData.totalPlayers = progressData.totalPlayers;
+      this.cdr.detectChanges();
+      console.log('📊 [App] Progresso de aceitação atualizado:', progressData.acceptedCount + '/' + progressData.totalPlayers);
+    }
+  }
+
+  /**
+   * ✅ NOVO: Atualizar timer do draft
+   */
+  private updateDraftTimer(timerData: any) {
+    // TODO: Implementar lógica do timer do draft
+    console.log('⏰ [App] Timer do draft atualizado:', timerData.secondsRemaining);
+  }
+
+  /**
+   * ✅ NOVO: Atualizar estado do draft (quando é a vez do jogador)
+   */
+  private updateDraftUpdate(updateData: any) {
+    console.log('🔄 [App] Draft update - é a vez do jogador:', updateData.currentPlayer);
+    // TODO: Implementar lógica de "é sua vez" no draft
+  }
+
+  /**
+   * ✅ NOVO: Atualizar draft após ação (todos os jogadores recebem)
+   */
+  private updateDraftUpdated(updatedData: any) {
+    console.log('✅ [App] Draft updated - ação realizada:', updatedData.actionType, 'por', updatedData.updatedBy);
+    // TODO: Implementar atualização do estado do draft
+  }
+
+  /**
+   * ✅ NOVO: Atualizar pick de campeão
+   */
+  private updatePickChampion(pickData: any) {
+    // TODO: Implementar lógica de pick de campeão
+    console.log('⚔️ [App] Pick de campeão atualizado:', pickData.championId, 'por', pickData.player);
+  }
+
+  /**
+   * ✅ NOVO: Atualizar ban de campeão
+   */
+  private updateBanChampion(banData: any) {
+    // TODO: Implementar lógica de ban de campeão
+    console.log('🚫 [App] Ban de campeão atualizado:', banData.championId, 'por', banData.player);
+  }
+
+  /**
+   * ✅ NOVO: Draft confirmado - ir para game in progress
+   */
+  private handleDraftConfirmed(confirmedData: any) {
+    console.log('✅ [App] Draft confirmado, iniciando jogo...');
+    this.inDraftPhase = false;
+    this.inGamePhase = true;
+    this.cdr.detectChanges();
+  }
+
+  /**
+   * ✅ NOVO: Game iniciado
+   */
+  private handleGameStarted(gameData: any) {
+    console.log('🎮 [App] Game iniciado!');
+    this.inGamePhase = true;
+    this.cdr.detectChanges();
+  }
+
+  /**
+   * ✅ NOVO: Mostrar modal de vencedor
+   */
+  private showWinnerModal(winnerData: any) {
+    console.log('🏆 [App] Mostrando modal de vencedor...');
+    // TODO: Implementar modal de vencedor
+  }
+
+  /**
+   * ✅ NOVO: Atualizar voto de vencedor
+   */
+  private updateVoteWinner(voteData: any) {
+    console.log('🗳️ [App] Voto de vencedor atualizado:', voteData.winner, 'por', voteData.voter);
+    // TODO: Implementar lógica de votação
+  }
+
+  /**
+   * ✅ NOVO: Atualizar espectador mutado
+   */
+  private updateSpectatorMuted(muteData: any) {
+    console.log('🔇 [App] Espectador mutado:', muteData.spectator, 'por', muteData.mutedBy);
+    // TODO: Implementar lógica de mute
+  }
+
+  /**
+   * ✅ NOVO: Atualizar espectador desmutado
+   */
+  private updateSpectatorUnmuted(unmuteData: any) {
+    console.log('🔊 [App] Espectador desmutado:', unmuteData.spectator, 'por', unmuteData.unmutedBy);
+    // TODO: Implementar lógica de unmute
   }
 
   ngOnInit(): void {

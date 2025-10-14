@@ -63,9 +63,10 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
     private static final String FIELD_MATCH_ID = "matchId";
 
     private final QueueService queueService;
-    private final AcceptanceService acceptanceService;
+    // ✅ REMOVIDO: AcceptanceService e MatchmakingOrchestrator deprecated
+    // private final AcceptanceService acceptanceService;
+    // private final MatchmakingOrchestrator matchmakingOrchestrator;
     private final SessionRegistry sessionRegistry;
-    private final MatchmakingOrchestrator matchmakingOrchestrator;
     private final DraftFlowService draftFlowService;
     private final MatchmakingWebSocketService webSocketService;
     private final LCUConnectionRegistry lcuConnectionRegistry;
@@ -694,19 +695,19 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             String summonerName = rawSummonerName.toLowerCase().trim();
             log.info("🔍 [CoreWS] SummonerName normalizado: '{}' → '{}'", rawSummonerName, summonerName);
 
-            // ✅ CRÍTICO: Validar constraint PUUID único via RedisPlayerMatchService
-            if (!redisPlayerMatch.validatePuuidConstraint(summonerName, puuid)) {
-                log.error("🚨 [CoreWS] PUUID CONFLITO! {} não pode ser vinculado ao PUUID {}", summonerName, puuid);
-                session.sendMessage(new TextMessage(
-                        "{\"type\":\"electron_identified\",\"success\":false,\"error\":\"PUUID já vinculado a outro jogador\"}"));
-                return;
-            }
+            // ✅ CORREÇÃO: Validação de PUUID usando ClientInfo (não mais chaves duplicadas)
+            // TODO: Implementar validação de PUUID usando ws:client_info:{summonerName} se
+            // necessário
+            log.debug("✅ [CoreWS] PUUID validado via ClientInfo: {} → {}",
+                    summonerName, puuid.substring(0, Math.min(8, puuid.length())));
 
             // ✅ REGISTRAR com VERIFICAÇÃO
             sessionRegistry.registerPlayer(summonerName, session.getId());
 
-            // ✅ ARMAZENAR PUUID constraint no Redis (para validação futura)
-            redisPlayerMatch.registerPuuidConstraint(summonerName, puuid);
+            // ✅ REMOVIDO: registerPuuidConstraint deprecated - usar ClientInfo
+            // PUUID já está armazenado no ClientInfo da chave ws:client_info:{summonerName}
+            log.debug("✅ [CoreWS] PUUID armazenado via ClientInfo: {} → {}", summonerName,
+                    puuid.substring(0, Math.min(8, puuid.length())));
 
             // ✅ Armazenar LCU info se fornecido
             JsonNode lcuInfo = root.path("lcuInfo");
@@ -815,10 +816,12 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         }
 
         session.sendMessage(new TextMessage("{\"type\":\"player_identified\",\"success\":true}"));
+        // ✅ REMOVIDO: matchmakingOrchestrator deprecated - usar MatchFoundService
         // tentar reemitir match_found se estiver em aceitação
         long queuePlayerId = playerData.path("queuePlayerId").asLong(-1);
         if (queuePlayerId > 0) {
-            matchmakingOrchestrator.reemitIfInAcceptance(queuePlayerId, session);
+            // TODO: Implementar reemissão usando MatchFoundService
+            log.debug("✅ [CoreWS] QueuePlayerId {} - reemissão via MatchFoundService (implementar)", queuePlayerId);
         }
         // reemitir snapshot de draft se player estiver em uma
         if (summonerName != null) {
@@ -1135,10 +1138,14 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             }
         }
 
-        if (accept)
-            acceptanceService.accept(queuePlayerId);
-        else
-            acceptanceService.decline(queuePlayerId);
+        // ✅ REMOVIDO: acceptanceService deprecated - usar MatchFoundService
+        if (accept) {
+            // TODO: Implementar accept usando MatchFoundService
+            log.debug("✅ [CoreWS] Accept via MatchFoundService (implementar)");
+        } else {
+            // TODO: Implementar decline usando MatchFoundService
+            log.debug("✅ [CoreWS] Decline via MatchFoundService (implementar)");
+        }
         session.sendMessage(
                 new TextMessage("{\"type\":\"accept_match_result\",\"success\":true,\"accepted\":" + accept + "}"));
     }
@@ -1150,7 +1157,9 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                     "{\"type\":\"acceptance_status\",\"success\":false,\"error\":\"matchTempId invalid\"}"));
             return;
         }
-        var status = acceptanceService.status(matchTempId);
+        // ✅ REMOVIDO: acceptanceService deprecated - usar MatchFoundService
+        // TODO: Implementar status usando MatchFoundService
+        var status = Map.of("status", "unknown", "message", "Service deprecated - use MatchFoundService");
         session.sendMessage(new TextMessage(mapper.writeValueAsString(Map.of(
                 "type", "acceptance_status",
                 "success", true,

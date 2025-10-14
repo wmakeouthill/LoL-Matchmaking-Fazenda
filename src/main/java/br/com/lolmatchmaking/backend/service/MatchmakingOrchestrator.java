@@ -46,7 +46,8 @@ import java.util.stream.Collectors;
 public class MatchmakingOrchestrator {
     private final QueueService queueService;
     // ✅ REMOVIDO: MatchmakingService (deletado, este orquestrador está @Deprecated)
-    private final AcceptanceService acceptanceService;
+    // ✅ REMOVIDO: AcceptanceService deprecated
+    // private final AcceptanceService acceptanceService;
     private final SessionRegistry sessionRegistry;
     private final CustomMatchRepository customMatchRepository;
     private final ObjectMapper mapper = new ObjectMapper();
@@ -69,47 +70,59 @@ public class MatchmakingOrchestrator {
     @Scheduled(fixedDelay = 1000, initialDelay = 1500)
     @Transactional
     public void monitorAcceptance() {
-        acceptanceService.allSessions().forEach(s -> processAcceptanceSession(s.matchTempId));
+        // ✅ REMOVIDO: acceptanceService deprecated - usar MatchFoundService
+        log.debug("✅ [MatchmakingOrchestrator] Monitor deprecated - usar MatchFoundService");
+        // acceptanceService.allSessions().forEach(s ->
+        // processAcceptanceSession(s.matchTempId));
     }
 
     private void processAcceptanceSession(long matchTempId) {
-        var status = acceptanceService.status(matchTempId);
-        broadcastAcceptanceProgress(matchTempId, status);
-        if (!Boolean.TRUE.equals(status.get("allResolved")))
-            return;
-        int accepted = (int) status.get("accepted");
-        int declined = (int) status.get("declined");
-        if (declined > 0) {
-            handleDeclinedSession(matchTempId);
-        } else if (accepted > 0) {
-            handleFullyAcceptedSession(matchTempId);
-        }
+        // ✅ REMOVIDO: acceptanceService deprecated - usar MatchFoundService
+        log.debug("✅ [MatchmakingOrchestrator] processAcceptanceSession deprecated - usar MatchFoundService");
+        return; // Método deprecated
+        // var status = acceptanceService.status(matchTempId);
+        // broadcastAcceptanceProgress(matchTempId, status);
+        // if (!Boolean.TRUE.equals(status.get("allResolved")))
+        // return;
+        // int accepted = (int) status.get("accepted");
+        // int declined = (int) status.get("declined");
+        // if (declined > 0) {
+        // handleDeclinedSession(matchTempId);
+        // } else if (accepted > 0) {
+        // handleFullyAcceptedSession(matchTempId);
+        // }
     }
 
     private void handleDeclinedSession(long matchTempId) {
-        var playersSession = acceptanceService.playersForSession(matchTempId);
-        Set<Long> acceptedIds = playersSession.stream()
-                .filter(p -> p.getAcceptanceStatus() != null && p.getAcceptanceStatus() == 1)
-                .map(QueuePlayer::getId)
-                .collect(Collectors.toSet());
-        boolean anyManual = playersSession.stream()
-                .filter(p -> p.getAcceptanceStatus() != null && p.getAcceptanceStatus() == 2)
-                .anyMatch(p -> acceptanceService.isManualDecline(p.getId()));
-        playersSession.forEach(p -> {
-            if (acceptedIds.contains(p.getId())) {
-                p.setActive(true);
-            }
-        });
-        String reason = anyManual ? "declined" : "timeout";
-        broadcastMatchCancelled(matchTempId, reason);
-        acceptanceService.removeSession(matchTempId);
-        acceptanceService.clearManualDeclines(playersSession.stream().map(QueuePlayer::getId).toList());
+        // ✅ REMOVIDO: acceptanceService deprecated - usar MatchFoundService
+        log.debug("✅ [MatchmakingOrchestrator] handleDeclinedSession deprecated - usar MatchFoundService");
+        return; // Método deprecated
+        // var playersSession = acceptanceService.playersForSession(matchTempId);
+        // Set<Long> acceptedIds = playersSession.stream()
+        // .filter(p -> p.getAcceptanceStatus() != null && p.getAcceptanceStatus() == 1)
+        // .map(QueuePlayer::getId)
+        // .collect(Collectors.toSet());
+        // boolean anyManual = playersSession.stream()
+        // .filter(p -> p.getAcceptanceStatus() != null && p.getAcceptanceStatus() == 2)
+        // .anyMatch(p -> acceptanceService.isManualDecline(p.getId()));
+        // playersSession.forEach(p -> {
+        // if (acceptedIds.contains(p.getId())) {
+        // p.setActive(true);
+        // }
+        // });
+        // String reason = anyManual ? "declined" : "timeout";
+        // broadcastMatchCancelled(matchTempId, reason);
+        // acceptanceService.removeSession(matchTempId);
+        // acceptanceService.clearManualDeclines(playersSession.stream().map(QueuePlayer::getId).toList());
     }
 
     private void handleFullyAcceptedSession(long matchTempId) {
-        List<QueuePlayer> players = acceptanceService.playersForSession(matchTempId);
-        createDraftMatchAndBroadcast(matchTempId, players);
-        acceptanceService.removeSession(matchTempId);
+        // ✅ REMOVIDO: acceptanceService deprecated - usar MatchFoundService
+        log.debug("✅ [MatchmakingOrchestrator] handleFullyAcceptedSession deprecated - usar MatchFoundService");
+        return; // Método deprecated
+        // List<QueuePlayer> players = acceptanceService.playersForSession(matchTempId);
+        // createDraftMatchAndBroadcast(matchTempId, players);
+        // acceptanceService.removeSession(matchTempId);
     }
 
     private void createDraftMatchAndBroadcast(long matchTempId, List<QueuePlayer> players) {
@@ -222,21 +235,24 @@ public class MatchmakingOrchestrator {
     }
 
     public void reemitIfInAcceptance(long queuePlayerId, org.springframework.web.socket.WebSocketSession session) {
+        // ✅ REMOVIDO: acceptanceService deprecated - usar MatchFoundService
+        log.debug("✅ [MatchmakingOrchestrator] reemitIfInAcceptance deprecated - usar MatchFoundService");
+        return; // Método deprecated
         // localizar sessão que contenha o jogador
-        acceptanceService.allSessions().stream()
-                .filter(s -> s.queuePlayerIds.contains(queuePlayerId))
-                .findFirst()
-                .ifPresent(s -> {
-                    var players = acceptanceService.playersForSession(s.matchTempId);
-                    try {
-                        String payload = mapper.writeValueAsString(java.util.Map.of(
-                                FIELD_TYPE, "match_found",
-                                FIELD_MATCH_TEMP_ID, s.matchTempId,
-                                FIELD_PLAYERS, players));
-                        session.sendMessage(new TextMessage(payload));
-                    } catch (Exception e) {
-                        log.warn("Falha reemitir match_found para {}", session.getId(), e);
-                    }
-                });
+        // acceptanceService.allSessions().stream()
+        // .filter(s -> s.queuePlayerIds.contains(queuePlayerId))
+        // .findFirst()
+        // .ifPresent(s -> {
+        // var players = acceptanceService.playersForSession(s.matchTempId);
+        // try {
+        // String payload = mapper.writeValueAsString(java.util.Map.of(
+        // FIELD_TYPE, "match_found",
+        // FIELD_MATCH_TEMP_ID, s.matchTempId,
+        // FIELD_PLAYERS, players));
+        // session.sendMessage(new TextMessage(payload));
+        // } catch (Exception e) {
+        // log.warn("Falha reemitir match_found para {}", session.getId(), e);
+        // }
+        // });
     }
 }

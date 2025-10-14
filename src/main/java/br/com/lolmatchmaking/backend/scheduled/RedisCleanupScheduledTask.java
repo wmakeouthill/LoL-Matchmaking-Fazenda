@@ -5,6 +5,7 @@ import br.com.lolmatchmaking.backend.domain.repository.CustomMatchRepository;
 import br.com.lolmatchmaking.backend.service.RedisMatchAcceptanceService;
 import br.com.lolmatchmaking.backend.service.RedisDraftFlowService;
 import br.com.lolmatchmaking.backend.service.RedisGameMonitoringService;
+import br.com.lolmatchmaking.backend.service.GameInProgressService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -32,6 +33,7 @@ public class RedisCleanupScheduledTask {
     private final RedisMatchAcceptanceService redisAcceptance;
     private final RedisDraftFlowService redisDraftFlow;
     private final RedisGameMonitoringService redisGameMonitoring;
+    private final GameInProgressService gameInProgressService;
 
     /**
      * ✅ CLEANUP: Limpa matches fantasma do Redis a cada 1 minuto
@@ -88,16 +90,32 @@ public class RedisCleanupScheduledTask {
                 Optional<CustomMatch> matchOpt = customMatchRepository.findById(matchId);
 
                 if (matchOpt.isEmpty()) {
-                    log.warn("🧹 [Cleanup] Jogo {} NÃO existe no MySQL! Removendo...", matchId);
-                    redisGameMonitoring.cancelGame(matchId);
+                    log.warn("🧹 [Cleanup] Jogo {} NÃO existe no MySQL! Removendo completamente...", matchId);
+                    // ✅ NOVO: Chamar cancelamento completo para limpar Discord também
+                    try {
+                        gameInProgressService.cancelGame(matchId, "Jogo órfão removido pelo cleanup");
+                    } catch (Exception e) {
+                        log.error("❌ [Cleanup] Erro ao cancelar jogo órfão {}: {}", matchId, e.getMessage());
+                        // Fallback: apenas limpar Redis
+                        redisGameMonitoring.cancelGame(matchId);
+                    }
                     cleanedGame++;
                 } else {
                     String status = matchOpt.get().getStatus();
                     // Se não está mais in_progress, limpar
                     if (!"in_progress".equalsIgnoreCase(status)) {
-                        log.warn("🧹 [Cleanup] Jogo {} não está mais in_progress (status: {}) - removendo do Redis",
+                        log.warn(
+                                "🧹 [Cleanup] Jogo {} não está mais in_progress (status: {}) - removendo completamente",
                                 matchId, status);
-                        redisGameMonitoring.cancelGame(matchId);
+                        // ✅ NOVO: Chamar cancelamento completo para limpar Discord também
+                        try {
+                            gameInProgressService.cancelGame(matchId,
+                                    "Jogo com status incorreto removido pelo cleanup");
+                        } catch (Exception e) {
+                            log.error("❌ [Cleanup] Erro ao cancelar jogo {}: {}", matchId, e.getMessage());
+                            // Fallback: apenas limpar Redis
+                            redisGameMonitoring.cancelGame(matchId);
+                        }
                         cleanedGame++;
                     }
                 }
