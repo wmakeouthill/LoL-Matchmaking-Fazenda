@@ -18,6 +18,7 @@ import { QueueStateService } from './services/queue-state';
 import { DiscordIntegrationService } from './services/discord-integration.service';
 import { BotService } from './services/bot.service';
 import { CurrentSummonerService } from './services/current-summoner.service';
+import { ElectronEventsService } from './services/electron-events.service';
 import { Player, QueueStatus, LCUStatus, QueuePreferences } from './interfaces';
 import type { Notification } from './interfaces';
 import { logApp } from './utils/app-logger';
@@ -158,6 +159,7 @@ export class App implements OnInit, OnDestroy {
     private readonly discordService: DiscordIntegrationService,
     private readonly botService: BotService,
     private readonly currentSummonerService: CurrentSummonerService,
+    private readonly electronEvents: ElectronEventsService,
     private readonly cdr: ChangeDetectorRef
   ) {
     console.log(`[App] Constructor`);
@@ -166,6 +168,55 @@ export class App implements OnInit, OnDestroy {
     // this.lcuCheckInterval = setInterval(() => this.startLCUStatusCheck(), this.LCU_CHECK_INTERVAL);
 
     this.isElectron = !!(window as any).electronAPI;
+
+    // ✅ NOVO: Configurar listeners de eventos do Electron
+    this.setupElectronEventListeners();
+  }
+
+  /**
+   * ✅ NOVO: Configurar listeners de eventos do Electron
+   */
+  private setupElectronEventListeners() {
+    console.log('🎮 [App] Configurando listeners de eventos do Electron...');
+
+    // ✅ MATCH_FOUND: Mostrar modal de aceitar/recusar partida
+    this.electronEvents.matchFound$.subscribe(matchData => {
+      if (matchData) {
+        console.log('🎯 [App] match-found recebido do Electron:', matchData);
+        this.handleMatchFound(matchData);
+      }
+    });
+
+    // ✅ DRAFT_STARTED: Ir para tela de draft
+    this.electronEvents.draftStarted$.subscribe(draftData => {
+      if (draftData) {
+        console.log('🎯 [App] draft-started recebido do Electron:', draftData);
+        this.inDraftPhase = true;
+        this.cdr.detectChanges();
+      }
+    });
+
+    // ✅ GAME_IN_PROGRESS: Ir para tela de jogo
+    this.electronEvents.gameInProgress$.subscribe(gameData => {
+      if (gameData) {
+        console.log('🎯 [App] game-in-progress recebido do Electron:', gameData);
+        this.inGamePhase = true;
+        this.cdr.detectChanges();
+      }
+    });
+
+    // ✅ MATCH_CANCELLED: Voltar para fila
+    this.electronEvents.matchCancelled$.subscribe(cancelData => {
+      if (cancelData) {
+        console.log('🎯 [App] match-cancelled recebido do Electron:', cancelData);
+        this.showMatchFound = false;
+        this.inDraftPhase = false;
+        this.inGamePhase = false;
+        this.cdr.detectChanges();
+      }
+    });
+
+    console.log('✅ [App] Listeners de eventos do Electron configurados!');
   }
 
   ngOnInit(): void {
@@ -3918,7 +3969,7 @@ export class App implements OnInit, OnDestroy {
         summonerName: this.currentPlayer?.displayName || this.currentPlayer?.summonerName,
         reason: 'frontend_queue_request'
       });
-      
+
       console.log('✅ [Player-Sessions] [FRONTEND] Electron notificado sobre entrada na fila');
     } catch (error) {
       console.error('❌ [Player-Sessions] [FRONTEND] Erro ao notificar Electron:', error);

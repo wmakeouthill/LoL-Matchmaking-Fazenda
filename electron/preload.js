@@ -70,6 +70,13 @@ async function postJson(url, body, timeoutMs = 5000) {
 const electronAPI = {
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   getVersion: () => process.versions?.electron || 'unknown',
+  
+  // ✅ NOVO: Métodos específicos para eventos do main process
+  onMatchFound: (callback) => ipcRenderer.on('match-found', callback),
+  onDraftStarted: (callback) => ipcRenderer.on('draft-started', callback),
+  onGameInProgress: (callback) => ipcRenderer.on('game-in-progress', callback),
+  onMatchCancelled: (callback) => ipcRenderer.on('match-cancelled', callback),
+  
   getBackendApiUrl: () => {
     // CONFIGURAÇÃO DE REDE: Altere esta URL para o IP do servidor na rede
     // Para testes locais: 'http://localhost:8080'
@@ -143,6 +150,71 @@ const electronAPI = {
 
 electronAPI.identifyPlayer = (payload) => {
   try { return ipcRenderer.invoke('lcu:identify', payload); } catch (e) { return Promise.resolve({ success: false, error: String(e) }); }
+};
+
+// ✅ NOVO: Sistema de Game Actions (TODAS as ações validadas via Electron)
+electronAPI.gameActionAcceptMatch = (matchData) => {
+  try { return ipcRenderer.invoke('game-action-accept-match', matchData); } catch (e) { return Promise.resolve(false); }
+};
+
+electronAPI.gameActionDeclineMatch = (matchData) => {
+  try { return ipcRenderer.invoke('game-action-decline-match', matchData); } catch (e) { return Promise.resolve(false); }
+};
+
+electronAPI.gameActionCancelMatch = (matchData) => {
+  try { return ipcRenderer.invoke('game-action-cancel-match', matchData); } catch (e) { return Promise.resolve(false); }
+};
+
+electronAPI.gameActionJoinQueue = (queueData) => {
+  try { return ipcRenderer.invoke('game-action-join-queue', queueData); } catch (e) { return Promise.resolve(false); }
+};
+
+electronAPI.gameActionLeaveQueue = (queueData) => {
+  try { return ipcRenderer.invoke('game-action-leave-queue', queueData); } catch (e) { return Promise.resolve(false); }
+};
+
+electronAPI.gameActionPickChampion = (pickData) => {
+  try { return ipcRenderer.invoke('game-action-pick-champion', pickData); } catch (e) { return Promise.resolve(false); }
+};
+
+electronAPI.gameActionBanChampion = (banData) => {
+  try { return ipcRenderer.invoke('game-action-ban-champion', banData); } catch (e) { return Promise.resolve(false); }
+};
+
+electronAPI.gameActionSelectLane = (laneData) => {
+  try { return ipcRenderer.invoke('game-action-select-lane', laneData); } catch (e) { return Promise.resolve(false); }
+};
+
+electronAPI.gameActionConfirmDraft = (draftData) => {
+  try { return ipcRenderer.invoke('game-action-confirm-draft', draftData); } catch (e) { return Promise.resolve(false); }
+};
+
+electronAPI.gameActionVoteWinner = (voteData) => {
+  try { return ipcRenderer.invoke('game-action-vote-winner', voteData); } catch (e) { return Promise.resolve(false); }
+};
+
+electronAPI.gameActionReportResult = (resultData) => {
+  try { return ipcRenderer.invoke('game-action-report-result', resultData); } catch (e) { return Promise.resolve(false); }
+};
+
+electronAPI.gameActionSurrender = (surrenderData) => {
+  try { return ipcRenderer.invoke('game-action-surrender', surrenderData); } catch (e) { return Promise.resolve(false); }
+};
+
+electronAPI.gameActionMuteSpectator = (muteData) => {
+  try { return ipcRenderer.invoke('game-action-mute-spectator', muteData); } catch (e) { return Promise.resolve(false); }
+};
+
+electronAPI.gameActionUnmuteSpectator = (unmuteData) => {
+  try { return ipcRenderer.invoke('game-action-unmute-spectator', unmuteData); } catch (e) { return Promise.resolve(false); }
+};
+
+electronAPI.gameActionPing = (pingData) => {
+  try { return ipcRenderer.invoke('game-action-ping', pingData); } catch (e) { return Promise.resolve(false); }
+};
+
+electronAPI.gameActionHeartbeat = (heartbeatData) => {
+  try { return ipcRenderer.invoke('game-action-heartbeat', heartbeatData); } catch (e) { return Promise.resolve(false); }
 };
 
 electronAPI.getLCULockfileInfo = () => {
@@ -268,11 +340,20 @@ electronAPI.lcu.getMatchHistory = async () => {
 try {
   if (typeof contextBridge !== 'undefined' && typeof contextBridge.exposeInMainWorld === 'function') {
     contextBridge.exposeInMainWorld('electronAPI', electronAPI);
+    console.log('[preload] electronAPI exposto via contextBridge');
+    console.log('[preload] ipcRenderer disponível:', !!electronAPI.ipcRenderer);
+    console.log('[preload] ipcRenderer.on disponível:', typeof electronAPI.ipcRenderer?.on);
   } else {
     globalThis.electronAPI = electronAPI;
+    console.log('[preload] electronAPI exposto via globalThis');
+    console.log('[preload] ipcRenderer disponível:', !!electronAPI.ipcRenderer);
+    console.log('[preload] ipcRenderer.on disponível:', typeof electronAPI.ipcRenderer?.on);
   }
-} catch {
+} catch (e) {
   globalThis.electronAPI = electronAPI;
+  console.log('[preload] electronAPI exposto via globalThis (catch)');
+  console.log('[preload] ipcRenderer disponível:', !!electronAPI.ipcRenderer);
+  console.log('[preload] ipcRenderer.on disponível:', typeof electronAPI.ipcRenderer?.on);
 }
 
 // Auto-configure backend once: read lockfile and POST to BACKEND_URL/api/lcu/configure
