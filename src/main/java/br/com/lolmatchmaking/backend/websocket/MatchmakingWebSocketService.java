@@ -1856,9 +1856,9 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                     confirmedSummoner, confirmedPuuid.substring(0, Math.min(8, confirmedPuuid.length())));
 
             // ✅ NOVO: Verificar se PUUID mudou usando ClientInfo
-            Optional<ClientInfo> clientInfoOpt = redisWSSession.getClientInfo(sessionId);
+            Optional<br.com.lolmatchmaking.backend.service.redis.RedisWebSocketSessionService.ClientInfo> clientInfoOpt = redisWSSession
+                    .getClientInfo(sessionId);
             if (clientInfoOpt.isPresent()) {
-                ClientInfo clientInfo = clientInfoOpt.get();
                 // TODO: Adicionar campo puuid ao ClientInfo se necessário
                 // Por enquanto, apenas log
                 log.debug("✅ [WebSocket] ClientInfo encontrado para validação de PUUID");
@@ -1897,15 +1897,10 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                     confirmedSummoner, confirmedPuuid.substring(0, Math.min(8, confirmedPuuid.length())));
 
             // ✅ CORREÇÃO: Validação de PUUID usando ClientInfo (não mais chaves duplicadas)
-            // TODO: Implementar validação de PUUID usando ws:client_info:{summonerName} se necessário
+            // TODO: Implementar validação de PUUID usando ws:client_info:{summonerName} se
+            // necessário
             log.debug("✅ [WebSocket] PUUID validado via ClientInfo: {} → {}",
                     confirmedSummoner, confirmedPuuid.substring(0, Math.min(8, confirmedPuuid.length())));
-
-                // Completar future como false
-                // ✅ CORREÇÃO: NÃO precisamos gerenciar futures no Redis - são locais na memória
-                // O timeout é gerenciado pelo CompletableFuture.delayedExecutor() local
-                return;
-            }
 
             // ✅ CORREÇÃO: NÃO precisamos gerenciar futures no Redis - são locais na memória
             // O future é gerenciado localmente pelo método que fez a requisição
@@ -1916,22 +1911,19 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             // 4. Atualizar timestamp
             redisWSSession.updateIdentityConfirmation(sessionId);
 
-        }catch(
+        } catch (Exception e) {
+            log.error("❌ [WebSocket] Erro ao processar confirmação crítica de identidade", e);
 
-    Exception e)
-    {
-        log.error("❌ [WebSocket] Erro ao processar confirmação crítica de identidade", e);
-
-        // Em caso de erro, completar future como false
-        try {
-            // ✅ CORREÇÃO: requestId não é mais necessário - não gerenciamos futures no
-            // Redis
-            // ✅ CORREÇÃO: NÃO precisamos buscar future no Redis - não é mais armazenado!
-            // ✅ CORREÇÃO: NÃO precisamos gerenciar futures no Redis - são locais na memória
-        } catch (Exception cleanupError) {
-            log.error("❌ [WebSocket] Erro no cleanup após falha de confirmação crítica", cleanupError);
+            // Em caso de erro, completar future como false
+            try {
+                // ✅ CORREÇÃO: requestId não é mais necessário - não gerenciamos futures no
+                // Redis
+                // ✅ CORREÇÃO: NÃO precisamos buscar future no Redis - não é mais armazenado!
+                // ✅ CORREÇÃO: NÃO precisamos gerenciar futures no Redis - são locais na memória
+            } catch (Exception cleanupError) {
+                log.error("❌ [WebSocket] Erro no cleanup após falha de confirmação crítica", cleanupError);
+            }
         }
-    }
     }
 
     /**
