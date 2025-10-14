@@ -143,7 +143,7 @@ public class RedisPlayerMatchService {
     public void registerPuuidConstraint(String summonerName, String puuid) {
         try {
             String puuidKey = PUUID_TO_PLAYER_PREFIX + puuid;
-            String normalizedName = summonerName.toLowerCase();
+            String normalizedName = summonerName.toLowerCase().trim();
             
             redisTemplate.opsForValue().set(puuidKey, normalizedName, TTL);
             log.debug("✅ [RedisPlayerMatch] PUUID constraint registrado: {} → {}", puuid, normalizedName);

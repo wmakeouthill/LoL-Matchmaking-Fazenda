@@ -75,7 +75,7 @@ const electronAPI = {
     // Para testes locais: 'http://localhost:8080'
     // Para rede local: 'http://192.168.1.5:8080' (seu IP)
     // Para cloud: 'https://seu-app.run.app'
-    const HARDCODED_BACKEND_URL = 'http://localhost:8080/';
+    const HARDCODED_BACKEND_URL = 'http://192.168.1.4:8080/';
     
     // If BACKEND_URL is provided in the environment, normalize it and return
     const raw = (process.env && process.env['BACKEND_URL']) ? String(process.env['BACKEND_URL']).replace(/\/+$/, '') : null;
@@ -282,7 +282,7 @@ try {
     if (!info) return;
     
     // CONFIGURAÇÃO DE REDE: Use a mesma URL configurada acima
-    const HARDCODED_BACKEND_URL = 'http://localhost:8080/';
+    const HARDCODED_BACKEND_URL = 'http://192.168.1.4:8080/';
     
     const backend = (process.env && process.env['BACKEND_URL']) ? String(process.env['BACKEND_URL']).replace(/\/+$/, '') : HARDCODED_BACKEND_URL;
     const url = backend.endsWith('/api') ? `${backend}/lcu/configure` : `${backend}/api/lcu/configure`;

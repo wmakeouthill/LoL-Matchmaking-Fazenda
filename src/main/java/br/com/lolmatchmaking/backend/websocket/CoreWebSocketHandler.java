@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 import org.slf4j.Logger;
@@ -91,9 +92,39 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionEstablished(@NonNull WebSocketSession session) {
-        log.info("Cliente conectado: {}", session.getId());
-        sessionRegistry.add(session);
-        webSocketService.addSession(session.getId(), session);
+        String sessionId = session.getId();
+
+        // ✅ CAPTURAR: IP e User Agent apenas para logs (não para identificação)
+        // IMPORTANTE: Backend NUNCA deve tentar resolver dados de sessão
+        // Electron é a ÚNICA fonte da verdade para dados do jogador
+        String ipAddress = "unknown";
+        String userAgent = "unknown";
+
+        try {
+            if (session.getRemoteAddress() != null) {
+                ipAddress = session.getRemoteAddress().getAddress().getHostAddress();
+            }
+            if (session.getHandshakeHeaders() != null) {
+                userAgent = session.getHandshakeHeaders().getFirst("User-Agent");
+                if (userAgent == null || userAgent.isBlank()) {
+                    userAgent = "unknown";
+                }
+            }
+        } catch (Exception e) {
+            log.debug("⚠️ [CoreWS] Erro ao capturar IP/UserAgent para sessão {}: {}", sessionId, e.getMessage());
+        }
+
+        log.info("🔌 Cliente conectado: {} (IP: {}, UserAgent: {})", sessionId, ipAddress, userAgent);
+
+        // ✅ CORRIGIDO: Verificar se já existe antes de adicionar
+        if (!sessionRegistry.hasSession(sessionId)) {
+            sessionRegistry.add(session);
+        } else {
+            log.debug("🔄 [CoreWS] Sessão {} já existe no registry, pulando adição", sessionId);
+        }
+
+        // ✅ NOVO: Armazenar IP e UserAgent no Redis para uso posterior
+        webSocketService.addSession(sessionId, session, ipAddress, userAgent);
     }
 
     @Override
@@ -505,6 +536,87 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
     }
 
     /**
+     * ✅ NOVO: Enviar logs player-session após entrada na fila
+     */
+    private void sendPlayerSessionLogsAfterQueueEntry(String summonerName, String sessionId, JsonNode data) {
+        try {
+            // ✅ LOG 1: DADOS VALIDADOS DO JOGADOR QUE ENTROU NA FILA
+            Map<String, Object> playerDataMap = new HashMap<>();
+            playerDataMap.put("action", "queue_entry_completed");
+            playerDataMap.put("summonerName", summonerName);
+            playerDataMap.put("sessionId", sessionId);
+            playerDataMap.put("region", data.path("region").asText("br1"));
+            playerDataMap.put("gameName", data.path("gameName").asText(""));
+            playerDataMap.put("tagLine", data.path("tagLine").asText(""));
+            playerDataMap.put("puuid", data.path("puuid").asText(""));
+            playerDataMap.put("summonerId", data.path("summonerId").asText(""));
+            playerDataMap.put("profileIconId", data.path("profileIconId").asText(""));
+            playerDataMap.put("summonerLevel", data.path("summonerLevel").asText(""));
+            playerDataMap.put("primaryLane", data.path("primaryLane").asText(""));
+            playerDataMap.put("secondaryLane", data.path("secondaryLane").asText(""));
+            playerDataMap.put("customLp", data.path(FIELD_CUSTOM_LP).asText(""));
+            playerDataMap.put("playerId", data.path(FIELD_PLAYER_ID).asText(""));
+            playerDataMap.put("validationStatus", "VALIDATED_AND_REBOUND");
+            playerDataMap.put("timestamp", System.currentTimeMillis());
+
+            // Enviar log para Electron que habilitou logs unificados
+            unifiedLogService.sendPlayerSessionLog("INFO", "[Player-Sessions]",
+                    "JOGADOR ENTRANDO NA FILA - DADOS VALIDADOS", playerDataMap);
+
+            // ✅ LOG 2: LISTA DE JOGADORES CONECTADOS ATUALIZADA
+            Map<String, Object> allClientInfo = redisWSSession.getAllClientInfo();
+            List<Map<String, Object>> connectedPlayers = new ArrayList<>();
+
+            for (Map.Entry<String, Object> entry : allClientInfo.entrySet()) {
+                String clientSessionId = entry.getKey();
+                Map<String, Object> clientInfo = (Map<String, Object>) entry.getValue();
+
+                Map<String, Object> playerInfo = new HashMap<>();
+                playerInfo.put("sessionId", clientSessionId);
+                playerInfo.put("summonerName", clientInfo.get("summonerName"));
+                playerInfo.put("connectedAt", clientInfo.get("connectedAt"));
+                playerInfo.put("lastActivity", clientInfo.get("lastActivity"));
+                playerInfo.put("ip", clientInfo.get("ip"));
+                playerInfo.put("userAgent", clientInfo.get("userAgent"));
+
+                // Buscar dados adicionais do jogador
+                try {
+                    String playerInfoJson = redisWSSession.getPlayerInfo(clientSessionId);
+                    if (playerInfoJson != null && !playerInfoJson.isEmpty()) {
+                        JsonNode playerInfoNode = mapper.readTree(playerInfoJson);
+                        playerInfo.put("puuid", playerInfoNode.path("puuid").asText(null));
+                        playerInfo.put("summonerId", playerInfoNode.path("summonerId").asText(null));
+                        playerInfo.put("profileIconId", playerInfoNode.path("profileIconId").asText(null));
+                        playerInfo.put("gameName", playerInfoNode.path("gameName").asText(null));
+                        playerInfo.put("tagLine", playerInfoNode.path("tagLine").asText(null));
+                    }
+                } catch (Exception e) {
+                    log.debug("Erro ao buscar dados adicionais para sessão {}: {}", clientSessionId, e.getMessage());
+                }
+
+                connectedPlayers.add(playerInfo);
+            }
+
+            Map<String, Object> connectedPlayersDataMap = new HashMap<>();
+            connectedPlayersDataMap.put("action", "connected_players_updated");
+            connectedPlayersDataMap.put("totalPlayers", connectedPlayers.size());
+            connectedPlayersDataMap.put("identifiedSessions", connectedPlayers.size());
+            connectedPlayersDataMap.put("localSessions", sessionRegistry.all().size());
+            connectedPlayersDataMap.put("players", connectedPlayers);
+            connectedPlayersDataMap.put("timestamp", System.currentTimeMillis());
+
+            // Enviar log da lista de jogadores conectados
+            unifiedLogService.sendPlayerSessionLog("INFO", "[Player-Sessions]",
+                    "LISTA DE JOGADORES CONECTADOS ATUALIZADA", connectedPlayersDataMap);
+
+            log.info("✅ [Player-Sessions] Logs player-session enviados após entrada na fila para {}", summonerName);
+
+        } catch (Exception e) {
+            log.error("❌ [Player-Sessions] Erro ao enviar logs player-session após entrada na fila", e);
+        }
+    }
+
+    /**
      * ✅ NOVO: Handler para habilitar logs unificados no Electron
      * 
      * Permite que o Electron receba logs do backend via WebSocket
@@ -550,6 +662,13 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         try {
             log.info("🔍 [CoreWS] Recebendo electron_identify de sessionId={}", session.getId());
 
+            // ✅ PRINCÍPIO FUNDAMENTAL: Backend NUNCA tenta resolver dados de sessão
+            // Electron é a ÚNICA fonte da verdade para:
+            // - ID da sessão WebSocket
+            // - Dados do LCU (summonerName#tagLine, PUUID, etc.)
+            // - Informações do jogador conectado
+            // Backend apenas CONFIA no que o Electron envia
+
             // ✅ Validar fonte
             String source = root.path("source").asText("");
             if (!"electron_main".equals(source)) {
@@ -557,19 +676,23 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                 // Aceitar mas marcar como não-verificado
             }
 
-            // ✅ Extrair dados
-            String summonerName = root.path("summonerName").asText(null);
+            // ✅ EXTRAIR DADOS: Confiar 100% no que o Electron envia
+            String rawSummonerName = root.path("summonerName").asText(null);
             String puuid = root.path("puuid").asText(null);
             String gameName = root.path("gameName").asText(null);
             String tagLine = root.path("tagLine").asText(null);
             String summonerId = root.path("summonerId").asText(null);
 
-            if (summonerName == null || puuid == null) {
-                log.error("❌ [CoreWS] Identificação incompleta! summonerName={}, puuid={}", summonerName, puuid);
+            if (rawSummonerName == null || puuid == null) {
+                log.error("❌ [CoreWS] Identificação incompleta! summonerName={}, puuid={}", rawSummonerName, puuid);
                 session.sendMessage(new TextMessage(
                         "{\"type\":\"electron_identified\",\"success\":false,\"error\":\"Dados incompletos\"}"));
                 return;
             }
+
+            // ✅ CRÍTICO: Normalizar summonerName (trim + toLowerCase)
+            String summonerName = rawSummonerName.toLowerCase().trim();
+            log.info("🔍 [CoreWS] SummonerName normalizado: '{}' → '{}'", rawSummonerName, summonerName);
 
             // ✅ CRÍTICO: Validar constraint PUUID único via RedisPlayerMatchService
             if (!redisPlayerMatch.validatePuuidConstraint(summonerName, puuid)) {
@@ -808,10 +931,45 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             return;
         }
 
+        // ✅ NOVO: VALIDAR SESSÕES DUPLICADAS ANTES DE ENTRAR NA FILA
+        String normalizedSummoner = summonerName.toLowerCase().trim();
+        String sessionId = session.getId();
+
+        log.info("🔍 [Player-Sessions] Validando sessão duplicada para entrar na fila:");
+        log.info("🔍 [Player-Sessions] Summoner: {} (normalizado: {})", summonerName, normalizedSummoner);
+        log.info("🔍 [Player-Sessions] SessionId: {}", sessionId);
+
+        // Verificar se há sessões duplicadas no Redis
+        Optional<String> existingSessionOpt = redisWSSession.getSessionBySummoner(normalizedSummoner);
+        if (existingSessionOpt.isPresent()) {
+            String existingSessionId = existingSessionOpt.get();
+            if (!existingSessionId.equals(sessionId)) {
+                log.warn("🚨 [Player-Sessions] SESSÃO DUPLICADA DETECTADA ao entrar na fila!");
+                log.warn("🚨 [Player-Sessions] Summoner {} já tem sessão ativa: {}", normalizedSummoner,
+                        existingSessionId);
+                log.warn("🚨 [Player-Sessions] Tentativa de nova sessão: {}", sessionId);
+
+                // ✅ REMOVER: Sessão duplicada anterior
+                log.info("🗑️ [Player-Sessions] Removendo sessão duplicada anterior: {}", existingSessionId);
+                redisWSSession.removeSession(existingSessionId);
+
+                // ✅ REGISTRAR: Nova sessão como a válida
+                log.info("✅ [Player-Sessions] Registrando nova sessão como válida: {} → {}", sessionId,
+                        normalizedSummoner);
+                redisWSSession.registerSession(sessionId, normalizedSummoner, "unknown", "unknown");
+            }
+        }
+
+        log.info("✅ [Player-Sessions] Validação de sessão duplicada concluída para entrada na fila");
+
         queueService.joinQueue(summonerName, data.path("region").asText("br1"), data.path(FIELD_PLAYER_ID).asLong(0),
                 data.has(FIELD_CUSTOM_LP) && !data.get(FIELD_CUSTOM_LP).isNull() ? data.get(FIELD_CUSTOM_LP).asInt()
                         : null,
                 data.path("primaryLane").asText(null), data.path("secondaryLane").asText(null));
+
+        // ✅ NOVO: ENVIAR LOGS PLAYER-SESSION APÓS ENTRADA NA FILA
+        sendPlayerSessionLogsAfterQueueEntry(summonerName, sessionId, data);
+
         session.sendMessage(new TextMessage("{\"type\":\"join_queue_result\",\"success\":true}"));
         broadcastQueueUpdate();
     }

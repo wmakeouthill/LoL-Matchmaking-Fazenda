@@ -12,10 +12,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.web.socket.TextMessage;
+import org.springframework.web.socket.WebSocketSession;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 @RequiredArgsConstructor
@@ -42,6 +42,9 @@ public class DraftFlowService {
 
     // ✅ NOVO: RedisTemplate para throttling de retries
     private final org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
+
+    // ✅ NOVO: RedisWebSocketSessionService para busca de sessões via Redis
+    private final br.com.lolmatchmaking.backend.service.redis.RedisWebSocketSessionService redisWSSession;
 
     @Value("${app.draft.action-timeout-ms:30000}")
     private long configuredActionTimeoutMs;
@@ -1592,14 +1595,25 @@ public class DraftFlowService {
         if (summonerName == null)
             return;
 
-        sessionRegistry.getByPlayer(summonerName).ifPresent(ws -> {
-            try {
-                ws.sendMessage(new TextMessage(payload));
-                log.debug("📤 Mensagem enviada para jogador: {}", summonerName);
-            } catch (Exception e) {
-                log.warn("⚠️ Erro ao enviar mensagem para {}: {}", summonerName, e.getMessage());
+        // ✅ CORRIGIDO: Usar Redis-only para buscar sessão
+        Optional<String> sessionIdOpt = redisWSSession.getSessionBySummoner(summonerName.toLowerCase().trim());
+        if (sessionIdOpt.isPresent()) {
+            String sessionId = sessionIdOpt.get();
+            WebSocketSession session = webSocketService.getSession(sessionId);
+
+            if (session != null && session.isOpen()) {
+                try {
+                    session.sendMessage(new TextMessage(payload));
+                    log.debug("📤 Mensagem enviada para jogador: {}", summonerName);
+                } catch (Exception e) {
+                    log.warn("⚠️ Erro ao enviar mensagem para {}: {}", summonerName, e.getMessage());
+                }
+            } else {
+                log.warn("⚠️ Sessão WebSocket {} não está ativa para jogador {}", sessionId, summonerName);
             }
-        });
+        } else {
+            log.warn("⚠️ Nenhuma sessão encontrada para jogador {}", summonerName);
+        }
     }
 
     /**
@@ -2839,7 +2853,7 @@ public class DraftFlowService {
                 try {
                     playerStateService.setPlayerState(playerName,
                             br.com.lolmatchmaking.backend.service.lock.PlayerState.AVAILABLE);
-                    
+
                     // ✅ NOVO: Log específico para bots
                     if (isBotPlayer(playerName)) {
                         log.info("🤖 [DraftFlow] Estado de BOT {} limpo para AVAILABLE", playerName);
@@ -3110,15 +3124,15 @@ public class DraftFlowService {
         if (summonerName == null || summonerName.isEmpty()) {
             return false;
         }
-        
+
         String normalizedName = summonerName.toLowerCase().trim();
-        
+
         // ✅ Padrões de nomes de bots conhecidos
-        return normalizedName.startsWith("bot") || 
-               normalizedName.startsWith("ai_") || 
-               normalizedName.endsWith("_bot") ||
-               normalizedName.contains("bot_") ||
-               normalizedName.equals("bot") ||
-               normalizedName.matches(".*bot\\d+.*"); // bot1, bot2, etc.
+        return normalizedName.startsWith("bot") ||
+                normalizedName.startsWith("ai_") ||
+                normalizedName.endsWith("_bot") ||
+                normalizedName.contains("bot_") ||
+                normalizedName.equals("bot") ||
+                normalizedName.matches(".*bot\\d+.*"); // bot1, bot2, etc.
     }
 }
