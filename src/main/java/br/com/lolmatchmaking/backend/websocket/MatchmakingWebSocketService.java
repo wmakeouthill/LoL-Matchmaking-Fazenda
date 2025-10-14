@@ -1031,6 +1031,37 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                     "📤 [Broadcast Paralelo] Enviando '{}' para {} jogadores SIMULTANEAMENTE (sessões encontradas: {})",
                     messageType, summonerNames.size(), playerSessions.size());
 
+            // ✅ NOVO: Log detalhado para cada jogador que vai receber match_found
+            if ("match_found".equals(messageType)) {
+                log.info("🔍 [session-match-found] ===== DETALHES DO BROADCAST MATCH_FOUND =====");
+                log.info("🔍 [session-match-found] Total de summonerNames solicitados: {}", summonerNames.size());
+                log.info("🔍 [session-match-found] Total de sessões encontradas: {}", playerSessions.size());
+                log.info("🔍 [session-match-found] SummonerNames solicitados: {}", summonerNames);
+                
+                // Log detalhado de cada sessão encontrada
+                for (WebSocketSession session : playerSessions) {
+                    String sessionId = session.getId();
+                    Optional<String> summonerOpt = redisWSSession.getSummonerBySession(sessionId);
+                    String summonerInfo = summonerOpt.isPresent() ? summonerOpt.get() : "UNKNOWN_SUMMONER";
+                    log.info("🔍 [session-match-found] ✅ ENVIANDO para sessionId: {} → summonerName: {}", sessionId, summonerInfo);
+                }
+                
+                // Log dos summonerNames que NÃO foram encontrados
+                List<String> foundSummoners = playerSessions.stream()
+                        .map(session -> redisWSSession.getSummonerBySession(session.getId()).orElse("UNKNOWN"))
+                        .collect(java.util.stream.Collectors.toList());
+                
+                List<String> notFoundSummoners = summonerNames.stream()
+                        .filter(name -> !foundSummoners.contains(name.toLowerCase().trim()))
+                        .collect(java.util.stream.Collectors.toList());
+                
+                if (!notFoundSummoners.isEmpty()) {
+                    log.warn("🔍 [session-match-found] ❌ NÃO ENCONTRADOS: {}", notFoundSummoners);
+                }
+                
+                log.info("🔍 [session-match-found] =================================================");
+            }
+
             long startTime = System.currentTimeMillis();
             sendToMultipleSessions(playerSessions, jsonMessage);
             long elapsed = System.currentTimeMillis() - startTime;

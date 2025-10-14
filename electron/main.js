@@ -15,6 +15,9 @@ try {
   safeLog('⚠️ [Player-Sessions] [UNIFIED-LOGS] Redis não disponível - logs unificados desabilitados');
 }
 
+// ✅ NOVO: Variável global para a janela principal
+let mainWindow = null;
+
 // ⚠️ LOGS DESABILITADOS EM PRODUÇÃO - Não salvar arquivos de log
 let LOG_FILE = null; // Mantido como null para desabilitar logs em arquivo
 
@@ -501,7 +504,7 @@ app.whenReady().then(async () => {
   
   const startUrl = await pickBackendUrl();
   console.log('[electron] Backend URL:', startUrl);
-  createWindow(startUrl, isDev);
+  mainWindow = createWindow(startUrl, isDev);
   console.log('[electron] Janela criada, iniciando watchers...');
   // start monitoring lockfile and report to backend
   try {
@@ -996,6 +999,22 @@ function startWebSocketGateway(backendBase) {
             safeLog('🔕 [Player-Sessions] [ELECTRON] Solicitação NÃO é para este jogador - ignorando');
           }
         }
+        // ✅ NOVO: Handler para match_found (CRÍTICO PARA DEBUG)
+        else if (json.type === 'match_found') {
+          await handleMatchFoundEvent(json);
+        }
+        // ✅ NOVO: Handler para draft_started
+        else if (json.type === 'draft_started') {
+          await handleDraftStartedEvent(json);
+        }
+        // ✅ NOVO: Handler para game_in_progress
+        else if (json.type === 'game_in_progress') {
+          await handleGameInProgressEvent(json);
+        }
+        // ✅ NOVO: Handler para match_cancelled
+        else if (json.type === 'match_cancelled') {
+          await handleMatchCancelledEvent(json);
+        }
         // ✅ DEPRECIADO: Mantido para compatibilidade
         else if (json.type === 'queue_entry_request') {
           safeLog('🔗 [Player-Sessions] [BACKEND→ELECTRON] Solicitação direta de entrada na fila recebida via Redis (DEPRECIADO)');
@@ -1204,6 +1223,317 @@ async function verifyIfRequestIsForThisPlayer(requestedSummonerName) {
     return false;
   }
 }
+
+// ✅ NOVO: Sistema de Handlers Centralizados para Eventos de Jogo
+async function handleMatchFoundEvent(json) {
+  try {
+    safeLog('🎯 [session-match-found] ===== MATCH_FOUND RECEBIDO NO ELECTRON =====');
+    safeLog('🎯 [session-match-found] MatchId:', json.matchId);
+    safeLog('🎯 [session-match-found] Timestamp:', json.timestamp);
+    
+    // ✅ BUSCAR summoner atual do LCU para comparação
+    const currentSummoner = await getCurrentSummonerFromLCU();
+    safeLog('🎯 [session-match-found] Current summoner:', currentSummoner || 'UNKNOWN');
+    safeLog('🎯 [session-match-found] WebSocket conectado:', wsClient && wsClient.readyState === WebSocket.OPEN ? 'SIM' : 'NÃO');
+    
+    // ✅ VERIFICAR se este match_found é para o jogador atual
+    const isForThisPlayer = await isMatchFoundForThisPlayer(json, currentSummoner);
+    
+    if (!isForThisPlayer) {
+      safeLog('🎯 [session-match-found] ❌ Match_found NÃO é para este jogador - ignorando');
+      return;
+    }
+    
+    safeLog('🎯 [session-match-found] ✅ Match_found É para este jogador!');
+    
+    // ✅ LOG detalhado dos jogadores na partida
+    if (json.team1 && Array.isArray(json.team1)) {
+      safeLog('🎯 [session-match-found] Team 1:');
+      json.team1.forEach((player, index) => {
+        safeLog(`🎯 [session-match-found]   [${index}] ${player.summonerName || player.name || 'UNKNOWN'}`);
+      });
+    }
+    
+    if (json.team2 && Array.isArray(json.team2)) {
+      safeLog('🎯 [session-match-found] Team 2:');
+      json.team2.forEach((player, index) => {
+        safeLog(`🎯 [session-match-found]   [${index}] ${player.summonerName || player.name || 'UNKNOWN'}`);
+      });
+    }
+    
+    safeLog('🎯 [session-match-found] ================================================');
+    
+    // ✅ ENVIAR para o frontend via IPC
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('match-found', json);
+      safeLog('🎯 [session-match-found] ✅ Match_found enviado para o frontend via IPC');
+    } else {
+      safeLog('🎯 [session-match-found] ❌ MainWindow não disponível - não foi possível enviar para frontend');
+    }
+    
+  } catch (error) {
+    safeLog('❌ [session-match-found] Erro ao processar match_found:', error);
+  }
+}
+
+// ✅ NOVO: Buscar summoner atual do LCU
+async function getCurrentSummonerFromLCU() {
+  try {
+    const summoner = await performLcuRequest('GET', '/lol-summoner/v1/current-summoner');
+    if (summoner && summoner.gameName && summoner.tagLine) {
+      return `${summoner.gameName}#${summoner.tagLine}`;
+    }
+    return null;
+  } catch (error) {
+    safeLog('⚠️ [session-match-found] Erro ao buscar summoner atual do LCU:', error.message);
+    return null;
+  }
+}
+
+// ✅ NOVO: Verificar se match_found é para este jogador
+async function isMatchFoundForThisPlayer(json, currentSummoner) {
+  if (!currentSummoner) {
+    safeLog('⚠️ [session-match-found] Summoner atual não disponível');
+    return false;
+  }
+  
+  const currentNormalized = currentSummoner.toLowerCase().trim();
+  
+  // Verificar em team1
+  if (json.team1 && Array.isArray(json.team1)) {
+    for (const player of json.team1) {
+      const playerName = player.summonerName || player.name;
+      if (playerName && playerName.toLowerCase().trim() === currentNormalized) {
+        return true;
+      }
+    }
+  }
+  
+  // Verificar em team2
+  if (json.team2 && Array.isArray(json.team2)) {
+    for (const player of json.team2) {
+      const playerName = player.summonerName || player.name;
+      if (playerName && playerName.toLowerCase().trim() === currentNormalized) {
+        return true;
+      }
+    }
+  }
+  
+  // Verificar em players (fallback)
+  if (json.players && Array.isArray(json.players)) {
+    for (const player of json.players) {
+      const playerName = player.summonerName || player.name;
+      if (playerName && playerName.toLowerCase().trim() === currentNormalized) {
+        return true;
+      }
+    }
+  }
+  
+  return false;
+}
+
+// ✅ NOVO: Handler para draft_started
+async function handleDraftStartedEvent(json) {
+  try {
+    safeLog('🎮 [draft-started] ===== DRAFT_STARTED RECEBIDO NO ELECTRON =====');
+    safeLog('🎮 [draft-started] MatchId:', json.matchId);
+    safeLog('🎮 [draft-started] Timestamp:', json.timestamp);
+    
+    const currentSummoner = await getCurrentSummonerFromLCU();
+    safeLog('🎮 [draft-started] Current summoner:', currentSummoner || 'UNKNOWN');
+    
+    const isForThisPlayer = await isMatchFoundForThisPlayer(json, currentSummoner);
+    
+    if (!isForThisPlayer) {
+      safeLog('🎮 [draft-started] ❌ Draft_started NÃO é para este jogador - ignorando');
+      return;
+    }
+    
+    safeLog('🎮 [draft-started] ✅ Draft_started É para este jogador!');
+    safeLog('🎮 [draft-started] ================================================');
+    
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('draft-started', json);
+      safeLog('🎮 [draft-started] ✅ Draft_started enviado para o frontend via IPC');
+    }
+    
+  } catch (error) {
+    safeLog('❌ [draft-started] Erro ao processar draft_started:', error);
+  }
+}
+
+// ✅ NOVO: Handler para game_in_progress
+async function handleGameInProgressEvent(json) {
+  try {
+    safeLog('🏁 [game-in-progress] ===== GAME_IN_PROGRESS RECEBIDO NO ELECTRON =====');
+    safeLog('🏁 [game-in-progress] MatchId:', json.matchId);
+    safeLog('🏁 [game-in-progress] Timestamp:', json.timestamp);
+    
+    const currentSummoner = await getCurrentSummonerFromLCU();
+    safeLog('🏁 [game-in-progress] Current summoner:', currentSummoner || 'UNKNOWN');
+    
+    const isForThisPlayer = await isMatchFoundForThisPlayer(json, currentSummoner);
+    
+    if (!isForThisPlayer) {
+      safeLog('🏁 [game-in-progress] ❌ Game_in_progress NÃO é para este jogador - ignorando');
+      return;
+    }
+    
+    safeLog('🏁 [game-in-progress] ✅ Game_in_progress É para este jogador!');
+    safeLog('🏁 [game-in-progress] ================================================');
+    
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('game-in-progress', json);
+      safeLog('🏁 [game-in-progress] ✅ Game_in_progress enviado para o frontend via IPC');
+    }
+    
+  } catch (error) {
+    safeLog('❌ [game-in-progress] Erro ao processar game_in_progress:', error);
+  }
+}
+
+// ✅ NOVO: Handler para match_cancelled
+async function handleMatchCancelledEvent(json) {
+  try {
+    safeLog('❌ [match-cancelled] ===== MATCH_CANCELLED RECEBIDO NO ELECTRON =====');
+    safeLog('❌ [match-cancelled] MatchId:', json.matchId);
+    safeLog('❌ [match-cancelled] Reason:', json.reason);
+    safeLog('❌ [match-cancelled] Timestamp:', json.timestamp);
+    
+    const currentSummoner = await getCurrentSummonerFromLCU();
+    safeLog('❌ [match-cancelled] Current summoner:', currentSummoner || 'UNKNOWN');
+    
+    // ✅ MATCH_CANCELLED é sempre relevante se o jogador está em uma partida
+    safeLog('❌ [match-cancelled] ✅ Match_cancelled processado!');
+    safeLog('❌ [match-cancelled] ================================================');
+    
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('match-cancelled', json);
+      safeLog('❌ [match-cancelled] ✅ Match_cancelled enviado para o frontend via IPC');
+    }
+    
+  } catch (error) {
+    safeLog('❌ [match-cancelled] Erro ao processar match_cancelled:', error);
+  }
+}
+
+// ✅ NOVO: Sistema de Validação de Ações do Jogo
+async function validateAndSendGameAction(actionType, actionData) {
+  try {
+    safeLog(`🔐 [game-action] ===== VALIDANDO AÇÃO: ${actionType.toUpperCase()} =====`);
+    
+    // ✅ BUSCAR summoner atual do LCU para validação
+    const currentSummoner = await getCurrentSummonerFromLCU();
+    if (!currentSummoner) {
+      safeLog(`🔐 [game-action] ❌ Summoner não disponível - ação ${actionType} negada`);
+      return false;
+    }
+    
+    safeLog(`🔐 [game-action] Summoner atual: ${currentSummoner}`);
+    safeLog(`🔐 [game-action] Ação: ${actionType}`);
+    safeLog(`🔐 [game-action] Dados:`, actionData);
+    
+    // ✅ ADICIONAR dados de validação
+    const validatedAction = {
+      ...actionData,
+      summonerName: currentSummoner,
+      timestamp: Date.now(),
+      validatedByElectron: true
+    };
+    
+    // ✅ ENVIAR para o backend via WebSocket
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      const message = {
+        type: actionType,
+        data: validatedAction
+      };
+      
+      ws.send(JSON.stringify(message));
+      safeLog(`🔐 [game-action] ✅ Ação ${actionType} enviada para o backend com validação`);
+      safeLog(`🔐 [game-action] ================================================`);
+      return true;
+    } else {
+      safeLog(`🔐 [game-action] ❌ WebSocket não conectado - ação ${actionType} não enviada`);
+      return false;
+    }
+    
+  } catch (error) {
+    safeLog(`❌ [game-action] Erro ao validar ação ${actionType}:`, error);
+    return false;
+  }
+}
+
+// ✅ NOVO: Handlers IPC para TODAS as ações do frontend (SEGURANÇA TOTAL)
+
+// === MATCH ACTIONS ===
+ipcMain.handle('game-action-accept-match', async (event, matchData) => {
+  return await validateAndSendGameAction('accept_match', matchData);
+});
+
+ipcMain.handle('game-action-decline-match', async (event, matchData) => {
+  return await validateAndSendGameAction('decline_match', matchData);
+});
+
+ipcMain.handle('game-action-cancel-match', async (event, matchData) => {
+  return await validateAndSendGameAction('cancel_match', matchData);
+});
+
+// === QUEUE ACTIONS ===
+ipcMain.handle('game-action-join-queue', async (event, queueData) => {
+  return await validateAndSendGameAction('join_queue', queueData);
+});
+
+ipcMain.handle('game-action-leave-queue', async (event, queueData) => {
+  return await validateAndSendGameAction('leave_queue', queueData);
+});
+
+// === DRAFT ACTIONS ===
+ipcMain.handle('game-action-pick-champion', async (event, pickData) => {
+  return await validateAndSendGameAction('pick_champion', pickData);
+});
+
+ipcMain.handle('game-action-ban-champion', async (event, banData) => {
+  return await validateAndSendGameAction('ban_champion', banData);
+});
+
+ipcMain.handle('game-action-select-lane', async (event, laneData) => {
+  return await validateAndSendGameAction('select_lane', laneData);
+});
+
+ipcMain.handle('game-action-confirm-draft', async (event, draftData) => {
+  return await validateAndSendGameAction('confirm_draft', draftData);
+});
+
+// === GAME IN PROGRESS ACTIONS ===
+ipcMain.handle('game-action-vote-winner', async (event, voteData) => {
+  return await validateAndSendGameAction('vote_winner', voteData);
+});
+
+ipcMain.handle('game-action-report-result', async (event, resultData) => {
+  return await validateAndSendGameAction('report_result', resultData);
+});
+
+ipcMain.handle('game-action-surrender', async (event, surrenderData) => {
+  return await validateAndSendGameAction('surrender', surrenderData);
+});
+
+// === SPECTATOR ACTIONS (OPCIONAL - só se tiver ações de moderação) ===
+ipcMain.handle('game-action-mute-spectator', async (event, muteData) => {
+  return await validateAndSendGameAction('mute_spectator', muteData);
+});
+
+ipcMain.handle('game-action-unmute-spectator', async (event, unmuteData) => {
+  return await validateAndSendGameAction('unmute_spectator', unmuteData);
+});
+
+// === GENERAL ACTIONS ===
+ipcMain.handle('game-action-ping', async (event, pingData) => {
+  return await validateAndSendGameAction('ping', pingData);
+});
+
+ipcMain.handle('game-action-heartbeat', async (event, heartbeatData) => {
+  return await validateAndSendGameAction('heartbeat', heartbeatData);
+});
 
 // ✅ NOVO: Função para identificar jogador automaticamente ao backend
 async function identifyPlayerToBackend(lockfileInfo) {

@@ -1032,6 +1032,13 @@ public class MatchFoundService {
                 log.info("  🎮 {}", playerName);
             }
 
+            // ✅ NOVO: Log detalhado antes de chamar sendToPlayers
+            log.info("🔍 [session-match-found] ===== MATCHFOUNDSERVICE.sendToPlayers CHAMADO =====");
+            log.info("🔍 [session-match-found] MatchId: {}", match.getId());
+            log.info("🔍 [session-match-found] Total de jogadores para enviar: {}", allPlayerNames.size());
+            log.info("🔍 [session-match-found] Lista completa de summonerNames: {}", allPlayerNames);
+            log.info("🔍 [session-match-found] =================================================");
+
             long startTime = System.currentTimeMillis();
             webSocketService.sendToPlayers("match_found", data, allPlayerNames);
             long elapsed = System.currentTimeMillis() - startTime;
