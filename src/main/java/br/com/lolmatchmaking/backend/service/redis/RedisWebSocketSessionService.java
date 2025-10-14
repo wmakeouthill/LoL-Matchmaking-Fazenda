@@ -656,7 +656,6 @@ public class RedisWebSocketSessionService {
             }
 
             // 2. ✅ CORREÇÃO: Remover ws:client_info:{summonerName} (formato unificado)
-            String summonerName = getSummonerBySession(sessionId).orElse(null);
             if (summonerName != null) {
                 String clientInfoKey = "ws:client_info:" + summonerName;
                 if (redisson.getBucket(clientInfoKey).delete()) {
