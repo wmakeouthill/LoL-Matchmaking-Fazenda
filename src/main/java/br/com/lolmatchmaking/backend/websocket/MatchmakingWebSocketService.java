@@ -1215,11 +1215,12 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     }
 
     /**
-     * ✅ MIGRADO PARA REDIS: Atualiza informações LCU de uma sessão
-     * (para integração com CoreWebSocketHandler)
+     * ✅ CORRIGIDO: Atualiza informações LCU de uma sessão
+     * ✅ CRÍTICO: NÃO cria chaves ws:player_info: diretamente - usa
+     * registerSession() para validação
      */
     public void updateLcuInfo(String sessionId, String host, int port, String summonerName) {
-        // ✅ REDIS ONLY: Armazenar informações do jogador (sem HashMap!)
+        // ✅ REDIS ONLY: Usar registerSession() para garantir validação de duplicação
         WebSocketSession session = sessions.get(sessionId);
         String ipAddress = "unknown";
         String userAgent = "unknown";
@@ -1233,23 +1234,18 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             }
         }
 
-        // Criar JSON com os dados do jogador
-        try {
-            Map<String, Object> playerInfo = new HashMap<>();
-            playerInfo.put("summonerName", summonerName);
-            playerInfo.put("ipAddress", ipAddress);
-            playerInfo.put("userAgent", userAgent);
-            playerInfo.put("host", host);
-            playerInfo.put("port", port);
+        // ✅ CORREÇÃO CRÍTICA: Usar registerSession() em vez de storePlayerInfo() direto
+        // Isso garante que a validação de duplicação seja aplicada
+        boolean success = redisWSSession.registerSession(sessionId, summonerName, ipAddress, userAgent);
 
-            String playerInfoJson = objectMapper.writeValueAsString(playerInfo);
-            redisWSSession.storePlayerInfo(sessionId, playerInfoJson);
-
+        if (success) {
             log.info(
-                    "🔧 [MatchmakingWebSocketService] LCU info atualizada no Redis: session={}, host={}, port={}, summoner={}",
+                    "✅ [MatchmakingWebSocketService] LCU info registrada com validação: session={}, host={}, port={}, summoner={}",
                     sessionId, host, port, summonerName);
-        } catch (Exception e) {
-            log.error("❌ [MatchmakingWebSocketService] Erro ao serializar playerInfo: {}", e.getMessage());
+        } else {
+            log.warn(
+                    "⚠️ [MatchmakingWebSocketService] Falha ao registrar LCU info (duplicação detectada): session={}, summoner={}",
+                    sessionId, summonerName);
         }
     }
 
@@ -1643,9 +1639,9 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                         "expectedSummoner", summonerName,
                         "timestamp", currentTime);
 
-                // Armazenar request pendente
-                String pendingKey = "identity:confirm:pending:" + requestId;
-                redisTemplate.opsForValue().set(pendingKey, sessionId, Duration.ofSeconds(30));
+                // ✅ CORREÇÃO: NÃO armazenar request pendente no Redis - DESNECESSÁRIO!
+                // O sessionId já está disponível localmente e as informações do jogador
+                // já estão nas chaves centralizadas (ws:client_info:{sessionId})
 
                 // Enviar via WebSocket
                 WebSocketSession session = sessions.get(sessionId);
@@ -1749,13 +1745,11 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                     "actionType", actionType,
                     "timestamp", System.currentTimeMillis());
 
-            // Armazenar request pendente com timeout maior (10s)
-            String pendingKey = "identity:confirm:critical:" + requestId;
-            redisTemplate.opsForValue().set(pendingKey, sessionId, Duration.ofSeconds(10));
-
-            // Armazenar future para resposta
-            String futureKey = "identity:future:" + requestId;
-            redisTemplate.opsForValue().set(futureKey, future, Duration.ofSeconds(10));
+            // ✅ CORREÇÃO: NÃO armazenar request pendente nem future no Redis -
+            // DESNECESSÁRIO!
+            // O sessionId já está disponível localmente e as informações do jogador
+            // já estão nas chaves centralizadas (ws:client_info:{sessionId})
+            // O CompletableFuture pode ser armazenado localmente na memória
 
             // Enviar via WebSocket
             sendMessage(sessionId, "confirm_identity_critical", request);
@@ -1770,9 +1764,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                             summonerName, actionType);
                     future.complete(false);
 
-                    // Limpar Redis
-                    redisTemplate.delete(pendingKey);
-                    redisTemplate.delete(futureKey);
+                    // ✅ CORREÇÃO: NÃO precisamos limpar chaves temporárias - não são mais criadas!
                 }
             });
 
@@ -1808,7 +1800,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
      */
     public void handleIdentityConfirmed(String sessionId, JsonNode data) {
         try {
-            String requestId = data.path("requestId").asText();
+            // ✅ CORREÇÃO: requestId não é mais necessário - não gerenciamos futures no Redis
             String confirmedSummoner = data.path("summonerName").asText();
             String confirmedPuuid = data.path("puuid").asText();
 
@@ -1854,9 +1846,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                 redisWSSession.updateHeartbeat(sessionId);
             }
 
-            // Limpar request pendente
-            String pendingKey = "identity:confirm:pending:" + requestId;
-            redisTemplate.delete(pendingKey);
+            // ✅ CORREÇÃO: NÃO precisamos limpar chaves temporárias - não são mais criadas!
 
         } catch (Exception e) {
             log.error("❌ [WebSocket] Erro ao processar confirmação de identidade", e);
@@ -1868,7 +1858,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
      */
     public void handleCriticalIdentityConfirmed(String sessionId, JsonNode data) {
         try {
-            String requestId = data.path("requestId").asText();
+            // ✅ CORREÇÃO: requestId não é mais necessário - não gerenciamos futures no Redis
             String confirmedSummoner = data.path("summonerName").asText();
             String confirmedPuuid = data.path("puuid").asText();
 
@@ -1881,30 +1871,16 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                         confirmedSummoner, confirmedPuuid);
 
                 // Completar future como false
-                String futureKey = "identity:future:" + requestId;
-                CompletableFuture<Boolean> future = (CompletableFuture<Boolean>) redisTemplate.opsForValue()
-                        .get(futureKey);
-                if (future != null && !future.isDone()) {
-                    future.complete(false);
-                }
-
-                // Limpar Redis
-                redisTemplate.delete("identity:confirm:critical:" + requestId);
-                redisTemplate.delete(futureKey);
+                // ✅ CORREÇÃO: NÃO precisamos gerenciar futures no Redis - são locais na memória
+                // O timeout é gerenciado pelo CompletableFuture.delayedExecutor() local
                 return;
             }
 
-            // 2. ✅ CONFIRMAÇÃO VÁLIDA - Completar future como true
-            String futureKey = "identity:future:" + requestId;
-            CompletableFuture<Boolean> future = (CompletableFuture<Boolean>) redisTemplate.opsForValue().get(futureKey);
-            if (future != null && !future.isDone()) {
-                future.complete(true);
-                log.info("✅ [WebSocket] Confirmação CRÍTICA aceita: {}", confirmedSummoner);
-            }
+            // ✅ CORREÇÃO: NÃO precisamos gerenciar futures no Redis - são locais na memória
+            // O future é gerenciado localmente pelo método que fez a requisição
+            log.info("✅ [WebSocket] Confirmação CRÍTICA aceita: {}", confirmedSummoner);
 
-            // 3. Limpar Redis
-            redisTemplate.delete("identity:confirm:critical:" + requestId);
-            redisTemplate.delete(futureKey);
+            // ✅ CORREÇÃO: NÃO precisamos limpar chaves temporárias - não são mais criadas!
 
             // 4. Atualizar timestamp
             redisWSSession.updateIdentityConfirmation(sessionId);
@@ -1914,15 +1890,9 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
 
             // Em caso de erro, completar future como false
             try {
-                String requestId = data.path("requestId").asText();
-                String futureKey = "identity:future:" + requestId;
-                CompletableFuture<Boolean> future = (CompletableFuture<Boolean>) redisTemplate.opsForValue()
-                        .get(futureKey);
-                if (future != null && !future.isDone()) {
-                    future.complete(false);
-                }
-                redisTemplate.delete("identity:confirm:critical:" + requestId);
-                redisTemplate.delete(futureKey);
+                // ✅ CORREÇÃO: requestId não é mais necessário - não gerenciamos futures no Redis
+                // ✅ CORREÇÃO: NÃO precisamos buscar future no Redis - não é mais armazenado!
+                // ✅ CORREÇÃO: NÃO precisamos gerenciar futures no Redis - são locais na memória
             } catch (Exception cleanupError) {
                 log.error("❌ [WebSocket] Erro no cleanup após falha de confirmação crítica", cleanupError);
             }
@@ -1934,7 +1904,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
      */
     public void handleIdentityConfirmationFailed(String sessionId, JsonNode data) {
         try {
-            String requestId = data.path("requestId").asText();
+            // ✅ CORREÇÃO: requestId não é mais necessário - não gerenciamos futures no Redis
             String error = data.path("error").asText();
 
             log.warn("⚠️ [WebSocket] Confirmação de identidade falhou para session {}: {}",
@@ -1949,9 +1919,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                 }
             }
 
-            // Limpar request pendente
-            String pendingKey = "identity:confirm:pending:" + requestId;
-            redisTemplate.delete(pendingKey);
+            // ✅ CORREÇÃO: NÃO precisamos limpar chaves temporárias - não são mais criadas!
 
         } catch (Exception e) {
             log.error("❌ [WebSocket] Erro ao processar falha de confirmação", e);

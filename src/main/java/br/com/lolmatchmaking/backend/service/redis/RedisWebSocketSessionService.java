@@ -153,7 +153,7 @@ public class RedisWebSocketSessionService {
             // 2. summonerName → sessionId (lookup reverso)
             playerBucket.set(sessionId, SESSION_TTL_SECONDS, TimeUnit.SECONDS);
 
-            // 3. Metadata completa
+            // 3. ✅ CORREÇÃO: Metadata completa usando formato unificado (String/Object)
             ClientInfo clientInfo = ClientInfo.builder()
                     .sessionId(sessionId)
                     .summonerName(normalizedSummoner)
@@ -163,14 +163,10 @@ public class RedisWebSocketSessionService {
                     .userAgent(userAgent)
                     .build();
 
-            RMap<String, String> clientMap = redisson.getMap(CLIENT_KEY_PREFIX + sessionId);
-            clientMap.put("sessionId", sessionId);
-            clientMap.put("summonerName", normalizedSummoner);
-            clientMap.put("ipAddress", ipAddress != null ? ipAddress : "unknown");
-            clientMap.put("connectedAt", clientInfo.getConnectedAt().toString());
-            clientMap.put("lastActivity", clientInfo.getLastActivity().toString());
-            clientMap.put("userAgent", userAgent != null ? userAgent : "unknown");
-            clientMap.expire(SESSION_TTL_SECONDS, TimeUnit.SECONDS);
+            // ✅ USAR: Formato unificado "ws:client_info:" (String/Object)
+            String clientInfoKey = "ws:client_info:" + sessionId;
+            RBucket<ClientInfo> clientInfoBucket = redisson.getBucket(clientInfoKey);
+            clientInfoBucket.set(clientInfo, Duration.ofHours(1));
 
             log.info("✅ [RedisWS] Sessão registrada: {} → {} (IP: {})",
                     sessionId, normalizedSummoner, ipAddress);
@@ -399,9 +395,9 @@ public class RedisWebSocketSessionService {
             // Buscar summonerName antes de deletar
             Optional<String> summonerOpt = getSummonerBySession(sessionId);
 
-            // Deletar chaves
+            // ✅ CORREÇÃO: Deletar chaves usando formato unificado
             redisson.getBucket(SESSION_KEY_PREFIX + sessionId).delete();
-            redisson.getMap(CLIENT_KEY_PREFIX + sessionId).delete();
+            redisson.getBucket("ws:client_info:" + sessionId).delete();
 
             if (summonerOpt.isPresent()) {
                 String summonerName = summonerOpt.get();
@@ -429,11 +425,11 @@ public class RedisWebSocketSessionService {
         try {
             Map<String, Object> allClients = new HashMap<>();
 
-            // Buscar todas as chaves ws:client:*
-            Iterable<String> keys = redisson.getKeys().getKeysByPattern(CLIENT_KEY_PREFIX + "*");
+            // ✅ CORREÇÃO: Buscar todas as chaves ws:client_info:*
+            Iterable<String> keys = redisson.getKeys().getKeysByPattern("ws:client_info:*");
 
             for (String key : keys) {
-                String sessionId = key.substring(CLIENT_KEY_PREFIX.length());
+                String sessionId = key.substring("ws:client_info:".length());
 
                 // Buscar summonerName para esta sessão
                 String summonerKey = SESSION_KEY_PREFIX + sessionId;
@@ -644,14 +640,14 @@ public class RedisWebSocketSessionService {
                 log.debug("✅ [RedisWS] Removido: {}", playerInfoKey);
             }
 
-            // 2. Remover ws:client_info:{sessionId} (novo formato)
-            String clientInfoKey = CLIENT_KEY_PREFIX + sessionId;
+            // 2. ✅ CORREÇÃO: Remover ws:client_info:{sessionId} (formato unificado)
+            String clientInfoKey = "ws:client_info:" + sessionId;
             if (redisson.getBucket(clientInfoKey).delete()) {
                 removedCount++;
                 log.debug("✅ [RedisWS] Removido: {}", clientInfoKey);
             }
 
-            // 3. Remover ws:client:{sessionId} (formato antigo Hash)
+            // 3. ✅ CORREÇÃO: Remover ws:client:{sessionId} (formato antigo Hash - limpeza)
             String clientKey = "ws:client:" + sessionId;
             if (redisson.getBucket(clientKey).delete()) {
                 removedCount++;
@@ -729,8 +725,9 @@ public class RedisWebSocketSessionService {
      */
     public void updateIdentityConfirmation(String sessionId) {
         try {
-            String clientKey = CLIENT_KEY_PREFIX + sessionId;
-            RBucket<ClientInfo> clientBucket = redisson.getBucket(clientKey);
+            // ✅ CORREÇÃO: Usar formato unificado
+            String clientInfoKey = "ws:client_info:" + sessionId;
+            RBucket<ClientInfo> clientBucket = redisson.getBucket(clientInfoKey);
 
             Optional<ClientInfo> clientInfoOpt = Optional.ofNullable(clientBucket.get());
             if (clientInfoOpt.isPresent()) {

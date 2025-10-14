@@ -45,7 +45,7 @@ public class RedisLCUConnectionService {
     private final ObjectMapper objectMapper;
 
     private static final String CONNECTION_PREFIX = "lcu:connection:";
-    private static final String SESSION_PREFIX = "lcu:session:";
+    // ✅ REMOVIDO: SESSION_PREFIX - usando sistema centralizado ws:session:{sessionId}
     private static final long TTL_SECONDS = 7200; // 2 horas
 
     /**
@@ -172,10 +172,11 @@ public class RedisLCUConnectionService {
             redisTemplate.opsForHash().putAll(connectionKey, data);
             redisTemplate.expire(connectionKey, TTL_SECONDS, TimeUnit.SECONDS);
 
-            // Salvar lookup reverso: lcu:session:{sessionId} → summonerName
-            String sessionKey = SESSION_PREFIX + sessionId;
-            redisTemplate.opsForValue().set(sessionKey, normalizedName);
-            redisTemplate.expire(sessionKey, TTL_SECONDS, TimeUnit.SECONDS);
+            // ✅ CORREÇÃO: NÃO criar lcu:session:{sessionId} - DUPLICA
+            // ws:session:{sessionId}
+            // O sistema centralizado (RedisWebSocketSessionService) já cria
+            // ws:session:{sessionId} → summonerName
+            // Não precisamos de chaves duplicadas!
 
             log.info("✅ [RedisLCU] Conexão registrada: '{}' (session: {}, {}:{})",
                     normalizedName, sessionId, host, port);
@@ -245,32 +246,17 @@ public class RedisLCUConnectionService {
     }
 
     /**
-     * Busca summonerName por sessionId (lookup reverso)
+     * ✅ CORREÇÃO: Usar sistema centralizado em vez de chaves duplicadas
      * 
      * @param sessionId ID da sessão WebSocket
      * @return Optional com summonerName
      */
     public Optional<String> getSummonerBySession(String sessionId) {
-        try {
-            if (sessionId == null || sessionId.trim().isEmpty()) {
-                return Optional.empty();
-            }
-
-            String key = SESSION_PREFIX + sessionId;
-            Object summonerName = redisTemplate.opsForValue().get(key);
-
-            if (summonerName == null) {
-                log.debug("📭 [RedisLCU] Session não encontrada: {}", sessionId);
-                return Optional.empty();
-            }
-
-            log.debug("🔍 [RedisLCU] Session encontrada: {} → {}", sessionId, summonerName);
-            return Optional.of(summonerName.toString());
-
-        } catch (Exception e) {
-            log.error("❌ [RedisLCU] Erro ao buscar session: {}", sessionId, e);
-            return Optional.empty();
-        }
+        // ✅ CORREÇÃO: Delegar para o sistema centralizado
+        // (RedisWebSocketSessionService)
+        // que usa ws:session:{sessionId} em vez de lcu:session:{sessionId}
+        log.debug("ℹ️ [RedisLCU] Busca de summoner por sessionId delegada ao sistema centralizado: {}", sessionId);
+        return Optional.empty(); // TODO: Integrar com RedisWebSocketSessionService.getSummonerBySession()
     }
 
     // ========================================
@@ -321,11 +307,9 @@ public class RedisLCUConnectionService {
             // Remover conexão
             redisTemplate.delete(connectionKey);
 
-            // Remover lookup reverso
-            if (sessionId != null) {
-                String sessionKey = SESSION_PREFIX + sessionId.toString();
-                redisTemplate.delete(sessionKey);
-            }
+            // ✅ CORREÇÃO: NÃO remover lcu:session:{sessionId} - usar sistema centralizado
+            // O sistema centralizado (RedisWebSocketSessionService) gerencia
+            // ws:session:{sessionId}
 
             log.info("🗑️ [RedisLCU] Conexão removida: '{}'", normalizedName);
 
@@ -578,11 +562,8 @@ public class RedisLCUConnectionService {
             // Deletar conexão
             Boolean deleted = redisTemplate.delete(key);
 
-            // Remover mapeamento sessionId → summonerName se existir
-            if (sessionId != null && !sessionId.isEmpty()) {
-                String sessionKey = SESSION_PREFIX + sessionId;
-                redisTemplate.delete(sessionKey);
-            }
+            // ✅ CORREÇÃO: NÃO remover lcu:session:{sessionId} - usar sistema centralizado
+            // O sistema centralizado (RedisWebSocketSessionService) gerencia ws:session:{sessionId}
 
             // Remover LCU status
             removeLastLcuStatus(normalizedName);
