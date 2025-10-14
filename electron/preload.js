@@ -76,13 +76,37 @@ const electronAPI = {
   onDraftStarted: (callback) => ipcRenderer.on('draft-started', callback),
   onGameInProgress: (callback) => ipcRenderer.on('game-in-progress', callback),
   onMatchCancelled: (callback) => ipcRenderer.on('match-cancelled', callback),
+  onAcceptanceTimer: (callback) => ipcRenderer.on('acceptance-timer', callback),
+  onAcceptanceProgress: (callback) => ipcRenderer.on('acceptance-progress', callback),
+  
+  // ✅ DRAFT EVENTS
+  onDraftTimer: (callback) => ipcRenderer.on('draft-timer', callback),
+  onDraftUpdate: (callback) => ipcRenderer.on('draft-update', callback),
+  onDraftUpdated: (callback) => ipcRenderer.on('draft-updated', callback),
+  onPickChampion: (callback) => ipcRenderer.on('pick-champion', callback),
+  onBanChampion: (callback) => ipcRenderer.on('ban-champion', callback),
+  onDraftConfirmed: (callback) => ipcRenderer.on('draft-confirmed', callback),
+  
+  // ✅ GAME EVENTS
+  onGameStarted: (callback) => ipcRenderer.on('game-started', callback),
+  onWinnerModal: (callback) => ipcRenderer.on('winner-modal', callback),
+  onVoteWinner: (callback) => ipcRenderer.on('vote-winner', callback),
+  
+  // ✅ SPECTATOR EVENTS
+  onSpectatorMuted: (callback) => ipcRenderer.on('spectator-muted', callback),
+  onSpectatorUnmuted: (callback) => ipcRenderer.on('spectator-unmuted', callback),
+  
+  // ✅ CANCELLATION EVENTS
+  onMatchCancelled: (callback) => ipcRenderer.on('match-cancelled', callback),
+  onDraftCancelled: (callback) => ipcRenderer.on('draft-cancelled', callback),
+  onGameCancelled: (callback) => ipcRenderer.on('game-cancelled', callback),
   
   getBackendApiUrl: () => {
     // CONFIGURAÇÃO DE REDE: Altere esta URL para o IP do servidor na rede
     // Para testes locais: 'http://localhost:8080'
     // Para rede local: 'http://192.168.1.5:8080' (seu IP)
     // Para cloud: 'https://seu-app.run.app'
-    const HARDCODED_BACKEND_URL = 'http://192.168.1.4:8080/';
+    const HARDCODED_BACKEND_URL = 'http://192.168.1.2:8080/';
     
     // If BACKEND_URL is provided in the environment, normalize it and return
     const raw = (process.env && process.env['BACKEND_URL']) ? String(process.env['BACKEND_URL']).replace(/\/+$/, '') : null;
@@ -363,7 +387,7 @@ try {
     if (!info) return;
     
     // CONFIGURAÇÃO DE REDE: Use a mesma URL configurada acima
-    const HARDCODED_BACKEND_URL = 'http://192.168.1.4:8080/';
+    const HARDCODED_BACKEND_URL = 'http://192.168.1.2:8080/';
     
     const backend = (process.env && process.env['BACKEND_URL']) ? String(process.env['BACKEND_URL']).replace(/\/+$/, '') : HARDCODED_BACKEND_URL;
     const url = backend.endsWith('/api') ? `${backend}/lcu/configure` : `${backend}/api/lcu/configure`;

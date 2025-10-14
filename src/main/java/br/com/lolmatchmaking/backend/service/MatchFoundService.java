@@ -6,6 +6,7 @@ import br.com.lolmatchmaking.backend.domain.repository.CustomMatchRepository;
 import br.com.lolmatchmaking.backend.domain.repository.QueuePlayerRepository;
 import br.com.lolmatchmaking.backend.dto.QueuePlayerInfoDTO;
 import br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService;
+import org.springframework.web.socket.WebSocketSession;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -547,6 +548,15 @@ public class MatchFoundService {
                 }
             }
 
+            // ✅ NOVO: Limpar canais Discord (se existirem)
+            try {
+                log.info("🧹 [MatchFound] Limpando canais Discord do match {} (recusado)", matchId);
+                discordService.deleteMatchChannels(matchId, true); // true = mover jogadores de volta
+                log.info("✅ [MatchFound] Canais Discord limpos para match {}", matchId);
+            } catch (Exception e) {
+                log.error("❌ [MatchFound] Erro ao limpar canais Discord do match {}: {}", matchId, e.getMessage());
+            }
+
             // Notificar cancelamento
             notifyMatchCancelled(matchId, declinedPlayer);
 
@@ -578,7 +588,7 @@ public class MatchFoundService {
                 return;
             }
 
-            log.debug("🔍 [MatchFound] Monitorando {} matches em aceitação", pendingMatchIds.size());
+            log.info("🔍 [MatchFound] Monitorando {} matches em aceitação", pendingMatchIds.size());
 
             Instant now = Instant.now();
 
@@ -845,7 +855,14 @@ public class MatchFoundService {
                     log.info("  ✅ {}", playerName);
                 }
 
+                log.info("📤 [session-draft-starting] ===== ENVIANDO DRAFT_STARTING =====");
+                log.info("📤 [session-draft-starting] MatchId: {}", matchId);
+                log.info("📤 [session-draft-starting] Total de jogadores: {}", allPlayerNames.size());
+                log.info("📤 [session-draft-starting] Jogadores: {}", allPlayerNames);
+
                 webSocketService.sendToPlayers("draft_starting", draftData, allPlayerNames);
+
+                log.info("📤 [session-draft-starting] =================================================");
 
                 log.info(
                         "✅ [MatchFound] draft_starting enviado para {} jogadores (ESTRUTURA MySQL: teams.blue/red + phases flat)",
@@ -1039,14 +1056,33 @@ public class MatchFoundService {
             log.info("🔍 [session-match-found] Lista completa de summonerNames: {}", allPlayerNames);
             log.info("🔍 [session-match-found] =================================================");
 
+            // ✅ NOVO: Verificar se todos os 10 jogadores estão online antes de enviar
+            Collection<WebSocketSession> playerSessions = sessionRegistry.getByPlayers(allPlayerNames);
+            int onlineCount = playerSessions.size();
+            int expectedCount = allPlayerNames.size();
+
+            if (onlineCount < expectedCount) {
+                log.warn("⚠️ [session-match-found] APENAS {}/{} jogadores estão online!", onlineCount, expectedCount);
+                log.warn("⚠️ [session-match-found] Jogadores offline:");
+                for (String playerName : allPlayerNames) {
+                    Optional<WebSocketSession> sessionOpt = sessionRegistry.getByPlayer(playerName);
+                    if (sessionOpt.isEmpty()) {
+                        log.warn("  ❌ {} (offline)", playerName);
+                    }
+                }
+                log.warn("⚠️ [session-match-found] Enviando mesmo assim - sistema de retry ativo");
+            } else {
+                log.info("✅ [session-match-found] Todos os {}/{} jogadores estão online!", onlineCount, expectedCount);
+            }
+
             long startTime = System.currentTimeMillis();
             webSocketService.sendToPlayers("match_found", data, allPlayerNames);
             long elapsed = System.currentTimeMillis() - startTime;
 
             log.info("╔═══════════════════════════════════════════════════════════════════════╗");
             log.info("║  ✅ [BROADCAST PARALELO] MATCH_FOUND ENVIADO SIMULTANEAMENTE          ║");
-            log.info("║  📊 {} jogadores receberam ao mesmo tempo em {}ms                     ║",
-                    allPlayerNames.size(), elapsed);
+            log.info("║  📊 {}/{} jogadores receberam ao mesmo tempo em {}ms                     ║",
+                    onlineCount, expectedCount, elapsed);
             log.info("╚═══════════════════════════════════════════════════════════════════════╝");
 
         } catch (Exception e) {
@@ -1351,8 +1387,12 @@ public class MatchFoundService {
             // ✅ REDIS ONLY: Buscar jogadores do Redis
             List<String> allPlayers = redisAcceptance.getAllPlayers(matchId);
             if (allPlayers == null || allPlayers.isEmpty()) {
+                log.warn("⚠️ [Timer] Nenhum jogador encontrado para match {} - não enviando timer", matchId);
                 return;
             }
+
+            log.info("⏰ [Timer] Enviando acceptance_timer para match {}: {}s restantes, {} jogadores",
+                    matchId, secondsRemaining, allPlayers.size());
 
             Map<String, Object> data = new HashMap<>();
             data.put("matchId", matchId);
@@ -1361,8 +1401,10 @@ public class MatchFoundService {
             // ✅ CRÍTICO: Enviar APENAS para os jogadores desta partida
             webSocketService.sendToPlayers("acceptance_timer", data, allPlayers);
 
+            log.info("✅ [Timer] acceptance_timer enviado com sucesso para match {}", matchId);
+
         } catch (Exception e) {
-            // Log silencioso para não poluir
+            log.error("❌ [Timer] Erro ao enviar acceptance_timer para match {}: {}", matchId, e.getMessage());
         }
     }
 

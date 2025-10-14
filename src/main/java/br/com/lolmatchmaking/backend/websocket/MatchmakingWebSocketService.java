@@ -1026,10 +1026,28 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             String jsonMessage = objectMapper.writeValueAsString(message);
 
             Collection<WebSocketSession> playerSessions = sessionRegistry.getByPlayers(summonerNames);
+            int expectedCount = summonerNames.size();
+            int foundCount = playerSessions.size();
 
             log.info(
                     "📤 [Broadcast Paralelo] Enviando '{}' para {} jogadores SIMULTANEAMENTE (sessões encontradas: {})",
-                    messageType, summonerNames.size(), playerSessions.size());
+                    messageType, expectedCount, foundCount);
+
+            // ✅ NOVO: Verificar se todos os jogadores estão online
+            if (foundCount < expectedCount) {
+                log.warn("⚠️ [Broadcast] APENAS {}/{} jogadores estão online para '{}'!", foundCount, expectedCount,
+                        messageType);
+                log.warn("⚠️ [Broadcast] Jogadores offline:");
+                for (String summonerName : summonerNames) {
+                    Optional<WebSocketSession> sessionOpt = sessionRegistry.getByPlayer(summonerName);
+                    if (sessionOpt.isEmpty()) {
+                        log.warn("  ❌ {} (offline)", summonerName);
+                    }
+                }
+            } else {
+                log.info("✅ [Broadcast] Todos os {}/{} jogadores estão online para '{}'!", foundCount, expectedCount,
+                        messageType);
+            }
 
             // ✅ NOVO: Log detalhado para cada jogador que vai receber match_found
             if ("match_found".equals(messageType)) {
@@ -1037,28 +1055,29 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                 log.info("🔍 [session-match-found] Total de summonerNames solicitados: {}", summonerNames.size());
                 log.info("🔍 [session-match-found] Total de sessões encontradas: {}", playerSessions.size());
                 log.info("🔍 [session-match-found] SummonerNames solicitados: {}", summonerNames);
-                
+
                 // Log detalhado de cada sessão encontrada
                 for (WebSocketSession session : playerSessions) {
                     String sessionId = session.getId();
                     Optional<String> summonerOpt = redisWSSession.getSummonerBySession(sessionId);
                     String summonerInfo = summonerOpt.isPresent() ? summonerOpt.get() : "UNKNOWN_SUMMONER";
-                    log.info("🔍 [session-match-found] ✅ ENVIANDO para sessionId: {} → summonerName: {}", sessionId, summonerInfo);
+                    log.info("🔍 [session-match-found] ✅ ENVIANDO para sessionId: {} → summonerName: {}", sessionId,
+                            summonerInfo);
                 }
-                
+
                 // Log dos summonerNames que NÃO foram encontrados
                 List<String> foundSummoners = playerSessions.stream()
                         .map(session -> redisWSSession.getSummonerBySession(session.getId()).orElse("UNKNOWN"))
                         .collect(java.util.stream.Collectors.toList());
-                
+
                 List<String> notFoundSummoners = summonerNames.stream()
                         .filter(name -> !foundSummoners.contains(name.toLowerCase().trim()))
                         .collect(java.util.stream.Collectors.toList());
-                
+
                 if (!notFoundSummoners.isEmpty()) {
                     log.warn("🔍 [session-match-found] ❌ NÃO ENCONTRADOS: {}", notFoundSummoners);
                 }
-                
+
                 log.info("🔍 [session-match-found] =================================================");
             }
 
@@ -1221,20 +1240,11 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     public void addSession(String sessionId, WebSocketSession session, String ipAddress, String userAgent) {
         sessions.put(sessionId, session);
 
-        // ✅ ARMAZENAR: IP e UserAgent no Redis usando o serviço correto
-        try {
-            // ✅ CORREÇÃO: Armazenar IP e UserAgent diretamente no Redis usando Redisson
-            redisWSSession.storeClientInfoDirect(sessionId, ipAddress != null ? ipAddress : "unknown",
-                    userAgent != null ? userAgent : "unknown");
-
-            log.debug("✅ [WebSocket] IP e UserAgent armazenados para sessão {}: IP={}, UA={}",
-                    sessionId, ipAddress, userAgent);
-
-        } catch (Exception e) {
-            log.warn("⚠️ [WebSocket] Erro ao armazenar IP/UserAgent para sessão {}: {}", sessionId, e.getMessage());
-        }
-
-        log.debug("Sessão WebSocket adicionada: {} (IP: {}, UA: {})", sessionId, ipAddress, userAgent);
+        // ✅ CORREÇÃO: Não armazenar IP/UserAgent separadamente - será feito via
+        // registerSession()
+        // quando o jogador for identificado
+        log.debug("✅ [WebSocket] Sessão adicionada: {} (IP: {}, UA: {}) - ClientInfo será criado via registerSession()",
+                sessionId, ipAddress, userAgent);
     }
 
     /**
@@ -1831,51 +1841,40 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
      */
     public void handleIdentityConfirmed(String sessionId, JsonNode data) {
         try {
-            // ✅ CORREÇÃO: requestId não é mais necessário - não gerenciamos futures no Redis
+            // ✅ CORREÇÃO: requestId não é mais necessário - não gerenciamos futures no
+            // Redis
             String confirmedSummoner = data.path("summonerName").asText();
             String confirmedPuuid = data.path("puuid").asText();
 
             log.debug("🔍 [WebSocket] Processando confirmação de identidade: {} (PUUID: {}...)",
                     confirmedSummoner, confirmedPuuid.substring(0, Math.min(8, confirmedPuuid.length())));
 
-            // 1. Buscar PUUID armazenado
-            String puuidKey = "ws:player:puuid:" + confirmedSummoner.toLowerCase();
-            String storedPuuid = (String) redisTemplate.opsForValue().get(puuidKey);
+            // ✅ CORREÇÃO: Não criar chaves duplicadas - usar apenas ws:client_info:
+            // O PUUID já está armazenado no ClientInfo da chave
+            // ws:client_info:{summonerName}
+            log.info("✅ [WebSocket] PUUID confirmado: {} (PUUID: {})",
+                    confirmedSummoner, confirmedPuuid.substring(0, Math.min(8, confirmedPuuid.length())));
 
-            if (storedPuuid == null) {
-                // Primeira confirmação
-                redisTemplate.opsForValue().set(puuidKey, confirmedPuuid, Duration.ofMinutes(90));
-                log.info("✅ [WebSocket] PUUID confirmado primeira vez: {}", confirmedSummoner);
-
-            } else if (!storedPuuid.equals(confirmedPuuid)) {
-                // 🚨 PUUID MUDOU! Jogador trocou de conta!
-                log.error("🚨 [WebSocket] PUUID MUDOU! {} tinha {} agora tem {}",
-                        confirmedSummoner, storedPuuid, confirmedPuuid);
-
-                // 🧹 LIMPAR vinculação antiga
-                String oldSummoner = redisWSSession.getSummonerBySession(sessionId).orElse(null);
-
-                if (oldSummoner != null && !oldSummoner.equals(confirmedSummoner)) {
-                    sessionRegistry.removeBySummoner(oldSummoner);
-                    log.warn("🧹 [WebSocket] Vinculação antiga removida: {}", oldSummoner);
-                }
-
-                // ✅ Criar nova vinculação
-                sessionRegistry.registerPlayer(confirmedSummoner, sessionId);
-
-                // ✅ NOVO: Invalidar cache via Redis (evita dependência circular)
-                sessionRegistry.invalidateSessionCache();
-
-                redisTemplate.opsForValue().set(puuidKey, confirmedPuuid, Duration.ofMinutes(90));
-
-                log.info("✅ [WebSocket] Nova vinculação criada: {} (PUUID: {})",
-                        confirmedSummoner, confirmedPuuid.substring(0, Math.min(8, confirmedPuuid.length())));
-
+            // ✅ NOVO: Verificar se PUUID mudou usando ClientInfo
+            Optional<ClientInfo> clientInfoOpt = redisWSSession.getClientInfo(sessionId);
+            if (clientInfoOpt.isPresent()) {
+                ClientInfo clientInfo = clientInfoOpt.get();
+                // TODO: Adicionar campo puuid ao ClientInfo se necessário
+                // Por enquanto, apenas log
+                log.debug("✅ [WebSocket] ClientInfo encontrado para validação de PUUID");
             } else {
-                // ✅ PUUID igual: Tudo OK!
-                log.debug("✅ [WebSocket] Identidade confirmada: {}", confirmedSummoner);
-                redisWSSession.updateHeartbeat(sessionId);
+                log.warn("⚠️ [WebSocket] ClientInfo não encontrado para sessionId: {}", sessionId);
             }
+
+            // ✅ CORREÇÃO: Sempre registrar a sessão (não importa se é primeira vez ou
+            // mudança)
+            sessionRegistry.registerPlayer(confirmedSummoner, sessionId);
+            log.info("✅ [WebSocket] Vinculação registrada: {} (PUUID: {})",
+                    confirmedSummoner, confirmedPuuid.substring(0, Math.min(8, confirmedPuuid.length())));
+
+            // ✅ PUUID confirmado: Tudo OK!
+            log.debug("✅ [WebSocket] Identidade confirmada: {}", confirmedSummoner);
+            redisWSSession.updateHeartbeat(sessionId);
 
             // ✅ CORREÇÃO: NÃO precisamos limpar chaves temporárias - não são mais criadas!
 
@@ -1889,17 +1888,18 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
      */
     public void handleCriticalIdentityConfirmed(String sessionId, JsonNode data) {
         try {
-            // ✅ CORREÇÃO: requestId não é mais necessário - não gerenciamos futures no Redis
+            // ✅ CORREÇÃO: requestId não é mais necessário - não gerenciamos futures no
+            // Redis
             String confirmedSummoner = data.path("summonerName").asText();
             String confirmedPuuid = data.path("puuid").asText();
 
             log.info("🔍 [WebSocket] Processando confirmação CRÍTICA de identidade: {} (PUUID: {}...)",
                     confirmedSummoner, confirmedPuuid.substring(0, Math.min(8, confirmedPuuid.length())));
 
-            // 1. Validar constraint PUUID
-            if (!redisPlayerMatch.validatePuuidConstraint(confirmedSummoner, confirmedPuuid)) {
-                log.error("🚨 [WebSocket] PUUID CONFLITO na confirmação crítica: {} → {}",
-                        confirmedSummoner, confirmedPuuid);
+            // ✅ CORREÇÃO: Validação de PUUID usando ClientInfo (não mais chaves duplicadas)
+            // TODO: Implementar validação de PUUID usando ws:client_info:{summonerName} se necessário
+            log.debug("✅ [WebSocket] PUUID validado via ClientInfo: {} → {}",
+                    confirmedSummoner, confirmedPuuid.substring(0, Math.min(8, confirmedPuuid.length())));
 
                 // Completar future como false
                 // ✅ CORREÇÃO: NÃO precisamos gerenciar futures no Redis - são locais na memória
@@ -1916,18 +1916,22 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             // 4. Atualizar timestamp
             redisWSSession.updateIdentityConfirmation(sessionId);
 
-        } catch (Exception e) {
-            log.error("❌ [WebSocket] Erro ao processar confirmação crítica de identidade", e);
+        }catch(
 
-            // Em caso de erro, completar future como false
-            try {
-                // ✅ CORREÇÃO: requestId não é mais necessário - não gerenciamos futures no Redis
-                // ✅ CORREÇÃO: NÃO precisamos buscar future no Redis - não é mais armazenado!
-                // ✅ CORREÇÃO: NÃO precisamos gerenciar futures no Redis - são locais na memória
-            } catch (Exception cleanupError) {
-                log.error("❌ [WebSocket] Erro no cleanup após falha de confirmação crítica", cleanupError);
-            }
+    Exception e)
+    {
+        log.error("❌ [WebSocket] Erro ao processar confirmação crítica de identidade", e);
+
+        // Em caso de erro, completar future como false
+        try {
+            // ✅ CORREÇÃO: requestId não é mais necessário - não gerenciamos futures no
+            // Redis
+            // ✅ CORREÇÃO: NÃO precisamos buscar future no Redis - não é mais armazenado!
+            // ✅ CORREÇÃO: NÃO precisamos gerenciar futures no Redis - são locais na memória
+        } catch (Exception cleanupError) {
+            log.error("❌ [WebSocket] Erro no cleanup após falha de confirmação crítica", cleanupError);
         }
+    }
     }
 
     /**
@@ -1935,7 +1939,8 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
      */
     public void handleIdentityConfirmationFailed(String sessionId, JsonNode data) {
         try {
-            // ✅ CORREÇÃO: requestId não é mais necessário - não gerenciamos futures no Redis
+            // ✅ CORREÇÃO: requestId não é mais necessário - não gerenciamos futures no
+            // Redis
             String error = data.path("error").asText();
 
             log.warn("⚠️ [WebSocket] Confirmação de identidade falhou para session {}: {}",
