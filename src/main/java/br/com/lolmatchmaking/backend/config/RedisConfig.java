@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
+import org.redisson.codec.JsonJacksonCodec;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
@@ -49,6 +50,16 @@ public class RedisConfig {
         log.info("🔒 Redis SSL: {}", redisSsl);
 
         Config config = new Config();
+
+        // ✅ CORREÇÃO CRÍTICA: Usar JSON codec compatível com RedisTemplate
+        ObjectMapper redissonMapper = new ObjectMapper();
+        redissonMapper.registerModule(new JavaTimeModule());
+        redissonMapper.disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+
+        // Desabilitar type information para compatibilidade com RedisTemplate
+        redissonMapper.deactivateDefaultTyping();
+
+        config.setCodec(new JsonJacksonCodec(redissonMapper));
 
         String address = (redisSsl ? "rediss://" : "redis://") + redisHost + ":" + redisPort;
         log.info("🌐 Redis Address: {}", address);

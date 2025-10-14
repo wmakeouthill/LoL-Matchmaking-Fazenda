@@ -75,9 +75,13 @@ class DraftFlowServiceTest {
         br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService webSocketService = mock(
                 br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService.class);
 
+        // ✅ NOVO: Adicionar RedisWebSocketSessionService mock ao construtor
+        br.com.lolmatchmaking.backend.service.redis.RedisWebSocketSessionService redisWSSession = mock(
+                br.com.lolmatchmaking.backend.service.redis.RedisWebSocketSessionService.class);
+
         draftFlowService = new DraftFlowService(customMatchRepository, sessionRegistry, dataDragonService,
                 gameInProgressService, discordService, redisDraftFlowService, webSocketService,
-                playerStateService, redisPlayerMatchService, redisTemplate);
+                playerStateService, redisPlayerMatchService, redisTemplate, redisWSSession);
     }
 
     @Test

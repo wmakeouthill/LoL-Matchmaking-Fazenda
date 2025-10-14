@@ -25,7 +25,6 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
-import org.springframework.data.redis.core.RedisTemplate;
 
 /**
  * ⚠️ MIGRAÇÃO PARCIAL PARA REDIS - EM PROGRESSO
@@ -467,7 +466,9 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                 // ✅ NOVO: Invalidar cache via Redis (evita dependência circular)
                 sessionRegistry.invalidateSessionCache();
 
-                log.info("✅ [Player-Sessions] [ELECTRON→BACKEND] Jogador {} registrado no Redis para sessão {} - cache invalidado", summonerName,
+                log.info(
+                        "✅ [Player-Sessions] [ELECTRON→BACKEND] Jogador {} registrado no Redis para sessão {} - cache invalidado",
+                        summonerName,
                         sessionId);
 
                 // ✅ Lockfile data processamento (se necessário no futuro)
@@ -1184,6 +1185,28 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     }
 
     /**
+     * ✅ NOVO: Adiciona sessão WebSocket com IP e UserAgent capturados
+     */
+    public void addSession(String sessionId, WebSocketSession session, String ipAddress, String userAgent) {
+        sessions.put(sessionId, session);
+
+        // ✅ ARMAZENAR: IP e UserAgent no Redis usando o serviço correto
+        try {
+            // ✅ CORREÇÃO: Armazenar IP e UserAgent diretamente no Redis usando Redisson
+            redisWSSession.storeClientInfoDirect(sessionId, ipAddress != null ? ipAddress : "unknown",
+                    userAgent != null ? userAgent : "unknown");
+
+            log.debug("✅ [WebSocket] IP e UserAgent armazenados para sessão {}: IP={}, UA={}",
+                    sessionId, ipAddress, userAgent);
+
+        } catch (Exception e) {
+            log.warn("⚠️ [WebSocket] Erro ao armazenar IP/UserAgent para sessão {}: {}", sessionId, e.getMessage());
+        }
+
+        log.debug("Sessão WebSocket adicionada: {} (IP: {}, UA: {})", sessionId, ipAddress, userAgent);
+    }
+
+    /**
      * Remove sessão (compatibilidade)
      */
     public void removeSession(String sessionId) {
@@ -1256,7 +1279,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     public String pickGatewaySessionId(String summonerName) {
         // Se summonerName fornecido, tentar encontrar sessão específica primeiro
         if (summonerName != null && !summonerName.isEmpty()) {
-            String normalizedName = summonerName.toLowerCase();
+            String normalizedName = summonerName.toLowerCase().trim();
             // ✅ Buscar sessão no Redis
             Optional<String> sessionIdOpt = redisWSSession.getSessionBySummoner(normalizedName);
             if (sessionIdOpt.isPresent()) {
@@ -1487,99 +1510,99 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     }
 
     /**
-     * ✅ NOVO: Solicitar identificação LCU para um jogador específico (ex: entrada na fila)
+     * ✅ NOVO: Solicitar identificação LCU para um jogador específico (ex: entrada
+     * na fila)
      */
     public void requestIdentityConfirmation(String summonerName, String reason) {
-        log.info("🔗 [Player-Sessions] [BACKEND] Solicitando identificação LCU para {} (motivo: {})", summonerName, reason);
-        
+        log.info("🔗 [Player-Sessions] [BACKEND] Solicitando identificação LCU para {} (motivo: {})", summonerName,
+                reason);
+
         try {
             // Buscar sessão WebSocket do jogador
             Optional<String> sessionIdOpt = redisWSSession.getSessionBySummoner(summonerName.toLowerCase().trim());
-            
+
             if (sessionIdOpt.isEmpty()) {
                 log.warn("⚠️ [Player-Sessions] [BACKEND] Nenhuma sessão WebSocket encontrada para {}", summonerName);
                 return;
             }
-            
+
             String sessionId = sessionIdOpt.get();
-            WebSocketSession session = sessionRegistry.get(sessionId);
-            
+            WebSocketSession session = getSession(sessionId);
+
             if (session == null || !session.isOpen()) {
-                log.warn("⚠️ [Player-Sessions] [BACKEND] Sessão WebSocket {} não está ativa para {}", sessionId, summonerName);
+                log.warn("⚠️ [Player-Sessions] [BACKEND] Sessão WebSocket {} não está ativa para {}", sessionId,
+                        summonerName);
                 return;
             }
-            
+
             // Enviar solicitação de identificação
             Map<String, Object> identityRequest = Map.of(
-                "type", "request_identity_confirmation",
-                "summonerName", summonerName,
-                "reason", reason,
-                "timestamp", System.currentTimeMillis()
-            );
-            
+                    "type", "request_identity_confirmation",
+                    "summonerName", summonerName,
+                    "reason", reason,
+                    "timestamp", System.currentTimeMillis());
+
             String message = objectMapper.writeValueAsString(identityRequest);
             session.sendMessage(new TextMessage(message));
-            
-            log.info("✅ [Player-Sessions] [BACKEND] Solicitação de identificação enviada para {} (sessionId: {})", summonerName, sessionId);
-            
+
+            log.info("✅ [Player-Sessions] [BACKEND] Solicitação de identificação enviada para {} (sessionId: {})",
+                    summonerName, sessionId);
+
             // ✅ NOVO: Enviar log para Electron se houver sessões registradas
             if (unifiedLogService.hasRegisteredPlayerSessionLogSessions()) {
-                unifiedLogService.sendPlayerSessionInfoLog("[Player-Sessions] [BACKEND]", 
-                    "Solicitando identificação LCU para %s (motivo: %s, sessionId: %s)", 
-                    summonerName, reason, sessionId);
+                unifiedLogService.sendPlayerSessionInfoLog("[Player-Sessions] [BACKEND]",
+                        "Solicitando identificação LCU para %s (motivo: %s, sessionId: %s)",
+                        summonerName, reason, sessionId);
             }
-            
+
         } catch (Exception e) {
             log.error("❌ [Player-Sessions] [BACKEND] Erro ao solicitar identificação para {}", summonerName, e);
         }
     }
 
     /**
-     * ✅ NOVO: Enviar mensagem diretamente para Electron via Redis (COMUNICAÇÃO SEGURA E DISTRIBUÍDA)
+     * ✅ NOVO: Enviar solicitação de identificação para TODOS os electrons (LÓGICA
+     * CORRETA)
+     * Cada electron verifica se a solicitação é para ele baseado no LCU conectado
      */
-    public void sendDirectToElectronViaRedis(String messageType, String summonerName, String reason, Object requestData) {
-        log.info("🔗 [Player-Sessions] [BACKEND] Enviando mensagem direta para Electron via Redis: {} (summoner: {}, motivo: {})", 
-                messageType, summonerName, reason);
-        
+    public void requestIdentityFromAllElectrons(String summonerName, String reason, Object requestData) {
+        log.info("🔗 [Player-Sessions] [BACKEND] Solicitando identificação para {} de TODOS os electrons (motivo: {})",
+                summonerName, reason);
+
         try {
-            // Buscar sessão WebSocket do jogador via Redis
-            Optional<String> sessionIdOpt = redisWSSession.getSessionBySummoner(summonerName.toLowerCase().trim());
-            
-            if (sessionIdOpt.isEmpty()) {
-                log.warn("⚠️ [Player-Sessions] [BACKEND] Nenhuma sessão WebSocket encontrada no Redis para {}", summonerName);
-                return;
-            }
-            
-            String sessionId = sessionIdOpt.get();
-            WebSocketSession session = sessionRegistry.get(sessionId);
-            
-            if (session == null || !session.isOpen()) {
-                log.warn("⚠️ [Player-Sessions] [BACKEND] Sessão WebSocket {} não está ativa para {}", sessionId, summonerName);
-                return;
-            }
-            
             // ✅ USAR REDIS: Armazenar dados da requisição no Redis (seguro e distribuído)
-            String redisKey = "queue_entry_request:" + summonerName.toLowerCase().trim() + ":" + System.currentTimeMillis();
+            String redisKey = "identity_request:" + summonerName.toLowerCase().trim() + ":"
+                    + System.currentTimeMillis();
             redisTemplate.opsForValue().set(redisKey, requestData, Duration.ofMinutes(5)); // TTL 5 minutos
-            
-            // Criar mensagem com referência ao Redis
+
+            // ✅ BROADCAST: Enviar para TODOS os electrons conectados
             Map<String, Object> message = Map.of(
-                "type", messageType,
-                "summonerName", summonerName,
-                "reason", reason,
-                "timestamp", System.currentTimeMillis(),
-                "redisKey", redisKey
-            );
-            
-            String messageJson = objectMapper.writeValueAsString(message);
-            session.sendMessage(new TextMessage(messageJson));
-            
-            log.info("✅ [Player-Sessions] [BACKEND] Mensagem direta enviada para Electron via Redis: {} → {} (sessionId: {}, redisKey: {})", 
-                    messageType, summonerName, sessionId, redisKey);
-            
+                    "type", "request_identity_verification",
+                    "summonerName", summonerName,
+                    "reason", reason,
+                    "timestamp", System.currentTimeMillis(),
+                    "redisKey", redisKey);
+
+            // Enviar para todas as sessões ativas
+            broadcastToAll("request_identity_verification", message);
+
+            log.info(
+                    "✅ [Player-Sessions] [BACKEND] Solicitação de identificação enviada para TODOS os electrons: {} (redisKey: {})",
+                    summonerName, redisKey);
+
         } catch (Exception e) {
-            log.error("❌ [Player-Sessions] [BACKEND] Erro ao enviar mensagem direta para Electron via Redis: {}", messageType, e);
+            log.error("❌ [Player-Sessions] [BACKEND] Erro ao solicitar identificação de todos os electrons: {}",
+                    summonerName, e);
         }
+    }
+
+    /**
+     * ✅ DEPRECIADO: Mantido para compatibilidade, mas não é a lógica correta
+     */
+    public void sendDirectToElectronViaRedis(String messageType, String summonerName, String reason,
+            Object requestData) {
+        // ✅ REDIRECIONAR: Usar a lógica correta de broadcast
+        requestIdentityFromAllElectrons(summonerName, reason, requestData);
     }
 
     // ✅ NOVO: Confirmação periódica de identidade DINÂMICA baseada no estado
@@ -1698,16 +1721,22 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                 return future;
             }
 
-            // Buscar sessão do jogador
-            Optional<WebSocketSession> sessionOpt = sessionRegistry.getByPlayer(summonerName);
-            if (sessionOpt.isEmpty()) {
+            // Buscar sessão do jogador via Redis
+            Optional<String> sessionIdOpt = redisWSSession.getSessionBySummoner(summonerName.toLowerCase().trim());
+            if (sessionIdOpt.isEmpty()) {
                 log.error("❌ [WebSocket] Jogador {} não tem sessão ativa para ação crítica: {}",
                         summonerName, actionType);
                 future.complete(false);
                 return future;
             }
 
-            WebSocketSession session = sessionOpt.get();
+            WebSocketSession session = getSession(sessionIdOpt.get());
+            if (session == null || !session.isOpen()) {
+                log.error("❌ [WebSocket] Sessão WebSocket {} não está ativa para jogador {} (ação crítica: {})",
+                        sessionIdOpt.get(), summonerName, actionType);
+                future.complete(false);
+                return future;
+            }
             String sessionId = session.getId();
 
             // ✅ SOLICITAR confirmação OBRIGATÓRIA
@@ -1927,5 +1956,21 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         } catch (Exception e) {
             log.error("❌ [WebSocket] Erro ao processar falha de confirmação", e);
         }
+    }
+
+    /**
+     * ✅ NOVO: Obter WebSocketSession por sessionId
+     */
+    public WebSocketSession getSession(String sessionId) {
+        return sessions.get(sessionId);
+    }
+
+    /**
+     * ✅ NOVO: Obter todas as sessões WebSocket ativas
+     */
+    public Collection<WebSocketSession> getAllActiveSessions() {
+        return sessions.values().stream()
+                .filter(WebSocketSession::isOpen)
+                .collect(Collectors.toList());
     }
 }

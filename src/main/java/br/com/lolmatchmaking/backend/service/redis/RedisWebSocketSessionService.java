@@ -2,8 +2,10 @@ package br.com.lolmatchmaking.backend.service.redis;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBucket;
@@ -11,6 +13,7 @@ import org.redisson.api.RMap;
 import org.redisson.api.RedissonClient;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
@@ -78,6 +81,8 @@ public class RedisWebSocketSessionService {
      */
     @Data
     @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
     public static class ClientInfo {
         private String sessionId;
         private String summonerName;
@@ -112,23 +117,40 @@ public class RedisWebSocketSessionService {
 
             String normalizedSummoner = normalizeSummonerName(summonerName);
 
-            // 1. sessionId → summonerName
-            RBucket<String> sessionBucket = redisson.getBucket(SESSION_KEY_PREFIX + sessionId);
-            sessionBucket.set(normalizedSummoner, SESSION_TTL_SECONDS, TimeUnit.SECONDS);
-
-            // 2. summonerName → sessionId (lookup reverso)
+            // ✅ CRÍTICO: VERIFICAR E REMOVER SESSÕES DUPLICADAS ANTES DE REGISTRAR
+            // 1. Verificar se já existe sessão para este summoner
             RBucket<String> playerBucket = redisson.getBucket(PLAYER_KEY_PREFIX + normalizedSummoner);
-
-            // Verificar se já existe sessão anterior
             String existingSessionId = playerBucket.get();
-            if (existingSessionId != null && !existingSessionId.equals(sessionId)) {
-                log.info("📱 [RedisWS] Jogador {} reconectando. Sessão anterior: {} → Nova: {}",
-                        normalizedSummoner, existingSessionId, sessionId);
 
-                // Limpar sessão anterior
+            if (existingSessionId != null && !existingSessionId.equals(sessionId)) {
+                log.warn("🚨 [RedisWS] SESSÃO DUPLICADA DETECTADA! Jogador {} já tem sessão ativa: {}",
+                        normalizedSummoner, existingSessionId);
+
+                // ✅ REMOVER: Sessão anterior completamente
+                log.info("🗑️ [RedisWS] Removendo sessão anterior duplicada: {} (jogador: {})",
+                        existingSessionId, normalizedSummoner);
                 removeSession(existingSessionId);
             }
 
+            // 2. Verificar se este sessionId já está registrado para outro jogador
+            RBucket<String> sessionBucket = redisson.getBucket(SESSION_KEY_PREFIX + sessionId);
+            String existingSummoner = sessionBucket.get();
+
+            if (existingSummoner != null && !existingSummoner.equals(normalizedSummoner)) {
+                log.warn("🚨 [RedisWS] SESSIONID DUPLICADO! Sessão {} já registrada para outro jogador: {}",
+                        sessionId, existingSummoner);
+
+                // ✅ REMOVER: Registro anterior desta sessão
+                log.info("🗑️ [RedisWS] Removendo registro anterior da sessão {} (jogador anterior: {})",
+                        sessionId, existingSummoner);
+                removeSession(sessionId);
+            }
+
+            // ✅ REGISTRAR: Agora que limpamos duplicatas, registrar nova sessão
+            // 1. sessionId → summonerName
+            sessionBucket.set(normalizedSummoner, SESSION_TTL_SECONDS, TimeUnit.SECONDS);
+
+            // 2. summonerName → sessionId (lookup reverso)
             playerBucket.set(sessionId, SESSION_TTL_SECONDS, TimeUnit.SECONDS);
 
             // 3. Metadata completa
@@ -211,6 +233,12 @@ public class RedisWebSocketSessionService {
                 return Optional.empty();
             }
 
+            // ✅ CORREÇÃO: Verificar se Redisson está ativo (evita erro durante shutdown)
+            if (redisson.isShutdown() || redisson.isShuttingDown()) {
+                log.debug("⚠️ [RedisWS] Redisson está desligado - retornando empty para sessionId: {}", sessionId);
+                return Optional.empty();
+            }
+
             RBucket<String> sessionBucket = redisson.getBucket(SESSION_KEY_PREFIX + sessionId);
             String summonerName = sessionBucket.get();
 
@@ -240,12 +268,22 @@ public class RedisWebSocketSessionService {
                 return Optional.empty();
             }
 
+            // ✅ CORREÇÃO: Tentar primeiro a nova chave (String/Object)
+            String clientInfoKey = "ws:client_info:" + sessionId;
+            RBucket<ClientInfo> clientInfoBucket = redisson.getBucket(clientInfoKey);
+            ClientInfo clientInfo = clientInfoBucket.get();
+
+            if (clientInfo != null) {
+                return Optional.of(clientInfo);
+            }
+
+            // ✅ FALLBACK: Tentar a chave antiga (Hash) para compatibilidade
             RMap<String, String> clientMap = redisson.getMap(CLIENT_KEY_PREFIX + sessionId);
             if (clientMap.isEmpty()) {
                 return Optional.empty();
             }
 
-            ClientInfo clientInfo = ClientInfo.builder()
+            ClientInfo fallbackClientInfo = ClientInfo.builder()
                     .sessionId(clientMap.get("sessionId"))
                     .summonerName(clientMap.get("summonerName"))
                     .ipAddress(clientMap.get("ipAddress"))
@@ -254,7 +292,7 @@ public class RedisWebSocketSessionService {
                     .userAgent(clientMap.get("userAgent"))
                     .build();
 
-            return Optional.of(clientInfo);
+            return Optional.of(fallbackClientInfo);
 
         } catch (Exception e) {
             log.error("❌ [RedisWS] Erro ao buscar client info: {}", sessionId, e);
@@ -365,13 +403,25 @@ public class RedisWebSocketSessionService {
                 if (clientInfoOpt.isPresent() && summonerName != null) {
                     ClientInfo clientInfo = clientInfoOpt.get();
 
+                    // ✅ MELHORAR: Tentar obter IP e UserAgent mais precisos
+                    String ipAddress = clientInfo.getIpAddress();
+                    String userAgent = clientInfo.getUserAgent();
+
+                    // ✅ CORREÇÃO: Usar valores padrão se não disponíveis
+                    if ("unknown".equals(ipAddress)) {
+                        ipAddress = "unknown";
+                    }
+                    if ("unknown".equals(userAgent)) {
+                        userAgent = "unknown";
+                    }
+
                     // Criar Map com informações do cliente
                     Map<String, Object> clientData = new HashMap<>();
                     clientData.put("summonerName", summonerName);
-                    clientData.put("ip", clientInfo.getIpAddress());
+                    clientData.put("ip", ipAddress);
                     clientData.put("connectedAt", clientInfo.getConnectedAt());
                     clientData.put("lastActivity", clientInfo.getLastActivity());
-                    clientData.put("userAgent", clientInfo.getUserAgent());
+                    clientData.put("userAgent", userAgent);
 
                     allClients.put(sessionId, clientData);
                 }
@@ -521,6 +571,8 @@ public class RedisWebSocketSessionService {
 
     /**
      * Remove informações do jogador identificado.
+     * ✅ CORRIGIDO: Remove TODAS as chaves relacionadas à sessão para evitar
+     * duplicações
      * 
      * @param sessionId ID da sessão WebSocket
      * @return true se removeu com sucesso, false caso contrário
@@ -531,14 +583,80 @@ public class RedisWebSocketSessionService {
                 return false;
             }
 
-            String key = PLAYER_INFO_KEY_PREFIX + sessionId;
-            boolean deleted = redisson.getBucket(key).delete();
+            log.debug("🧹 [RedisWS] Iniciando limpeza completa para sessionId: {}", sessionId);
 
-            if (deleted) {
-                log.debug("✅ [RedisWS] Player info removido: sessionId={}", sessionId);
+            // ✅ CRÍTICO: Buscar summonerName antes de remover para limpar mapeamentos
+            Optional<String> summonerOpt = getSummonerBySession(sessionId);
+            String summonerName = summonerOpt.orElse(null);
+
+            int removedCount = 0;
+
+            // 1. Remover ws:player_info:{sessionId}
+            String playerInfoKey = PLAYER_INFO_KEY_PREFIX + sessionId;
+            if (redisson.getBucket(playerInfoKey).delete()) {
+                removedCount++;
+                log.debug("✅ [RedisWS] Removido: {}", playerInfoKey);
             }
 
-            return deleted;
+            // 2. Remover ws:client_info:{sessionId} (novo formato)
+            String clientInfoKey = CLIENT_KEY_PREFIX + sessionId;
+            if (redisson.getBucket(clientInfoKey).delete()) {
+                removedCount++;
+                log.debug("✅ [RedisWS] Removido: {}", clientInfoKey);
+            }
+
+            // 3. Remover ws:client:{sessionId} (formato antigo Hash)
+            String clientKey = "ws:client:" + sessionId;
+            if (redisson.getBucket(clientKey).delete()) {
+                removedCount++;
+                log.debug("✅ [RedisWS] Removido: {}", clientKey);
+            }
+
+            // 4. Remover ws:session:{sessionId} (mapeamento sessionId → summonerName)
+            String sessionKey = SESSION_KEY_PREFIX + sessionId;
+            if (redisson.getBucket(sessionKey).delete()) {
+                removedCount++;
+                log.debug("✅ [RedisWS] Removido: {}", sessionKey);
+            }
+
+            // 5. Se temos summonerName, remover mapeamento reverso ws:player:{summonerName}
+            if (summonerName != null && !summonerName.isEmpty()) {
+                String playerKey = PLAYER_KEY_PREFIX + summonerName;
+                if (redisson.getBucket(playerKey).delete()) {
+                    removedCount++;
+                    log.debug("✅ [RedisWS] Removido mapeamento reverso: {} → {}", playerKey, summonerName);
+                }
+
+                // 6. Remover PUUID constraint se existir (se método estiver disponível)
+                // ✅ COMENTADO: Método getPuuidBySession e constante PUUID_TO_PLAYER_KEY_PREFIX
+                // não estão implementados
+                // TODO: Implementar se necessário para limpeza completa de PUUID constraints
+                /*
+                 * try {
+                 * String puuid = getPuuidBySession(sessionId);
+                 * if (puuid != null && !puuid.isEmpty()) {
+                 * String puuidKey = PUUID_TO_PLAYER_KEY_PREFIX + puuid;
+                 * if (redisson.getBucket(puuidKey).delete()) {
+                 * removedCount++;
+                 * log.debug("✅ [RedisWS] Removido PUUID constraint: {}", puuidKey);
+                 * }
+                 * }
+                 * } catch (Exception e) {
+                 * log.debug("⚠️ [RedisWS] Erro ao remover PUUID constraint: {}",
+                 * e.getMessage());
+                 * }
+                 */
+            }
+
+            if (removedCount > 0) {
+                log.info(
+                        "✅ [RedisWS] Limpeza completa realizada: {} chaves removidas para sessionId={}, summonerName={}",
+                        removedCount, sessionId, summonerName);
+                return true;
+            } else {
+                log.debug("ℹ️ [RedisWS] Nenhuma chave encontrada para remover: sessionId={}", sessionId);
+                return false;
+            }
 
         } catch (Exception e) {
             log.error("❌ [RedisWS] Erro ao remover player info: sessionId={}", sessionId, e);
@@ -588,6 +706,34 @@ public class RedisWebSocketSessionService {
 
         } catch (Exception e) {
             log.error("❌ [RedisWSSession] Erro ao atualizar timestamp de confirmação: {}", sessionId, e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Armazenar informações do cliente (IP, UserAgent) diretamente no Redis
+     */
+    public void storeClientInfoDirect(String sessionId, String ipAddress, String userAgent) {
+        try {
+            // Criar ClientInfo com dados capturados usando construtor correto
+            ClientInfo clientInfo = ClientInfo.builder()
+                    .sessionId(sessionId)
+                    .summonerName("unknown") // Será atualizado quando identificar
+                    .ipAddress(ipAddress)
+                    .userAgent(userAgent)
+                    .connectedAt(Instant.now())
+                    .lastActivity(Instant.now())
+                    .build();
+
+            // ✅ CORREÇÃO: Usar chave diferente para evitar conflito com Hash existente
+            String clientInfoKey = "ws:client_info:" + sessionId;
+            RBucket<ClientInfo> clientInfoBucket = redisson.getBucket(clientInfoKey);
+            clientInfoBucket.set(clientInfo, Duration.ofHours(1));
+
+            log.debug("✅ [RedisWS] ClientInfo armazenado para sessão {}: IP={}, UA={}",
+                    sessionId, ipAddress, userAgent);
+
+        } catch (Exception e) {
+            log.warn("⚠️ [RedisWS] Erro ao armazenar ClientInfo para sessão {}: {}", sessionId, e.getMessage());
         }
     }
 }

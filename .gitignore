@@ -85,6 +85,8 @@ desktop.ini
 # Other
 *.tmp
 *.swp
+/redis/
+/redis-new/
 
 # Local docker / env overrides (developer-specific)
 docker-compose.override.yml

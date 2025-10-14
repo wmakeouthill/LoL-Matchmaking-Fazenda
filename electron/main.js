@@ -96,10 +96,10 @@ function checkReachable(u, timeout = 2000) {
 async function pickBackendUrl() {
   // CONFIGURAÇÃO DE REDE: Altere esta URL para o IP do servidor na rede
   // Para testes locais: 'http://localhost:8080/'
-  // Para rede local: 'http://192.168.1.5:8080/' (seu IP)
+  // Para rede local: 'http://192.168.1.4:8080/' (seu IP)
   // Para cloud: 'https://lol-matchmaking-368951732227.southamerica-east1.run.app/'
   // ✅ CORREÇÃO: URL correta do Cloud Run (nome do serviço é 'lol-matchmaking')
-  const HARDCODED_BACKEND_URL = 'http://localhost:8080/';
+  const HARDCODED_BACKEND_URL = 'http://192.168.1.4:8080/';
   
   const env = process.env.BACKEND_URL || '';
   const defaultBase = env || HARDCODED_BACKEND_URL;
@@ -971,23 +971,53 @@ function startWebSocketGateway(backendBase) {
           // ✅ PROATIVO: Enviar identificação LCU antes do backend solicitar
           await sendProactiveIdentification('queue_entry_proactive');
         }
-        // ✅ NOVO: Handler para solicitação direta do backend (COMUNICAÇÃO DIRETA VIA REDIS)
+        // ✅ NOVO: Handler para solicitação de verificação de identidade (LÓGICA CORRETA)
+        else if (json.type === 'request_identity_verification') {
+          safeLog('🔗 [Player-Sessions] [BACKEND→ELECTRON] Solicitação de verificação de identidade recebida');
+          
+          // ✅ CORREÇÃO: Extrair dados corretamente (pode estar em json.data ou json)
+          const data = json.data || json;
+          const summonerName = data.summonerName;
+          const reason = data.reason;
+          const redisKey = data.redisKey;
+          
+          safeLog(`🔗 [Player-Sessions] [BACKEND→ELECTRON] Summoner solicitado: ${summonerName}`);
+          safeLog(`🔗 [Player-Sessions] [BACKEND→ELECTRON] Motivo: ${reason}`);
+          safeLog(`🔗 [Player-Sessions] [BACKEND→ELECTRON] Redis Key: ${redisKey}`);
+          
+          // ✅ VERIFICAR: Se a solicitação é para este jogador
+          const isForThisPlayer = await verifyIfRequestIsForThisPlayer(summonerName);
+          
+          if (isForThisPlayer) {
+            safeLog('✅ [Player-Sessions] [ELECTRON] Solicitação é para este jogador - enviando identificação');
+            // ✅ PROATIVO: Enviar identificação LCU imediatamente
+            await sendProactiveIdentification('identity_verification_request');
+          } else {
+            safeLog('🔕 [Player-Sessions] [ELECTRON] Solicitação NÃO é para este jogador - ignorando');
+          }
+        }
+        // ✅ DEPRECIADO: Mantido para compatibilidade
         else if (json.type === 'queue_entry_request') {
-          safeLog('🔗 [Player-Sessions] [BACKEND→ELECTRON] Solicitação direta de entrada na fila recebida via Redis');
+          safeLog('🔗 [Player-Sessions] [BACKEND→ELECTRON] Solicitação direta de entrada na fila recebida via Redis (DEPRECIADO)');
           safeLog(`🔗 [Player-Sessions] [BACKEND→ELECTRON] Summoner: ${json.summonerName}`);
-          safeLog(`🔗 [Player-Sessions] [BACKEND→ELECTRON] Motivo: ${json.reason}`);
-          safeLog(`🔗 [Player-Sessions] [BACKEND→ELECTRON] Redis Key: ${json.redisKey}`);
           
-          // ✅ PROATIVO: Enviar identificação LCU imediatamente (comunicação direta via Redis)
-          await sendProactiveIdentification('backend_direct_request_redis');
+          // ✅ VERIFICAR: Se a solicitação é para este jogador
+          const isForThisPlayer = await verifyIfRequestIsForThisPlayer(json.summonerName);
           
-          // ✅ NOVO: Log dos dados completos do Redis
-          safeLog(`🔗 [Player-Sessions] [BACKEND→ELECTRON] Dados completos disponíveis no Redis: ${json.redisKey}`);
+          if (isForThisPlayer) {
+            safeLog('✅ [Player-Sessions] [ELECTRON] Solicitação é para este jogador - enviando identificação');
+            await sendProactiveIdentification('backend_direct_request_redis');
+          } else {
+            safeLog('🔕 [Player-Sessions] [ELECTRON] Solicitação NÃO é para este jogador - ignorando');
+          }
         }
         // ✅ NOVO: Monitoramento proativo - qualquer mensagem que mencione summoner atual
         else {
-          // Verificar se a mensagem menciona o summoner atual e revincular
-          checkAndRebindOnSummonerEvent(json.type || 'unknown', json);
+          // ✅ CORRIGIDO: Não processar mensagens de confirmação para evitar loop infinito
+          if (json.type !== 'electron_identified' && json.type !== 'player_identified') {
+            // Verificar se a mensagem menciona o summoner atual e revincular
+            checkAndRebindOnSummonerEvent(json.type || 'unknown', json);
+          }
         }
       } catch (e) {
         safeLog('ws gateway message error', String(e));
@@ -1133,6 +1163,44 @@ function checkSummonerMention(data) {
            dataStr.includes(gameName) ||
            dataStr.includes(currentSummonerInfo.puuid.toLowerCase());
   } catch (error) {
+    return false;
+  }
+}
+
+// ✅ NOVO: Verificar se a solicitação é para este jogador (LÓGICA CORRETA)
+async function verifyIfRequestIsForThisPlayer(requestedSummonerName) {
+  try {
+    // Verificar se temos informações do summoner atual
+    if (!currentSummonerInfo) {
+      safeLog('⚠️ [Player-Sessions] [ELECTRON] Nenhuma informação de summoner atual disponível');
+      return false;
+    }
+    
+    // Buscar summoner atual do LCU
+    const summoner = await performLcuRequest('GET', '/lol-summoner/v1/current-summoner');
+    
+    if (!summoner || !summoner.gameName || !summoner.tagLine) {
+      safeLog('⚠️ [Player-Sessions] [ELECTRON] Summoner não disponível no LCU');
+      return false;
+    }
+    
+    const currentSummonerName = `${summoner.gameName}#${summoner.tagLine}`;
+    
+    // ✅ COMPARAR: Normalizar ambos os nomes para comparação
+    const requestedNormalized = requestedSummonerName.toLowerCase().trim();
+    const currentNormalized = currentSummonerName.toLowerCase().trim();
+    
+    const isMatch = requestedNormalized === currentNormalized;
+    
+    safeLog(`🔍 [Player-Sessions] [ELECTRON] Verificação de identidade:`);
+    safeLog(`🔍 [Player-Sessions] [ELECTRON] Solicitado: "${requestedSummonerName}" → "${requestedNormalized}"`);
+    safeLog(`🔍 [Player-Sessions] [ELECTRON] Atual LCU: "${currentSummonerName}" → "${currentNormalized}"`);
+    safeLog(`🔍 [Player-Sessions] [ELECTRON] É para este jogador: ${isMatch ? 'SIM' : 'NÃO'}`);
+    
+    return isMatch;
+    
+  } catch (error) {
+    safeLog('❌ [Player-Sessions] [ELECTRON] Erro ao verificar se solicitação é para este jogador:', error);
     return false;
   }
 }

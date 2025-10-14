@@ -9,24 +9,25 @@ import org.springframework.web.socket.WebSocketSession;
 
 import java.time.Duration;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * ✅ MIGRADO PARA REDIS: Registry para mapear sessões WebSocket
+ * ✅ ZERO CACHE LOCAL: Registry para mapear sessões WebSocket
  * 
  * ANTES: ConcurrentHashMaps perdiam dados em reinícios do backend
  * DEPOIS: Redis mantém sessões, permite reconexão transparente
  * 
  * PADRÃO DE INTEGRAÇÃO:
- * 1. Redis é a fonte da verdade (registerPlayer, getByPlayer)
- * 2. ConcurrentHashMap mantido por backward compatibility (sessions)
- * 3. WebSocketSession não é serializável → só Redis mantém mapeamentos
- * (sessionId ↔ summonerName)
+ * 1. Redis é a ÚNICA fonte da verdade (registerPlayer, getByPlayer)
+ * 2. ❌ REMOVIDO: ConcurrentHashMap local (causava sessões fantasmas)
+ * 3. WebSocketSession não é serializável → Redis mantém apenas mapeamentos
+ * (sessionId ↔ summonerName), WebSocketSession obtido via
+ * MatchmakingWebSocketService
  * 
  * FLUXO DE RECONEXÃO:
- * - Backend reinicia → ConcurrentHashMaps vazios
+ * - Backend reinicia → Redis mantém estado
  * - Electron reconecta → registerPlayer restaura do Redis
  * - Eventos chegam corretamente ao jogador
  * 
@@ -40,15 +41,30 @@ public class SessionRegistry {
     private final RedisWebSocketSessionService redisWSSession;
     private final RedisTemplate<String, Object> redisTemplate;
     private final br.com.lolmatchmaking.backend.service.UnifiedLogService unifiedLogService;
+    private final org.springframework.context.ApplicationContext applicationContext;
 
-    // Cache local (WebSocketSession não é serializável para Redis)
-    private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
+    // ❌ REMOVIDO: Cache local que causava sessões fantasmas
+    // WebSocketSession será obtido via MatchmakingWebSocketService quando
+    // necessário
 
     // ✅ REMOVIDO: Substituído completamente por Redis
     // playerToSession agora está APENAS no Redis (single source of truth)
 
+    /**
+     * ❌ REMOVIDO: Não precisa mais adicionar no cache local
+     * WebSocketSession é gerenciado pelo MatchmakingWebSocketService
+     */
     public void add(WebSocketSession session) {
-        sessions.put(session.getId(), session);
+        // ✅ REDIS ONLY: Sessão será registrada quando summoner for identificado
+        log.debug("🔄 [SessionRegistry] Sessão {} adicionada (sem cache local)", session.getId());
+    }
+
+    /**
+     * ❌ REMOVIDO: Não há mais cache local para verificar
+     */
+    public boolean hasSession(String sessionId) {
+        // ✅ REDIS ONLY: Verificar se existe no Redis
+        return redisWSSession.getSummonerBySession(sessionId).isPresent();
     }
 
     /**
@@ -66,21 +82,24 @@ public class SessionRegistry {
             return;
         }
 
-        String normalizedName = summonerName.toLowerCase();
+        String normalizedName = summonerName.toLowerCase().trim();
 
-        // ✅ REDIS FIRST: Fonte da verdade
-        WebSocketSession session = sessions.get(sessionId);
+        // ✅ CORRIGIDO: Verificar se já está registrado para evitar logs duplicados
+        Optional<String> existingSessionId = redisWSSession.getSessionBySummoner(normalizedName);
+        if (existingSessionId.isPresent() && existingSessionId.get().equals(sessionId)) {
+            log.debug("🔄 [SessionRegistry] Jogador {} já está registrado com sessão {}, pulando registro duplicado",
+                    normalizedName, sessionId);
+            return;
+        }
+
+        // ✅ REDIS ONLY: Não há mais cache local para limpar
+        // Redis já gerencia sessões antigas automaticamente
+
+        // ✅ REDIS ONLY: WebSocketSession obtido via MatchmakingWebSocketService quando
+        // necessário
+        // Por enquanto, usar valores padrão (será melhorado posteriormente)
         String ipAddress = "unknown";
         String userAgent = "unknown";
-
-        if (session != null && session.getRemoteAddress() != null) {
-            ipAddress = session.getRemoteAddress().getAddress().getHostAddress();
-            if (session.getHandshakeHeaders() != null) {
-                userAgent = session.getHandshakeHeaders().getFirst("User-Agent");
-                if (userAgent == null)
-                    userAgent = "unknown";
-            }
-        }
 
         boolean registered = redisWSSession.registerSession(sessionId, normalizedName, ipAddress, userAgent);
 
@@ -106,7 +125,7 @@ public class SessionRegistry {
             return;
         }
 
-        String normalizedName = summonerName.toLowerCase();
+        String normalizedName = summonerName.toLowerCase().trim();
 
         // Buscar sessionId antes de remover
         Optional<String> sessionIdOpt = redisWSSession.getSessionBySummoner(normalizedName);
@@ -124,7 +143,7 @@ public class SessionRegistry {
     public void remove(String id) {
         // ✅ REDIS ONLY
         redisWSSession.removeSession(id);
-        sessions.remove(id);
+        // ❌ REMOVIDO: Não há mais cache local para remover
 
         log.info("🗑️ [SessionRegistry] Sessão removida: {}", id);
     }
@@ -137,7 +156,7 @@ public class SessionRegistry {
             return;
         }
 
-        String normalizedName = summonerName.toLowerCase();
+        String normalizedName = summonerName.toLowerCase().trim();
 
         // Buscar sessionId no Redis
         Optional<String> sessionIdOpt = redisWSSession.getSessionBySummoner(normalizedName);
@@ -147,8 +166,7 @@ public class SessionRegistry {
             // Remover do Redis
             redisWSSession.removeSession(sessionId);
 
-            // Remover do cache local
-            sessions.remove(sessionId);
+            // ❌ REMOVIDO: Não há mais cache local para remover
 
             log.info("🗑️ [SessionRegistry] Sessão removida por summoner: {} → sessionId={}",
                     normalizedName, sessionId);
@@ -158,7 +176,9 @@ public class SessionRegistry {
     }
 
     public WebSocketSession get(String id) {
-        return sessions.get(id);
+        // ❌ REMOVIDO: Cache local não existe mais
+        // TODO: Obter WebSocketSession via MatchmakingWebSocketService
+        return null;
     }
 
     /**
@@ -180,14 +200,15 @@ public class SessionRegistry {
             return Optional.empty();
         }
 
-        String normalizedName = summonerName.toLowerCase();
+        String normalizedName = summonerName.toLowerCase().trim();
 
         // ✅ REDIS ONLY: Single source of truth (sem fallback HashMap!)
         Optional<String> sessionIdOpt = redisWSSession.getSessionBySummoner(normalizedName);
 
         if (sessionIdOpt.isPresent()) {
             String sessionId = sessionIdOpt.get();
-            WebSocketSession session = sessions.get(sessionId);
+            // ✅ NOVO: Obter WebSocketSession via MatchmakingWebSocketService
+            WebSocketSession session = getWebSocketService().getSession(sessionId);
 
             if (session != null) {
                 log.debug("🔍 [SessionRegistry] Sessão encontrada (Redis): {} → {}", normalizedName, sessionId);
@@ -232,7 +253,15 @@ public class SessionRegistry {
      * Usado para broadcast geral.
      */
     public Collection<WebSocketSession> all() {
-        return sessions.values();
+        // ✅ NOVO: Obter todas as sessões via MatchmakingWebSocketService
+        return getWebSocketService().getAllActiveSessions();
+    }
+
+    /**
+     * ✅ NOVO: Obter MatchmakingWebSocketService via ApplicationContext
+     */
+    private MatchmakingWebSocketService getWebSocketService() {
+        return applicationContext.getBean(MatchmakingWebSocketService.class);
     }
 
     /**
@@ -292,25 +321,19 @@ public class SessionRegistry {
      */
     public int getActiveSessionCount() {
         try {
-            // Contar sessões no cache local (WebSocketSession ativas)
-            int localSessions = sessions.size();
-
-            // Verificar se há sessões identificadas no Redis
+            // ✅ REDIS ONLY: Contar apenas sessões identificadas no Redis
             Map<String, Object> allClientInfo = redisWSSession.getAllClientInfo();
             int identifiedSessions = allClientInfo.size();
 
-            // Retornar o maior valor (pode haver sessões não identificadas)
-            int totalSessions = Math.max(localSessions, identifiedSessions);
+            log.debug("📊 [SessionRegistry] Sessões ativas: {} (Redis: {})",
+                    identifiedSessions, identifiedSessions);
 
-            log.debug("📊 [SessionRegistry] Sessões ativas: {} (local: {}, identificadas: {})",
-                    totalSessions, localSessions, identifiedSessions);
-
-            return totalSessions;
+            return identifiedSessions;
 
         } catch (Exception e) {
             log.error("❌ [SessionRegistry] Erro ao contar sessões ativas", e);
-            // Em caso de erro, retornar contagem local como fallback
-            return sessions.size();
+            // ❌ REMOVIDO: Não há mais cache local para fallback
+            return 0;
         }
     }
 

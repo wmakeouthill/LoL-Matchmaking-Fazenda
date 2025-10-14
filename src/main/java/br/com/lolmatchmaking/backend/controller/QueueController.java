@@ -436,12 +436,13 @@ public class QueueController {
             long startTime = System.currentTimeMillis();
 
             while (System.currentTimeMillis() - startTime < timeoutMs) {
-                // Verificar se há uma sessão vinculada para este jogador
-                Optional<WebSocketSession> sessionOpt = sessionRegistry.getByPlayer(normalizedName);
+                // Verificar se há uma sessão vinculada para este jogador via Redis
+                Optional<String> sessionIdOpt = redisWSSession.getSessionBySummoner(normalizedName);
 
-                if (sessionOpt.isPresent()) {
-                    WebSocketSession session = sessionOpt.get();
-
+                if (sessionIdOpt.isPresent()) {
+                    String sessionId = sessionIdOpt.get();
+                    WebSocketSession session = webSocketService.getSession(sessionId);
+                    
                     if (session != null && session.isOpen()) {
                         log.info("✅ [Player-Sessions] [BACKEND] Vinculação encontrada: {} → {}", normalizedName,
                                 session.getId());
