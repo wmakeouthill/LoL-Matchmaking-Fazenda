@@ -257,6 +257,31 @@ public class RedisWebSocketSessionService {
     }
 
     /**
+     * ✅ NOVO: Limpa chaves corrompidas por ClassLoader conflicts
+     */
+    private void cleanupCorruptedKeys(String sessionId) {
+        try {
+            String clientInfoKey = "ws:client_info:" + sessionId;
+            RBucket<Object> bucket = redisson.getBucket(clientInfoKey);
+            
+            // Tentar acessar para detectar ClassCastException
+            try {
+                Object data = bucket.get();
+                if (data != null && !(data instanceof ClientInfo)) {
+                    log.warn("⚠️ [RedisWS] Dados corrompidos detectados - limpando: {}", clientInfoKey);
+                    bucket.delete();
+                }
+            } catch (ClassCastException e) {
+                log.warn("⚠️ [RedisWS] ClassCastException - limpando chave corrompida: {}", clientInfoKey);
+                bucket.delete();
+            }
+            
+        } catch (Exception e) {
+            log.debug("⚠️ [RedisWS] Erro durante limpeza de chaves corrompidas: {}", e.getMessage());
+        }
+    }
+
+    /**
      * Busca metadata completa da conexão.
      * 
      * @param sessionId ID da sessão WebSocket
@@ -268,13 +293,31 @@ public class RedisWebSocketSessionService {
                 return Optional.empty();
             }
 
+            // ✅ CORREÇÃO: Verificar se Redisson está ativo (evita erro durante shutdown)
+            if (redisson.isShutdown() || redisson.isShuttingDown()) {
+                log.debug("⚠️ [RedisWS] Redisson está desligado - retornando empty para sessionId: {}", sessionId);
+                return Optional.empty();
+            }
+
             // ✅ CORREÇÃO: Tentar primeiro a nova chave (String/Object)
             String clientInfoKey = "ws:client_info:" + sessionId;
             RBucket<ClientInfo> clientInfoBucket = redisson.getBucket(clientInfoKey);
-            ClientInfo clientInfo = clientInfoBucket.get();
-
-            if (clientInfo != null) {
-                return Optional.of(clientInfo);
+            
+            try {
+                ClientInfo clientInfo = clientInfoBucket.get();
+                if (clientInfo != null) {
+                    return Optional.of(clientInfo);
+                }
+            } catch (ClassCastException e) {
+                // ✅ CORREÇÃO CRÍTICA: ClassLoader conflict (Spring Boot DevTools)
+                log.warn("⚠️ [RedisWS] ClassCastException detectada (DevTools ClassLoader conflict) - limpando chave corrompida: {}", clientInfoKey);
+                try {
+                    // Limpar chave corrompida
+                    clientInfoBucket.delete();
+                    log.info("✅ [RedisWS] Chave corrompida removida: {}", clientInfoKey);
+                } catch (Exception cleanupError) {
+                    log.warn("⚠️ [RedisWS] Erro ao limpar chave corrompida: {}", cleanupError.getMessage());
+                }
             }
 
             // ✅ FALLBACK: Tentar a chave antiga (Hash) para compatibilidade
@@ -397,6 +440,9 @@ public class RedisWebSocketSessionService {
                 RBucket<String> summonerBucket = redisson.getBucket(summonerKey);
                 String summonerName = summonerBucket.get();
 
+                // ✅ CORREÇÃO: Limpar chaves corrompidas antes de buscar ClientInfo
+                cleanupCorruptedKeys(sessionId);
+                
                 // Buscar ClientInfo
                 Optional<ClientInfo> clientInfoOpt = getClientInfo(sessionId);
 
