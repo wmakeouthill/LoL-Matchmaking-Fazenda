@@ -832,59 +832,11 @@ public class MatchFoundService {
                     }
                 }
 
-                // ✅ CRÍTICO: Buscar estrutura COMPLETA do MySQL (mesma que
-                // getDraftDataForRestore)
-                Map<String, Object> draftDataFromMySQL = draftFlowService.getDraftDataForRestore(matchId);
-
-                // Notificar início do draft com dados completos (ESTRUTURA DO MySQL!)
-                Map<String, Object> draftData = new HashMap<>(draftDataFromMySQL);
-                draftData.put("matchId", matchId);
-                draftData.put("id", matchId);
-                draftData.put("timeRemaining", 30); // Timer inicial
-
-                // ✅ COMPATIBILIDADE: Manter team1/team2 flat para frontend antigo
-                draftData.put("team1", team1Data);
-                draftData.put("team2", team2Data);
-                draftData.put("averageMmrTeam1", match.getAverageMmrTeam1());
-                draftData.put("averageMmrTeam2", match.getAverageMmrTeam2());
-
-                // ✅ Log detalhado do que será enviado
-                log.info("📢 [MatchFound] Enviando draft_starting via WebSocket (ESTRUTURA MySQL):");
-                log.info("  - matchId: {}", matchId);
-                log.info("  - teams.blue: {} jogadores", draftData.containsKey("teams") ? "SIM" : "NÃO");
-                log.info("  - teams.red: {} jogadores", draftData.containsKey("teams") ? "SIM" : "NÃO");
-                log.info("  - phases (flat): {} ações",
-                        draftData.containsKey("phases") ? ((List<?>) draftData.get("phases")).size() : 0);
-                log.info("  - currentIndex: {}", draftData.get("currentIndex"));
-                log.info("  - currentPlayer: {}", draftData.get("currentPlayer"));
-                log.info("  - timeRemaining: 30s (inicial)");
-
-                // ✅ Enviar draft_starting IMEDIATAMENTE usando o snapshot salvo no MySQL
-                try {
-                    CustomMatch updated = customMatchRepository.findById(matchId).orElse(null);
-                    if (updated != null && updated.getPickBanDataJson() != null
-                            && !updated.getPickBanDataJson().isBlank()) {
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> snapshot = new ObjectMapper().readValue(updated.getPickBanDataJson(),
-                                Map.class);
-
-                        // Padronizar: garantir matchId e allowedSummoners
-                        snapshot.put("matchId", matchId);
-                        List<String> allowedSummoners = new ArrayList<>();
-                        allowedSummoners.addAll(team1Names);
-                        allowedSummoners.addAll(team2Names);
-                        snapshot.put("allowedSummoners", allowedSummoners);
-
-                        webSocketService.broadcastToAll("draft_starting", snapshot);
-                        log.info("📤 [MatchFound] draft_starting enviado via snapshot MySQL para match {}", matchId);
-                    } else {
-                        log.warn(
-                                "⚠️ [MatchFound] pick_ban_data ainda não disponível para match {} ao enviar draft_starting",
-                                matchId);
-                    }
-                } catch (Exception ex) {
-                    log.error("❌ [MatchFound] Falha ao enviar draft_starting pelo snapshot do MySQL", ex);
-                }
+                // ✅ CORREÇÃO: DraftFlowService.startDraft() já enviou o draft_starting com
+                // dados corretos
+                // Não precisamos enviar novamente aqui para evitar sobrescrever os dados
+                // corretos
+                log.info("✅ [MatchFound] DraftFlowService já enviou draft_starting com currentPlayer correto");
 
             } catch (Exception e) {
                 log.error("❌ [MatchFound] Erro ao parsear pick_ban_data", e);
