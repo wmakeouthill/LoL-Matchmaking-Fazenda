@@ -50,6 +50,9 @@ public class GameInProgressService {
     // ✅ NOVO: PlayerStateService para cleanup inteligente
     private final br.com.lolmatchmaking.backend.service.lock.PlayerStateService playerStateService;
 
+    // ✅ NOVO: PlayerLockService para limpeza de locks
+    private final br.com.lolmatchmaking.backend.service.lock.PlayerLockService playerLockService;
+
     // ✅ NOVO: RedisTemplate para throttling de retries
     private final org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
 
@@ -340,7 +343,7 @@ public class GameInProgressService {
                 try {
                     playerStateService.setPlayerState(playerName,
                             br.com.lolmatchmaking.backend.service.lock.PlayerState.AVAILABLE);
-                    
+
                     // ✅ NOVO: Log específico para bots
                     if (isBotPlayer(playerName)) {
                         log.info("🤖 [finishGame] Estado de BOT {} limpo para AVAILABLE", playerName);
@@ -441,6 +444,18 @@ public class GameInProgressService {
                     log.info("✅ [cancelGame] Estado de {} limpo para AVAILABLE", playerName);
                 } catch (Exception e) {
                     log.error("❌ [cancelGame] Erro ao limpar estado de {}: {}", playerName, e.getMessage());
+                }
+            }
+
+            // ✅ NOVO: Limpar locks de jogadores
+            for (String playerName : allPlayers) {
+                try {
+                    if (playerLockService.getPlayerSession(playerName) != null) {
+                        playerLockService.forceReleasePlayerLock(playerName);
+                        log.info("🔓 [cancelGame] Lock de {} liberado", playerName);
+                    }
+                } catch (Exception e) {
+                    log.error("❌ [cancelGame] Erro ao liberar lock de {}: {}", playerName, e.getMessage());
                 }
             }
 
@@ -693,8 +708,8 @@ public class GameInProgressService {
                         }
                     }
 
-                    // ✅ BROADCAST PARALELO
-                    webSocketService.sendToPlayers("game_started", gameData, validPlayers);
+                    // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
+                    webSocketService.broadcastToAll("game_started", gameData);
 
                     log.debug("✅ [GameInProgress] RETRY enviado para {} jogadores", validPlayers.size());
                 }
@@ -854,36 +869,13 @@ public class GameInProgressService {
 
             String json = objectMapper.writeValueAsString(payload);
 
-            // ✅ CRÍTICO: Enviar APENAS para os 10 jogadores da partida
-            List<String> allPlayerNames = new ArrayList<>();
-            allPlayerNames.addAll(gameData.getTeam1().stream().map(GamePlayer::getSummonerName).toList());
-            allPlayerNames.addAll(gameData.getTeam2().stream().map(GamePlayer::getSummonerName).toList());
-
-            log.info("🎯 [ENVIO INDIVIDUALIZADO] Enviando game_started APENAS para {} jogadores específicos:",
-                    allPlayerNames.size());
-            for (String playerName : allPlayerNames) {
-                log.info("  ✅ {}", playerName);
-            }
-
-            Collection<org.springframework.web.socket.WebSocketSession> playerSessions = sessionRegistry
-                    .getByPlayers(allPlayerNames);
-
-            int sentCount = 0;
-            for (org.springframework.web.socket.WebSocketSession ws : playerSessions) {
-                try {
-                    if (ws.isOpen()) {
-                        ws.sendMessage(new org.springframework.web.socket.TextMessage(json));
-                        sentCount++;
-                    }
-                } catch (Exception e) {
-                    log.warn("⚠️ [GameInProgress] Erro ao enviar game_started para sessão", e);
-                }
-            }
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
+            webSocketService.broadcastToAll("game_started", payload);
 
             log.info("╔════════════════════════════════════════════════════════════════╗");
-            log.info("║  📡 [GameInProgress] game_started ENVIADO APENAS PARA 10 JOGADORES║");
+            log.info("║  📡 [GameInProgress] game_started ENVIADO GLOBALMENTE         ║");
             log.info("╚════════════════════════════════════════════════════════════════╝");
-            log.info("✅ Evento enviado para {} jogadores (de {} esperados)", sentCount, allPlayerNames.size());
+            log.info("✅ Evento enviado globalmente para todos os Electrons conectados");
 
         } catch (Exception e) {
             log.error("❌ [GameInProgress] Erro ao broadcast game_started", e);
@@ -995,15 +987,15 @@ public class GameInProgressService {
         if (summonerName == null || summonerName.isEmpty()) {
             return false;
         }
-        
+
         String normalizedName = summonerName.toLowerCase().trim();
-        
+
         // ✅ Padrões de nomes de bots conhecidos
-        return normalizedName.startsWith("bot") || 
-               normalizedName.startsWith("ai_") || 
-               normalizedName.endsWith("_bot") ||
-               normalizedName.contains("bot_") ||
-               normalizedName.equals("bot") ||
-               normalizedName.matches(".*bot\\d+.*"); // bot1, bot2, etc.
+        return normalizedName.startsWith("bot") ||
+                normalizedName.startsWith("ai_") ||
+                normalizedName.endsWith("_bot") ||
+                normalizedName.contains("bot_") ||
+                normalizedName.equals("bot") ||
+                normalizedName.matches(".*bot\\d+.*"); // bot1, bot2, etc.
     }
 }

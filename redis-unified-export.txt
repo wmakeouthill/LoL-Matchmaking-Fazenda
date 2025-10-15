@@ -1,11 +1,11 @@
 # ======================================== 
-# EXPORT UNIFICADO DO REDIS - 14/10/2025 23:12:24,80 
+# EXPORT UNIFICADO DO REDIS - 14/10/2025 23:42:39,80 
 # ======================================== 
  
 ## QUANTIDADE TOTAL DE CHAVES: 
 {"result":59} 
 ## TODAS AS CHAVES: 
-{"result":["cache:session_invalidation","discord:users:cache","draft_ack:107:fzd ratoso#fzd","game:107","game_ack:107:fzd ratoso#fzd","game_retry:107","identity_request:fzd ratoso#fzd:1760494191395","identity_request:fzd ratoso#fzd:1760494201667","lcu:connection:fzd ratoso#fzd","leaderboard:data:Arkles#BR1","leaderboard:data:BBN China#1592","leaderboard:data:CMXCII#br1","leaderboard:data:DEDEF0DAUM#br1","leaderboard:data:Eahm#patas","leaderboard:data:FZD Ratoso#fzd","leaderboard:data:FZD SherlokGaz#FZD","leaderboard:data:Golden Glub#glub","leaderboard:data:HACKER#NTM1","leaderboard:data:Hunter#Gato","leaderboard:data:IRandall#000","leaderboard:data:Insomniac Astro#Stars","leaderboard:data:Let me Reset II#KAT","leaderboard:data:Mates#Aksh","leaderboard:data:N4M1RA#br1","leaderboard:data:NoTearsAri#Fefe","leaderboard:data:PortiolliCelso#TORRE","leaderboard:data:Pura bondade#6969","leaderboard:data:Quenamilos#83022","leaderboard:data:Shooter is Good#BR1","leaderboard:data:Syfah#br1","leaderboard:data:Vastaya#100","leaderboard:data:anirataK#game","leaderboard:data:bripes#noxus","leaderboard:data:gostosa roIuda#1312","leaderboard:data:igago#br1","leaderboard:data:luanbpt#BR2","leaderboard:top","lock:player:FZD Ratoso#fzd","match:players:107","match_found_ack:107:fzd ratoso#fzd","player:current_match:bot1","player:current_match:bot2","player:current_match:bot3","player:current_match:bot4","player:current_match:bot5","player:current_match:bot6","player:current_match:bot7","player:current_match:bot8","player:current_match:bot9","state:player:bot1","state:player:bot2","state:player:bot3","state:player:bot4","state:player:bot5","state:player:bot6","state:player:bot7","state:player:bot8","state:player:bot9","state:player:fzd ratoso#fzd"]} 
+{"result":["cache:session_invalidation","discord:status:cache","discord:users:cache","draft_ack:108:fzd ratoso#fzd","game:107","game:108","game_ack:108:fzd ratoso#fzd","game_retry:108","identity_request:fzd ratoso#fzd:1760496050244","lcu:connection:fzd ratoso#fzd","leaderboard:data:Arkles#BR1","leaderboard:data:BBN China#1592","leaderboard:data:CMXCII#br1","leaderboard:data:DEDEF0DAUM#br1","leaderboard:data:Eahm#patas","leaderboard:data:FZD Ratoso#fzd","leaderboard:data:FZD SherlokGaz#FZD","leaderboard:data:Golden Glub#glub","leaderboard:data:HACKER#NTM1","leaderboard:data:Hunter#Gato","leaderboard:data:IRandall#000","leaderboard:data:Insomniac Astro#Stars","leaderboard:data:Let me Reset II#KAT","leaderboard:data:Mates#Aksh","leaderboard:data:N4M1RA#br1","leaderboard:data:NoTearsAri#Fefe","leaderboard:data:PortiolliCelso#TORRE","leaderboard:data:Pura bondade#6969","leaderboard:data:Quenamilos#83022","leaderboard:data:Shooter is Good#BR1","leaderboard:data:Syfah#br1","leaderboard:data:Vastaya#100","leaderboard:data:anirataK#game","leaderboard:data:bripes#noxus","leaderboard:data:gostosa roIuda#1312","leaderboard:data:igago#br1","leaderboard:data:luanbpt#BR2","leaderboard:top","match:players:108","match_found_ack:108:fzd ratoso#fzd","player:current_match:bot1","player:current_match:bot2","player:current_match:bot3","player:current_match:bot4","player:current_match:bot5","player:current_match:bot6","player:current_match:bot7","player:current_match:bot8","player:current_match:bot9","state:player:bot1","state:player:bot2","state:player:bot3","state:player:bot4","state:player:bot5","state:player:bot6","state:player:bot7","state:player:bot8","state:player:bot9","state:player:fzd ratoso#fzd"]} 
 ### CHAVES WEBSOCKET (ws:*): 
 {"result":[]} 
 ### CHAVES LCU (lcu:*): 
@@ -13,9 +13,9 @@
 ### CHAVES LEADERBOARD (leaderboard:*): 
 {"result":["leaderboard:data:Arkles#BR1","leaderboard:data:BBN China#1592","leaderboard:data:CMXCII#br1","leaderboard:data:DEDEF0DAUM#br1","leaderboard:data:Eahm#patas","leaderboard:data:FZD Ratoso#fzd","leaderboard:data:FZD SherlokGaz#FZD","leaderboard:data:Golden Glub#glub","leaderboard:data:HACKER#NTM1","leaderboard:data:Hunter#Gato","leaderboard:data:IRandall#000","leaderboard:data:Insomniac Astro#Stars","leaderboard:data:Let me Reset II#KAT","leaderboard:data:Mates#Aksh","leaderboard:data:N4M1RA#br1","leaderboard:data:NoTearsAri#Fefe","leaderboard:data:PortiolliCelso#TORRE","leaderboard:data:Pura bondade#6969","leaderboard:data:Quenamilos#83022","leaderboard:data:Shooter is Good#BR1","leaderboard:data:Syfah#br1","leaderboard:data:Vastaya#100","leaderboard:data:anirataK#game","leaderboard:data:bripes#noxus","leaderboard:data:gostosa roIuda#1312","leaderboard:data:igago#br1","leaderboard:data:luanbpt#BR2","leaderboard:top"]} 
 ### CHAVES LOCK (lock:*): 
-{"result":["lock:player:FZD Ratoso#fzd"]} 
+{"result":[]} 
 ### CHAVES MATCH (match:*): 
-{"result":["match:players:107"]} 
+{"result":["match:players:108"]} 
 ### CHAVES QUEUE (queue:*): 
 {"result":[]} 
 ### CHAVES DRAFT (draft:*): 
