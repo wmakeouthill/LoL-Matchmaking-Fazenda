@@ -1581,10 +1581,27 @@ public class DraftFlowService {
             log.info("{}", mapper.writerWithDefaultPrettyPrinter().writeValueAsString(updateData));
             log.info("====================================================");
 
-            // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida (não para todos)
-            sendToMatchPlayers(st, payload);
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
+            broadcastToAllSessions(payload);
         } catch (Exception e) {
             log.error("Erro broadcast draft_updated", e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Envia mensagem para TODAS as sessões WebSocket (broadcast global)
+     */
+    private void broadcastToAllSessions(String payload) {
+        try {
+            sessionRegistry.all().forEach(ws -> {
+                try {
+                    ws.sendMessage(new TextMessage(payload));
+                } catch (Exception e) {
+                    log.warn("⚠️ Erro ao enviar mensagem para sessão {}", ws.getId());
+                }
+            });
+        } catch (Exception e) {
+            log.error("❌ Erro ao fazer broadcast global", e);
         }
     }
 
@@ -1649,8 +1666,8 @@ public class DraftFlowService {
                     KEY_TYPE, "draft_completed",
                     KEY_MATCH_ID, st.getMatchId()));
 
-            // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida
-            sendToMatchPlayers(st, payload);
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
+            broadcastToAllSessions(payload);
         } catch (Exception e) {
             log.error("Erro broadcast draft_completed", e);
         }
@@ -1662,8 +1679,8 @@ public class DraftFlowService {
                     KEY_TYPE, "draft_confirmed",
                     KEY_MATCH_ID, st.getMatchId()));
 
-            // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida
-            sendToMatchPlayers(st, payload);
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
+            broadcastToAllSessions(payload);
         } catch (Exception e) {
             log.error("Erro broadcast draft_confirmed", e);
         }
@@ -2101,8 +2118,8 @@ public class DraftFlowService {
                     "team1", team1Data,
                     "team2", team2Data));
 
-            // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida
-            sendToMatchPlayers(st, payload);
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
+            broadcastToAllSessions(payload);
         } catch (Exception e) {
             log.error("Erro broadcast match_game_ready", e);
         }
@@ -2401,9 +2418,8 @@ public class DraftFlowService {
                 log.info("  📤 {}", player);
             }
 
-            // ✅ BROADCAST PARALELO usando webSocketService (mesmo padrão do
-            // MatchFoundService)
-            webSocketService.sendToPlayers("draft_starting", draftData, players);
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
+            webSocketService.broadcastToAll("draft_starting", draftData);
 
             log.info("✅ [DraftFlow] RETRY: draft_starting enviado para {} jogadores", players.size());
 
@@ -2737,8 +2753,8 @@ public class DraftFlowService {
 
             String json = mapper.writeValueAsString(payload);
 
-            // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida
-            sendToMatchPlayers(st, json);
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
+            broadcastToAllSessions(json);
 
             log.info("📡 [DraftFlow] Broadcast para 10 jogadores: {}/{} confirmaram", confirmations.size(),
                     totalPlayers);
@@ -2797,8 +2813,8 @@ public class DraftFlowService {
 
             String json = mapper.writeValueAsString(payload);
 
-            // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida
-            sendToMatchPlayers(st, json);
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
+            broadcastToAllSessions(json);
             log.info("📡 [DraftFlow] Broadcast game_ready para 10 jogadores");
 
         } catch (Exception e) {
@@ -2932,8 +2948,8 @@ public class DraftFlowService {
 
             String json = mapper.writeValueAsString(payload);
 
-            // ✅ CORREÇÃO: Enviar apenas para os 10 jogadores da partida
-            sendToMatchPlayers(st, json);
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
+            broadcastToAllSessions(json);
             log.info("📡 [DraftFlow] Broadcast match_cancelled para 10 jogadores");
 
         } catch (Exception e) {

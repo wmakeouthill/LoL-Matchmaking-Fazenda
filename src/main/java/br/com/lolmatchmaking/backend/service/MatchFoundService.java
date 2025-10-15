@@ -860,7 +860,8 @@ public class MatchFoundService {
                 log.info("📤 [session-draft-starting] Total de jogadores: {}", allPlayerNames.size());
                 log.info("📤 [session-draft-starting] Jogadores: {}", allPlayerNames);
 
-                webSocketService.sendToPlayers("draft_starting", draftData, allPlayerNames);
+                // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
+                webSocketService.broadcastToAll("draft_starting", draftData);
 
                 log.info("📤 [session-draft-starting] =================================================");
 
@@ -1076,7 +1077,8 @@ public class MatchFoundService {
             }
 
             long startTime = System.currentTimeMillis();
-            webSocketService.sendToPlayers("match_found", data, allPlayerNames);
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
+            webSocketService.broadcastToAll("match_found", data);
             long elapsed = System.currentTimeMillis() - startTime;
 
             log.info("╔═══════════════════════════════════════════════════════════════════════╗");
@@ -1140,8 +1142,8 @@ public class MatchFoundService {
             data.put("totalPlayers", allPlayers.size());
             data.put("acceptedPlayers", new ArrayList<>(acceptedPlayers));
 
-            // Enviar apenas para os jogadores desta partida
-            webSocketService.sendToPlayers("acceptance_progress", data, allPlayers);
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
+            webSocketService.broadcastToAll("acceptance_progress", data);
 
             log.debug("📊 [MatchFound] Progresso enviado para {} jogadores da partida {} (Redis): {}/{}",
                     allPlayers.size(), matchId,
@@ -1163,8 +1165,8 @@ public class MatchFoundService {
             Map<String, Object> data = new HashMap<>();
             data.put("matchId", matchId);
 
-            // Enviar apenas para os jogadores desta partida
-            webSocketService.sendToPlayers("all_players_accepted", data, allPlayers);
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
+            webSocketService.broadcastToAll("all_players_accepted", data);
 
             log.info(
                     "🎉 [MatchFound] Notificação de aceitação completa enviada para {} jogadores da partida {} (Redis)",
@@ -1188,8 +1190,8 @@ public class MatchFoundService {
             data.put("reason", "declined");
             data.put("declinedPlayer", declinedPlayer);
 
-            // Enviar apenas para os jogadores desta partida
-            webSocketService.sendToPlayers("match_cancelled", data, allPlayers);
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
+            webSocketService.broadcastToAll("match_cancelled", data);
 
             log.warn("⚠️ [MatchFound] Cancelamento enviado para {} jogadores da partida {} (recusado por: {}) - Redis",
                     allPlayers.size(), matchId, declinedPlayer);
@@ -1318,8 +1320,8 @@ public class MatchFoundService {
                 log.info("  📤 {}", player);
             }
 
-            // ✅ BROADCAST PARALELO para jogadores pendentes
-            webSocketService.sendToPlayers("match_found", matchFoundData, validPendingPlayers);
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
+            webSocketService.broadcastToAll("match_found", matchFoundData);
 
             log.info("✅ [MatchFound-Retry] ENVIADO para {} jogadores", validPendingPlayers.size());
             log.info("╚═══════════════════════════════════════════════════════════════════════╝");
@@ -1398,8 +1400,8 @@ public class MatchFoundService {
             data.put("matchId", matchId);
             data.put("secondsRemaining", secondsRemaining);
 
-            // ✅ CRÍTICO: Enviar APENAS para os jogadores desta partida
-            webSocketService.sendToPlayers("acceptance_timer", data, allPlayers);
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
+            webSocketService.broadcastToAll("acceptance_timer", data);
 
             log.info("✅ [Timer] acceptance_timer enviado com sucesso para match {}", matchId);
 
