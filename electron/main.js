@@ -1821,6 +1821,78 @@ async function isMatchFoundForThisPlayer(json, currentSummoner) {
   return false;
 }
 
+// ✅ NOVO: Verificar se draft_starting é para este jogador (estrutura específica)
+async function isDraftForThisPlayer(json, currentSummoner) {
+  if (!currentSummoner) {
+    safeLog("⚠️ [draft-started] Summoner atual não disponível");
+    return false;
+  }
+
+  const currentNormalized = currentSummoner.toLowerCase().trim();
+
+  // ✅ PRIORIDADE 1: Verificar em teams.blue.players e teams.red.players
+  if (json.teams) {
+    if (json.teams.blue && json.teams.blue.players) {
+      for (const player of json.teams.blue.players) {
+        const playerName = player.summonerName || player.gameName;
+        if (
+          playerName &&
+          playerName.toLowerCase().trim() === currentNormalized
+        ) {
+          safeLog(
+            `🎮 [draft-started] ✅ Jogador encontrado em teams.blue: ${playerName}`
+          );
+          return true;
+        }
+      }
+    }
+    if (json.teams.red && json.teams.red.players) {
+      for (const player of json.teams.red.players) {
+        const playerName = player.summonerName || player.gameName;
+        if (
+          playerName &&
+          playerName.toLowerCase().trim() === currentNormalized
+        ) {
+          safeLog(
+            `🎮 [draft-started] ✅ Jogador encontrado em teams.red: ${playerName}`
+          );
+          return true;
+        }
+      }
+    }
+  }
+
+  // ✅ PRIORIDADE 2: Verificar em team1 e team2 (compatibilidade)
+  if (json.team1 && Array.isArray(json.team1)) {
+    for (const player of json.team1) {
+      const playerName = player.summonerName || player.gameName || player.name;
+      if (playerName && playerName.toLowerCase().trim() === currentNormalized) {
+        safeLog(
+          `🎮 [draft-started] ✅ Jogador encontrado em team1: ${playerName}`
+        );
+        return true;
+      }
+    }
+  }
+
+  if (json.team2 && Array.isArray(json.team2)) {
+    for (const player of json.team2) {
+      const playerName = player.summonerName || player.gameName || player.name;
+      if (playerName && playerName.toLowerCase().trim() === currentNormalized) {
+        safeLog(
+          `🎮 [draft-started] ✅ Jogador encontrado em team2: ${playerName}`
+        );
+        return true;
+      }
+    }
+  }
+
+  safeLog(
+    `🎮 [draft-started] ❌ Jogador ${currentNormalized} não encontrado no draft`
+  );
+  return false;
+}
+
 // ✅ NOVO: Handler para draft_started
 async function handleDraftStartedEvent(json) {
   try {
@@ -1841,23 +1913,37 @@ async function handleDraftStartedEvent(json) {
     if (json.team1) {
       safeLog(
         "🎮 [draft-started] Team1 players:",
-        json.team1.map((p) => p.summonerName || p).join(", ")
+        json.team1.map((p) => p.summonerName || p.gameName || p).join(", ")
       );
     }
     if (json.team2) {
       safeLog(
         "🎮 [draft-started] Team2 players:",
-        json.team2.map((p) => p.summonerName || p).join(", ")
+        json.team2.map((p) => p.summonerName || p.gameName || p).join(", ")
       );
     }
     if (json.teams) {
       safeLog("🎮 [draft-started] Teams structure:", Object.keys(json.teams));
+      if (json.teams.blue && json.teams.blue.players) {
+        safeLog(
+          "🎮 [draft-started] Blue players:",
+          json.teams.blue.players
+            .map((p) => p.summonerName || p.gameName)
+            .join(", ")
+        );
+      }
+      if (json.teams.red && json.teams.red.players) {
+        safeLog(
+          "🎮 [draft-started] Red players:",
+          json.teams.red.players
+            .map((p) => p.summonerName || p.gameName)
+            .join(", ")
+        );
+      }
     }
 
-    const isForThisPlayer = await isMatchFoundForThisPlayer(
-      json,
-      currentSummoner
-    );
+    // ✅ CORREÇÃO: Usar função específica para draft
+    const isForThisPlayer = await isDraftForThisPlayer(json, currentSummoner);
 
     if (!isForThisPlayer) {
       safeLog(
@@ -1872,9 +1958,12 @@ async function handleDraftStartedEvent(json) {
     );
 
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("draft-started", json);
+      // ✅ CORREÇÃO: Detectar tipo de evento e enviar o correto
+      const eventType =
+        json.type === "draft_starting" ? "draft-starting" : "draft-started";
+      mainWindow.webContents.send(eventType, json);
       safeLog(
-        "🎮 [draft-started] ✅ Draft_started enviado para o frontend via IPC"
+        `🎮 [draft-started] ✅ ${eventType} enviado para o frontend via IPC`
       );
     } else {
       safeLog(
@@ -1884,6 +1973,186 @@ async function handleDraftStartedEvent(json) {
   } catch (error) {
     safeLog("❌ [draft-started] Erro ao processar draft_started:", error);
   }
+}
+
+// ✅ NOVO: Verificar se game_in_progress é para este jogador
+async function isGameInProgressForThisPlayer(json, currentSummoner) {
+  if (!currentSummoner) {
+    safeLog("⚠️ [game-in-progress] Summoner atual não disponível");
+    return false;
+  }
+
+  const currentNormalized = currentSummoner.toLowerCase().trim();
+
+  // ✅ PRIORIDADE 1: Verificar em team1 e team2
+  if (json.team1 && Array.isArray(json.team1)) {
+    for (const player of json.team1) {
+      const playerName = player.summonerName || player.gameName || player.name;
+      if (playerName && playerName.toLowerCase().trim() === currentNormalized) {
+        safeLog(
+          `🏁 [game-in-progress] ✅ Jogador encontrado em team1: ${playerName}`
+        );
+        return true;
+      }
+    }
+  }
+
+  if (json.team2 && Array.isArray(json.team2)) {
+    for (const player of json.team2) {
+      const playerName = player.summonerName || player.gameName || player.name;
+      if (playerName && playerName.toLowerCase().trim() === currentNormalized) {
+        safeLog(
+          `🏁 [game-in-progress] ✅ Jogador encontrado em team2: ${playerName}`
+        );
+        return true;
+      }
+    }
+  }
+
+  // ✅ PRIORIDADE 2: Verificar em players (fallback)
+  if (json.players && Array.isArray(json.players)) {
+    for (const player of json.players) {
+      const playerName = player.summonerName || player.gameName || player.name;
+      if (playerName && playerName.toLowerCase().trim() === currentNormalized) {
+        safeLog(
+          `🏁 [game-in-progress] ✅ Jogador encontrado em players: ${playerName}`
+        );
+        return true;
+      }
+    }
+  }
+
+  safeLog(
+    `🏁 [game-in-progress] ❌ Jogador ${currentNormalized} não encontrado no jogo`
+  );
+  return false;
+}
+
+// ✅ NOVO: Verificar se winner_modal é para este jogador
+async function isWinnerModalForThisPlayer(json, currentSummoner) {
+  if (!currentSummoner) {
+    safeLog("⚠️ [winner-modal] Summoner atual não disponível");
+    return false;
+  }
+
+  const currentNormalized = currentSummoner.toLowerCase().trim();
+
+  // ✅ Verificar se é jogador da partida
+  if (json.team1 && Array.isArray(json.team1)) {
+    for (const player of json.team1) {
+      const playerName = player.summonerName || player.gameName || player.name;
+      if (playerName && playerName.toLowerCase().trim() === currentNormalized) {
+        safeLog(
+          `🏆 [winner-modal] ✅ Jogador encontrado em team1: ${playerName}`
+        );
+        return true;
+      }
+    }
+  }
+
+  if (json.team2 && Array.isArray(json.team2)) {
+    for (const player of json.team2) {
+      const playerName = player.summonerName || player.gameName || player.name;
+      if (playerName && playerName.toLowerCase().trim() === currentNormalized) {
+        safeLog(
+          `🏆 [winner-modal] ✅ Jogador encontrado em team2: ${playerName}`
+        );
+        return true;
+      }
+    }
+  }
+
+  safeLog(
+    `🏆 [winner-modal] ❌ Jogador ${currentNormalized} não encontrado na partida`
+  );
+  return false;
+}
+
+// ✅ NOVO: Verificar se vote_winner é para este jogador
+async function isVoteWinnerForThisPlayer(json, currentSummoner) {
+  if (!currentSummoner) {
+    safeLog("⚠️ [vote-winner] Summoner atual não disponível");
+    return false;
+  }
+
+  const currentNormalized = currentSummoner.toLowerCase().trim();
+
+  // ✅ Verificar se é jogador da partida (mesma lógica do winner_modal)
+  if (json.team1 && Array.isArray(json.team1)) {
+    for (const player of json.team1) {
+      const playerName = player.summonerName || player.gameName || player.name;
+      if (playerName && playerName.toLowerCase().trim() === currentNormalized) {
+        safeLog(
+          `🗳️ [vote-winner] ✅ Jogador encontrado em team1: ${playerName}`
+        );
+        return true;
+      }
+    }
+  }
+
+  if (json.team2 && Array.isArray(json.team2)) {
+    for (const player of json.team2) {
+      const playerName = player.summonerName || player.gameName || player.name;
+      if (playerName && playerName.toLowerCase().trim() === currentNormalized) {
+        safeLog(
+          `🗳️ [vote-winner] ✅ Jogador encontrado em team2: ${playerName}`
+        );
+        return true;
+      }
+    }
+  }
+
+  safeLog(
+    `🗳️ [vote-winner] ❌ Jogador ${currentNormalized} não encontrado na partida`
+  );
+  return false;
+}
+
+// ✅ NOVO: Verificar se spectator event é para este jogador
+async function isSpectatorEventForThisPlayer(json, currentSummoner) {
+  if (!currentSummoner) {
+    safeLog("⚠️ [spectator] Summoner atual não disponível");
+    return false;
+  }
+
+  const currentNormalized = currentSummoner.toLowerCase().trim();
+
+  // ✅ Verificar se é o espectador mencionado no evento
+  if (json.spectator) {
+    const spectatorName = json.spectator.toLowerCase().trim();
+    if (spectatorName === currentNormalized) {
+      safeLog(
+        `👁️ [spectator] ✅ Este é o espectador mencionado: ${json.spectator}`
+      );
+      return true;
+    }
+  }
+
+  // ✅ Verificar se é jogador da partida (para notificações)
+  if (json.team1 && Array.isArray(json.team1)) {
+    for (const player of json.team1) {
+      const playerName = player.summonerName || player.gameName || player.name;
+      if (playerName && playerName.toLowerCase().trim() === currentNormalized) {
+        safeLog(`👁️ [spectator] ✅ Jogador encontrado em team1: ${playerName}`);
+        return true;
+      }
+    }
+  }
+
+  if (json.team2 && Array.isArray(json.team2)) {
+    for (const player of json.team2) {
+      const playerName = player.summonerName || player.gameName || player.name;
+      if (playerName && playerName.toLowerCase().trim() === currentNormalized) {
+        safeLog(`👁️ [spectator] ✅ Jogador encontrado em team2: ${playerName}`);
+        return true;
+      }
+    }
+  }
+
+  safeLog(
+    `👁️ [spectator] ❌ Jogador ${currentNormalized} não encontrado no evento`
+  );
+  return false;
 }
 
 // ✅ NOVO: Handler para game_in_progress
@@ -1901,7 +2170,8 @@ async function handleGameInProgressEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
-    const isForThisPlayer = await isMatchFoundForThisPlayer(
+    // ✅ CORREÇÃO: Usar função específica para game_in_progress
+    const isForThisPlayer = await isGameInProgressForThisPlayer(
       json,
       currentSummoner
     );
@@ -2336,10 +2606,8 @@ async function handleDraftUpdateEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
-    const isForThisPlayer = await isMatchFoundForThisPlayer(
-      json,
-      currentSummoner
-    );
+    // ✅ CORREÇÃO: Usar função específica para draft
+    const isForThisPlayer = await isDraftForThisPlayer(json, currentSummoner);
 
     if (!isForThisPlayer) {
       safeLog(
@@ -2380,10 +2648,8 @@ async function handleDraftUpdatedEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
-    const isForThisPlayer = await isMatchFoundForThisPlayer(
-      json,
-      currentSummoner
-    );
+    // ✅ CORREÇÃO: Usar função específica para draft
+    const isForThisPlayer = await isDraftForThisPlayer(json, currentSummoner);
 
     if (!isForThisPlayer) {
       safeLog(
@@ -2423,10 +2689,8 @@ async function handlePickChampionEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
-    const isForThisPlayer = await isMatchFoundForThisPlayer(
-      json,
-      currentSummoner
-    );
+    // ✅ CORREÇÃO: Usar função específica para draft
+    const isForThisPlayer = await isDraftForThisPlayer(json, currentSummoner);
 
     if (!isForThisPlayer) {
       safeLog(
@@ -2464,10 +2728,8 @@ async function handleBanChampionEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
-    const isForThisPlayer = await isMatchFoundForThisPlayer(
-      json,
-      currentSummoner
-    );
+    // ✅ CORREÇÃO: Usar função específica para draft
+    const isForThisPlayer = await isDraftForThisPlayer(json, currentSummoner);
 
     if (!isForThisPlayer) {
       safeLog(
@@ -2506,10 +2768,8 @@ async function handleDraftConfirmedEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
-    const isForThisPlayer = await isMatchFoundForThisPlayer(
-      json,
-      currentSummoner
-    );
+    // ✅ CORREÇÃO: Usar função específica para draft
+    const isForThisPlayer = await isDraftForThisPlayer(json, currentSummoner);
 
     if (!isForThisPlayer) {
       safeLog(
@@ -2587,7 +2847,8 @@ async function handleWinnerModalEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
-    const isForThisPlayer = await isMatchFoundForThisPlayer(
+    // ✅ CORREÇÃO: Usar função específica para winner_modal
+    const isForThisPlayer = await isWinnerModalForThisPlayer(
       json,
       currentSummoner
     );
@@ -2625,7 +2886,8 @@ async function handleVoteWinnerEvent(json) {
     const currentSummoner = await getCurrentSummonerFromLCU();
     safeLog("🗳️ [vote-winner] Current summoner:", currentSummoner || "UNKNOWN");
 
-    const isForThisPlayer = await isMatchFoundForThisPlayer(
+    // ✅ CORREÇÃO: Usar função específica para vote_winner
+    const isForThisPlayer = await isVoteWinnerForThisPlayer(
       json,
       currentSummoner
     );
@@ -2669,7 +2931,8 @@ async function handleSpectatorMutedEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
-    const isForThisPlayer = await isMatchFoundForThisPlayer(
+    // ✅ CORREÇÃO: Usar função específica para spectator events
+    const isForThisPlayer = await isSpectatorEventForThisPlayer(
       json,
       currentSummoner
     );
@@ -2712,7 +2975,8 @@ async function handleSpectatorUnmutedEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
-    const isForThisPlayer = await isMatchFoundForThisPlayer(
+    // ✅ CORREÇÃO: Usar função específica para spectator events
+    const isForThisPlayer = await isSpectatorEventForThisPlayer(
       json,
       currentSummoner
     );

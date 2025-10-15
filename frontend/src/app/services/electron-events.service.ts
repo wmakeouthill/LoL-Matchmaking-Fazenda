@@ -96,6 +96,16 @@ export class ElectronEventsService {
           this.matchFoundSubject.next(data);
         });
 
+        // ✅ DRAFT_STARTING: Draft iniciando (evento do backend)
+        window.electronAPI.onDraftStarting((event: any, data: any) => {
+          console.log('🎯 [ElectronEvents] draft-starting recebido:', data);
+          console.log('🎯 [ElectronEvents] MatchId:', data.matchId);
+          console.log('🎯 [ElectronEvents] Teams:', data.teams);
+          console.log('🎯 [ElectronEvents] Team1:', data.team1);
+          console.log('🎯 [ElectronEvents] Team2:', data.team2);
+          this.draftStartedSubject.next(data);
+        });
+
         // ✅ DRAFT_STARTED: Draft iniciado - ir para tela de draft
         window.electronAPI.onDraftStarted((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] draft-started recebido:', data);
