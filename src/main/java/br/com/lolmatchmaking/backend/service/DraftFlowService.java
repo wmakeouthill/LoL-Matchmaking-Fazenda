@@ -2,6 +2,7 @@ package br.com.lolmatchmaking.backend.service;
 
 import br.com.lolmatchmaking.backend.domain.entity.CustomMatch;
 import br.com.lolmatchmaking.backend.domain.repository.CustomMatchRepository;
+import br.com.lolmatchmaking.backend.domain.repository.QueuePlayerRepository;
 import br.com.lolmatchmaking.backend.websocket.SessionRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,7 @@ import java.util.concurrent.CompletableFuture;
 @Slf4j
 public class DraftFlowService {
     private final CustomMatchRepository customMatchRepository;
+    private final QueuePlayerRepository queuePlayerRepository;
     private final SessionRegistry sessionRegistry;
     private final DataDragonService dataDragonService;
     private final ObjectMapper mapper = new ObjectMapper();
@@ -48,6 +50,9 @@ public class DraftFlowService {
 
     // ✅ NOVO: PlayerLockService para limpeza de locks
     private final br.com.lolmatchmaking.backend.service.lock.PlayerLockService playerLockService;
+
+    // ✅ NOVO: MatchOperationsLockService para evitar múltiplos drafts simultâneos
+    private final br.com.lolmatchmaking.backend.service.lock.MatchOperationsLockService matchOpsLockService;
 
     @Value("${app.draft.action-timeout-ms:30000}")
     private long configuredActionTimeoutMs;
@@ -183,25 +188,58 @@ public class DraftFlowService {
 
                     for (br.com.lolmatchmaking.backend.domain.entity.CustomMatch match : activeDrafts) {
                         Long matchId = match.getId();
+                        log.info("🔍 [Timer] Processando draft ativo: matchId={}", matchId);
 
                         // ✅ Buscar estado do Redis (com fallback MySQL)
                         DraftState st = getDraftStateFromRedis(matchId);
 
                         if (st == null) {
-                            log.debug("⚠️ [Timer] DraftState não encontrado: matchId={}", matchId);
+                            log.info("⚠️ [Timer] DraftState não encontrado: matchId={}", matchId);
                             continue;
                         }
+
+                        log.info("🔍 [Timer] DraftState encontrado: matchId={}, currentIndex={}/{}, actions={}",
+                                matchId, st.getCurrentIndex(), st.getActions().size(), st.getActions().size());
 
                         // Só se não estiver completo
                         if (st.getCurrentIndex() >= st.getActions().size()) {
+                            log.info("⏭️ [Timer] Draft já completo: matchId={}, currentIndex={}, actions={}",
+                                    matchId, st.getCurrentIndex(), st.getActions().size());
                             continue;
                         }
 
+                        log.info("⏰ [Timer] Decrementando timer para matchId={}", matchId);
                         // ⚡ REDIS: Decrementar timer atomicamente
                         int currentTimer = redisDraftFlow.decrementTimer(matchId);
+                        log.info("⏰ [Timer] Timer decrementado: matchId={}, newTimer={}", matchId, currentTimer);
 
-                        // Enviar atualização
-                        sendTimerOnly(matchId, st, currentTimer);
+                        // ✅ CORREÇÃO: Se timer chegou a 0, progredir draft automaticamente
+                        if (currentTimer <= 0) {
+                            log.warn("⏰ [Timer] Timer ZEROU para matchId={}, progredindo draft automaticamente",
+                                    matchId);
+
+                            // ✅ CORREÇÃO: Progredir draft automaticamente
+                            DraftAction currentAction = st.getActions().get(st.getCurrentIndex());
+                            String currentPlayer = getPlayerForTeamAndIndex(st, currentAction.team(),
+                                    st.getCurrentIndex());
+
+                            // ✅ CORREÇÃO: Usar SKIPPED para timeout automático
+                            boolean success = processAction(matchId, st.getCurrentIndex(), currentPlayer, SKIPPED);
+                            if (success) {
+                                log.info("✅ [Timer] Draft progredido automaticamente para matchId={}", matchId);
+
+                                // ✅ CORREÇÃO: Reinicializar timer para próxima ação
+                                redisDraftFlow.initTimer(matchId);
+                                log.info("⏰ [Timer] Timer reinicializado para próxima ação: matchId={}", matchId);
+                            } else {
+                                log.error("❌ [Timer] Falha ao progredir draft automaticamente para matchId={}",
+                                        matchId);
+                            }
+                        } else {
+                            // Enviar atualização apenas se timer não zerou
+                            log.info("📡 [Timer] Enviando timer update: matchId={}, timer={}", matchId, currentTimer);
+                            sendTimerOnly(matchId, st, currentTimer);
+                        }
                     }
 
                 } catch (InterruptedException e) {
@@ -224,17 +262,18 @@ public class DraftFlowService {
      */
     private void sendTimerOnly(Long matchId, DraftState st, int seconds) {
         try {
-            // Criar payload SIMPLES
-            Map<String, Object> data = Map.of(
-                    "matchId", matchId,
-                    "timeRemaining", seconds);
+            // Criar payload padronizado
+            List<String> allowedSummoners = new ArrayList<>();
+            allowedSummoners.addAll(st.getTeam1Players());
+            allowedSummoners.addAll(st.getTeam2Players());
 
-            String payload = mapper.writeValueAsString(Map.of(
-                    "type", "draft_update",
-                    "data", data));
+            Map<String, Object> data = new HashMap<>();
+            data.put("matchId", matchId);
+            data.put("timeRemaining", seconds);
+            data.put("allowedSummoners", allowedSummoners);
 
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
-            broadcastToAllSessions(payload);
+            // ✅ Enviar GLOBALMENTE com envelope tipado (type + timestamp) consistente
+            webSocketService.broadcastToAll("draft_update", data);
 
         } catch (Exception e) {
             log.error("❌ Erro sendTimerOnly", e);
@@ -598,45 +637,63 @@ public class DraftFlowService {
 
     /**
      * ✅ REFATORADO: Inicia draft usando 100% Redis
+     * ✅ CORREÇÃO: Adicionado proteção contra race condition
+     * 
+     * ⚠️ IMPORTANTE: O lock de draft JÁ deve ter sido adquirido pelo chamador
+     * (MatchFoundService)!
+     * Este método NÃO adquire lock para evitar deadlock.
      */
     public DraftState startDraft(long matchId, List<String> team1Players, List<String> team2Players) {
-        List<DraftAction> actions = buildDefaultActionSequence();
-
-        // ✅ CRÍTICO: Atribuir byPlayer para cada action ANTES de criar o DraftState!
-        assignPlayersByDraftOrder(actions, team1Players, team2Players);
-        log.info("✅ [startDraft] byPlayer atribuído para todas as {} actions", actions.size());
-
-        DraftState st = new DraftState(matchId, actions, team1Players, team2Players);
-
-        // ✅ CORREÇÃO BOTS: Se primeiro jogador é bot, iniciar com tempo no passado
-        if (!actions.isEmpty()) {
-            DraftAction firstAction = actions.get(0);
-            String firstPlayer = getPlayerForTeamAndIndex(st, firstAction.team(), 0);
-            if (isBot(firstPlayer)) {
-                log.info("🤖 [DraftFlow] Primeira ação é de bot {}, ajustando timer para auto-pick", firstPlayer);
-                st.lastActionStartMs = System.currentTimeMillis() - 3000; // 3s no passado
+        try {
+            // ✅ CORREÇÃO: Verificar se draft já foi iniciado para evitar race condition
+            DraftState existingState = getDraftStateFromRedis(matchId);
+            if (existingState != null) {
+                log.info("✅ [startDraft] Draft {} já foi iniciado - retornando estado existente", matchId);
+                return existingState;
             }
+
+            List<DraftAction> actions = buildDefaultActionSequence();
+
+            // ✅ CRÍTICO: Atribuir byPlayer para cada action ANTES de criar o DraftState!
+            assignPlayersByDraftOrder(actions, team1Players, team2Players);
+            log.info("✅ [startDraft] byPlayer atribuído para todas as {} actions", actions.size());
+
+            DraftState st = new DraftState(matchId, actions, team1Players, team2Players);
+
+            // ✅ CORREÇÃO BOTS: Se primeiro jogador é bot, iniciar com tempo no passado
+            if (!actions.isEmpty()) {
+                DraftAction firstAction = actions.get(0);
+                String firstPlayer = getPlayerForTeamAndIndex(st, firstAction.team(), 0);
+                if (isBot(firstPlayer)) {
+                    log.info("🤖 [DraftFlow] Primeira ação é de bot {}, ajustando timer para auto-pick", firstPlayer);
+                    st.lastActionStartMs = System.currentTimeMillis() - 3000; // 3s no passado
+                }
+            }
+
+            // ✅ Salvar no Redis (fonte ÚNICA)
+            saveDraftStateToRedis(matchId, st);
+
+            log.info("🎬 [DraftFlow] startDraft - matchId={}, actions={}, currentIndex={}, team1={}, team2={}",
+                    matchId, actions.size(), st.getCurrentIndex(), team1Players, team2Players);
+
+            // ⚡ REDIS: Inicializar timer (30 segundos)
+            redisDraftFlow.initTimer(matchId);
+
+            // ✅ Persistir o estado inicial no MySQL
+            persist(matchId, st);
+
+            log.info("📡 [DraftFlow] startDraft - Estado salvo no Redis e MySQL: matchId={}", matchId);
+
+            // ✅ CRÍTICO: Fazer broadcast inicial para frontend
+            broadcastUpdate(st, false);
+            log.info("✅ [DraftFlow] startDraft - Broadcast inicial enviado para frontend");
+
+            return st;
+
+        } catch (Exception e) {
+            log.error("❌ [DraftFlow] Erro ao iniciar draft", e);
+            throw new RuntimeException("Erro ao iniciar draft: " + e.getMessage(), e);
         }
-
-        // ✅ Salvar no Redis (fonte ÚNICA)
-        saveDraftStateToRedis(matchId, st);
-
-        log.info("🎬 [DraftFlow] startDraft - matchId={}, actions={}, currentIndex={}, team1={}, team2={}",
-                matchId, actions.size(), st.getCurrentIndex(), team1Players, team2Players);
-
-        // ⚡ REDIS: Inicializar timer (30 segundos)
-        redisDraftFlow.initTimer(matchId);
-
-        // ✅ Persistir o estado inicial no MySQL
-        persist(matchId, st);
-
-        log.info("📡 [DraftFlow] startDraft - Estado salvo no Redis e MySQL: matchId={}", matchId);
-
-        // ✅ CRÍTICO: Fazer broadcast inicial para frontend
-        broadcastUpdate(st, false);
-        log.info("✅ [DraftFlow] startDraft - Broadcast inicial enviado para frontend");
-
-        return st;
     }
 
     /**
@@ -1220,18 +1277,10 @@ public class DraftFlowService {
                                 (team2Data instanceof java.util.List && ((java.util.List<?>) team2Data).isEmpty());
 
                         if (team1Empty) {
-                            log.warn("⚠️ [DraftFlow] team1 vazio, adicionando nomes (fallback): {}",
+                            log.warn("⚠️ [DraftFlow] team1 vazio, criando dados completos (fallback): {}",
                                     st.getTeam1Players());
-                            // ✅ Criar objetos básicos com apenas nomes como fallback
-                            List<Map<String, Object>> team1Fallback = new ArrayList<>();
-                            int idx = 0;
-                            for (String playerName : st.getTeam1Players()) {
-                                Map<String, Object> playerObj = new HashMap<>();
-                                playerObj.put("summonerName", playerName);
-                                playerObj.put("teamIndex", idx++);
-                                team1Fallback.add(playerObj);
-                            }
-                            snapshot.put(KEY_TEAM1, team1Fallback);
+                            // ✅ Criar dados completos dos jogadores como fallback
+                            snapshot.put(KEY_TEAM1, createCompleteTeamDataFromMemory(st.getTeam1Players(), 0));
                         } else {
                             log.debug("✅ [DraftFlow] team1 já existe com {} jogadores, PRESERVANDO",
                                     ((java.util.List<?>) team1Data).size());
@@ -1239,18 +1288,10 @@ public class DraftFlowService {
                         }
 
                         if (team2Empty) {
-                            log.warn("⚠️ [DraftFlow] team2 vazio, adicionando nomes (fallback): {}",
+                            log.warn("⚠️ [DraftFlow] team2 vazio, criando dados completos (fallback): {}",
                                     st.getTeam2Players());
-                            // ✅ Criar objetos básicos com apenas nomes como fallback
-                            List<Map<String, Object>> team2Fallback = new ArrayList<>();
-                            int idx = 5; // Team 2 começa no índice 5
-                            for (String playerName : st.getTeam2Players()) {
-                                Map<String, Object> playerObj = new HashMap<>();
-                                playerObj.put("summonerName", playerName);
-                                playerObj.put("teamIndex", idx++);
-                                team2Fallback.add(playerObj);
-                            }
-                            snapshot.put(KEY_TEAM2, team2Fallback);
+                            // ✅ Criar dados completos dos jogadores como fallback
+                            snapshot.put(KEY_TEAM2, createCompleteTeamDataFromMemory(st.getTeam2Players(), 5));
                         } else {
                             log.debug("✅ [DraftFlow] team2 já existe com {} jogadores, PRESERVANDO",
                                     ((java.util.List<?>) team2Data).size());
@@ -1264,28 +1305,11 @@ public class DraftFlowService {
                         snapshot.put(KEY_CURRENT_INDEX, st.getCurrentIndex());
                         snapshot.put(KEY_CONFIRMATIONS, st.getConfirmations());
 
-                        log.warn("⚠️ [DraftFlow] Criando pick_ban_data pela primeira vez (SEM dados de times!)");
-                        // ✅ Criar estrutura mínima
-                        List<Map<String, Object>> team1Fallback = new ArrayList<>();
-                        int idx = 0;
-                        for (String playerName : st.getTeam1Players()) {
-                            Map<String, Object> playerObj = new HashMap<>();
-                            playerObj.put("summonerName", playerName);
-                            playerObj.put("teamIndex", idx++);
-                            team1Fallback.add(playerObj);
-                        }
-
-                        List<Map<String, Object>> team2Fallback = new ArrayList<>();
-                        idx = 5;
-                        for (String playerName : st.getTeam2Players()) {
-                            Map<String, Object> playerObj = new HashMap<>();
-                            playerObj.put("summonerName", playerName);
-                            playerObj.put("teamIndex", idx++);
-                            team2Fallback.add(playerObj);
-                        }
-
-                        snapshot.put(KEY_TEAM1, team1Fallback);
-                        snapshot.put(KEY_TEAM2, team2Fallback);
+                        log.warn(
+                                "⚠️ [DraftFlow] Criando pick_ban_data pela primeira vez - criando dados completos dos times!");
+                        // ✅ Criar estrutura completa dos times
+                        snapshot.put(KEY_TEAM1, createCompleteTeamDataFromMemory(st.getTeam1Players(), 0));
+                        snapshot.put(KEY_TEAM2, createCompleteTeamDataFromMemory(st.getTeam2Players(), 5));
                     }
 
                     // ✅ ESTRUTURA LIMPA + COMPATIBILIDADE
@@ -1310,9 +1334,16 @@ public class DraftFlowService {
                     finalSnapshot.put("currentPlayer", cleanData.get("currentPlayer"));
                     finalSnapshot.put("currentTeam", cleanData.get("currentTeam"));
                     finalSnapshot.put("currentActionType", cleanData.get("currentActionType"));
+                    finalSnapshot.put(KEY_MATCH_ID, matchId);
+                    finalSnapshot.put(KEY_TYPE, "draft_snapshot");
+                    finalSnapshot.put("timestamp", System.currentTimeMillis());
 
                     // ✅ CRÍTICO: Salvar lastActionStartMs para timer de bots funcionar!
                     finalSnapshot.put("lastActionStartMs", st.getLastActionStartMs());
+
+                    // ✅ 4. Actions e confirmations (fonte da verdade para restauração)
+                    finalSnapshot.put(KEY_ACTIONS, st.getActions());
+                    finalSnapshot.put(KEY_CONFIRMATIONS, st.getConfirmations());
 
                     // ✅ NOVO: Contar actions completed vs pending para debug
                     long completedActions = st.getActions().stream()
@@ -1397,27 +1428,49 @@ public class DraftFlowService {
             long remainingMs = calcRemainingMs(st);
             long elapsed = System.currentTimeMillis() - st.getLastActionStartMs();
 
-            // ✅ Calcular jogador atual
+            // ✅ Calcular jogador/ação atual
             String currentPlayer = null;
+            Integer currentTeamNum = null;
+            String currentActionType = null;
             int currentIdx = st.getCurrentIndex();
             if (currentIdx < st.getActions().size()) {
                 DraftAction currentAction = st.getActions().get(currentIdx);
+                currentTeamNum = currentAction.team();
+                currentActionType = currentAction.type();
                 currentPlayer = getPlayerForTeamAndIndex(st, currentAction.team(), currentIdx);
+                log.info("🎯 [DraftFlow] Ação atual: index={} type={} team={} player={}",
+                        currentIdx, currentActionType, currentTeamNum, currentPlayer);
             }
 
             // ✅ CRÍTICO: Carregar dados completos dos times do banco, não apenas nomes
             Map<String, Object> updateData = new HashMap<>();
-            updateData.put(KEY_TYPE, "draft_updated");
+
+            // ✅ CORREÇÃO: Enviar draft_starting no início, draft_updated nas atualizações
+            String eventType = (st.getCurrentIndex() == 0 && !confirmationOnly) ? "draft_starting" : "draft_updated";
+            updateData.put(KEY_TYPE, eventType);
             updateData.put(KEY_MATCH_ID, st.getMatchId());
             updateData.put(KEY_CURRENT_INDEX, st.getCurrentIndex());
             updateData.put("currentAction", st.getCurrentIndex()); // ✅ CRÍTICO: Frontend espera currentAction
+            if (currentTeamNum != null) {
+                updateData.put("currentTeam", currentTeamNum == 1 ? "blue" : "red");
+            }
+            if (currentActionType != null) {
+                updateData.put("currentActionType", currentActionType);
+            }
             updateData.put(KEY_ACTIONS, st.getActions());
             updateData.put(KEY_CONFIRMATIONS, st.getConfirmations());
             updateData.put("currentPlayer", currentPlayer); // ✅ Nome do jogador da vez
 
+            // ✅ Padronização: incluir always allowedSummoners (para filtro no Electron)
+            List<String> allowedSummoners = new ArrayList<>();
+            allowedSummoners.addAll(st.getTeam1Players());
+            allowedSummoners.addAll(st.getTeam2Players());
+            updateData.put("allowedSummoners", allowedSummoners);
+
             log.info(
-                    "📡 [DraftFlow] Broadcasting update - matchId={}, currentIndex={}, currentPlayer={}, elapsed={}ms, remainingMs={}, timeout={}ms",
-                    st.getMatchId(), currentIdx, currentPlayer, elapsed, remainingMs, getActionTimeoutMs());
+                    "📡 [DraftFlow] Broadcasting {} - matchId={}, currentIndex={}, currentPlayer={}, actions={}, confirmations={}, remainingMs={}, timeout={}ms",
+                    eventType, st.getMatchId(), currentIdx, currentPlayer, st.getActions().size(),
+                    st.getConfirmations().size(), remainingMs, getActionTimeoutMs());
 
             // ✅ Buscar dados completos dos times do banco
             customMatchRepository.findById(st.getMatchId()).ifPresent(cm -> {
@@ -1430,8 +1483,20 @@ public class DraftFlowService {
                         Object teamsData = pickBanData.get("teams");
                         if (teamsData != null) {
                             updateData.put("teams", teamsData);
-                            log.info("✅✅✅ [DraftFlow] Broadcast COM estrutura teams.blue/red!");
-                            log.info("✅✅✅ [DraftFlow] teams Data: {}", mapper.writeValueAsString(teamsData));
+                            try {
+                                Map<?, ?> teamsMap = (Map<?, ?>) teamsData;
+                                Map<?, ?> blue = (Map<?, ?>) teamsMap.get("blue");
+                                Map<?, ?> red = (Map<?, ?>) teamsMap.get("red");
+                                int bluePlayers = blue != null && blue.get("players") instanceof java.util.List
+                                        ? ((java.util.List<?>) blue.get("players")).size()
+                                        : 0;
+                                int redPlayers = red != null && red.get("players") instanceof java.util.List
+                                        ? ((java.util.List<?>) red.get("players")).size()
+                                        : 0;
+                                log.info("✅ [DraftFlow] teams presentes: bluePlayers={}, redPlayers={}", bluePlayers,
+                                        redPlayers);
+                            } catch (Exception ignore) {
+                            }
                         } else {
                             log.warn("⚠️⚠️⚠️ [DraftFlow] Broadcast SEM estrutura teams! pickBanData keys: {}",
                                     pickBanData.keySet());
@@ -1573,19 +1638,27 @@ public class DraftFlowService {
     }
 
     /**
-     * ✅ NOVO: Envia mensagem para TODAS as sessões WebSocket (broadcast global)
+     * ✅ CORRIGIDO: Envia mensagem para TODAS as sessões WebSocket (broadcast
+     * global)
+     * 
+     * PROBLEMA RESOLVIDO:
+     * - ANTES: Usava sessionRegistry.all() que tinha problemas de injeção circular
+     * - DEPOIS: Usa webSocketService.broadcastToAll() diretamente (mesmo método que
+     * funciona)
      */
     private void broadcastToAllSessions(String payload) {
         try {
-            sessionRegistry.all().forEach(ws -> {
-                try {
-                    ws.sendMessage(new TextMessage(payload));
-                } catch (Exception e) {
-                    log.warn("⚠️ Erro ao enviar mensagem para sessão {}", ws.getId());
-                }
-            });
+            log.info("🔍 [broadcastToAllSessions] Iniciando broadcast para todas as sessões");
+            log.info("🔍 [broadcastToAllSessions] Payload: {}",
+                    payload.length() > 200 ? payload.substring(0, 200) + "..." : payload);
+
+            // ✅ CORREÇÃO: Usar webSocketService.broadcastToAll() diretamente
+            // Este é o mesmo método que funciona para draft_starting
+            webSocketService.broadcastToAll(payload);
+
+            log.info("✅ [broadcastToAllSessions] Broadcast concluído via webSocketService.broadcastToAll()");
         } catch (Exception e) {
-            log.error("❌ Erro ao fazer broadcast global", e);
+            log.error("❌ [broadcastToAllSessions] Erro ao fazer broadcast global: {}", e.getMessage(), e);
         }
     }
 
@@ -1690,29 +1763,18 @@ public class DraftFlowService {
                     }
                 }
 
-                // ✅ 2. FALLBACK: Se não existe no banco, criar da memória (DraftState)
+                // ✅ 2. FALLBACK: Se não existe no banco, criar da memória (DraftState) com
+                // dados completos
                 if (team1Players == null || team1Players.isEmpty()) {
-                    log.info("📝 [buildHierarchicalDraftData] Criando team1 da MEMÓRIA (DraftState)");
-                    team1Players = new ArrayList<>();
-                    int idx = 0;
-                    for (String playerName : st.getTeam1Players()) {
-                        Map<String, Object> playerObj = new HashMap<>();
-                        playerObj.put("summonerName", playerName);
-                        playerObj.put("teamIndex", idx++);
-                        team1Players.add(playerObj);
-                    }
+                    log.warn(
+                            "⚠️ [buildHierarchicalDraftData] Team1 vazio no banco! Criando dados completos da MEMÓRIA");
+                    team1Players = createCompleteTeamDataFromMemory(st.getTeam1Players(), 0);
                 }
 
                 if (team2Players == null || team2Players.isEmpty()) {
-                    log.info("📝 [buildHierarchicalDraftData] Criando team2 da MEMÓRIA (DraftState)");
-                    team2Players = new ArrayList<>();
-                    int idx = 5; // Team 2 começa no índice 5
-                    for (String playerName : st.getTeam2Players()) {
-                        Map<String, Object> playerObj = new HashMap<>();
-                        playerObj.put("summonerName", playerName);
-                        playerObj.put("teamIndex", idx++);
-                        team2Players.add(playerObj);
-                    }
+                    log.warn(
+                            "⚠️ [buildHierarchicalDraftData] Team2 vazio no banco! Criando dados completos da MEMÓRIA");
+                    team2Players = createCompleteTeamDataFromMemory(st.getTeam2Players(), 5);
                 }
 
                 // ✅ 3. Construir estrutura hierárquica teams.blue/red (SEM duplicação)
@@ -1744,6 +1806,102 @@ public class DraftFlowService {
 
         log.info("✅ [buildHierarchicalDraftData] JSON LIMPO gerado: {} keys (sem duplicação)", result.keySet().size());
         return result;
+    }
+
+    /**
+     * ✅ NOVO: Cria dados completos dos jogadores da memória (DraftState)
+     * Busca informações completas do banco de dados para cada jogador
+     */
+    private List<Map<String, Object>> createCompleteTeamDataFromMemory(Collection<String> playerNames,
+            int startTeamIndex) {
+        List<Map<String, Object>> teamPlayers = new ArrayList<>();
+        String[] lanes = { "top", "jungle", "mid", "bot", "support" };
+
+        int i = 0;
+        for (String playerName : playerNames) {
+            int teamIndex = startTeamIndex + i;
+            String assignedLane = lanes[i];
+
+            // ✅ Buscar dados completos do jogador no banco
+            Map<String, Object> playerObj = new HashMap<>();
+            playerObj.put("summonerName", playerName);
+            playerObj.put("assignedLane", assignedLane);
+            playerObj.put("teamIndex", teamIndex);
+
+            // ✅ Tentar buscar dados completos do QueuePlayer
+            try {
+                Optional<br.com.lolmatchmaking.backend.domain.entity.QueuePlayer> playerOpt = queuePlayerRepository
+                        .findBySummonerName(playerName);
+
+                if (playerOpt.isPresent()) {
+                    var player = playerOpt.get();
+                    playerObj.put("mmr", player.getCustomLp() != null ? player.getCustomLp() : 1500);
+                    playerObj.put("primaryLane", player.getPrimaryLane() != null ? player.getPrimaryLane() : "fill");
+                    playerObj.put("secondaryLane",
+                            player.getSecondaryLane() != null ? player.getSecondaryLane() : "fill");
+                    playerObj.put("isAutofill", false); // QueuePlayer não tem campo isAutofill
+                    playerObj.put("laneBadge",
+                            calculateLaneBadge(assignedLane, player.getPrimaryLane(), player.getSecondaryLane()));
+
+                    if (player.getPlayerId() != null) {
+                        playerObj.put("playerId", player.getPlayerId());
+                    }
+                } else {
+                    // ✅ Fallback para dados básicos se não encontrar no banco
+                    log.warn(
+                            "⚠️ [createCompleteTeamDataFromMemory] Jogador {} não encontrado no banco, usando dados básicos",
+                            playerName);
+                    playerObj.put("mmr", 1500); // MMR padrão
+                    playerObj.put("primaryLane", assignedLane);
+                    playerObj.put("secondaryLane", "fill");
+                    playerObj.put("isAutofill", false);
+                    playerObj.put("laneBadge", "primary");
+                }
+            } catch (Exception e) {
+                log.error("❌ [createCompleteTeamDataFromMemory] Erro ao buscar dados de {}: {}", playerName,
+                        e.getMessage());
+                // ✅ Fallback para dados básicos em caso de erro
+                playerObj.put("mmr", 1500);
+                playerObj.put("primaryLane", assignedLane);
+                playerObj.put("secondaryLane", "fill");
+                playerObj.put("isAutofill", false);
+                playerObj.put("laneBadge", "primary");
+            }
+
+            // ✅ NOVO: Adicionar gameName e tagLine (extrair do summonerName)
+            String[] nameParts = playerName.split("#");
+            if (nameParts.length >= 2) {
+                playerObj.put("gameName", nameParts[0]);
+                playerObj.put("tagLine", nameParts[1]);
+            } else {
+                playerObj.put("gameName", playerName);
+                playerObj.put("tagLine", "");
+            }
+
+            // ✅ NOVO: Inicializar actions vazias para o jogador
+            playerObj.put("actions", new ArrayList<Map<String, Object>>());
+
+            teamPlayers.add(playerObj);
+            i++;
+        }
+
+        log.info("✅ [createCompleteTeamDataFromMemory] Dados completos criados para {} jogadores", teamPlayers.size());
+        return teamPlayers;
+    }
+
+    /**
+     * ✅ NOVO: Retorna o label da fase baseado no índice da ação
+     */
+    private String getPhaseLabel(int actionIndex) {
+        if (actionIndex < 6) {
+            return "ban1";
+        } else if (actionIndex < 12) {
+            return "pick1";
+        } else if (actionIndex < 16) {
+            return "ban2";
+        } else {
+            return "pick2";
+        }
     }
 
     /**
@@ -1948,20 +2106,6 @@ public class DraftFlowService {
         return "completed";
     }
 
-    /**
-     * Retorna o label da fase para uma ação específica
-     */
-    private String getPhaseLabel(int actionIndex) {
-        if (actionIndex < 6)
-            return "ban1";
-        if (actionIndex < 12)
-            return "pick1";
-        if (actionIndex < 16)
-            return "ban2";
-        if (actionIndex < 20)
-            return "pick2";
-        return "completed";
-    }
 
     // ✅ FIM DA NOVA ESTRUTURA HIERÁRQUICA
 
@@ -2365,23 +2509,26 @@ public class DraftFlowService {
 
             log.info("✅ [Validação MySQL] Match {} confirmada como 'draft' - prosseguindo retry", matchId);
 
-            // Buscar dados completos do MySQL para montar draft_starting
-            Map<String, Object> draftData = getDraftDataForRestore(matchId);
-
-            draftData.put("matchId", matchId);
-            draftData.put("id", matchId);
-            draftData.put("timeRemaining", 30);
-
-            log.info("🔄 [DraftFlow] RETRY: Enviando draft_starting para {} jogadores",
-                    players.size());
-            for (String player : players) {
-                log.info("  📤 {}", player);
+            // ✅ CORREÇÃO: Usar DraftState do Redis e broadcastUpdate padronizado
+            DraftState st = getDraftStateFromRedis(matchId);
+            if (st == null) {
+                log.error("❌ [DraftFlow] RETRY: Não foi possível reconstruir DraftState do MySQL. Abortando retry.");
+                return;
             }
 
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
-            webSocketService.broadcastToAll("draft_starting", draftData);
+            // Garantir que começa em 0
+            if (st.getCurrentIndex() != 0) {
+                log.warn("⚠️ [DraftFlow] RETRY: currentIndex={} ajustado para 0", st.getCurrentIndex());
+                // não há setter público; se existir método para reset, usar. Caso contrário,
+                // reconstroi
+                List<DraftAction> acts = new ArrayList<>(st.getActions());
+                st = new DraftState(matchId, acts, st.getTeam1Players(), st.getTeam2Players());
+                saveDraftStateToRedis(matchId, st);
+            }
 
-            log.info("✅ [DraftFlow] RETRY: draft_starting enviado para {} jogadores", players.size());
+            log.info("🔄 [DraftFlow] RETRY: Enviando broadcastUpdate inicial padronizado");
+            broadcastUpdate(st, false);
+            log.info("✅ [DraftFlow] RETRY: draft_starting enviado via broadcastUpdate padronizado");
 
         } catch (Exception e) {
             log.error("❌ [DraftFlow] Erro ao retry draft_starting", e);
@@ -2392,7 +2539,19 @@ public class DraftFlowService {
      * Verifica se um jogador é um bot
      */
     private boolean isBot(String playerName) {
-        return playerName != null && playerName.startsWith("Bot");
+        if (playerName == null || playerName.isEmpty()) {
+            return false;
+        }
+
+        String normalizedName = playerName.toLowerCase().trim();
+
+        // ✅ Padrões de nomes de bots conhecidos
+        return normalizedName.startsWith("bot") ||
+                normalizedName.startsWith("ai_") ||
+                normalizedName.endsWith("_bot") ||
+                normalizedName.contains("bot_") ||
+                normalizedName.equals("bot") ||
+                normalizedName.matches(".*bot\\d+.*"); // bot1, bot2, etc.
     }
 
     /**
@@ -2628,6 +2787,20 @@ public class DraftFlowService {
         log.info("🎯 Match ID: {}", matchId);
         log.info("👤 Player ID: {}", playerId);
 
+        // ✅ CORREÇÃO: Verificar se match já está in_progress para evitar race condition
+        Optional<CustomMatch> matchOpt = customMatchRepository.findById(matchId);
+        if (matchOpt.isPresent()) {
+            CustomMatch match = matchOpt.get();
+            if ("in_progress".equals(match.getStatus())) {
+                log.info("✅ [DraftFlow] Match {} já está in_progress - confirmação ignorada", matchId);
+                // Retornar dados do jogo em progresso
+                return Map.of(
+                        "success", true,
+                        "message", "Match já está em progresso",
+                        "status", "in_progress");
+            }
+        }
+
         // ✅ 1. Buscar draft do Redis (com fallback MySQL)
         DraftState state = getDraftStateFromRedis(matchId);
         if (state == null) {
@@ -2831,7 +3004,7 @@ public class DraftFlowService {
                             br.com.lolmatchmaking.backend.service.lock.PlayerState.AVAILABLE);
 
                     // ✅ NOVO: Log específico para bots
-                    if (isBotPlayer(playerName)) {
+                    if (isBot(playerName)) {
                         log.info("🤖 [DraftFlow] Estado de BOT {} limpo para AVAILABLE", playerName);
                     } else {
                         log.info("✅ [DraftFlow] Estado de {} limpo para AVAILABLE", playerName);
@@ -3099,22 +3272,4 @@ public class DraftFlowService {
         }
     }
 
-    /**
-     * ✅ NOVO: Verifica se um jogador é bot
-     */
-    private boolean isBotPlayer(String summonerName) {
-        if (summonerName == null || summonerName.isEmpty()) {
-            return false;
-        }
-
-        String normalizedName = summonerName.toLowerCase().trim();
-
-        // ✅ Padrões de nomes de bots conhecidos
-        return normalizedName.startsWith("bot") ||
-                normalizedName.startsWith("ai_") ||
-                normalizedName.endsWith("_bot") ||
-                normalizedName.contains("bot_") ||
-                normalizedName.equals("bot") ||
-                normalizedName.matches(".*bot\\d+.*"); // bot1, bot2, etc.
-    }
 }

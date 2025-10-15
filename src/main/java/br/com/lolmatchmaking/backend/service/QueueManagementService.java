@@ -239,6 +239,22 @@ public class QueueManagementService {
                 }
             }
 
+            // ✅ NOVO: VERIFICAR COOLDOWN - Evitar múltiplas partidas em sequência rápida
+            // Considerando draft de até 10 minutos + margem de segurança de 5 minutos
+            java.time.Instant cooldownSince = java.time.Instant.now().minus(15, java.time.temporal.ChronoUnit.MINUTES);
+            Optional<br.com.lolmatchmaking.backend.domain.entity.CustomMatch> recentMatchOpt = customMatchRepository
+                    .findRecentMatchByPlayer(summonerName, cooldownSince);
+
+            if (recentMatchOpt.isPresent()) {
+                br.com.lolmatchmaking.backend.domain.entity.CustomMatch recentMatch = recentMatchOpt.get();
+                long minutesAgo = java.time.Duration.between(recentMatch.getCreatedAt(), java.time.Instant.now())
+                        .toMinutes();
+                log.warn(
+                        "⏰ [addToQueue] Jogador {} tem partida recente (matchId={}, status={}, criada há {}min) - aplicando cooldown de 15min",
+                        summonerName, recentMatch.getId(), recentMatch.getStatus(), minutesAgo);
+                return false;
+            }
+
             // ✅ SQL ONLY: Buscar fila do banco
             List<QueuePlayer> currentQueue = queuePlayerRepository.findByActiveTrueOrderByJoinTimeAsc();
 

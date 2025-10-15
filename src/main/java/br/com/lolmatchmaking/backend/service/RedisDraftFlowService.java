@@ -49,7 +49,7 @@ public class RedisDraftFlowService {
 
     private static final String KEY_PREFIX = "draft_flow:";
     private static final long TTL_SECONDS = 3600; // 1 hora (para estado e confirmações)
-    private static final long TIMER_TTL_SECONDS = 35; // 35 segundos (timer máximo + margem)
+    private static final long TIMER_TTL_SECONDS = 60; // 60 segundos (timer máximo + margem)
 
     /**
      * ✅ NOVO: Retorna um distributed lock para operações atômicas
@@ -204,8 +204,8 @@ public class RedisDraftFlowService {
         try {
             String key = KEY_PREFIX + matchId + ":timer";
             redisTemplate.opsForValue().set(key, 30);
-            redisTemplate.expire(key, TIMER_TTL_SECONDS, TimeUnit.SECONDS); // ✅ CORREÇÃO: TTL de 35 segundos
-            log.info("⏰ [RedisDraftFlow] Timer inicializado: matchId={}, timer=30s, TTL=35s", matchId);
+            redisTemplate.expire(key, TIMER_TTL_SECONDS, TimeUnit.SECONDS); // ✅ CORREÇÃO: TTL de 60 segundos
+            log.info("⏰ [RedisDraftFlow] Timer inicializado: matchId={}, timer=30s, TTL=60s", matchId);
         } catch (Exception e) {
             log.error("❌ [RedisDraftFlow] Erro ao inicializar timer: matchId={}", matchId, e);
         }
@@ -221,8 +221,8 @@ public class RedisDraftFlowService {
         try {
             String key = KEY_PREFIX + matchId + ":timer";
             redisTemplate.opsForValue().set(key, seconds);
-            redisTemplate.expire(key, TIMER_TTL_SECONDS, TimeUnit.SECONDS); // ✅ CORREÇÃO: TTL de 35 segundos
-            log.debug("⏱️ [RedisDraftFlow] Timer atualizado: matchId={}, timer={}s, TTL=35s", matchId, seconds);
+            redisTemplate.expire(key, TIMER_TTL_SECONDS, TimeUnit.SECONDS); // ✅ CORREÇÃO: TTL de 60 segundos
+            log.debug("⏱️ [RedisDraftFlow] Timer atualizado: matchId={}, timer={}s, TTL=60s", matchId, seconds);
         } catch (Exception e) {
             log.error("❌ [RedisDraftFlow] Erro ao atualizar timer: matchId={}", matchId, e);
         }
