@@ -775,6 +775,8 @@ public class MatchFoundService {
 
                 // 🎮 INTEGRAÇÃO DISCORD: Criar canais e mover jogadores
                 try {
+                    // ✅ ObjectMapper local para leitura do snapshot
+                    ObjectMapper objectMapper = new ObjectMapper();
                     log.info("🎮 [MatchFound] Criando canais Discord para match {}", matchId);
                     log.info("📋 [MatchFound] Blue Team ({}): {}", team1Names.size(), team1Names);
                     log.info("📋 [MatchFound] Red Team ({}): {}", team2Names.size(), team2Names);
@@ -857,30 +859,32 @@ public class MatchFoundService {
                 log.info("  - currentPlayer: {}", draftData.get("currentPlayer"));
                 log.info("  - timeRemaining: 30s (inicial)");
 
-                // ✅ CRÍTICO: Enviar APENAS para os 10 jogadores da partida
-                List<String> allPlayerNames = new ArrayList<>();
-                allPlayerNames.addAll(team1Names);
-                allPlayerNames.addAll(team2Names);
+                // ✅ Enviar draft_starting IMEDIATAMENTE usando o snapshot salvo no MySQL
+                try {
+                    CustomMatch updated = customMatchRepository.findById(matchId).orElse(null);
+                    if (updated != null && updated.getPickBanDataJson() != null
+                            && !updated.getPickBanDataJson().isBlank()) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> snapshot = new ObjectMapper().readValue(updated.getPickBanDataJson(),
+                                Map.class);
 
-                log.info("🎯 [ENVIO INDIVIDUALIZADO] Enviando draft_starting APENAS para {} jogadores específicos:",
-                        allPlayerNames.size());
-                for (String playerName : allPlayerNames) {
-                    log.info("  ✅ {}", playerName);
+                        // Padronizar: garantir matchId e allowedSummoners
+                        snapshot.put("matchId", matchId);
+                        List<String> allowedSummoners = new ArrayList<>();
+                        allowedSummoners.addAll(team1Names);
+                        allowedSummoners.addAll(team2Names);
+                        snapshot.put("allowedSummoners", allowedSummoners);
+
+                        webSocketService.broadcastToAll("draft_starting", snapshot);
+                        log.info("📤 [MatchFound] draft_starting enviado via snapshot MySQL para match {}", matchId);
+                    } else {
+                        log.warn(
+                                "⚠️ [MatchFound] pick_ban_data ainda não disponível para match {} ao enviar draft_starting",
+                                matchId);
+                    }
+                } catch (Exception ex) {
+                    log.error("❌ [MatchFound] Falha ao enviar draft_starting pelo snapshot do MySQL", ex);
                 }
-
-                log.info("📤 [session-draft-starting] ===== ENVIANDO DRAFT_STARTING =====");
-                log.info("📤 [session-draft-starting] MatchId: {}", matchId);
-                log.info("📤 [session-draft-starting] Total de jogadores: {}", allPlayerNames.size());
-                log.info("📤 [session-draft-starting] Jogadores: {}", allPlayerNames);
-
-                // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
-                webSocketService.broadcastToAll("draft_starting", draftData);
-
-                log.info("📤 [session-draft-starting] =================================================");
-
-                log.info(
-                        "✅ [MatchFound] draft_starting enviado para {} jogadores (ESTRUTURA MySQL: teams.blue/red + phases flat)",
-                        allPlayerNames.size());
 
             } catch (Exception e) {
                 log.error("❌ [MatchFound] Erro ao parsear pick_ban_data", e);
@@ -906,9 +910,18 @@ public class MatchFoundService {
                 return;
             }
 
-            // ✅ Criar estrutura EXATAMENTE como no backend antigo (team1/team2, não
-            // team1Players/team2Players)
+            // ✅ Carregar snapshot existente (para não sobrescrever actions/metadados)
             Map<String, Object> pickBanData = new HashMap<>();
+            try {
+                String existing = match.getPickBanDataJson();
+                if (existing != null && !existing.isBlank()) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> loaded = new ObjectMapper().readValue(existing, Map.class);
+                    if (loaded != null)
+                        pickBanData.putAll(loaded);
+                }
+            } catch (Exception ignore) {
+            }
 
             // ✅ Construir objetos completos para team1
             List<Map<String, Object>> team1Objects = new ArrayList<>();
@@ -958,7 +971,51 @@ public class MatchFoundService {
                 team2Objects.add(playerObj);
             }
 
-            // ✅ Salvar com nomes "team1" e "team2" (como no backend antigo)
+            // ✅ CORREÇÃO: Criar estrutura hierárquica completa desde o início
+            // ✅ 1. Adicionar gameName e tagLine para cada jogador
+            for (Map<String, Object> playerObj : team1Objects) {
+                addGameNameAndTagLine(playerObj);
+                addActionsArray(playerObj);
+            }
+
+            for (Map<String, Object> playerObj : team2Objects) {
+                addGameNameAndTagLine(playerObj);
+                addActionsArray(playerObj);
+            }
+
+            // ✅ 2. Criar estrutura hierárquica teams.blue/red
+            Map<String, Object> teams = new HashMap<>();
+
+            // Blue team (team1)
+            Map<String, Object> blueTeam = new HashMap<>();
+            blueTeam.put("players", team1Objects);
+            blueTeam.put("allPicks", new ArrayList<String>());
+            blueTeam.put("allBans", new ArrayList<String>());
+            blueTeam.put("name", "Blue Team");
+            blueTeam.put("teamNumber", 1);
+            blueTeam.put("averageMmr", calculateAverageMmr(team1Objects));
+
+            // Red team (team2)
+            Map<String, Object> redTeam = new HashMap<>();
+            redTeam.put("players", team2Objects);
+            redTeam.put("allPicks", new ArrayList<String>());
+            redTeam.put("allBans", new ArrayList<String>());
+            redTeam.put("name", "Red Team");
+            redTeam.put("teamNumber", 2);
+            redTeam.put("averageMmr", calculateAverageMmr(team2Objects));
+
+            teams.put("blue", blueTeam);
+            teams.put("red", redTeam);
+
+            // ✅ 3. Adicionar metadados do draft
+            pickBanData.put("teams", teams);
+            pickBanData.put("currentPhase", "ban1");
+            pickBanData.put("currentIndex", 0);
+            pickBanData.put("currentPlayer", null);
+            pickBanData.put("currentTeam", null);
+            pickBanData.put("currentActionType", null);
+
+            // ✅ 4. Manter compatibilidade com formato antigo
             pickBanData.put("team1", team1Objects);
             pickBanData.put("team2", team2Objects);
 
@@ -967,8 +1024,16 @@ public class MatchFoundService {
             match.setPickBanDataJson(mapper.writeValueAsString(pickBanData));
             customMatchRepository.save(match);
 
-            log.info("✅ [MatchFound] Dados dos times salvos em pick_ban_data para partida {} (team1: {}, team2: {})",
-                    matchId, team1Objects.size(), team2Objects.size());
+            int actionsCount = 0;
+            try {
+                Object acts = pickBanData.get("actions");
+                if (acts instanceof java.util.List)
+                    actionsCount = ((java.util.List<?>) acts).size();
+            } catch (Exception ignore) {
+            }
+
+            log.info("✅ [MatchFound] pick_ban_data salvo (merge) match {}: team1={}, team2={}, actions={}",
+                    matchId, team1Objects.size(), team2Objects.size(), actionsCount);
 
         } catch (Exception e) {
             log.error("❌ [MatchFound] Erro ao salvar pick_ban_data", e);
@@ -1459,6 +1524,48 @@ public class MatchFoundService {
                 .isCurrentPlayer(false)
                 .profileIconId(29) // Default icon
                 .build();
+    }
+
+    /**
+     * ✅ NOVO: Adiciona gameName e tagLine extraídos do summonerName
+     */
+    private void addGameNameAndTagLine(Map<String, Object> playerObj) {
+        String summonerName = (String) playerObj.get("summonerName");
+        if (summonerName != null && summonerName.contains("#")) {
+            String[] parts = summonerName.split("#", 2);
+            playerObj.put("gameName", parts[0]);
+            playerObj.put("tagLine", parts.length > 1 ? parts[1] : "");
+        } else {
+            playerObj.put("gameName", summonerName);
+            playerObj.put("tagLine", "");
+        }
+    }
+
+    /**
+     * ✅ NOVO: Adiciona array actions vazio para cada jogador
+     */
+    private void addActionsArray(Map<String, Object> playerObj) {
+        playerObj.put("actions", new ArrayList<Map<String, Object>>());
+    }
+
+    /**
+     * ✅ NOVO: Calcula MMR médio de uma lista de jogadores
+     */
+    private int calculateAverageMmr(List<Map<String, Object>> players) {
+        if (players.isEmpty())
+            return 1500;
+
+        int totalMmr = 0;
+        int count = 0;
+        for (Map<String, Object> player : players) {
+            Object mmrObj = player.get("mmr");
+            if (mmrObj instanceof Number) {
+                totalMmr += ((Number) mmrObj).intValue();
+                count++;
+            }
+        }
+
+        return count > 0 ? totalMmr / count : 1500;
     }
 
     // ✅ REMOVIDO: Classe MatchAcceptanceStatus - Redis é fonte única da verdade

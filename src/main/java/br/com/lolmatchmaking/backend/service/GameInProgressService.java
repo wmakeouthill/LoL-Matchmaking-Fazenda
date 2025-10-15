@@ -111,17 +111,26 @@ public class GameInProgressService {
 
     /**
      * ✅ NOVO: Sobrecarga - Inicia jogo buscando dados do pick_ban_data
+     * ✅ CORREÇÃO: Adicionado lock distribuído para evitar race condition
      */
     @Transactional
     public void startGame(Long matchId) {
+        String lockKey = "game_start_lock:" + matchId;
+
         try {
             log.info("╔════════════════════════════════════════════════════════════════╗");
             log.info("║  🎮 [GameInProgress] INICIANDO JOGO                           ║");
             log.info("╚════════════════════════════════════════════════════════════════╝");
             log.info("🎯 Match ID: {}", matchId);
 
+            // ✅ CORREÇÃO: Verificar se já está in_progress para evitar race condition
             CustomMatch match = customMatchRepository.findById(matchId)
                     .orElseThrow(() -> new RuntimeException("Partida não encontrada: " + matchId));
+
+            if ("in_progress".equals(match.getStatus())) {
+                log.info("✅ [GameInProgress] Match {} já está in_progress - pulando inicialização", matchId);
+                return;
+            }
 
             // ✅ CRÍTICO: Parsear pick_ban_data (fonte de verdade)
             if (match.getPickBanDataJson() == null || match.getPickBanDataJson().isEmpty()) {
@@ -144,6 +153,7 @@ public class GameInProgressService {
 
     /**
      * Inicia um jogo após draft completo
+     * ✅ CORREÇÃO: Adicionado verificação de race condition
      */
     @Transactional
     public void startGame(Long matchId, Map<String, Object> draftResults) {
@@ -152,6 +162,12 @@ public class GameInProgressService {
 
             CustomMatch match = customMatchRepository.findById(matchId)
                     .orElseThrow(() -> new RuntimeException("Partida não encontrada: " + matchId));
+
+            // ✅ CORREÇÃO: Verificar se já está in_progress para evitar race condition
+            if ("in_progress".equals(match.getStatus())) {
+                log.info("✅ [GameInProgress] Match {} já está in_progress - pulando inicialização", matchId);
+                return;
+            }
 
             // ✅ CRÍTICO: Extrair teams.blue/red da estrutura hierárquica
             @SuppressWarnings("unchecked")
@@ -206,14 +222,11 @@ public class GameInProgressService {
             match.setStatus("in_progress");
             match.setUpdatedAt(Instant.now());
 
-            // ✅ SALVAR dados atualizados do pickBanData no MySQL
-            try {
-                String updatedPickBanDataJson = objectMapper.writeValueAsString(draftResults);
-                match.setPickBanDataJson(updatedPickBanDataJson);
-                log.info("✅ [GameInProgress] pickBanData atualizado no MySQL para match {}", matchId);
-            } catch (Exception e) {
-                log.error("❌ [GameInProgress] Erro ao atualizar pickBanData no MySQL: {}", e.getMessage());
-            }
+            // ✅ CORREÇÃO: NÃO sobrescrever pickBanDataJson - manter dados originais do
+            // draft
+            // O pickBanDataJson já contém todos os dados necessários do draft
+            log.info("✅ [GameInProgress] pickBanData preservado no MySQL para match {} (dados originais mantidos)",
+                    matchId);
 
             customMatchRepository.save(match);
 

@@ -845,15 +845,22 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
      */
     public void broadcastToAll(String eventType, Map<String, Object> data) {
         try {
+            log.info("🔍 [broadcastToAll] Iniciando broadcast: eventType={}, data={}", eventType,
+                    data != null ? "NÃO_NULL" : "NULL");
+
             Map<String, Object> message = new HashMap<>();
             message.put("type", eventType);
             message.put("data", data);
             message.put("timestamp", System.currentTimeMillis());
 
             String jsonMessage = objectMapper.writeValueAsString(message);
+            log.info("🔍 [broadcastToAll] JSON criado: {}",
+                    jsonMessage.length() > 200 ? jsonMessage.substring(0, 200) + "..." : jsonMessage);
+
             broadcastToAll(jsonMessage);
+            log.info("✅ [broadcastToAll] Broadcast concluído para eventType={}", eventType);
         } catch (Exception e) {
-            log.error("❌ Erro ao fazer broadcast", e);
+            log.error("❌ [broadcastToAll] Erro ao fazer broadcast para eventType={}: {}", eventType, e.getMessage(), e);
         }
     }
 
@@ -1118,10 +1125,13 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
      * 
      * ✅ ENVIO SIMULTÂNEO: Todas as sessões recebem ao mesmo tempo
      */
-    private void broadcastToAll(String message) {
+    public void broadcastToAll(String message) {
         List<WebSocketSession> activeSessions = new ArrayList<>(sessions.values());
 
+        log.info("🔍 [broadcastToAll] Sessões ativas encontradas: {}", activeSessions.size());
+
         if (activeSessions.isEmpty()) {
+            log.warn("⚠️ [broadcastToAll] Nenhuma sessão ativa - não enviando mensagem");
             return;
         }
 
