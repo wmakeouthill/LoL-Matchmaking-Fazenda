@@ -654,6 +654,25 @@ public class DraftFlowService {
                     log.info(
                             "✅ [startDraft] Draft {} já foi iniciado e está ativo (timer={}) - retornando estado existente",
                             matchId, currentTimer);
+
+                    // ✅ CORREÇÃO: Verificar se byPlayer está correto, se não, reatribuir
+                    boolean needsReassignment = existingState.getActions().stream()
+                            .anyMatch(action -> action.byPlayer() == null || "SKIPPED".equals(action.byPlayer()));
+
+                    if (needsReassignment) {
+                        log.warn("⚠️ [startDraft] Ações com byPlayer incorreto detectadas, reatribuindo...");
+                        assignPlayersByDraftOrder(existingState.getActions(), team1Players, team2Players);
+                        log.info("✅ [startDraft] byPlayer reatribuído para estado existente");
+                        // Salvar estado corrigido
+                        saveDraftStateToRedis(matchId, existingState);
+                        persist(matchId, existingState);
+                    }
+
+                    // ✅ CRÍTICO: Fazer broadcast mesmo para estado existente para garantir que
+                    // frontend receba
+                    broadcastUpdate(existingState, false);
+                    log.info("✅ [startDraft] Broadcast enviado para estado existente: matchId={}", matchId);
+
                     return existingState;
                 } else {
                     log.warn("⚠️ [startDraft] Draft {} existe mas não está ativo (timer={}) - reiniciando", matchId,
