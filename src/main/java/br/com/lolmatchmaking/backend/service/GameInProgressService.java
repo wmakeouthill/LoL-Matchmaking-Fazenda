@@ -846,7 +846,7 @@ public class GameInProgressService {
 
                 players.add(player);
 
-                log.debug("✅ [GameInProgress] Jogador criado: {} - Lane: {} - Champion: {} (ID: {})",
+                log.info("✅ [GameInProgress] Jogador criado: {} - Lane: {} - Champion: {} (ID: {})",
                         summonerName, assignedLane, championName, championId);
             }
 
@@ -877,18 +877,19 @@ public class GameInProgressService {
             gameDataMap.put("originalMatchId", matchId); // ✅ CRÍTICO: Necessário para cancelamento
             gameDataMap.put("currentPhase", "completed"); // ✅ Draft já foi completado
 
-            // ✅ Garantir que team1/team2 estão presentes para compatibilidade
-            if (!gameDataMap.containsKey("team1") || !gameDataMap.containsKey("team2")) {
-                List<Map<String, Object>> team1Maps = gameData.getTeam1().stream()
-                        .map(this::gamePlayerToMap)
-                        .toList();
-                List<Map<String, Object>> team2Maps = gameData.getTeam2().stream()
-                        .map(this::gamePlayerToMap)
-                        .toList();
+            // ✅ CORREÇÃO: SEMPRE usar os dados processados com campeões (team1/team2 do
+            // GameData)
+            List<Map<String, Object>> team1Maps = gameData.getTeam1().stream()
+                    .map(this::gamePlayerToMap)
+                    .toList();
+            List<Map<String, Object>> team2Maps = gameData.getTeam2().stream()
+                    .map(this::gamePlayerToMap)
+                    .toList();
 
-                gameDataMap.put("team1", team1Maps);
-                gameDataMap.put("team2", team2Maps);
-            }
+            // ✅ Substituir team1/team2 com dados processados (incluem
+            // championId/championName)
+            gameDataMap.put("team1", team1Maps);
+            gameDataMap.put("team2", team2Maps);
 
             Map<String, Object> payload = Map.of(
                     "type", "game_started",
@@ -899,6 +900,27 @@ public class GameInProgressService {
 
             // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
             webSocketService.broadcastToAll("game_started", payload);
+
+            // ✅ DEBUG: Log dos dados sendo enviados
+            log.info("🔍 [GameInProgress] DEBUG - Dados sendo enviados no game_started:");
+            log.info("🔍 [GameInProgress] team1 size: {}",
+                    gameDataMap.get("team1") != null ? ((List<?>) gameDataMap.get("team1")).size() : 0);
+            log.info("🔍 [GameInProgress] team2 size: {}",
+                    gameDataMap.get("team2") != null ? ((List<?>) gameDataMap.get("team2")).size() : 0);
+            if (gameDataMap.get("team1") != null) {
+                List<?> team1 = (List<?>) gameDataMap.get("team1");
+                if (!team1.isEmpty()) {
+                    Object firstPlayer = team1.get(0);
+                    log.info("🔍 [GameInProgress] Primeiro jogador team1: {}", firstPlayer);
+                }
+            }
+            if (gameDataMap.get("team2") != null) {
+                List<?> team2 = (List<?>) gameDataMap.get("team2");
+                if (!team2.isEmpty()) {
+                    Object firstPlayer = team2.get(0);
+                    log.info("🔍 [GameInProgress] Primeiro jogador team2: {}", firstPlayer);
+                }
+            }
 
             log.info("╔════════════════════════════════════════════════════════════════╗");
             log.info("║  📡 [GameInProgress] game_started ENVIADO GLOBALMENTE         ║");
