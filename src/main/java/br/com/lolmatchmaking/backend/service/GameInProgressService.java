@@ -880,16 +880,39 @@ public class GameInProgressService {
             // ✅ CORREÇÃO: SEMPRE usar os dados processados com campeões (team1/team2 do
             // GameData)
             List<Map<String, Object>> team1Maps = gameData.getTeam1().stream()
-                    .map(this::gamePlayerToMap)
+                    .map(player -> gamePlayerToMap(player, gameDataMap))
                     .toList();
             List<Map<String, Object>> team2Maps = gameData.getTeam2().stream()
-                    .map(this::gamePlayerToMap)
+                    .map(player -> gamePlayerToMap(player, gameDataMap))
                     .toList();
 
             // ✅ Substituir team1/team2 com dados processados (incluem
             // championId/championName)
             gameDataMap.put("team1", team1Maps);
             gameDataMap.put("team2", team2Maps);
+
+            // ✅ CORREÇÃO: Preservar dados de bans da estrutura teams.blue/red
+            @SuppressWarnings("unchecked")
+            Map<String, Object> teams = (Map<String, Object>) gameDataMap.get("teams");
+            if (teams != null) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> blueTeam = (Map<String, Object>) teams.get("blue");
+                @SuppressWarnings("unchecked")
+                Map<String, Object> redTeam = (Map<String, Object>) teams.get("red");
+
+                if (blueTeam != null && redTeam != null) {
+                    // ✅ Preservar allBans de cada time
+                    List<String> blueBans = (List<String>) blueTeam.get("allBans");
+                    List<String> redBans = (List<String>) redTeam.get("allBans");
+
+                    // ✅ Adicionar bans aos dados finais
+                    gameDataMap.put("blueBans", blueBans != null ? blueBans : new ArrayList<>());
+                    gameDataMap.put("redBans", redBans != null ? redBans : new ArrayList<>());
+
+                    log.info("🔍 [GameInProgress] DEBUG - Bans preservados: Blue={}, Red={}",
+                            gameDataMap.get("blueBans"), gameDataMap.get("redBans"));
+                }
+            }
 
             Map<String, Object> payload = Map.of(
                     "type", "game_started",
@@ -975,9 +998,9 @@ public class GameInProgressService {
     }
 
     /**
-     * ✅ NOVO: Converte GamePlayer para Map
+     * ✅ NOVO: Converte GamePlayer para Map preservando dados originais
      */
-    private Map<String, Object> gamePlayerToMap(GamePlayer player) {
+    private Map<String, Object> gamePlayerToMap(GamePlayer player, Map<String, Object> gameDataMap) {
         Map<String, Object> map = new HashMap<>();
         map.put("summonerName", player.getSummonerName());
         map.put("assignedLane", player.getAssignedLane());
@@ -985,6 +1008,53 @@ public class GameInProgressService {
         map.put("championName", player.getChampionName());
         map.put("teamIndex", player.getTeamIndex());
         map.put("isConnected", player.isConnected());
+
+        // ✅ CORREÇÃO: Buscar dados originais para preservar laneBadge e outros campos
+        try {
+            // Buscar dados originais do pick_ban_data para preservar laneBadge
+            @SuppressWarnings("unchecked")
+            Map<String, Object> teams = (Map<String, Object>) gameDataMap.get("teams");
+            if (teams != null) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> blueTeam = (Map<String, Object>) teams.get("blue");
+                @SuppressWarnings("unchecked")
+                Map<String, Object> redTeam = (Map<String, Object>) teams.get("red");
+
+                List<Map<String, Object>> allPlayers = new ArrayList<>();
+                if (blueTeam != null) {
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> bluePlayers = (List<Map<String, Object>>) blueTeam.get("players");
+                    if (bluePlayers != null)
+                        allPlayers.addAll(bluePlayers);
+                }
+                if (redTeam != null) {
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> redPlayers = (List<Map<String, Object>>) redTeam.get("players");
+                    if (redPlayers != null)
+                        allPlayers.addAll(redPlayers);
+                }
+
+                // Encontrar o jogador original pelo summonerName
+                for (Map<String, Object> originalPlayer : allPlayers) {
+                    String originalSummonerName = (String) originalPlayer.get("summonerName");
+                    if (player.getSummonerName().equals(originalSummonerName)) {
+                        // ✅ Preservar dados originais importantes
+                        map.put("laneBadge", originalPlayer.get("laneBadge"));
+                        map.put("mmr", originalPlayer.get("mmr"));
+                        map.put("gameName", originalPlayer.get("gameName"));
+                        map.put("tagLine", originalPlayer.get("tagLine"));
+                        map.put("primaryLane", originalPlayer.get("primaryLane"));
+                        map.put("secondaryLane", originalPlayer.get("secondaryLane"));
+                        map.put("isAutofill", originalPlayer.get("isAutofill"));
+                        map.put("playerId", originalPlayer.get("playerId"));
+                        break;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("⚠️ [GameInProgress] Erro ao preservar dados originais do jogador: {}", e.getMessage());
+        }
+
         return map;
     }
 
