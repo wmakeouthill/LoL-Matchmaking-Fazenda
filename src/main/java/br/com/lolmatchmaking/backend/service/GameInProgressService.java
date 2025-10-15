@@ -864,26 +864,31 @@ public class GameInProgressService {
      */
     private void broadcastGameStarted(Long matchId, GameData gameData) {
         try {
-            // ✅ Converter GameData para formato esperado pelo frontend
-            Map<String, Object> gameDataMap = new HashMap<>();
+            // ✅ CORREÇÃO: Enviar pick_ban_data COMPLETO em vez de JSON simplificado
+            Map<String, Object> pickBanData = gameData.getDraftResults();
+
+            // ✅ Adicionar metadados do jogo ao pick_ban_data existente
+            Map<String, Object> gameDataMap = new HashMap<>(pickBanData);
             gameDataMap.put("matchId", matchId);
             gameDataMap.put("sessionId", "session_" + matchId);
             gameDataMap.put("status", "in_progress");
             gameDataMap.put("startTime", gameData.getStartedAt().toString());
             gameDataMap.put("isCustomGame", true);
             gameDataMap.put("originalMatchId", matchId); // ✅ CRÍTICO: Necessário para cancelamento
+            gameDataMap.put("currentPhase", "completed"); // ✅ Draft já foi completado
 
-            // ✅ Converter GamePlayers para Maps
-            List<Map<String, Object>> team1Maps = gameData.getTeam1().stream()
-                    .map(this::gamePlayerToMap)
-                    .toList();
-            List<Map<String, Object>> team2Maps = gameData.getTeam2().stream()
-                    .map(this::gamePlayerToMap)
-                    .toList();
+            // ✅ Garantir que team1/team2 estão presentes para compatibilidade
+            if (!gameDataMap.containsKey("team1") || !gameDataMap.containsKey("team2")) {
+                List<Map<String, Object>> team1Maps = gameData.getTeam1().stream()
+                        .map(this::gamePlayerToMap)
+                        .toList();
+                List<Map<String, Object>> team2Maps = gameData.getTeam2().stream()
+                        .map(this::gamePlayerToMap)
+                        .toList();
 
-            gameDataMap.put("team1", team1Maps);
-            gameDataMap.put("team2", team2Maps);
-            gameDataMap.put("pickBanData", gameData.getDraftResults());
+                gameDataMap.put("team1", team1Maps);
+                gameDataMap.put("team2", team2Maps);
+            }
 
             Map<String, Object> payload = Map.of(
                     "type", "game_started",
