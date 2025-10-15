@@ -538,14 +538,14 @@ public class MatchFoundService {
             }
 
             // ✅ NOVO: Limpar Redis OWNERSHIP (player → match)
-            log.info("🧹 [MatchFound] Limpando ownership de {} jogadores", allPlayers.size());
-            for (String playerName : allPlayers) {
-                try {
-                    redisPlayerMatch.clearPlayerMatch(playerName);
-                    log.info("✅ [MatchFound] Ownership de {} limpo", playerName);
-                } catch (Exception e) {
-                    log.error("❌ [MatchFound] Erro ao limpar ownership de {}: {}", playerName, e.getMessage());
-                }
+            // ✅ CORREÇÃO: Usar clearMatchPlayers() em vez de clearPlayerMatch() individual
+            // pois a partida foi deletada do MySQL e clearMatchPlayers() limpa diretamente
+            log.info("🧹 [MatchFound] Limpando ownership de match {} (partida deletada)", matchId);
+            try {
+                redisPlayerMatch.clearMatchPlayers(matchId);
+                log.info("✅ [MatchFound] Ownership limpo para match {} ({} jogadores)", matchId, allPlayers.size());
+            } catch (Exception e) {
+                log.error("❌ [MatchFound] Erro ao limpar ownership do match {}: {}", matchId, e.getMessage());
             }
 
             // ✅ NOVO: Limpar canais Discord (se existirem)

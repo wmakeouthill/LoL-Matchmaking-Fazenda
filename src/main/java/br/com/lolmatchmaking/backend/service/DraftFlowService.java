@@ -2885,16 +2885,12 @@ public class DraftFlowService {
             customMatchRepository.deleteById(matchId);
             log.info("🗑️ [DraftFlow] Partida deletada do banco de dados");
 
-            // 6. ✅ REDIS ONLY: Limpar dados do Redis
+            // 6. ✅ REDIS ONLY: Limpar dados do Redis (inclui timer, confirmações e estado)
             redisDraftFlow.clearAllDraftData(matchId);
-            log.info("🧹 [DraftFlow] Dados limpos do Redis");
+            log.info("🧹 [DraftFlow] Dados limpos do Redis (timer, confirmações, estado)");
 
             // 7. Broadcast evento de cancelamento
             broadcastMatchCancelled(matchId);
-
-            // ✅ 8. Limpar do Redis
-            redisDraftFlow.clearDraftState(matchId);
-            log.info("🗑️ [DraftFlow] Estado do draft limpo do Redis");
 
             log.info("✅ [DraftFlow] Partida cancelada com sucesso!");
 
