@@ -1371,14 +1371,27 @@ export class App implements OnInit, OnDestroy {
         break;
       case 'game_started':
         console.log('🎮 [App] Game started recebido:', message);
-        const gameData = message.gameData || message.data || message;
+
+        // ✅ CORREÇÃO: Extrair gameData corretamente do payload
+        let gameData;
+        if (message.gameData) {
+          // Backend envia: {type: "game_started", matchId: 135, gameData: {...}}
+          gameData = message.gameData;
+        } else if (message.data && message.data.gameData) {
+          // Estrutura alternativa: {data: {gameData: {...}}}
+          gameData = message.data.gameData;
+        } else {
+          // Fallback: usar message diretamente
+          gameData = message;
+        }
 
         console.log('🎮 [App] Extraindo gameData:', {
           matchId: gameData.matchId,
           status: gameData.status,
           team1Length: gameData.team1?.length || 0,
           team2Length: gameData.team2?.length || 0,
-          hasPickBanData: !!gameData.pickBanData
+          hasPickBanData: !!gameData.pickBanData,
+          hasTeams: !!(gameData.teams?.blue && gameData.teams?.red)
         });
 
         // ✅ Atualizar estado para game in progress

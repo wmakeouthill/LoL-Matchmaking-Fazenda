@@ -1984,9 +1984,22 @@ async function isGameInProgressForThisPlayer(json, currentSummoner) {
 
   const currentNormalized = currentSummoner.toLowerCase().trim();
 
+  // ✅ CORREÇÃO: Verificar estrutura game_started: data.gameData.team1/team2
+  let team1, team2;
+  if (json.data && json.data.gameData) {
+    team1 = json.data.gameData.team1;
+    team2 = json.data.gameData.team2;
+    safeLog("🔍 [game-in-progress] Usando estrutura data.gameData.team1/team2");
+  } else {
+    // ✅ FALLBACK: Estrutura direta team1/team2
+    team1 = json.team1;
+    team2 = json.team2;
+    safeLog("🔍 [game-in-progress] Usando estrutura direta team1/team2");
+  }
+
   // ✅ PRIORIDADE 1: Verificar em team1 e team2
-  if (json.team1 && Array.isArray(json.team1)) {
-    for (const player of json.team1) {
+  if (team1 && Array.isArray(team1)) {
+    for (const player of team1) {
       const playerName = player.summonerName || player.gameName || player.name;
       if (playerName && playerName.toLowerCase().trim() === currentNormalized) {
         safeLog(
@@ -1997,8 +2010,8 @@ async function isGameInProgressForThisPlayer(json, currentSummoner) {
     }
   }
 
-  if (json.team2 && Array.isArray(json.team2)) {
-    for (const player of json.team2) {
+  if (team2 && Array.isArray(team2)) {
+    for (const player of team2) {
       const playerName = player.summonerName || player.gameName || player.name;
       if (playerName && playerName.toLowerCase().trim() === currentNormalized) {
         safeLog(
@@ -2807,7 +2820,7 @@ async function handleGameStartedEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
-    const isForThisPlayer = await isMatchFoundForThisPlayer(
+    const isForThisPlayer = await isGameInProgressForThisPlayer(
       json,
       currentSummoner
     );
