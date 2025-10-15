@@ -202,9 +202,19 @@ public class GameInProgressService {
                     team2,
                     draftResults);
 
-            // Atualizar status da partida no banco
+            // ✅ CRÍTICO: Atualizar status E pickBanData no banco
             match.setStatus("in_progress");
             match.setUpdatedAt(Instant.now());
+
+            // ✅ SALVAR dados atualizados do pickBanData no MySQL
+            try {
+                String updatedPickBanDataJson = objectMapper.writeValueAsString(draftResults);
+                match.setPickBanDataJson(updatedPickBanDataJson);
+                log.info("✅ [GameInProgress] pickBanData atualizado no MySQL para match {}", matchId);
+            } catch (Exception e) {
+                log.error("❌ [GameInProgress] Erro ao atualizar pickBanData no MySQL: {}", e.getMessage());
+            }
+
             customMatchRepository.save(match);
 
             // ✅ Atualizar estatísticas no Redis

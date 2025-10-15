@@ -1343,6 +1343,14 @@ function startWebSocketGateway(backendBase) {
         else if (json.type === "acceptance_progress") {
           await handleAcceptanceProgressEvent(json);
         }
+        // ✅ NOVO: Handler para reconnect_check (verificar partida ativa)
+        else if (json.type === "reconnect_check") {
+          await handleReconnectCheckEvent(json);
+        }
+        // ✅ NOVO: Handler para restore_active_match (restaurar estado da partida)
+        else if (json.type === "restore_active_match") {
+          await handleRestoreActiveMatchEvent(json);
+        }
         // ✅ DRAFT EVENTS
         else if (json.type === "draft_started") {
           await handleDraftStartedEvent(json);
@@ -2048,6 +2056,186 @@ async function handleAcceptanceProgressEvent(json) {
   } catch (error) {
     safeLog(
       "❌ [acceptance-progress] Erro ao processar acceptance_progress:",
+      error
+    );
+  }
+}
+
+// ✅ NOVO: Handler para reconnect_check
+async function handleReconnectCheckEvent(json) {
+  try {
+    safeLog(
+      "🔄 [reconnect-check] ===== RECONNECT_CHECK RECEBIDO NO ELECTRON ====="
+    );
+    safeLog("🔄 [reconnect-check] Timestamp:", json.timestamp);
+    safeLog("🔄 [reconnect-check] Reason:", json.reason);
+
+    const currentSummoner = await getCurrentSummonerFromLCU();
+    safeLog(
+      "🔄 [reconnect-check] Current summoner:",
+      currentSummoner || "UNKNOWN"
+    );
+
+    if (!currentSummoner) {
+      safeLog(
+        "🔄 [reconnect-check] ❌ Current summoner não disponível - ignorando"
+      );
+      return;
+    }
+
+    // ✅ Verificar se tem partida ativa chamando o endpoint my-active-match
+    try {
+      const backendBase = await pickBackendUrl();
+      const response = await fetch(
+        `${backendBase}api/queue/my-active-match?summonerName=${encodeURIComponent(
+          currentSummoner
+        )}`,
+        {
+          method: "GET",
+          headers: {
+            "User-Agent": "LoL-Matchmaking-Electron/1.0.0",
+            "X-Summoner-Name": currentSummoner,
+            ...(process.env.BACKEND_GATEWAY_TOKEN
+              ? { Authorization: "Bearer " + process.env.BACKEND_GATEWAY_TOKEN }
+              : {}),
+          },
+        }
+      );
+
+      let hasActiveMatch = false;
+      let matchData = null;
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.success !== false) {
+          hasActiveMatch = true;
+          matchData = data;
+          safeLog(
+            "🔄 [reconnect-check] ✅ Partida ativa encontrada:",
+            data.matchId,
+            data.status
+          );
+        }
+      } else if (response.status === 404) {
+        safeLog("🔄 [reconnect-check] ✅ Nenhuma partida ativa (404)");
+      } else {
+        safeLog(
+          "🔄 [reconnect-check] ⚠️ Erro ao verificar partida ativa:",
+          response.status,
+          response.statusText
+        );
+      }
+
+      // ✅ Enviar resposta para o backend
+      if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+        const responseData = {
+          type: "reconnect_check_response",
+          data: {
+            summonerName: currentSummoner,
+            hasActiveMatch: hasActiveMatch,
+            matchData: matchData,
+            timestamp: Date.now(),
+          },
+        };
+
+        wsClient.send(JSON.stringify(responseData));
+        safeLog(
+          "🔄 [reconnect-check] ✅ Resposta enviada para o backend:",
+          hasActiveMatch ? "TEM partida ativa" : "NÃO TEM partida ativa"
+        );
+      } else {
+        safeLog(
+          "🔄 [reconnect-check] ❌ WebSocket não conectado - não foi possível responder"
+        );
+      }
+    } catch (error) {
+      safeLog(
+        "❌ [reconnect-check] Erro ao verificar partida ativa:",
+        error.message
+      );
+    }
+
+    safeLog(
+      "🔄 [reconnect-check] ================================================"
+    );
+  } catch (error) {
+    safeLog("❌ [reconnect-check] Erro ao processar reconnect_check:", error);
+  }
+}
+
+// ✅ NOVO: Handler para restore_active_match
+async function handleRestoreActiveMatchEvent(json) {
+  try {
+    safeLog(
+      "🔄 [restore-active-match] ===== RESTORE_ACTIVE_MATCH RECEBIDO NO ELECTRON ====="
+    );
+    safeLog("🔄 [restore-active-match] MatchId:", json.matchId);
+    safeLog("🔄 [restore-active-match] Status:", json.status);
+    safeLog("🔄 [restore-active-match] SummonerName:", json.summonerName);
+
+    const currentSummoner = await getCurrentSummonerFromLCU();
+    safeLog(
+      "🔄 [restore-active-match] Current summoner:",
+      currentSummoner || "UNKNOWN"
+    );
+
+    if (!currentSummoner) {
+      safeLog(
+        "🔄 [restore-active-match] ❌ Current summoner não disponível - ignorando"
+      );
+      return;
+    }
+
+    // ✅ Verificar se é para este jogador
+    if (currentSummoner.toLowerCase() !== json.summonerName.toLowerCase()) {
+      safeLog(
+        "🔄 [restore-active-match] ❌ Não é para este jogador - ignorando"
+      );
+      return;
+    }
+
+    safeLog(
+      "🔄 [restore-active-match] ✅ Restaurando estado da partida para este jogador!"
+    );
+
+    // ✅ Enviar evento para o frontend baseado no status da partida
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (json.status === "found") {
+        // Partida encontrada - mostrar modal de aceitação
+        mainWindow.webContents.send("match-found", json.matchData);
+        safeLog(
+          "🔄 [restore-active-match] ✅ Modal match_found enviado para o frontend"
+        );
+      } else if (json.status === "draft") {
+        // Draft ativo - mostrar tela de draft
+        mainWindow.webContents.send("draft-started", json.matchData);
+        safeLog(
+          "🔄 [restore-active-match] ✅ Tela de draft enviada para o frontend"
+        );
+      } else if (json.status === "in_progress") {
+        // Jogo em progresso - mostrar modal de game in progress
+        mainWindow.webContents.send("game-in-progress", json.matchData);
+        safeLog(
+          "🔄 [restore-active-match] ✅ Modal game_in_progress enviado para o frontend"
+        );
+      } else {
+        safeLog(
+          "🔄 [restore-active-match] ⚠️ Status desconhecido:",
+          json.status
+        );
+      }
+    } else {
+      safeLog(
+        "🔄 [restore-active-match] ❌ MainWindow não disponível - não foi possível restaurar estado"
+      );
+    }
+
+    safeLog(
+      "🔄 [restore-active-match] ================================================"
+    );
+  } catch (error) {
+    safeLog(
+      "❌ [restore-active-match] Erro ao processar restore_active_match:",
       error
     );
   }

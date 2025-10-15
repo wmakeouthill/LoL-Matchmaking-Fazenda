@@ -220,23 +220,10 @@ public class DraftFlowService {
     }
 
     /**
-     * ✅ TIMER: Envia APENAS o número via draft_update
+     * ✅ TIMER: Envia APENAS o número via draft_update usando arquitetura global
      */
     private void sendTimerOnly(Long matchId, DraftState st, int seconds) {
         try {
-            // Combinar jogadores
-            Collection<String> allPlayers = new ArrayList<>();
-            allPlayers.addAll(st.getTeam1Players());
-            allPlayers.addAll(st.getTeam2Players());
-
-            // Buscar sessões
-            Collection<org.springframework.web.socket.WebSocketSession> sessions = sessionRegistry
-                    .getByPlayers(allPlayers);
-
-            if (sessions.isEmpty()) {
-                return;
-            }
-
             // Criar payload SIMPLES
             Map<String, Object> data = Map.of(
                     "matchId", matchId,
@@ -246,14 +233,8 @@ public class DraftFlowService {
                     "type", "draft_update",
                     "data", data));
 
-            // Enviar
-            for (org.springframework.web.socket.WebSocketSession ws : sessions) {
-                try {
-                    ws.sendMessage(new TextMessage(payload));
-                } catch (Exception e) {
-                    log.warn("⚠️ Erro ao enviar timer");
-                }
-            }
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
+            broadcastToAllSessions(payload);
 
         } catch (Exception e) {
             log.error("❌ Erro sendTimerOnly", e);
@@ -2860,16 +2841,13 @@ public class DraftFlowService {
                 }
             }
 
-            // 2.2. Limpar RedisPlayerMatch ownership
-            // IMPORTANTE: Fazer ANTES de deletar do MySQL, pois clearPlayerMatch valida
-            // contra MySQL!
-            for (String playerName : allPlayers) {
-                try {
-                    redisPlayerMatch.clearPlayerMatch(playerName);
-                    log.info("✅ [DraftFlow] Ownership de {} limpo", playerName);
-                } catch (Exception e) {
-                    log.error("❌ [DraftFlow] Erro ao limpar ownership de {}: {}", playerName, e.getMessage());
-                }
+            // 2.2. ✅ CORREÇÃO: Limpar RedisPlayerMatch ownership usando clearMatchPlayers
+            // IMPORTANTE: Fazer ANTES de deletar do MySQL para validação correta
+            try {
+                redisPlayerMatch.clearMatchPlayers(matchId);
+                log.info("✅ [DraftFlow] Ownership de match {} limpo ({} jogadores)", matchId, allPlayers.size());
+            } catch (Exception e) {
+                log.error("❌ [DraftFlow] Erro ao limpar ownership do match {}: {}", matchId, e.getMessage());
             }
 
             // 2.3. ✅ NOVO: Limpar locks de jogadores
