@@ -159,6 +159,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             case "match_found_acknowledged" -> handleMatchFoundAcknowledged(session, root);
             case "draft_acknowledged" -> handleDraftAcknowledged(session, root);
             case "game_acknowledged" -> handleGameAcknowledged(session, root);
+            case "reconnect_check_response" -> handleReconnectCheckResponse(session, root);
             default -> session.sendMessage(new TextMessage("{\"error\":\"unknown_type\"}"));
         }
     }
@@ -1292,5 +1293,49 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                 "type", "draft_snapshot",
                 "success", true,
                 "snapshot", snap))));
+    }
+
+    /**
+     * ✅ NOVO: Handler para resposta do Electron ao evento de reconexão
+     * O Electron envia dados da partida ativa se tiver uma
+     */
+    private void handleReconnectCheckResponse(@NonNull WebSocketSession session, @NonNull JsonNode root)
+            throws Exception {
+        String sessionId = session.getId();
+
+        try {
+            JsonNode data = root.path("data");
+            String summonerName = data.path("summonerName").asText();
+            boolean hasActiveMatch = data.path("hasActiveMatch").asBoolean();
+
+            if (summonerName == null || summonerName.isBlank()) {
+                log.warn("⚠️ [ReconnectCheck] Resposta sem summonerName da sessão {}", sessionId);
+                return;
+            }
+
+            if (hasActiveMatch) {
+                JsonNode matchData = data.path("matchData");
+                Long matchId = matchData.path("matchId").asLong();
+                String status = matchData.path("status").asText();
+
+                log.info("🔄 [ReconnectCheck] Jogador {} tem partida ativa: matchId={}, status={}",
+                        summonerName, matchId, status);
+
+                // ✅ Enviar evento específico para restaurar estado da partida
+                Map<String, Object> restoreData = new HashMap<>();
+                restoreData.put("matchId", matchId);
+                restoreData.put("status", status);
+                restoreData.put("summonerName", summonerName);
+                restoreData.put("matchData", matchData);
+
+                webSocketService.sendMessage(sessionId, "restore_active_match", restoreData);
+
+            } else {
+                log.info("✅ [ReconnectCheck] Jogador {} não tem partida ativa", summonerName);
+            }
+
+        } catch (Exception e) {
+            log.error("❌ [ReconnectCheck] Erro ao processar resposta de reconexão da sessão {}", sessionId, e);
+        }
     }
 }

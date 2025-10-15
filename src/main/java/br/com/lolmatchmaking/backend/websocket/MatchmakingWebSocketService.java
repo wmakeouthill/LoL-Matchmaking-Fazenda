@@ -155,6 +155,9 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
 
         // Iniciar monitoramento de heartbeat
         startHeartbeatMonitoring(sessionId);
+
+        // ✅ NOVO: Enviar evento global de reconexão para verificar partidas ativas
+        sendGlobalReconnectCheck();
     }
 
     @Override
@@ -920,6 +923,23 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
 
         } catch (Exception e) {
             log.error("❌ [WebSocket] Erro ao fazer broadcast de match_acceptance_progress", e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Envia evento global de reconexão para verificar partidas ativas
+     * Cada Electron deve verificar se tem partida ativa e responder com dados
+     */
+    private void sendGlobalReconnectCheck() {
+        try {
+            Map<String, Object> reconnectData = new HashMap<>();
+            reconnectData.put("timestamp", System.currentTimeMillis());
+            reconnectData.put("reason", "reconnection_check");
+
+            broadcastToAll("reconnect_check", reconnectData);
+            log.info("📡 [ReconnectCheck] Evento global de reconexão enviado para {} sessões", sessions.size());
+        } catch (Exception e) {
+            log.error("❌ [ReconnectCheck] Erro ao enviar evento de reconexão", e);
         }
     }
 
