@@ -15,6 +15,7 @@ declare global {
 
       // === EVENT LISTENERS ===
       onMatchFound: (callback: (event: any, data: any) => void) => void;
+      onDraftStarting: (callback: (event: any, data: any) => void) => void;
       onDraftStarted: (callback: (event: any, data: any) => void) => void;
       onGameInProgress: (callback: (event: any, data: any) => void) => void;
       onMatchCancelled: (callback: (event: any, data: any) => void) => void;

@@ -645,11 +645,22 @@ public class DraftFlowService {
      */
     public DraftState startDraft(long matchId, List<String> team1Players, List<String> team2Players) {
         try {
-            // ✅ CORREÇÃO: Verificar se draft já foi iniciado para evitar race condition
+            // ✅ CORREÇÃO: Verificar se draft já foi iniciado E está ativo (com timer)
             DraftState existingState = getDraftStateFromRedis(matchId);
             if (existingState != null) {
-                log.info("✅ [startDraft] Draft {} já foi iniciado - retornando estado existente", matchId);
-                return existingState;
+                // ✅ VERIFICAR: Se o draft está realmente ativo (tem timer rodando)
+                int currentTimer = redisDraftFlow.getTimer(matchId);
+                if (currentTimer > 0) {
+                    log.info(
+                            "✅ [startDraft] Draft {} já foi iniciado e está ativo (timer={}) - retornando estado existente",
+                            matchId, currentTimer);
+                    return existingState;
+                } else {
+                    log.warn("⚠️ [startDraft] Draft {} existe mas não está ativo (timer={}) - reiniciando", matchId,
+                            currentTimer);
+                    // ✅ LIMPAR: Remover estado antigo e criar novo
+                    redisDraftFlow.clearDraftState(matchId);
+                }
             }
 
             List<DraftAction> actions = buildDefaultActionSequence();
@@ -1458,6 +1469,7 @@ public class DraftFlowService {
                 updateData.put("currentActionType", currentActionType);
             }
             updateData.put(KEY_ACTIONS, st.getActions());
+            updateData.put("phases", st.getActions()); // ✅ CRÍTICO: Frontend espera 'phases', não apenas 'actions'
             updateData.put(KEY_CONFIRMATIONS, st.getConfirmations());
             updateData.put("currentPlayer", currentPlayer); // ✅ Nome do jogador da vez
 
@@ -1623,42 +1635,19 @@ public class DraftFlowService {
                 }
             }
 
-            String payload = mapper.writeValueAsString(updateData);
-
-            // ✅ LOG DETALHADO: Mostrar payload completo do broadcast
-            log.info("📤 [broadcastUpdate] === PAYLOAD COMPLETO DO BROADCAST ===");
-            log.info("{}", mapper.writerWithDefaultPrettyPrinter().writeValueAsString(updateData));
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE usando o padrão correto (eventType, data)
+            log.info("📤 [broadcastUpdate] === ENVIANDO {} ===", eventType);
+            log.info("📤 [broadcastUpdate] MatchId: {}", st.getMatchId());
+            log.info("📤 [broadcastUpdate] CurrentIndex: {}", st.getCurrentIndex());
+            log.info("📤 [broadcastUpdate] CurrentPlayer: {}", currentPlayer);
+            log.info("📤 [broadcastUpdate] Actions: {}", st.getActions().size());
+            log.info("📤 [broadcastUpdate] Confirmations: {}", st.getConfirmations().size());
             log.info("====================================================");
 
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
-            broadcastToAllSessions(payload);
+            // ✅ CORREÇÃO: Usar o padrão correto como draft_update e draft_starting
+            webSocketService.broadcastToAll(eventType, updateData);
         } catch (Exception e) {
             log.error("Erro broadcast draft_updated", e);
-        }
-    }
-
-    /**
-     * ✅ CORRIGIDO: Envia mensagem para TODAS as sessões WebSocket (broadcast
-     * global)
-     * 
-     * PROBLEMA RESOLVIDO:
-     * - ANTES: Usava sessionRegistry.all() que tinha problemas de injeção circular
-     * - DEPOIS: Usa webSocketService.broadcastToAll() diretamente (mesmo método que
-     * funciona)
-     */
-    private void broadcastToAllSessions(String payload) {
-        try {
-            log.info("🔍 [broadcastToAllSessions] Iniciando broadcast para todas as sessões");
-            log.info("🔍 [broadcastToAllSessions] Payload: {}",
-                    payload.length() > 200 ? payload.substring(0, 200) + "..." : payload);
-
-            // ✅ CORREÇÃO: Usar webSocketService.broadcastToAll() diretamente
-            // Este é o mesmo método que funciona para draft_starting
-            webSocketService.broadcastToAll(payload);
-
-            log.info("✅ [broadcastToAllSessions] Broadcast concluído via webSocketService.broadcastToAll()");
-        } catch (Exception e) {
-            log.error("❌ [broadcastToAllSessions] Erro ao fazer broadcast global: {}", e.getMessage(), e);
         }
     }
 
@@ -1695,12 +1684,11 @@ public class DraftFlowService {
 
     private void broadcastDraftCompleted(DraftState st) {
         try {
-            String payload = mapper.writeValueAsString(Map.of(
-                    KEY_TYPE, "draft_completed",
-                    KEY_MATCH_ID, st.getMatchId()));
+            Map<String, Object> data = Map.of(
+                    KEY_MATCH_ID, st.getMatchId());
 
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
-            broadcastToAllSessions(payload);
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE usando o padrão correto
+            webSocketService.broadcastToAll("draft_completed", data);
         } catch (Exception e) {
             log.error("Erro broadcast draft_completed", e);
         }
@@ -1708,12 +1696,11 @@ public class DraftFlowService {
 
     private void broadcastAllConfirmed(DraftState st) {
         try {
-            String payload = mapper.writeValueAsString(Map.of(
-                    KEY_TYPE, "draft_confirmed",
-                    KEY_MATCH_ID, st.getMatchId()));
+            Map<String, Object> data = Map.of(
+                    KEY_MATCH_ID, st.getMatchId());
 
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
-            broadcastToAllSessions(payload);
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE usando o padrão correto
+            webSocketService.broadcastToAll("draft_confirmed", data);
         } catch (Exception e) {
             log.error("Erro broadcast draft_confirmed", e);
         }
@@ -2106,7 +2093,6 @@ public class DraftFlowService {
         return "completed";
     }
 
-
     // ✅ FIM DA NOVA ESTRUTURA HIERÁRQUICA
 
     private void broadcastTimeout(DraftState st) {
@@ -2216,14 +2202,13 @@ public class DraftFlowService {
         try {
             Map<String, Object> team1Data = buildTeamData(st, 1);
             Map<String, Object> team2Data = buildTeamData(st, 2);
-            String payload = mapper.writeValueAsString(Map.of(
-                    KEY_TYPE, "match_game_ready",
+            Map<String, Object> data = Map.of(
                     KEY_MATCH_ID, st.getMatchId(),
                     "team1", team1Data,
-                    "team2", team2Data));
+                    "team2", team2Data);
 
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
-            broadcastToAllSessions(payload);
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE usando o padrão correto
+            webSocketService.broadcastToAll("match_game_ready", data);
         } catch (Exception e) {
             log.error("Erro broadcast match_game_ready", e);
         }
@@ -2884,10 +2869,8 @@ public class DraftFlowService {
                     "totalPlayers", totalPlayers,
                     "allConfirmed", confirmations.size() >= totalPlayers);
 
-            String json = mapper.writeValueAsString(payload);
-
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
-            broadcastToAllSessions(json);
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE usando o padrão correto
+            webSocketService.broadcastToAll("draft_updated", payload);
 
             log.info("📡 [DraftFlow] Broadcast para 10 jogadores: {}/{} confirmaram", confirmations.size(),
                     totalPlayers);
@@ -2944,10 +2927,8 @@ public class DraftFlowService {
                     "status", "game_ready",
                     "message", "Todos confirmaram! Jogo iniciando...");
 
-            String json = mapper.writeValueAsString(payload);
-
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
-            broadcastToAllSessions(json);
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE usando o padrão correto
+            webSocketService.broadcastToAll("game_ready", payload);
             log.info("📡 [DraftFlow] Broadcast game_ready para 10 jogadores");
 
         } catch (Exception e) {
@@ -3089,10 +3070,8 @@ public class DraftFlowService {
                     "matchId", matchId,
                     "message", "Partida cancelada pelo líder");
 
-            String json = mapper.writeValueAsString(payload);
-
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
-            broadcastToAllSessions(json);
+            // ✅ CORREÇÃO: Enviar GLOBALMENTE usando o padrão correto
+            webSocketService.broadcastToAll("match_cancelled", payload);
             log.info("📡 [DraftFlow] Broadcast match_cancelled para 10 jogadores");
 
         } catch (Exception e) {

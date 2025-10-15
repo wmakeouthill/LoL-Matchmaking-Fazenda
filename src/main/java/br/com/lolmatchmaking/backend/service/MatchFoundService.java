@@ -1007,15 +1007,43 @@ public class MatchFoundService {
             teams.put("blue", blueTeam);
             teams.put("red", redTeam);
 
-            // ✅ 3. Adicionar metadados do draft
+            // ✅ 3. Criar sequência de ações do draft (20 ações: 6 bans + 14 picks)
+            List<Map<String, Object>> actions = new ArrayList<>();
+
+            // Fase 1: Bans (6 ações)
+            for (int i = 0; i < 6; i++) {
+                Map<String, Object> action = new HashMap<>();
+                action.put("index", i);
+                action.put("type", "ban");
+                action.put("team", (i % 2 == 0) ? 1 : 2);
+                action.put("championId", null);
+                action.put("championName", null);
+                action.put("byPlayer", null);
+                actions.add(action);
+            }
+
+            // Fase 2: Picks (14 ações)
+            for (int i = 6; i < 20; i++) {
+                Map<String, Object> action = new HashMap<>();
+                action.put("index", i);
+                action.put("type", "pick");
+                action.put("team", (i % 2 == 0) ? 1 : 2);
+                action.put("championId", null);
+                action.put("championName", null);
+                action.put("byPlayer", null);
+                actions.add(action);
+            }
+
+            // ✅ 4. Adicionar metadados do draft
             pickBanData.put("teams", teams);
+            pickBanData.put("actions", actions); // ✅ CRÍTICO: Adicionar actions para o frontend
             pickBanData.put("currentPhase", "ban1");
             pickBanData.put("currentIndex", 0);
             pickBanData.put("currentPlayer", null);
             pickBanData.put("currentTeam", null);
             pickBanData.put("currentActionType", null);
 
-            // ✅ 4. Manter compatibilidade com formato antigo
+            // ✅ 5. Manter compatibilidade com formato antigo
             pickBanData.put("team1", team1Objects);
             pickBanData.put("team2", team2Objects);
 
