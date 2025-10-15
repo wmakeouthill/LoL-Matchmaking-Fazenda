@@ -1,40 +1,40 @@
 # ======================================== 
-# EXPORT UNIFICADO DO REDIS - 13/10/2025 22:09:39,57 
+# EXPORT UNIFICADO DO REDIS - 14/10/2025 21:03:22,28 
 # ======================================== 
  
 ## QUANTIDADE TOTAL DE CHAVES: 
-{"result":64} 
+{"result":54} 
 ## TODAS AS CHAVES: 
-{"result":["cache:session_invalidation","discord:status:cache","discord:users:cache","identity:confirm:pending:a4700f47-ff45-4c72-bcf5-2904f83252aa","identity_request:fzd ratoso#fzd:1760404026533","identity_request:fzd ratoso#fzd:1760404141101","lcu:connection:fzd ratoso#fzd","lcu:session:3435a4f8-5294-7ff7-1ccb-826bccfb536a","leaderboard:data:Arkles#BR1","leaderboard:data:BBN China#1592","leaderboard:data:CMXCII#br1","leaderboard:data:DEDEF0DAUM#br1","leaderboard:data:Eahm#patas","leaderboard:data:FZD Ratoso#fzd","leaderboard:data:FZD SherlokGaz#FZD","leaderboard:data:Golden Glub#glub","leaderboard:data:HACKER#NTM1","leaderboard:data:Insomniac Astro#Stars","leaderboard:data:Let me Reset II#KAT","leaderboard:data:Mates#Aksh","leaderboard:data:N4M1RA#br1","leaderboard:data:PortiolliCelso#TORRE","leaderboard:data:Pura bondade#6969","leaderboard:data:Quenamilos#83022","leaderboard:data:Shooter is Good#BR1","leaderboard:data:Syfah#br1","leaderboard:data:Vastaya#100","leaderboard:data:anirataK#game","leaderboard:data:bripes#noxus","leaderboard:data:gostosa roIuda#1312","leaderboard:data:igago#br1","leaderboard:data:luanbpt#BR2","leaderboard:top","lock:player:FZD Ratoso#fzd","match:players:91","player:current_match:bot1","player:current_match:bot2","player:current_match:bot3","player:current_match:bot4","player:current_match:bot5","player:current_match:bot6","player:current_match:bot7","player:current_match:bot8","player:current_match:bot9","player:current_match:fzd ratoso#fzd","queue:status:cache","queue_session_info:fzd ratoso#fzd","state:player:bot1","state:player:bot2","state:player:bot3","state:player:bot4","state:player:bot5","state:player:bot6","state:player:bot7","state:player:bot8","state:player:bot9","state:player:fzd ratoso#fzd","ws:client_info:3435a4f8-5294-7ff7-1ccb-826bccfb536a","ws:player:fzd ratoso#fzd","ws:player:puuid:fzd ratoso#fzd","ws:player_info:3435a4f8-5294-7ff7-1ccb-826bccfb536a","ws:player_info:c98fec38-2a23-cc0e-67fc-e5ec002e668a","ws:puuid:to:player:9e7d05fe-ef7f-5ecb-b877-de7e68ff06eb","ws:session:3435a4f8-5294-7ff7-1ccb-826bccfb536a"]} 
+{"result":["discord:users:cache","draft_flow:105:timer","draft_retry:105","identity_request:fzd ratoso#fzd:1760486276956","lcu:connection:fzd ratoso#fzd","leaderboard:data:Arkles#BR1","leaderboard:data:BBN China#1592","leaderboard:data:CMXCII#br1","leaderboard:data:DEDEF0DAUM#br1","leaderboard:data:Eahm#patas","leaderboard:data:FZD Ratoso#fzd","leaderboard:data:FZD SherlokGaz#FZD","leaderboard:data:Golden Glub#glub","leaderboard:data:HACKER#NTM1","leaderboard:data:Hunter#Gato","leaderboard:data:IRandall#000","leaderboard:data:Insomniac Astro#Stars","leaderboard:data:Let me Reset II#KAT","leaderboard:data:Mates#Aksh","leaderboard:data:N4M1RA#br1","leaderboard:data:NoTearsAri#Fefe","leaderboard:data:PortiolliCelso#TORRE","leaderboard:data:Pura bondade#6969","leaderboard:data:Quenamilos#83022","leaderboard:data:Shooter is Good#BR1","leaderboard:data:Syfah#br1","leaderboard:data:Vastaya#100","leaderboard:data:anirataK#game","leaderboard:data:bripes#noxus","leaderboard:data:gostosa roIuda#1312","leaderboard:data:igago#br1","leaderboard:data:luanbpt#BR2","leaderboard:top","lock:player:FZD Ratoso#fzd","match:players:105","player:current_match:bot1","player:current_match:bot2","player:current_match:bot3","player:current_match:bot4","player:current_match:bot5","player:current_match:bot6","player:current_match:bot7","player:current_match:bot8","player:current_match:bot9","state:player:bot1","state:player:bot2","state:player:bot3","state:player:bot4","state:player:bot5","state:player:bot6","state:player:bot7","state:player:bot8","state:player:bot9","state:player:fzd ratoso#fzd"]} 
 ### CHAVES WEBSOCKET (ws:*): 
-{"result":["ws:client_info:3435a4f8-5294-7ff7-1ccb-826bccfb536a","ws:player:fzd ratoso#fzd","ws:player:puuid:fzd ratoso#fzd","ws:player_info:3435a4f8-5294-7ff7-1ccb-826bccfb536a","ws:player_info:c98fec38-2a23-cc0e-67fc-e5ec002e668a","ws:puuid:to:player:9e7d05fe-ef7f-5ecb-b877-de7e68ff06eb","ws:session:3435a4f8-5294-7ff7-1ccb-826bccfb536a"]} 
+{"result":[]} 
 ### CHAVES LCU (lcu:*): 
-{"result":["lcu:connection:fzd ratoso#fzd","lcu:session:3435a4f8-5294-7ff7-1ccb-826bccfb536a"]} 
+{"result":["lcu:connection:fzd ratoso#fzd"]} 
 ### CHAVES LEADERBOARD (leaderboard:*): 
-{"result":["leaderboard:data:Arkles#BR1","leaderboard:data:BBN China#1592","leaderboard:data:CMXCII#br1","leaderboard:data:DEDEF0DAUM#br1","leaderboard:data:Eahm#patas","leaderboard:data:FZD Ratoso#fzd","leaderboard:data:FZD SherlokGaz#FZD","leaderboard:data:Golden Glub#glub","leaderboard:data:HACKER#NTM1","leaderboard:data:Insomniac Astro#Stars","leaderboard:data:Let me Reset II#KAT","leaderboard:data:Mates#Aksh","leaderboard:data:N4M1RA#br1","leaderboard:data:PortiolliCelso#TORRE","leaderboard:data:Pura bondade#6969","leaderboard:data:Quenamilos#83022","leaderboard:data:Shooter is Good#BR1","leaderboard:data:Syfah#br1","leaderboard:data:Vastaya#100","leaderboard:data:anirataK#game","leaderboard:data:bripes#noxus","leaderboard:data:gostosa roIuda#1312","leaderboard:data:igago#br1","leaderboard:data:luanbpt#BR2","leaderboard:top"]} 
+{"result":["leaderboard:data:Arkles#BR1","leaderboard:data:BBN China#1592","leaderboard:data:CMXCII#br1","leaderboard:data:DEDEF0DAUM#br1","leaderboard:data:Eahm#patas","leaderboard:data:FZD Ratoso#fzd","leaderboard:data:FZD SherlokGaz#FZD","leaderboard:data:Golden Glub#glub","leaderboard:data:HACKER#NTM1","leaderboard:data:Hunter#Gato","leaderboard:data:IRandall#000","leaderboard:data:Insomniac Astro#Stars","leaderboard:data:Let me Reset II#KAT","leaderboard:data:Mates#Aksh","leaderboard:data:N4M1RA#br1","leaderboard:data:NoTearsAri#Fefe","leaderboard:data:PortiolliCelso#TORRE","leaderboard:data:Pura bondade#6969","leaderboard:data:Quenamilos#83022","leaderboard:data:Shooter is Good#BR1","leaderboard:data:Syfah#br1","leaderboard:data:Vastaya#100","leaderboard:data:anirataK#game","leaderboard:data:bripes#noxus","leaderboard:data:gostosa roIuda#1312","leaderboard:data:igago#br1","leaderboard:data:luanbpt#BR2","leaderboard:top"]} 
 ### CHAVES LOCK (lock:*): 
 {"result":["lock:player:FZD Ratoso#fzd"]} 
 ### CHAVES MATCH (match:*): 
-{"result":["match:players:91"]} 
+{"result":["match:players:105"]} 
 ### CHAVES QUEUE (queue:*): 
-{"result":["queue:status:cache"]} 
+{"result":[]} 
 ### CHAVES DRAFT (draft:*): 
 {"result":[]} 
 ### CHAVES PLAYER (player:*): 
-{"result":["player:current_match:bot1","player:current_match:bot2","player:current_match:bot3","player:current_match:bot4","player:current_match:bot5","player:current_match:bot6","player:current_match:bot7","player:current_match:bot8","player:current_match:bot9","player:current_match:fzd ratoso#fzd"]} 
+{"result":["player:current_match:bot1","player:current_match:bot2","player:current_match:bot3","player:current_match:bot4","player:current_match:bot5","player:current_match:bot6","player:current_match:bot7","player:current_match:bot8","player:current_match:bot9"]} 
 ### CHAVES IDENTITY (identity:*): 
-{"result":["identity:confirm:pending:a4700f47-ff45-4c72-bcf5-2904f83252aa"]} 
+{"result":[]} 
 ### CHAVES TEMPORARIAS (temp:*): 
 {"result":[]} 
 ### CHAVES CACHE (cache:*): 
-{"result":["cache:session_invalidation"]} 
+{"result":[]} 
 ### CHAVES EVENT (event:*): 
 {"result":[]} 
  
 ## CONTEUDO DE CHAVES IMPORTANTES: 
  
 ### Chaves ws:client_info:* (novas): 
-Chave: {"result":["ws:client_info:3435a4f8-5294-7ff7-1ccb-826bccfb536a"]} 
+Chave: {"result":[]} 
  
 ### Chaves ws:client:* (antigas - Hash): 
 Chave: {"result":[]} 
