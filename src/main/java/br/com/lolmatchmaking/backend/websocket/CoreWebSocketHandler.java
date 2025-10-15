@@ -373,13 +373,12 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         // Enviar para a sessão atual (gateway do Electron)
         session.sendMessage(new TextMessage(confirmationMessage));
 
-        // Enviar para todas as outras sessões do mesmo jogador (frontend)
+        // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
         try {
             Map<String, Object> data = new HashMap<>();
             data.put(FIELD_SUMMONER_NAME, finalSummonerName);
-            webSocketService.sendToPlayers("lcu_connection_registered", data, List.of(finalSummonerName));
-            log.info("📡 [WS] Notificação lcu_connection_registered enviada para todas as sessões de: {}",
-                    finalSummonerName);
+            webSocketService.broadcastToAll("lcu_connection_registered", data);
+            log.info("📡 [WS] Notificação lcu_connection_registered enviada GLOBALMENTE");
         } catch (Exception e) {
             log.warn("⚠️ [WS] Erro ao enviar broadcast de lcu_connection_registered: {}", e.getMessage());
         }

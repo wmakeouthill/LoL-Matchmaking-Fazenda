@@ -46,6 +46,9 @@ public class DraftFlowService {
     // ✅ NOVO: RedisWebSocketSessionService para busca de sessões via Redis
     private final br.com.lolmatchmaking.backend.service.redis.RedisWebSocketSessionService redisWSSession;
 
+    // ✅ NOVO: PlayerLockService para limpeza de locks
+    private final br.com.lolmatchmaking.backend.service.lock.PlayerLockService playerLockService;
+
     @Value("${app.draft.action-timeout-ms:30000}")
     private long configuredActionTimeoutMs;
 
@@ -1633,32 +1636,8 @@ public class DraftFlowService {
         }
     }
 
-    /**
-     * ✅ NOVO: Envia mensagem para OS 10 JOGADORES da partida (broadcast restrito)
-     * Usado para: match_found, draft_updated, game_in_progress
-     */
-    private void sendToMatchPlayers(DraftState st, String payload) {
-        // Combinar todos os jogadores da partida (time 1 + time 2)
-        Collection<String> allPlayers = new java.util.ArrayList<>();
-        allPlayers.addAll(st.getTeam1Players());
-        allPlayers.addAll(st.getTeam2Players());
-
-        // Buscar sessões apenas desses 10 jogadores
-        Collection<org.springframework.web.socket.WebSocketSession> playerSessions = sessionRegistry
-                .getByPlayers(allPlayers);
-
-        log.info("📤 Enviando mensagem para {} jogadores da partida (de {} esperados)",
-                playerSessions.size(), allPlayers.size());
-
-        // Enviar apenas para esses jogadores
-        playerSessions.forEach(ws -> {
-            try {
-                ws.sendMessage(new TextMessage(payload));
-            } catch (Exception e) {
-                log.warn("⚠️ Erro ao enviar para jogador: {}", e.getMessage());
-            }
-        });
-    }
+    // ✅ REMOVIDO: sendToMatchPlayers - substituído por broadcastToAllSessions
+    // (arquitetura global)
 
     private void broadcastDraftCompleted(DraftState st) {
         try {
@@ -2890,6 +2869,19 @@ public class DraftFlowService {
                     log.info("✅ [DraftFlow] Ownership de {} limpo", playerName);
                 } catch (Exception e) {
                     log.error("❌ [DraftFlow] Erro ao limpar ownership de {}: {}", playerName, e.getMessage());
+                }
+            }
+
+            // 2.3. ✅ NOVO: Limpar locks de jogadores
+            for (String playerName : allPlayers) {
+                try {
+                    // Liberar lock de jogador se existir
+                    if (playerLockService.getPlayerSession(playerName) != null) {
+                        playerLockService.forceReleasePlayerLock(playerName);
+                        log.info("🔓 [DraftFlow] Lock de {} liberado", playerName);
+                    }
+                } catch (Exception e) {
+                    log.error("❌ [DraftFlow] Erro ao liberar lock de {}: {}", playerName, e.getMessage());
                 }
             }
 

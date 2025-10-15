@@ -43,6 +43,7 @@ public class MatchFoundService {
     private final br.com.lolmatchmaking.backend.service.lock.PlayerStateService playerStateService;
     private final br.com.lolmatchmaking.backend.service.lock.MatchOperationsLockService matchOpsLockService;
     private final br.com.lolmatchmaking.backend.service.lock.AcceptanceStatusLockService acceptanceStatusLockService;
+    private final br.com.lolmatchmaking.backend.service.lock.PlayerLockService playerLockService;
     private final EventBroadcastService eventBroadcastService;
 
     // ✅ NOVO: RedisTemplate para throttling de retries
@@ -64,6 +65,7 @@ public class MatchFoundService {
             br.com.lolmatchmaking.backend.service.lock.PlayerStateService playerStateService,
             br.com.lolmatchmaking.backend.service.lock.MatchOperationsLockService matchOpsLockService,
             br.com.lolmatchmaking.backend.service.lock.AcceptanceStatusLockService acceptanceStatusLockService,
+            br.com.lolmatchmaking.backend.service.lock.PlayerLockService playerLockService,
             EventBroadcastService eventBroadcastService,
             org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate,
             br.com.lolmatchmaking.backend.websocket.SessionRegistry sessionRegistry) {
@@ -78,6 +80,7 @@ public class MatchFoundService {
         this.playerStateService = playerStateService;
         this.matchOpsLockService = matchOpsLockService;
         this.acceptanceStatusLockService = acceptanceStatusLockService;
+        this.playerLockService = playerLockService;
         this.eventBroadcastService = eventBroadcastService;
         this.redisTemplate = redisTemplate;
         this.sessionRegistry = sessionRegistry;
@@ -515,6 +518,16 @@ public class MatchFoundService {
                 log.info("✅ [MatchFound] Estado de {} atualizado para AVAILABLE", declinedPlayer);
             } catch (Exception e) {
                 log.error("❌ [MatchFound] Erro ao atualizar estado de {}: {}", declinedPlayer, e.getMessage());
+            }
+
+            // ✅ NOVO: Liberar lock de jogador que recusou
+            try {
+                if (playerLockService.getPlayerSession(declinedPlayer) != null) {
+                    playerLockService.forceReleasePlayerLock(declinedPlayer);
+                    log.info("🔓 [MatchFound] Lock de {} liberado (recusou partida)", declinedPlayer);
+                }
+            } catch (Exception e) {
+                log.error("❌ [MatchFound] Erro ao liberar lock de {}: {}", declinedPlayer, e.getMessage());
             }
 
             // ✅ Resetar status de aceitação dos OUTROS jogadores (voltam ao normal na fila)
