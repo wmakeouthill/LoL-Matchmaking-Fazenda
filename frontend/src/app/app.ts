@@ -1391,7 +1391,10 @@ export class App implements OnInit, OnDestroy {
           team1Length: gameData.team1?.length || 0,
           team2Length: gameData.team2?.length || 0,
           hasPickBanData: !!gameData.pickBanData,
-          hasTeams: !!(gameData.teams?.blue && gameData.teams?.red)
+          hasTeams: !!(gameData.teams?.blue && gameData.teams?.red),
+          blueBans: gameData.blueBans,
+          redBans: gameData.redBans,
+          pickBanDataKeys: gameData.pickBanData ? Object.keys(gameData.pickBanData) : []
         });
 
         // ✅ Atualizar estado para game in progress

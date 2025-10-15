@@ -1577,9 +1577,40 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
 
   // ✅ NOVO: Métodos para obter bans dos times
   getTeamBans(team: TeamColor): any[] {
+    logGameInProgress(`🔍 [GameInProgress] getTeamBans chamado para team: ${team}`);
+
+    // ✅ TEMPORÁRIO: Limpar cache para debug
+    this.cachedTeamBans.clear();
+
     // ✅ CACHE: Retornar do cache se disponível
     if (this.cachedTeamBans.has(team)) {
+      logGameInProgress(`✅ [GameInProgress] Retornando bans do cache para team: ${team}`);
       return this.cachedTeamBans.get(team)!;
+    }
+
+    // ✅ PRIORIDADE 1: Fallback direto no gameData (estrutura que o backend está enviando)
+    if (team === 'blue' && Array.isArray((this.gameData as any)?.blueBans)) {
+      const bans = (this.gameData as any).blueBans.map((championId: any) => ({
+        champion: { id: championId, name: this.getChampionNameById(championId) },
+        championName: this.getChampionNameById(championId),
+        championId: championId
+      }));
+      if (bans.length > 0) {
+        logGameInProgress(`✅ [GameInProgress] Bans diretos do gameData encontrados para time ${team}:`, bans);
+        this.cachedTeamBans.set(team, bans);
+        return bans;
+      }
+    } else if (team === 'red' && Array.isArray((this.gameData as any)?.redBans)) {
+      const bans = (this.gameData as any).redBans.map((championId: any) => ({
+        champion: { id: championId, name: this.getChampionNameById(championId) },
+        championName: this.getChampionNameById(championId),
+        championId: championId
+      }));
+      if (bans.length > 0) {
+        logGameInProgress(`✅ [GameInProgress] Bans diretos do gameData encontrados para time ${team}:`, bans);
+        this.cachedTeamBans.set(team, bans);
+        return bans;
+      }
     }
 
     // Usar pickBanData normalizado se existir
@@ -1592,6 +1623,15 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
 
     try {
       const pickBanData = normalizedPickBan || this.gameData?.pickBanData;
+
+      logGameInProgress(`🔍 [GameInProgress] pickBanData para team ${team}:`, pickBanData);
+      logGameInProgress(`🔍 [GameInProgress] blueBans:`, pickBanData?.blueBans);
+      logGameInProgress(`🔍 [GameInProgress] redBans:`, pickBanData?.redBans);
+
+      // ✅ NOVO: Debug da estrutura completa do gameData
+      logGameInProgress(`🔍 [GameInProgress] gameData completo:`, this.gameData);
+      logGameInProgress(`🔍 [GameInProgress] gameData.blueBans:`, (this.gameData as any)?.blueBans);
+      logGameInProgress(`🔍 [GameInProgress] gameData.redBans:`, (this.gameData as any)?.redBans);
 
       // ✅ CORREÇÃO: Extrair bans das phases (estrutura correta)
       if (Array.isArray(pickBanData?.phases)) {
@@ -1680,6 +1720,32 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
         this.cachedTeamBans.set(team, teamBans);
         return teamBans;
       }
+
+      // ✅ NOVO: Fallback para blueBans/redBans (estrutura enviada pelo backend)
+      if (team === 'blue' && Array.isArray(pickBanData?.blueBans)) {
+        const bans = pickBanData.blueBans.map((championId: any) => ({
+          champion: { id: championId, name: this.getChampionNameById(championId) },
+          championName: this.getChampionNameById(championId),
+          championId: championId
+        }));
+        if (bans.length > 0) {
+          logGameInProgress(`✅ [GameInProgress] Bans do backend encontrados para time ${team}:`, bans);
+          this.cachedTeamBans.set(team, bans);
+          return bans;
+        }
+      } else if (team === 'red' && Array.isArray(pickBanData?.redBans)) {
+        const bans = pickBanData.redBans.map((championId: any) => ({
+          champion: { id: championId, name: this.getChampionNameById(championId) },
+          championName: this.getChampionNameById(championId),
+          championId: championId
+        }));
+        if (bans.length > 0) {
+          logGameInProgress(`✅ [GameInProgress] Bans do backend encontrados para time ${team}:`, bans);
+          this.cachedTeamBans.set(team, bans);
+          return bans;
+        }
+      }
+
 
       logGameInProgress(`⚠️ [GameInProgress] Nenhum ban encontrado para time ${team}`);
       const emptyResult: any[] = [];
