@@ -319,32 +319,14 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
 
     console.log('✅ [DEBUG 7/10] winningTeam válido:', selectedOption.winningTeam);
 
-    // ✅ CRÍTICO: Confirmação obrigatória de identidade antes da votação
+    // ✅ VERIFICAÇÃO: Apenas verificar se currentPlayer está disponível (sem confirmação crítica)
     if (!this.currentPlayer) {
-      console.error('❌ [WinnerModal] currentPlayer não disponível para confirmação crítica');
+      console.error('❌ [WinnerModal] currentPlayer não disponível');
       alert('Erro: Jogador não identificado. Não é possível votar.');
       return;
     }
 
-    console.log('🔍 [WinnerModal] Solicitando confirmação crítica de identidade...');
-
-    try {
-      // ✅ NOVO: Solicitar confirmação crítica de identidade
-      const identityConfirmed = await this.requestCriticalIdentityConfirmation();
-
-      if (!identityConfirmed) {
-        console.warn('⚠️ [WinnerModal] Confirmação de identidade falhou ou expirou');
-        alert('Confirmação de identidade falhou. Tente novamente.');
-        return;
-      }
-
-      console.log('✅ [WinnerModal] Identidade confirmada, prosseguindo com votação...');
-
-    } catch (error) {
-      console.error('❌ [WinnerModal] Erro na confirmação de identidade:', error);
-      alert('Erro na confirmação de identidade. Tente novamente.');
-      return;
-    }
+    console.log('✅ [WinnerModal] currentPlayer disponível, prosseguindo com votação...');
 
     // ✅ VOTAÇÃO: Enviar voto ao backend
     if (!this.matchId) {
@@ -423,53 +405,6 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
     this.onCancel.emit();
   }
 
-  /**
-   * ✅ NOVO: Solicita confirmação crítica de identidade antes de ações importantes
-   */
-  private async requestCriticalIdentityConfirmation(): Promise<boolean> {
-    return new Promise((resolve) => {
-      const requestId = Math.random().toString(36).substr(2, 9);
-
-      console.log('🔍 [WinnerModal] Enviando solicitação de confirmação crítica...');
-
-      // Enviar solicitação via WebSocket
-      this.apiService.sendWebSocketMessage({
-        type: 'request_critical_identity_confirmation',
-        requestId: requestId,
-        actionType: 'winner_voting',
-        timestamp: Date.now()
-      });
-
-      // Aguardar resposta por até 8 segundos
-      const timeout = setTimeout(() => {
-        console.warn('⚠️ [WinnerModal] Timeout na confirmação crítica de identidade');
-        resolve(false);
-      }, 8000);
-
-      // Listener para resposta
-      const messageSubscription = this.apiService.onWebSocketMessage().subscribe({
-        next: (message) => {
-          if (message.type === 'critical_identity_confirmed' && message.requestId === requestId) {
-            console.log('✅ [WinnerModal] Confirmação crítica de identidade recebida');
-            clearTimeout(timeout);
-            messageSubscription.unsubscribe();
-            resolve(true);
-          } else if (message.type === 'critical_identity_confirmation_failed' && message.requestId === requestId) {
-            console.warn('⚠️ [WinnerModal] Confirmação crítica de identidade falhou');
-            clearTimeout(timeout);
-            messageSubscription.unsubscribe();
-            resolve(false);
-          }
-        },
-        error: (error) => {
-          console.error('❌ [WinnerModal] Erro no WebSocket durante confirmação crítica:', error);
-          clearTimeout(timeout);
-          messageSubscription.unsubscribe();
-          resolve(false);
-        }
-      });
-    });
-  }
 
   getChampionName(championId: number): string {
     const key = getChampionKeyById(championId);
