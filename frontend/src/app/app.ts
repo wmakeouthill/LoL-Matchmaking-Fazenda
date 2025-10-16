@@ -3249,11 +3249,11 @@ export class App implements OnInit, OnDestroy {
   }
 
   async simulateLastMatch(): Promise<void> {
-    console.log('🎮 [App] Simulando última partida PERSONALIZADA do LCU...');
+    console.log('🎮 [App] Simulando última partida PERSONALIZADA do LCU com 10 players...');
 
     try {
       // 1. Buscar histórico completo do LCU (limite maior para encontrar personalizadas)
-      const response: any = await firstValueFrom(this.apiService.getLCUMatchHistoryAll(0, 20, false));
+      const response: any = await firstValueFrom(this.apiService.getLCUMatchHistoryAll(0, 50, false));
 
       if (!response?.success || !response?.matches || response.matches.length === 0) {
         this.addNotification('error', 'Sem Partidas', 'Nenhuma partida encontrada no histórico do LCU. Certifique-se de que o League of Legends está aberto.');
@@ -3271,21 +3271,44 @@ export class App implements OnInit, OnDestroy {
         return;
       }
 
-      // 3. Pegar a primeira (última) partida personalizada
-      const lastMatchSummary = customMatches[0];
-      console.log('✅ [App] Última partida personalizada encontrada (resumo):', lastMatchSummary);
-      console.log('🔍 [App] GameId:', lastMatchSummary.gameId);
+      // 3. Buscar a primeira partida personalizada com EXATAMENTE 10 players
+      let validMatchSummary = null;
+      let lastMatch = null;
 
-      // 4. Buscar detalhes COMPLETOS da partida usando gameId
-      console.log('📡 [App] Buscando detalhes completos da partida...');
-      const lastMatch: any = await firstValueFrom(this.apiService.getLCUGameDetails(lastMatchSummary.gameId));
+      console.log('🔍 [App] Procurando partida personalizada com 10 players...');
 
-      if (!lastMatch || !lastMatch.participants || lastMatch.participants.length !== 10) {
-        console.error('❌ [App] Detalhes da partida inválidos:', lastMatch);
-        this.addNotification('error', 'Erro nos Detalhes',
-          `Não foi possível buscar detalhes completos da partida. Participantes: ${lastMatch?.participants?.length || 0}`);
+      for (let i = 0; i < customMatches.length; i++) {
+        const matchSummary = customMatches[i];
+        console.log(`🔍 [App] Verificando partida ${i + 1}/${customMatches.length} - GameId: ${matchSummary.gameId}`);
+
+        // Buscar detalhes da partida
+        try {
+          const matchDetails: any = await firstValueFrom(this.apiService.getLCUGameDetails(matchSummary.gameId));
+
+          if (matchDetails && matchDetails.participants && matchDetails.participants.length === 10) {
+            console.log(`✅ [App] Partida com 10 players encontrada! GameId: ${matchSummary.gameId}`);
+            validMatchSummary = matchSummary;
+            lastMatch = matchDetails;
+            break;
+          } else {
+            console.log(`⚠️ [App] Partida ${matchSummary.gameId} tem ${matchDetails?.participants?.length || 0} players - pulando...`);
+          }
+        } catch (error) {
+          console.warn(`⚠️ [App] Erro ao buscar detalhes da partida ${matchSummary.gameId}:`, error);
+          continue;
+        }
+      }
+
+      if (!validMatchSummary || !lastMatch) {
+        console.error('❌ [App] Nenhuma partida personalizada com 10 players encontrada');
+        this.addNotification('error', 'Sem Partidas Válidas', 'Nenhuma partida personalizada com exatamente 10 players encontrada. Jogue uma partida personalizada com 10 players primeiro!');
         return;
       }
+
+      console.log('✅ [App] Partida personalizada com 10 players encontrada:', {
+        gameId: validMatchSummary.gameId,
+        participantsCount: lastMatch.participants?.length
+      });
 
       console.log('✅ [App] Detalhes completos da partida carregados:', {
         gameId: lastMatch.gameId,
@@ -3293,17 +3316,17 @@ export class App implements OnInit, OnDestroy {
         participantIdentitiesCount: lastMatch.participantIdentities?.length
       });
 
-      // 5. Enviar para backend simular como partida IN_PROGRESS
-      console.log('📡 [App] Enviando partida para backend criar como IN_PROGRESS...');
+      // 4. Enviar para backend simular como partida IN_PROGRESS
+      console.log('📡 [App] Enviando partida com 10 players para backend criar como IN_PROGRESS...');
       const simulateResponse: any = await firstValueFrom(this.apiService.simulateLastLcuMatch(lastMatch));
 
       if (simulateResponse?.success) {
         this.addNotification(
           'success',
           'Entrando na Partida!',
-          `Partida simulada criada. Redirecionando para Game In Progress...`
+          `Partida com 10 players simulada criada. Redirecionando para Game In Progress...`
         );
-        console.log('✅ [App] Partida simulada criada - aguardando broadcast game_started:', simulateResponse);
+        console.log('✅ [App] Partida com 10 players simulada criada - aguardando broadcast game_started:', simulateResponse);
         // O WebSocket receberá game_started e redirecionará automaticamente
       } else {
         this.addNotification('error', 'Erro na Simulação', simulateResponse?.error || 'Erro desconhecido');
