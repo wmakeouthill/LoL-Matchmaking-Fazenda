@@ -1,10 +1,22 @@
-<div class="final-confirmation-overlay" *ngIf="isVisible" (click)="closeModal()" (keydown.escape)="closeModal()">
-  <div class="final-confirmation-modal" (click)="$event.stopPropagation()" (keydown)="$event.stopPropagation()">>
+<div
+  class="final-confirmation-overlay"
+  *ngIf="isVisible"
+  (click)="closeModal()"
+  (keydown.escape)="closeModal()"
+>
+  <div
+    class="final-confirmation-modal"
+    (click)="$event.stopPropagation()"
+    (keydown)="$event.stopPropagation()"
+  >
+    >
     <!-- Header -->
     <div class="confirmation-header">
       <div class="confirmation-icon">🎯</div>
       <h2>Confirmar Seleção Final</h2>
-      <p>- Verifique se todos os picks e bans estão corretos antes de continuar</p>
+      <p>
+        - Verifique se todos os picks e bans estão corretos antes de continuar
+      </p>
     </div>
 
     <!-- Conteúdo -->
@@ -19,33 +31,74 @@
 
           <!-- Bans do Time Azul -->
           <div class="team-bans">
-            <div class="ban-slot" *ngFor="let ban of getTeamBans('blue'); let i = index">
-              <img [src]="ban.image" [alt]="ban.name" class="ban-img">
+            <div
+              class="ban-slot"
+              *ngFor="let ban of getTeamBans('blue'); let i = index"
+            >
+              <img [src]="ban.image" [alt]="ban.name" class="ban-img" />
               <span class="ban-name">{{ ban.name }}</span>
             </div>
             <!-- Slots vazios para completar 5 bans -->
-            <div class="ban-slot empty-ban" *ngFor="let i of getEmptyBanSlots(getTeamBans('blue').length)">
+            <div
+              class="ban-slot empty-ban"
+              *ngFor="let i of getEmptyBanSlots(getTeamBans('blue').length)"
+            >
               <div class="ban-placeholder">?</div>
               <span class="ban-name">Ban</span>
             </div>
           </div>
 
           <div class="team-picks">
-            <div class="team-slot" *ngFor="let slot of getTeamByLane('blue'); let i = index">
-              <div class="slot-content" [class.confirmed]="isPlayerConfirmed(slot.player)" [class.auto-confirmed]="isPlayerAutoConfirmed(slot.player)">
+            <div
+              class="team-slot"
+              *ngFor="let slot of getTeamByLane('blue'); let i = index"
+              [class.confirmed-player]="getPlayerConfirmationStatus(slot.player.summonerName) === 'confirmed'"
+              [class.declined-player]="getPlayerConfirmationStatus(slot.player.summonerName) === 'declined'"
+              [class.timeout-player]="getPlayerConfirmationStatus(slot.player.summonerName) === 'timeout'"
+            >
+              <!-- Status de confirmação -->
+              <div
+                class="confirmation-status"
+                [class]="getConfirmationStatusClass(slot.player)"
+              >
+                <span class="status-icon"
+                  >{{ getConfirmationStatusIcon(slot.player) }}</span
+                >
+              </div>
+
+              <div
+                class="slot-content"
+                [class.confirmed]="isPlayerConfirmed(slot.player)"
+                [class.auto-confirmed]="isPlayerAutoConfirmed(slot.player)"
+              >
                 <div class="player-info">
                   <span class="player-name">
-                    {{ slot.player.summonerName || slot.player.name || 'Jogador' }}
-                    <span class="you-indicator" *ngIf="isCurrentPlayer(slot.player)">(Você)</span>
+                    {{ slot.player.summonerName || slot.player.name || 'Jogador'
+                    }}
+                    <span
+                      class="you-indicator"
+                      *ngIf="isCurrentUser(slot.player)"
+                      >(Você)</span
+                    >
                   </span>
-                  <span class="player-lane">{{ getPlayerLaneDisplayForPlayer(slot.player) }}</span>
-                  <span class="confirmation-status" [class.confirmed]="isPlayerConfirmed(slot.player)" [class.pending]="!isPlayerConfirmed(slot.player)">
+                  <span class="player-lane">
+                    {{ getPlayerLaneDisplayForPlayer(slot.player) }}
+                  </span>
+                  <span
+                    class="confirmation-status"
+                    [class.confirmed]="isPlayerConfirmed(slot.player)"
+                    [class.pending]="!isPlayerConfirmed(slot.player)"
+                  >
                     {{ getConfirmationStatus(slot.player) }}
                   </span>
                 </div>
                 <div class="champion-info" *ngIf="slot.champion">
-                  <img [src]="slot.champion.image" [alt]="slot.champion.name" class="champion-img">
-                  <span class="champion-name">{{ slot.champion.name }}</span>
+                  <img
+                    [src]="slot.champion.image"
+                    [alt]="slot.champion.name"
+                    class="champion-img"
+                  />
+                  <span class="champion-name"> {{ slot.champion.name }} </span>
                 </div>
                 <div class="champion-placeholder" *ngIf="!slot.champion">?</div>
               </div>
@@ -61,32 +114,73 @@
 
           <!-- Bans do Time Vermelho -->
           <div class="team-bans">
-            <div class="ban-slot" *ngFor="let ban of getTeamBans('red'); let i = index">
-              <img [src]="ban.image" [alt]="ban.name" class="ban-img">
+            <div
+              class="ban-slot"
+              *ngFor="let ban of getTeamBans('red'); let i = index"
+            >
+              <img [src]="ban.image" [alt]="ban.name" class="ban-img" />
               <span class="ban-name">{{ ban.name }}</span>
             </div>
             <!-- Slots vazios para completar 5 bans -->
-            <div class="ban-slot empty-ban" *ngFor="let i of getEmptyBanSlots(getTeamBans('red').length)">
+            <div
+              class="ban-slot empty-ban"
+              *ngFor="let i of getEmptyBanSlots(getTeamBans('red').length)"
+            >
               <div class="ban-placeholder">?</div>
               <span class="ban-name">Ban</span>
             </div>
           </div>
 
           <div class="team-picks">
-            <div class="team-slot" *ngFor="let slot of getTeamByLane('red'); let i = index">
-              <div class="slot-content" [class.confirmed]="isPlayerConfirmed(slot.player)" [class.auto-confirmed]="isPlayerAutoConfirmed(slot.player)">
+            <div
+              class="team-slot"
+              *ngFor="let slot of getTeamByLane('red'); let i = index"
+              [class.confirmed-player]="getPlayerConfirmationStatus(slot.player.summonerName) === 'confirmed'"
+              [class.declined-player]="getPlayerConfirmationStatus(slot.player.summonerName) === 'declined'"
+              [class.timeout-player]="getPlayerConfirmationStatus(slot.player.summonerName) === 'timeout'"
+            >
+              <!-- Status de confirmação -->
+              <div
+                class="confirmation-status"
+                [class]="getConfirmationStatusClass(slot.player)"
+              >
+                <span class="status-icon"
+                  >{{ getConfirmationStatusIcon(slot.player) }}</span
+                >
+              </div>
+
+              <div
+                class="slot-content"
+                [class.confirmed]="isPlayerConfirmed(slot.player)"
+                [class.auto-confirmed]="isPlayerAutoConfirmed(slot.player)"
+              >
                 <div class="player-info">
                   <span class="player-name">
-                    {{ slot.player.summonerName || slot.player.name || 'Jogador' }}
-                    <span class="you-indicator" *ngIf="isCurrentPlayer(slot.player)">(Você)</span>
+                    {{ slot.player.summonerName || slot.player.name || 'Jogador'
+                    }}
+                    <span
+                      class="you-indicator"
+                      *ngIf="isCurrentUser(slot.player)"
+                      >(Você)</span
+                    >
                   </span>
-                  <span class="player-lane">{{ getPlayerLaneDisplayForPlayer(slot.player) }}</span>
-                  <span class="confirmation-status" [class.confirmed]="isPlayerConfirmed(slot.player)" [class.pending]="!isPlayerConfirmed(slot.player)">
+                  <span class="player-lane">
+                    {{ getPlayerLaneDisplayForPlayer(slot.player) }}
+                  </span>
+                  <span
+                    class="confirmation-status"
+                    [class.confirmed]="isPlayerConfirmed(slot.player)"
+                    [class.pending]="!isPlayerConfirmed(slot.player)"
+                  >
                     {{ getConfirmationStatus(slot.player) }}
                   </span>
                 </div>
                 <div class="champion-info" *ngIf="slot.champion">
-                  <img [src]="slot.champion.image" [alt]="slot.champion.name" class="champion-img">
+                  <img
+                    [src]="slot.champion.image"
+                    [alt]="slot.champion.name"
+                    class="champion-img"
+                  />
                   <span class="champion-name">{{ slot.champion.name }}</span>
                 </div>
                 <div class="champion-placeholder" *ngIf="!slot.champion">?</div>
@@ -99,30 +193,63 @@
 
     <!-- Ações -->
     <div class="confirmation-actions">
-      <!-- ✅ NOVO: Mostrar contagem de confirmações -->
-      <div class="confirmation-status-info" *ngIf="confirmationData?.confirmations">
-        <p class="confirmation-count">
-          {{ getConfirmationCount().confirmed }}/{{ getConfirmationCount().total }} jogadores confirmaram
-        </p>
-        <!-- ✅ NOVO: Mostrar mensagem de estado -->
-        <p class="confirmation-message" *ngIf="confirmationMessage" [class.error]="confirmationMessage.includes('Erro')">
+      <!-- ✅ NOVO: Progresso de confirmação -->
+      <div class="confirmation-progress">
+        <div class="progress-header">
+          <h4>Status de Confirmação</h4>
+          <span class="progress-text">
+            {{ getConfirmationCount().confirmed }}/{{
+            getConfirmationCount().total }} jogadores confirmaram ({{
+            getConfirmationProgress() }}%)
+          </span>
+        </div>
+
+        <!-- Barra de progresso -->
+        <div class="progress-bar">
+          <div
+            class="progress-fill"
+            [style.width.%]="getConfirmationProgress()"
+            [class.complete]="haveAllPlayersConfirmed()"
+          ></div>
+        </div>
+
+        <!-- Mensagem de estado -->
+        <p
+          class="confirmation-message"
+          *ngIf="confirmationMessage"
+          [class.error]="confirmationMessage.includes('Erro')"
+        >
           {{ confirmationMessage }}
         </p>
       </div>
 
-      <button class="btn btn-danger btn-lg" (click)="cancelFinalDraft()" [disabled]="isConfirming">
+      <button
+        class="btn btn-danger btn-lg"
+        (click)="cancelFinalDraft()"
+        [disabled]="isConfirming"
+      >
         ❌ Cancelar Partida
       </button>
-      <button class="btn btn-info btn-lg" (click)="refreshDraftState()" [disabled]="isConfirming">
+      <button
+        class="btn btn-info btn-lg"
+        (click)="refreshDraftState()"
+        [disabled]="isConfirming"
+      >
         🔄 Atualizar Estado do Draft
       </button>
-      <button class="btn btn-secondary btn-lg" (click)="startEditingCurrentPlayer()" [disabled]="isConfirming">
+      <button
+        class="btn btn-secondary btn-lg"
+        (click)="startEditingCurrentPlayer()"
+        [disabled]="isConfirming"
+      >
         ✏️ Editar Minha Seleção
       </button>
-      <button class="btn btn-success btn-lg btn-confirm"
-              (click)="confirmFinalDraft()"
-              [disabled]="isConfirming"
-              [class.loading]="isConfirming">
+      <button
+        class="btn btn-success btn-lg btn-confirm"
+        (click)="confirmFinalDraft()"
+        [disabled]="isConfirming"
+        [class.loading]="isConfirming"
+      >
         <span *ngIf="!isConfirming">✅ Confirmar Draft Final</span>
         <span *ngIf="isConfirming">⏳ Confirmando...</span>
       </button>

@@ -7,7 +7,8 @@
 
     <div class="modal-body">
       <p class="description">
-        Selecione qual das últimas partidas personalizadas corresponde ao jogo que acabou de terminar:
+        Selecione qual das últimas partidas personalizadas corresponde ao jogo
+        que acabou de terminar:
       </p>
 
       <div class="matches-list">
@@ -16,38 +17,57 @@
           class="match-card"
           [class.selected]="selectedMatchIndex === i"
           [class.has-winner]="option.winningTeam"
-          (click)="selectMatch(i)">
-
+          (click)="selectMatch(i)"
+        >
           <div class="match-header">
             <div class="match-info">
-              <span class="match-number">Partida #{{i + 1}}</span>
+              <span class="match-number">Partida #{{ i + 1 }}</span>
               <span class="match-time">{{ option.formattedDate }}</span>
-              <span class="match-duration">⏱️ {{ option.formattedDuration }}</span>
+              <span class="match-duration"
+                >⏱️ {{ option.formattedDuration }}</span
+              >
 
               <!-- Vote Counter -->
-              <span class="vote-badge" *ngIf="option.voteCount && option.voteCount > 0">
+              <span
+                class="vote-badge"
+                *ngIf="option.voteCount && option.voteCount > 0"
+              >
                 🗳️ {{ option.voteCount }}/10 votos
               </span>
 
               <!-- You Voted Badge -->
-              <span class="voted-badge" *ngIf="myVotedGameId === option.match.gameId">
+              <span
+                class="voted-badge"
+                *ngIf="myVotedGameId === option.match.gameId"
+              >
                 ✓ Você votou aqui
               </span>
             </div>
 
             <div class="winner-badge" *ngIf="option.winningTeam">
-              <span [class.blue-winner]="option.winningTeam === 'blue'"
-                    [class.red-winner]="option.winningTeam === 'red'">
-                Vencedor: {{ option.winningTeam === 'blue' ? 'Time Azul' : 'Time Vermelho' }}
+              <span
+                [class.blue-winner]="option.winningTeam === 'blue'"
+                [class.red-winner]="option.winningTeam === 'red'"
+              >
+                Vencedor:
+                {{
+                  option.winningTeam === "blue" ? "Time Azul" : "Time Vermelho"
+                }}
               </span>
             </div>
           </div>
 
           <!-- Vote Progress Bar -->
-          <div class="vote-progress-container" *ngIf="option.voteCount && option.voteCount > 0">
-            <div class="vote-progress-bar" [style.width.%]="(option.voteCount / 10) * 100">
+          <div
+            class="vote-progress-container"
+            *ngIf="option.voteCount && option.voteCount > 0"
+          >
+            <div
+              class="vote-progress-bar"
+              [style.width.%]="(option.voteCount / 10) * 100"
+            >
               <span class="progress-text" *ngIf="option.voteCount >= 5">
-                {{ option.voteCount >= 5 ? 'Vinculando...' : '' }}
+                {{ option.voteCount >= 5 ? "Vinculando..." : "" }}
               </span>
             </div>
           </div>
@@ -56,22 +76,69 @@
           <div class="teams-composition">
             <div class="teams-container-side-by-side">
               <!-- Blue Team -->
-              <div class="team-section blue-team" [class.winner]="option.winningTeam === 'blue'">
+              <div
+                class="team-section blue-team"
+                [class.winner]="option.winningTeam === 'blue'"
+              >
                 <div class="team-header">
                   <h5 class="team-title">
                     <span class="team-color-indicator blue"></span>
                     Time Azul
-                    <span class="team-result victory" *ngIf="option.winningTeam === 'blue'">VITÓRIA</span>
-                    <span class="team-result defeat" *ngIf="option.winningTeam !== 'blue' && option.winningTeam">DERROTA</span>
+                    <span
+                      class="team-result victory"
+                      *ngIf="option.winningTeam === 'blue'"
+                      >VITÓRIA</span
+                    >
+                    <span
+                      class="team-result defeat"
+                      *ngIf="
+                        option.winningTeam !== 'blue' && option.winningTeam
+                      "
+                      >DERROTA</span
+                    >
                   </h5>
                 </div>
 
                 <div class="team-players-by-lane">
-                  <div *ngFor="let lane of ['TOP', 'JUNGLE', 'MIDDLE', 'ADC', 'SUPPORT']" class="lane-row">
+                  <div
+                    *ngFor="
+                      let lane of ['TOP', 'JUNGLE', 'MIDDLE', 'ADC', 'SUPPORT']
+                    "
+                    class="lane-row"
+                  >
                     <div
                       class="participant-detailed-card"
-                      *ngIf="organizeTeamByLanes(getPlayersByTeam(option.match, 100))[lane] as participant"
-                      [class.current-player]="isPlayerInOurMatch(participant)">
+                      *ngIf="
+                        organizeTeamByLanes(
+                          getPlayersByTeam(option.match, 100)
+                        )[lane] as participant
+                      "
+                      [class.current-player]="isPlayerInOurMatch(participant)"
+                      [class.voted-player]="
+                        getPlayerVoteStatus(
+                          participant.summonerName || participant.riotIdGameName
+                        ) === 'voted'
+                      "
+                      [class.declined-player]="
+                        getPlayerVoteStatus(
+                          participant.summonerName || participant.riotIdGameName
+                        ) === 'declined'
+                      "
+                      [class.timeout-player]="
+                        getPlayerVoteStatus(
+                          participant.summonerName || participant.riotIdGameName
+                        ) === 'timeout'
+                      "
+                    >
+                      <!-- Status de votação -->
+                      <div
+                        class="vote-status"
+                        [class]="getVoteStatusClass(participant)"
+                      >
+                        <span class="status-icon">{{
+                          getVoteStatusIcon(participant)
+                        }}</span>
+                      </div>
 
                       <!-- Champion Info -->
                       <div class="participant-champion-section">
@@ -82,22 +149,45 @@
                             class="champion-img"
                             onerror="this.style.display='none'; this.nextElementSibling.style.display='block'"
                           />
-                          <div class="champion-placeholder" style="display: none;">
-                            {{ participant.championName?.charAt(0) || '?' }}
+                          <div
+                            class="champion-placeholder"
+                            style="display: none"
+                          >
+                            {{ participant.championName?.charAt(0) || "?" }}
                           </div>
-                          <span class="champion-level">{{ participant.champLevel }}</span>
+                          <span class="champion-level">{{
+                            participant.champLevel
+                          }}</span>
                         </div>
                         <div class="champion-info">
                           <!-- ✅ Lane Badge dentro do card -->
                           <div class="lane-badge">
-                            <span class="lane-icon">{{ getLaneIcon(lane) }}</span>
-                            <span class="lane-name">{{ getLaneName(lane) }}</span>
+                            <span class="lane-icon">{{
+                              getLaneIcon(lane)
+                            }}</span>
+                            <span class="lane-name">{{
+                              getLaneName(lane)
+                            }}</span>
                           </div>
-                          <div class="summoner-name" [class.current-player-name]="isPlayerInOurMatch(participant)">
-                            {{ participant.summonerName || participant.riotIdGameName }}
-                            <span *ngIf="isPlayerInOurMatch(participant)" class="you-badge">VOCÊ</span>
+                          <div
+                            class="summoner-name"
+                            [class.current-player-name]="
+                              isPlayerInOurMatch(participant)
+                            "
+                          >
+                            {{
+                              participant.summonerName ||
+                                participant.riotIdGameName
+                            }}
+                            <span
+                              *ngIf="isPlayerInOurMatch(participant)"
+                              class="you-badge"
+                              >VOCÊ</span
+                            >
                           </div>
-                          <div class="champion-name">{{ participant.championName }}</div>
+                          <div class="champion-name">
+                            {{ participant.championName }}
+                          </div>
                         </div>
                       </div>
 
@@ -111,21 +201,30 @@
                           <span class="assists">{{ participant.assists }}</span>
                         </div>
                         <div class="kda-ratio">
-                          {{ getParticipantKDARatio(participant).toFixed(2) }}:1 KDA
+                          {{ getParticipantKDARatio(participant).toFixed(2) }}:1
+                          KDA
                         </div>
                       </div>
 
                       <!-- Items Section -->
                       <div class="items-section-detailed">
                         <div class="items-row">
-                          <div *ngFor="let item of getParticipantItems(participant)" class="item-slot-detailed">
+                          <div
+                            *ngFor="
+                              let item of getParticipantItems(participant)
+                            "
+                            class="item-slot-detailed"
+                          >
                             <img
                               *ngIf="item && item !== 0"
                               [src]="getItemImageUrl(item)"
                               [alt]="'Item ' + item"
                               class="item-img-detailed"
                             />
-                            <div *ngIf="!item || item === 0" class="empty-item-detailed"></div>
+                            <div
+                              *ngIf="!item || item === 0"
+                              class="empty-item-detailed"
+                            ></div>
                           </div>
                         </div>
 
@@ -133,19 +232,34 @@
                         <div class="stats-row-horizontal">
                           <div class="stat-compact">
                             <span class="stat-label">Farm</span>
-                            <span class="stat-value">{{ (participant.totalMinionsKilled || 0) + (participant.neutralMinionsKilled || 0) }}</span>
+                            <span class="stat-value">{{
+                              (participant.totalMinionsKilled || 0) +
+                                (participant.neutralMinionsKilled || 0)
+                            }}</span>
                           </div>
                           <div class="stat-compact">
                             <span class="stat-label">Ouro</span>
-                            <span class="stat-value">{{ (participant.goldEarned / 1000).toFixed(1) }}k</span>
+                            <span class="stat-value"
+                              >{{
+                                (participant.goldEarned / 1000).toFixed(1)
+                              }}k</span
+                            >
                           </div>
                           <div class="stat-compact">
                             <span class="stat-label">Dano</span>
-                            <span class="stat-value">{{ (participant.totalDamageDealtToChampions / 1000).toFixed(1) }}k</span>
+                            <span class="stat-value"
+                              >{{
+                                (
+                                  participant.totalDamageDealtToChampions / 1000
+                                ).toFixed(1)
+                              }}k</span
+                            >
                           </div>
                           <div class="stat-compact">
                             <span class="stat-label">Visão</span>
-                            <span class="stat-value">{{ participant.visionScore }}</span>
+                            <span class="stat-value">{{
+                              participant.visionScore
+                            }}</span>
                           </div>
                         </div>
                       </div>
@@ -155,23 +269,43 @@
               </div>
 
               <!-- Red Team -->
-              <div class="team-section red-team" [class.winner]="option.winningTeam === 'red'">
+              <div
+                class="team-section red-team"
+                [class.winner]="option.winningTeam === 'red'"
+              >
                 <div class="team-header">
                   <h5 class="team-title">
                     <span class="team-color-indicator red"></span>
                     Time Vermelho
-                    <span class="team-result victory" *ngIf="option.winningTeam === 'red'">VITÓRIA</span>
-                    <span class="team-result defeat" *ngIf="option.winningTeam !== 'red' && option.winningTeam">DERROTA</span>
+                    <span
+                      class="team-result victory"
+                      *ngIf="option.winningTeam === 'red'"
+                      >VITÓRIA</span
+                    >
+                    <span
+                      class="team-result defeat"
+                      *ngIf="option.winningTeam !== 'red' && option.winningTeam"
+                      >DERROTA</span
+                    >
                   </h5>
                 </div>
 
                 <div class="team-players-by-lane">
-                  <div *ngFor="let lane of ['TOP', 'JUNGLE', 'MIDDLE', 'ADC', 'SUPPORT']" class="lane-row">
+                  <div
+                    *ngFor="
+                      let lane of ['TOP', 'JUNGLE', 'MIDDLE', 'ADC', 'SUPPORT']
+                    "
+                    class="lane-row"
+                  >
                     <div
                       class="participant-detailed-card"
-                      *ngIf="organizeTeamByLanes(getPlayersByTeam(option.match, 200))[lane] as participant"
-                      [class.current-player]="isPlayerInOurMatch(participant)">
-
+                      *ngIf="
+                        organizeTeamByLanes(
+                          getPlayersByTeam(option.match, 200)
+                        )[lane] as participant
+                      "
+                      [class.current-player]="isPlayerInOurMatch(participant)"
+                    >
                       <!-- Champion Info -->
                       <div class="participant-champion-section">
                         <div class="champion-avatar">
@@ -181,22 +315,45 @@
                             class="champion-img"
                             onerror="this.style.display='none'; this.nextElementSibling.style.display='block'"
                           />
-                          <div class="champion-placeholder" style="display: none;">
-                            {{ participant.championName?.charAt(0) || '?' }}
+                          <div
+                            class="champion-placeholder"
+                            style="display: none"
+                          >
+                            {{ participant.championName?.charAt(0) || "?" }}
                           </div>
-                          <span class="champion-level">{{ participant.champLevel }}</span>
+                          <span class="champion-level">{{
+                            participant.champLevel
+                          }}</span>
                         </div>
                         <div class="champion-info">
                           <!-- ✅ Lane Badge dentro do card -->
                           <div class="lane-badge">
-                            <span class="lane-icon">{{ getLaneIcon(lane) }}</span>
-                            <span class="lane-name">{{ getLaneName(lane) }}</span>
+                            <span class="lane-icon">{{
+                              getLaneIcon(lane)
+                            }}</span>
+                            <span class="lane-name">{{
+                              getLaneName(lane)
+                            }}</span>
                           </div>
-                          <div class="summoner-name" [class.current-player-name]="isPlayerInOurMatch(participant)">
-                            {{ participant.summonerName || participant.riotIdGameName }}
-                            <span *ngIf="isPlayerInOurMatch(participant)" class="you-badge">VOCÊ</span>
+                          <div
+                            class="summoner-name"
+                            [class.current-player-name]="
+                              isPlayerInOurMatch(participant)
+                            "
+                          >
+                            {{
+                              participant.summonerName ||
+                                participant.riotIdGameName
+                            }}
+                            <span
+                              *ngIf="isPlayerInOurMatch(participant)"
+                              class="you-badge"
+                              >VOCÊ</span
+                            >
                           </div>
-                          <div class="champion-name">{{ participant.championName }}</div>
+                          <div class="champion-name">
+                            {{ participant.championName }}
+                          </div>
                         </div>
                       </div>
 
@@ -210,21 +367,30 @@
                           <span class="assists">{{ participant.assists }}</span>
                         </div>
                         <div class="kda-ratio">
-                          {{ getParticipantKDARatio(participant).toFixed(2) }}:1 KDA
+                          {{ getParticipantKDARatio(participant).toFixed(2) }}:1
+                          KDA
                         </div>
                       </div>
 
                       <!-- Items Section -->
                       <div class="items-section-detailed">
                         <div class="items-row">
-                          <div *ngFor="let item of getParticipantItems(participant)" class="item-slot-detailed">
+                          <div
+                            *ngFor="
+                              let item of getParticipantItems(participant)
+                            "
+                            class="item-slot-detailed"
+                          >
                             <img
                               *ngIf="item && item !== 0"
                               [src]="getItemImageUrl(item)"
                               [alt]="'Item ' + item"
                               class="item-img-detailed"
                             />
-                            <div *ngIf="!item || item === 0" class="empty-item-detailed"></div>
+                            <div
+                              *ngIf="!item || item === 0"
+                              class="empty-item-detailed"
+                            ></div>
                           </div>
                         </div>
 
@@ -232,19 +398,34 @@
                         <div class="stats-row-horizontal">
                           <div class="stat-compact">
                             <span class="stat-label">Farm</span>
-                            <span class="stat-value">{{ (participant.totalMinionsKilled || 0) + (participant.neutralMinionsKilled || 0) }}</span>
+                            <span class="stat-value">{{
+                              (participant.totalMinionsKilled || 0) +
+                                (participant.neutralMinionsKilled || 0)
+                            }}</span>
                           </div>
                           <div class="stat-compact">
                             <span class="stat-label">Ouro</span>
-                            <span class="stat-value">{{ (participant.goldEarned / 1000).toFixed(1) }}k</span>
+                            <span class="stat-value"
+                              >{{
+                                (participant.goldEarned / 1000).toFixed(1)
+                              }}k</span
+                            >
                           </div>
                           <div class="stat-compact">
                             <span class="stat-label">Dano</span>
-                            <span class="stat-value">{{ (participant.totalDamageDealtToChampions / 1000).toFixed(1) }}k</span>
+                            <span class="stat-value"
+                              >{{
+                                (
+                                  participant.totalDamageDealtToChampions / 1000
+                                ).toFixed(1)
+                              }}k</span
+                            >
                           </div>
                           <div class="stat-compact">
                             <span class="stat-label">Visão</span>
-                            <span class="stat-value">{{ participant.visionScore }}</span>
+                            <span class="stat-value">{{
+                              participant.visionScore
+                            }}</span>
                           </div>
                         </div>
                       </div>
@@ -258,26 +439,31 @@
           <div class="match-footer">
             <span class="match-count">
               Jogadores da nossa partida:
-              <strong>{{ option.ourPlayers.blue.length + option.ourPlayers.red.length }}/10</strong>
+              <strong
+                >{{
+                  option.ourPlayers.blue.length + option.ourPlayers.red.length
+                }}/10</strong
+              >
             </span>
           </div>
         </div>
 
         <div class="no-matches" *ngIf="matchOptions.length === 0">
           <p>❌ Nenhuma partida personalizada encontrada no histórico.</p>
-          <p>Certifique-se de que a partida foi concluída no League of Legends.</p>
+          <p>
+            Certifique-se de que a partida foi concluída no League of Legends.
+          </p>
         </div>
       </div>
     </div>
 
     <div class="modal-footer">
-      <button class="btn btn-secondary" (click)="cancel()">
-        Cancelar
-      </button>
+      <button class="btn btn-secondary" (click)="cancel()">Cancelar</button>
       <button
         class="btn btn-primary"
         (click)="confirmSelection()"
-        [disabled]="selectedMatchIndex === null">
+        [disabled]="selectedMatchIndex === null"
+      >
         Confirmar Vencedor
       </button>
     </div>

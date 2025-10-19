@@ -58,7 +58,14 @@
           class="player"
           *ngFor="let player of getTeamPlayers('blue')"
           [class.current-player]="currentPlayer && player.id === currentPlayer.id"
+          [class.voted-player]="getPlayerVoteStatus(player.summonerName) === 'voted'"
+          [class.declined-player]="getPlayerVoteStatus(player.summonerName) === 'declined'"
+          [class.timeout-player]="getPlayerVoteStatus(player.summonerName) === 'timeout'"
         >
+          <!-- Status de votação -->
+          <div class="vote-status" [class]="getVoteStatusClass(player)">
+            <span class="status-icon">{{ getVoteStatusIcon(player) }}</span>
+          </div>
           <div class="player-lane">
             <span class="lane-icon"
               >{{ getLaneIcon(player.assignedLane || player.lane || player.role)
@@ -173,7 +180,14 @@
           class="player"
           *ngFor="let player of getTeamPlayers('red')"
           [class.current-player]="currentPlayer && player.id === currentPlayer.id"
+          [class.voted-player]="getPlayerVoteStatus(player.summonerName) === 'voted'"
+          [class.declined-player]="getPlayerVoteStatus(player.summonerName) === 'declined'"
+          [class.timeout-player]="getPlayerVoteStatus(player.summonerName) === 'timeout'"
         >
+          <!-- Status de votação -->
+          <div class="vote-status" [class]="getVoteStatusClass(player)">
+            <span class="status-icon">{{ getVoteStatusIcon(player) }}</span>
+          </div>
           <div class="player-lane">
             <span class="lane-icon"
               >{{ getLaneIcon(player.assignedLane || player.lane || player.role)
@@ -246,7 +260,33 @@
       </div>
     </div>
   </div>
-  <!-- Game Status Information -->
+
+  <!-- ✅ NOVO: Progresso de votação -->
+  <div class="vote-progress-section">
+    <div class="vote-progress-card">
+      <div class="progress-header">
+        <h4>Status de Votação</h4>
+        <span class="progress-text">
+          {{ getVoteCount().voted }}/{{ getVoteCount().total }} jogadores
+          votaram ({{ getVoteProgress() }}%)
+        </span>
+      </div>
+
+      <!-- Barra de progresso -->
+      <div class="progress-bar">
+        <div
+          class="progress-fill"
+          [style.width.%]="getVoteProgress()"
+          [class.complete]="haveAllPlayersVoted()"
+        ></div>
+      </div>
+
+      <!-- Mensagem de estado -->
+      <p class="vote-message" *ngIf="haveAllPlayersVoted()">
+        ✅ Todos os jogadores votaram! Aguardando resultado final...
+      </p>
+    </div>
+  </div>
   <div class="game-status-section">
     <div class="status-card">
       <div class="status-item">

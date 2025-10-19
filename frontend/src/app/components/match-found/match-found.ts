@@ -646,18 +646,20 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
 
   /**
    * Retorna se deve mostrar informações completas do jogador (não borradas)
+   * NO MATCH_FOUND: Só mostra detalhes do usuário atual, blur permanente até o draft
    */
   shouldShowPlayerDetails(player: PlayerInfo): boolean {
-    // Mostrar detalhes se for o usuário atual ou se aceitou
-    return this.isCurrentUser(player) || this.hasPlayerAccepted(player);
+    // Só mostrar detalhes se for o usuário atual
+    return this.isCurrentUser(player);
   }
 
   /**
    * Retorna se deve aplicar blur nas informações do jogador
+   * NO MATCH_FOUND: Blur permanente para todos exceto o usuário atual
    */
   shouldBlurPlayerInfo(player: PlayerInfo): boolean {
-    // Aplicar blur se não for o usuário atual e ainda não aceitou
-    return !this.isCurrentUser(player) && !this.hasPlayerAccepted(player);
+    // Aplicar blur se não for o usuário atual (blur permanente até o draft)
+    return !this.isCurrentUser(player);
   }
 
   /**

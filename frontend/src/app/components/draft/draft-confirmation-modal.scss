@@ -55,6 +55,172 @@
   }
 }
 
+
+.confirmed-player {
+  border: 2px solid #00ff00;
+  background: linear-gradient(135deg, rgba(0, 255, 0, 0.1) 0%, rgba(0, 255, 0, 0.05) 100%);
+}
+
+.declined-player {
+  border: 2px solid #ff4444;
+  background: linear-gradient(135deg, rgba(255, 68, 68, 0.1) 0%, rgba(255, 68, 68, 0.05) 100%);
+}
+
+.timeout-player {
+  border: 2px solid #ffaa00;
+  background: linear-gradient(135deg, rgba(255, 170, 0, 0.1) 0%, rgba(255, 170, 0, 0.05) 100%);
+}
+
+// ✅ NOVO: Status de confirmação visual
+.confirmation-status {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  z-index: 10;
+
+  &.confirmation-status-confirmed {
+    background: linear-gradient(135deg, #00ff00 0%, #00cc00 100%);
+    animation: statusAccepted 0.6s ease;
+  }
+
+  &.confirmation-status-declined {
+    background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%);
+    animation: statusDeclined 0.6s ease;
+  }
+
+  &.confirmation-status-timeout {
+    background: linear-gradient(135deg, #ffaa00 0%, #cc8800 100%);
+    animation: statusTimeout 0.6s ease;
+  }
+
+  &.confirmation-status-pending {
+    background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
+    animation: statusPulse 2s infinite;
+  }
+
+  .status-icon {
+    font-size: 12px;
+    color: white;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  }
+}
+
+// ✅ NOVO: Animações para status
+@keyframes statusAccepted {
+  0% { transform: scale(0.8); opacity: 0.7; }
+  50% { transform: scale(1.2); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes statusDeclined {
+  0% { transform: scale(0.8); opacity: 0.7; }
+  50% { transform: scale(1.2); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes statusTimeout {
+  0% { transform: scale(0.8); opacity: 0.7; }
+  50% { transform: scale(1.2); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(0.95); }
+}
+
+// ✅ NOVO: Estilos para progresso de confirmação
+.confirmation-progress {
+  background: linear-gradient(135deg, #1e2e4b 0%, #2a3f5f 100%);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 20px;
+
+  .progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+
+    h4 {
+      margin: 0;
+      color: #f0c040;
+      font-size: 16px;
+      font-weight: bold;
+    }
+
+    .progress-text {
+      color: #c9aa71;
+      font-size: 14px;
+      font-weight: 500;
+    }
+  }
+
+  .progress-bar {
+    width: 100%;
+    height: 8px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 8px;
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #4a90e2 0%, #357abd 100%);
+      border-radius: 4px;
+      transition: width 0.5s ease;
+      position: relative;
+
+      &.complete {
+        background: linear-gradient(90deg, #00ff00 0%, #00cc00 100%);
+        animation: progressComplete 0.8s ease;
+      }
+
+      &::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+        animation: progressShimmer 2s infinite;
+      }
+    }
+  }
+
+  .confirmation-message {
+    margin: 0;
+    color: #c9aa71;
+    font-size: 12px;
+    text-align: center;
+
+    &.error {
+      color: #ff6b6b;
+    }
+  }
+}
+
+@keyframes progressComplete {
+  0% { transform: scaleX(0.8); }
+  50% { transform: scaleX(1.05); }
+  100% { transform: scaleX(1); }
+}
+
+@keyframes progressShimmer {
+  0% { left: -100%; }
+  100% { left: 100%; }
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }

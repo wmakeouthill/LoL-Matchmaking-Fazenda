@@ -28,6 +28,15 @@ interface MatchOption {
   voteCount?: number; // Contador de votos para esta partida
 }
 
+// ✅ NOVO: Interface para status de votação dos jogadores
+interface PlayerVoteStatus {
+  summonerName: string;
+  voteStatus: 'pending' | 'voted' | 'declined' | 'timeout';
+  votedAt?: string; // ISO timestamp quando votou
+  votedFor?: 'blue' | 'red'; // Qual time votou
+  isCurrentUser?: boolean; // Se é o usuário logado via LCU
+}
+
 @Component({
   selector: 'app-winner-confirmation-modal',
   standalone: true,
@@ -49,12 +58,18 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
   myVotedGameId: number | null = null; // LCU game que o usuário votou
   private wsSubscription?: Subscription;
 
+  // ✅ NOVO: Status de votação dos jogadores
+  playerVoteStatuses: Map<string, PlayerVoteStatus> = new Map();
+  votedCount: number = 0;
+  totalPlayers: number = 10;
+
   constructor(private apiService: ApiService) { }
 
   ngOnInit() {
     this.processMatches();
     this.setupWebSocketListeners();
     this.loadInitialVotes();
+    this.identifyCurrentUser(); // ✅ NOVO: Identificar usuário atual
   }
 
   ngOnDestroy() {
@@ -641,5 +656,139 @@ Items: ${items || 'Nenhum'}`;
 
     // Comparar por nome completo (gameName#tagLine) ou apenas gameName
     return participantName === fullPlayerName || participantName === currentPlayerName;
+  }
+
+  // ✅ NOVO: Métodos para status e identificação dos jogadores
+
+  /**
+   * Identifica o usuário atual via LCU
+   */
+  private identifyCurrentUser(): void {
+    if (this.currentPlayer) {
+      console.log('🔍 [WinnerModal] Usuário atual identificado via LCU:', {
+        displayName: this.currentPlayer.displayName,
+        summonerName: this.currentPlayer.summonerName,
+        gameName: this.currentPlayer.gameName,
+        tagLine: this.currentPlayer.tagLine
+      });
+
+      this.markCurrentUserInPlayers(this.currentPlayer);
+    } else {
+      console.log('⚠️ [WinnerModal] Usuário atual não disponível via LCU');
+    }
+  }
+
+  /**
+   * Marca o jogador atual nos dados da partida
+   */
+  private markCurrentUserInPlayers(currentUser: any): void {
+    this.currentPlayers.forEach(player => {
+      if (this.isPlayerCurrentUser(player, currentUser)) {
+        player.isCurrentUser = true;
+        console.log('✅ [WinnerModal] Jogador marcado como usuário atual:', player.summonerName);
+      }
+    });
+  }
+
+  /**
+   * Verifica se um jogador é o usuário atual baseado nos dados do LCU
+   */
+  private isPlayerCurrentUser(player: any, currentUser: any): boolean {
+    if (!player || !currentUser) return false;
+
+    // Comparar por displayName (formato completo com #)
+    if (currentUser.displayName && player.summonerName === currentUser.displayName) {
+      return true;
+    }
+
+    // Comparar por summonerName
+    if (currentUser.summonerName && player.summonerName === currentUser.summonerName) {
+      return true;
+    }
+
+    // Comparar por gameName#tagLine
+    if (currentUser.gameName && currentUser.tagLine) {
+      const fullName = `${currentUser.gameName}#${currentUser.tagLine}`;
+      if (player.summonerName === fullName) {
+        return true;
+      }
+    }
+
+    // Comparar por gameName (sem tag)
+    if (currentUser.gameName && player.summonerName === currentUser.gameName) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Verifica se um jogador é o usuário atual (para uso no template)
+   */
+  isCurrentUser(player: any): boolean {
+    return player?.isCurrentUser === true;
+  }
+
+  /**
+   * Obtém o status de votação de um jogador
+   */
+  getPlayerVoteStatus(summonerName: string): 'pending' | 'voted' | 'declined' | 'timeout' {
+    const status = this.playerVoteStatuses.get(summonerName);
+    return status?.voteStatus || 'pending';
+  }
+
+  /**
+   * Obtém o ícone de status de votação
+   */
+  getVoteStatusIcon(player: any): string {
+    const status = this.getPlayerVoteStatus(player.summonerName);
+    switch (status) {
+      case 'voted': return '✅';
+      case 'declined': return '❌';
+      case 'timeout': return '⏰';
+      default: return '⏳';
+    }
+  }
+
+  /**
+   * Obtém a classe CSS para o status de votação
+   */
+  getVoteStatusClass(player: any): string {
+    const status = this.getPlayerVoteStatus(player.summonerName);
+    return `vote-status-${status}`;
+  }
+
+  /**
+   * Obtém contagem de votos
+   */
+  getVoteCount(): { voted: number; total: number } {
+    let voted = 0;
+    this.currentPlayers.forEach(player => {
+      if (this.getPlayerVoteStatus(player.summonerName) === 'voted') {
+        voted++;
+      }
+    });
+
+    return {
+      voted,
+      total: this.currentPlayers.length
+    };
+  }
+
+  /**
+   * Verifica se todos os jogadores votaram
+   */
+  haveAllPlayersVoted(): boolean {
+    const count = this.getVoteCount();
+    return count.voted === count.total;
+  }
+
+  /**
+   * Obtém progresso de votação em porcentagem
+   */
+  getVoteProgress(): number {
+    const count = this.getVoteCount();
+    if (count.total === 0) return 0;
+    return Math.round((count.voted / count.total) * 100);
   }
 }
