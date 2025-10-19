@@ -4,6 +4,7 @@ import br.com.lolmatchmaking.backend.domain.entity.Match;
 import br.com.lolmatchmaking.backend.domain.entity.Player;
 import br.com.lolmatchmaking.backend.domain.repository.MatchRepository;
 import br.com.lolmatchmaking.backend.domain.repository.PlayerRepository;
+import br.com.lolmatchmaking.backend.service.EventBroadcastService;
 import br.com.lolmatchmaking.backend.service.LCUService;
 import br.com.lolmatchmaking.backend.service.MatchVoteService;
 import br.com.lolmatchmaking.backend.util.SummonerAuthUtil;
@@ -31,6 +32,7 @@ public class MatchVoteController {
     private final LCUService lcuService;
     private final MatchRepository matchRepository;
     private final PlayerRepository playerRepository;
+    private final EventBroadcastService eventBroadcastService;
 
     private static final String KEY_ERROR = "error";
     private static final String KEY_SUCCESS = "success";
@@ -123,12 +125,33 @@ public class MatchVoteController {
                 log.info("✅ Voto registrado: voteCount={}, shouldLink={}", voteCount, shouldLink);
             }
 
-            // Se atingiu 5 votos OU é special user, buscar dados do LCU e vincular
+            // ✅ NOVO: Broadcast progresso de votação via WebSocket
+            try {
+                // Determinar qual time foi votado (assumir team1 por enquanto)
+                Integer votedTeam = 1; // TODO: Implementar lógica para determinar team baseado no lcuGameId
+
+                // Broadcast do progresso de votação
+                eventBroadcastService.publishWinnerVote(
+                        matchId,
+                        voterName,
+                        votedTeam,
+                        voteCount, // votesTeam1
+                        0, // votesTeam2 (assumir 0 por enquanto)
+                        6 // totalNeeded - ✅ ALTERADO: De 5 para 6 votos
+                );
+
+                log.info("📢 [MatchVoteController] Broadcast de votação enviado: {} votou em team {}", voterName,
+                        votedTeam);
+            } catch (Exception e) {
+                log.error("❌ [MatchVoteController] Erro ao fazer broadcast de votação", e);
+            }
+
+            // Se atingiu 6 votos OU é special user, buscar dados do LCU e vincular
             if (shouldLink) {
                 if (isSpecialUserVote) {
                     log.info("🌟 SPECIAL USER finalizou a votação! Vinculando partida automaticamente...");
                 } else {
-                    log.info("🎯 Limite de 5 votos atingido! Vinculando partida automaticamente...");
+                    log.info("🎯 Limite de 6 votos atingido! Vinculando partida automaticamente...");
                 }
 
                 try {

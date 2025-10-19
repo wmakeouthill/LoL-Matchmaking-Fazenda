@@ -1992,6 +1992,83 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     }
 
     /**
+     * ✅ NOVO: Broadcast progresso de votação de winner
+     */
+    public void broadcastWinnerVoteProgress(br.com.lolmatchmaking.backend.dto.events.WinnerVoteEvent event) {
+        try {
+            Map<String, Object> message = new HashMap<>();
+            message.put("type", "match_vote_progress");
+            message.put("data", Map.of(
+                    "matchId", event.getMatchId(),
+                    "summonerName", event.getSummonerName(),
+                    "votedTeam", event.getVotedTeam(),
+                    "votesTeam1", event.getVotesTeam1(),
+                    "votesTeam2", event.getVotesTeam2(),
+                    "totalNeeded", event.getTotalVotesNeeded(),
+                    "votedPlayers", getVotedPlayersList(event.getMatchId())));
+
+            String jsonMessage = objectMapper.writeValueAsString(message);
+
+            // Broadcast para todos os clientes conectados
+            for (WebSocketSession session : sessions.values()) {
+                if (session.isOpen()) {
+                    try {
+                        session.sendMessage(new TextMessage(jsonMessage));
+                        log.debug("📡 [WebSocket] match_vote_progress enviado para sessão: {}", session.getId());
+                    } catch (Exception e) {
+                        log.warn("⚠️ [WebSocket] Erro ao enviar match_vote_progress para sessão {}: {}",
+                                session.getId(), e.getMessage());
+                    }
+                }
+            }
+
+            log.info("📢 [WebSocket] match_vote_progress broadcast enviado para {} sessões", sessions.size());
+
+        } catch (Exception e) {
+            log.error("❌ [WebSocket] Erro ao fazer broadcast de match_vote_progress", e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Obter lista de jogadores que votaram
+     */
+    private List<String> getVotedPlayersList(Long matchId) {
+        try {
+            // ✅ CORREÇÃO: Buscar jogadores que votaram do Redis
+            br.com.lolmatchmaking.backend.service.RedisMatchVoteService redisMatchVote = applicationContext
+                    .getBean(br.com.lolmatchmaking.backend.service.RedisMatchVoteService.class);
+
+            // Buscar todos os jogadores que votaram
+            Map<String, Object> voteData = redisMatchVote.getVotingStatus(matchId);
+
+            List<String> votedPlayers = new ArrayList<>();
+
+            // Extrair jogadores que votaram dos dados do Redis
+            if (voteData.containsKey("player_votes")) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> playerVotes = (Map<String, Object>) voteData.get("player_votes");
+
+                for (Map.Entry<String, Object> entry : playerVotes.entrySet()) {
+                    String playerName = entry.getKey();
+                    Object voteInfo = entry.getValue();
+
+                    if (voteInfo != null) {
+                        votedPlayers.add(playerName);
+                        log.debug("📊 [WebSocket] Jogador que votou encontrado: {}", playerName);
+                    }
+                }
+            }
+
+            log.info("📊 [WebSocket] {} jogadores que votaram encontrados para match {}", votedPlayers.size(), matchId);
+            return votedPlayers;
+
+        } catch (Exception e) {
+            log.error("❌ [WebSocket] Erro ao buscar jogadores que votaram: {}", e.getMessage(), e);
+            return new ArrayList<>();
+        }
+    }
+
+    /**
      * ✅ NOVO: Obter todas as sessões WebSocket ativas
      */
     public Collection<WebSocketSession> getAllActiveSessions() {

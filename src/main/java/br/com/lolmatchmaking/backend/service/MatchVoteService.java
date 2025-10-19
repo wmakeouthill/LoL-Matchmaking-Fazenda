@@ -39,7 +39,7 @@ public class MatchVoteService {
     // ✅ NOVO: Lock service para prevenir race conditions em votação
     private final br.com.lolmatchmaking.backend.service.lock.MatchVoteLockService matchVoteLockService;
 
-    private static final int VOTES_REQUIRED_FOR_AUTO_LINK = 5;
+    private static final int VOTES_REQUIRED_FOR_AUTO_LINK = 6; // ✅ ALTERADO: De 5 para 6 votos
 
     // ✅ REMOVIDO: HashMap local removido - Redis é fonte única da verdade
     // Use redisMatchVote para todas as operações de votação
@@ -97,14 +97,44 @@ public class MatchVoteService {
             boolean isSpecialUser = specialUserService.isSpecialUser(player.getSummonerName());
 
             if (isSpecialUser) {
-                log.info("🌟 Special user detectado! Voto finaliza a partida imediatamente");
+                // ✅ NOVO: Obter configuração do special user
+                SpecialUserService.SpecialUserConfig config = specialUserService
+                        .getSpecialUserConfig(player.getSummonerName());
+
+                log.info("🌟 Special user detectado! Configuração: weight={}, multiple={}, max={}",
+                        config.getVoteWeight(), config.isAllowMultipleVotes(), config.getMaxVotes());
+
+                // ✅ NOVO: Verificar se pode votar múltiplas vezes
+                if (config.isAllowMultipleVotes()) {
+                    // Verificar quantos votos já foram dados por este special user
+                    int currentVotes = redisMatchVote.getSpecialUserVoteCount(matchId, player.getSummonerName());
+
+                    if (currentVotes >= config.getMaxVotes()) {
+                        log.warn("⚠️ Special user {} já atingiu limite de {} votos", player.getSummonerName(),
+                                config.getMaxVotes());
+                        Map<String, Object> result = new HashMap<>();
+                        result.put("success", false);
+                        result.put("error", "Limite de votos atingido para special user");
+                        result.put("currentVotes", currentVotes);
+                        result.put("maxVotes", config.getMaxVotes());
+                        return result;
+                    }
+
+                    // Registrar voto adicional do special user
+                    redisMatchVote.addSpecialUserVote(matchId, player.getSummonerName(), lcuGameId);
+                    log.info("✅ Special user {} votou pela {}ª vez (peso: {})",
+                            player.getSummonerName(), currentVotes + 1, config.getVoteWeight());
+                }
+
                 Map<String, Object> result = new HashMap<>();
                 result.put("success", true);
                 result.put("shouldLink", true);
                 result.put("lcuGameId", lcuGameId);
                 result.put("specialUserVote", true);
-                result.put("voteCount", 1);
+                result.put("voteWeight", config.getVoteWeight());
+                result.put("voteCount", config.getVoteWeight()); // ✅ CORREÇÃO: Usar peso como contagem
                 result.put("playerVote", lcuGameId);
+                result.put("totalVoters", redisMatchVote.getTotalVoters(matchId));
                 return result;
             }
 

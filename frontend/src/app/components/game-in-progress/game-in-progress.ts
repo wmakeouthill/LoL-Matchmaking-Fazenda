@@ -46,7 +46,7 @@ interface GameResult {
 // ✅ NOVO: Interface para status de votação dos jogadores
 interface PlayerVoteStatus {
   summonerName: string;
-  voteStatus: 'pending' | 'voted' | 'declined' | 'timeout';
+  voteStatus: 'pending' | 'voted'; // ✅ CORREÇÃO: Apenas pending ou voted
   votedAt?: string; // ISO timestamp quando votou
   votedFor?: 'blue' | 'red'; // Qual time votou
   isCurrentUser?: boolean; // Se é o usuário logado via LCU
@@ -178,6 +178,9 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     if (this.gameData) {
       this.initializeGame();
 
+      // ✅ NOVO: Inicializar status de votação
+      this.resetAllVoteStatuses();
+
       // ✅ NOVO: Notificar backend que este jogador JÁ ESTÁ vendo o game
       // Isso permite que o backend PARE de enviar retry desnecessário
       this.sendGameAcknowledgment();
@@ -194,6 +197,9 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       logGameInProgress('🎮 [GameInProgress] gameData recebido via ngOnChanges, inicializando jogo...');
       this.invalidateCache(); // Limpar cache quando dados mudam
       this.initializeGame();
+
+      // ✅ NOVO: Inicializar status de votação
+      this.resetAllVoteStatuses();
     }
   }
 
@@ -2329,9 +2335,15 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   /**
    * Obtém o status de votação de um jogador
    */
-  getPlayerVoteStatus(summonerName: string): 'pending' | 'voted' | 'declined' | 'timeout' {
-    const status = this.playerVoteStatuses.get(summonerName);
-    return status?.voteStatus || 'pending';
+  getPlayerVoteStatus(summonerName: string): 'pending' | 'voted' {
+    // ✅ CORREÇÃO: Apenas pending ou voted (sem declined/timeout)
+    const allPlayers = [
+      ...(this.gameData?.team1 || []),
+      ...(this.gameData?.team2 || [])
+    ];
+
+    const player = allPlayers.find(p => p.summonerName === summonerName);
+    return player?.voteStatus || 'pending';
   }
 
   /**
@@ -2341,8 +2353,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     const status = this.getPlayerVoteStatus(player.summonerName);
     switch (status) {
       case 'voted': return '✅';
-      case 'declined': return '❌';
-      case 'timeout': return '⏰';
+      case 'pending': return '⏳';
       default: return '⏳';
     }
   }
@@ -2368,7 +2379,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     ];
 
     allPlayers.forEach(player => {
-      if (this.getPlayerVoteStatus(player.summonerName) === 'voted') {
+      if (player.voteStatus === 'voted') {
         voted++;
       }
     });
@@ -2406,8 +2417,12 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       this.voteWsSubscription.unsubscribe();
     }
 
+    // ✅ NOVO: Escutar eventos customizados do app.ts
+    document.addEventListener('matchVoteProgress', this.handleVoteProgressEvent);
+    document.addEventListener('matchVoteUpdate', this.handleVoteUpdateEvent);
+
     this.voteWsSubscription = this.apiService.onWebSocketMessage().subscribe({
-      next: (message) => {
+      next: (message: any) => {
         const { type, data } = message;
 
         if (type === 'match_vote_progress') {
@@ -2416,7 +2431,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
           this.handleVoteUpdate(data);
         }
       },
-      error: (error) => {
+      error: (error: any) => {
         console.error('❌ [GameInProgress] Erro no WebSocket de votação:', error);
       }
     });
@@ -2433,7 +2448,22 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       this.voteWsSubscription = undefined;
       console.log('🔌 [GameInProgress] WebSocket listeners de votação limpos');
     }
+
+    // ✅ NOVO: Remover listeners customizados
+    document.removeEventListener('matchVoteProgress', this.handleVoteProgressEvent);
+    document.removeEventListener('matchVoteUpdate', this.handleVoteUpdateEvent);
   }
+
+  // ✅ NOVO: Métodos para lidar com eventos customizados
+  private readonly handleVoteProgressEvent = (event: any): void => {
+    console.log('📊 [GameInProgress] Evento customizado de progresso recebido:', event.detail);
+    this.handleVoteProgress(event.detail);
+  };
+
+  private readonly handleVoteUpdateEvent = (event: any): void => {
+    console.log('📊 [GameInProgress] Evento customizado de atualização recebido:', event.detail);
+    this.handleVoteUpdate(event.detail);
+  };
 
   /**
    * Manipula atualizações de progresso de votação
@@ -2442,32 +2472,51 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     console.log('🗳️ [GameInProgress] Progresso de votação recebido:', data);
 
     if (data.votedPlayers && Array.isArray(data.votedPlayers)) {
+      // ✅ CORREÇÃO: Usar mesma técnica do draft - buscar nos dados dos jogadores
+      const allPlayers = [
+        ...(this.gameData?.team1 || []),
+        ...(this.gameData?.team2 || [])
+      ];
+
+      console.log(`🗳️ [GameInProgress] Processando ${data.votedPlayers.length} votos para ${allPlayers.length} jogadores`);
+
       // Atualizar status de todos os jogadores para 'pending' primeiro
-      this.resetAllVoteStatuses();
+      allPlayers.forEach(player => {
+        player.voteStatus = 'pending';
+        console.log(`🗳️ [GameInProgress] Resetando ${player.summonerName} para pending`);
+      });
 
       // Marcar jogadores que votaram como 'voted'
       data.votedPlayers.forEach((votedPlayerName: string) => {
-        const allPlayers = [
-          ...(this.gameData?.team1 || []),
-          ...(this.gameData?.team2 || [])
-        ];
-
         const player = allPlayers.find(p =>
-          p.summonerName === votedPlayerName ||
-          (p.riotIdGameName && p.riotIdTagline && `${p.riotIdGameName}#${p.riotIdTagline}` === votedPlayerName)
+          p.summonerName?.toLowerCase() === votedPlayerName?.toLowerCase() ||
+          (p.riotIdGameName && p.riotIdTagline && `${p.riotIdGameName}#${p.riotIdTagline}`.toLowerCase() === votedPlayerName?.toLowerCase())
         );
 
         if (player) {
-          this.playerVoteStatuses.set(player.summonerName, {
-            summonerName: player.summonerName,
-            voteStatus: 'voted',
-            votedAt: new Date().toISOString(),
-            votedFor: data.winnerTeam || 'blue', // Assumir que votou no time vencedor
-            isCurrentUser: player.isCurrentUser || false
-          });
+          player.voteStatus = 'voted';
+          player.votedAt = new Date().toISOString();
+          player.votedFor = data.winnerTeam || 'blue';
           console.log('✅ [GameInProgress] Jogador votou:', player.summonerName);
+        } else {
+          console.log('⚠️ [GameInProgress] Jogador não encontrado:', votedPlayerName);
         }
       });
+
+      // Atualizar contadores
+      this.votedCount = data.votedCount || 0;
+      this.totalPlayers = data.totalPlayers || 10;
+
+      console.log(`🗳️ [GameInProgress] Atualizado: ${this.votedCount}/${this.totalPlayers} votaram`);
+      console.log(`🗳️ [GameInProgress] Progresso: ${this.getVoteProgress()}%`);
+
+      // ✅ NOVO: Forçar detecção de mudanças
+      setTimeout(() => {
+        console.log(`🔄 [GameInProgress] Re-check progresso: ${this.getVoteProgress()}%`);
+        console.log(`🔄 [GameInProgress] Re-check contagem: ${this.getVoteCount().voted}/${this.getVoteCount().total}`);
+      }, 100);
+    } else {
+      console.log('⚠️ [GameInProgress] Dados de votação inválidos:', data);
     }
   }
 
@@ -2478,13 +2527,21 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     console.log('🔄 [GameInProgress] Atualização de votação recebida:', data);
 
     if (data.playerName && data.status) {
-      this.playerVoteStatuses.set(data.playerName, {
-        summonerName: data.playerName,
-        voteStatus: data.status,
-        votedAt: data.status === 'voted' ? new Date().toISOString() : undefined,
-        votedFor: data.votedFor,
-        isCurrentUser: false // Será atualizado pela identificação do usuário
-      });
+      const allPlayers = [
+        ...(this.gameData?.team1 || []),
+        ...(this.gameData?.team2 || [])
+      ];
+
+      const player = allPlayers.find(p => p.summonerName === data.playerName);
+      if (player) {
+        // ✅ CORREÇÃO: Apenas 'pending' ou 'voted'
+        player.voteStatus = data.status === 'voted' ? 'voted' : 'pending';
+        if (data.status === 'voted') {
+          player.votedAt = new Date().toISOString();
+          player.votedFor = data.votedFor;
+        }
+        console.log(`🔄 [GameInProgress] Status atualizado para ${data.playerName}: ${player.voteStatus}`);
+      }
     }
   }
 
@@ -2500,11 +2557,9 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     ];
 
     allPlayers.forEach(player => {
-      this.playerVoteStatuses.set(player.summonerName, {
-        summonerName: player.summonerName,
-        voteStatus: 'pending',
-        isCurrentUser: player.isCurrentUser || false
-      });
+      // ✅ CORREÇÃO: Usar mesma técnica do draft - definir no player.voteStatus
+      player.voteStatus = 'pending';
+      console.log(`🗳️ [GameInProgress] Resetando ${player.summonerName} para pending`);
     });
   }
 }

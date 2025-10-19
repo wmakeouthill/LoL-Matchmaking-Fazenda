@@ -23,11 +23,9 @@
             class="player-card"
             *ngFor="let player of sortedBlueTeam"
             [class.current-player]="isCurrentPlayer(player)"
-            [class.blurred-player]="shouldBlurPlayerInfo(player)"
             [class.accepted-player]="hasPlayerAccepted(player)"
             [class.declined-player]="hasPlayerDeclined(player)"
             [class.timeout-player]="hasPlayerTimeout(player)"
-            [title]="shouldBlurPlayerInfo(player) ? getBlurredPlayerTooltip(player) : ''"
           >
             <!-- Status de Aceitação -->
             <div
@@ -66,45 +64,40 @@
                   class="player-name"
                   [class.blurred]="shouldBlurPlayerInfo(player)"
                 >
-                  {{ shouldShowPlayerDetails(player) ? player.summonerName :
-                  'Jogador' }}
+                  {{ player.summonerName }}
                 </span>
-                <span
-                  class="lane-badge"
-                  [ngClass]="{
-                    'badge-primary': getLaneBadgeType(player) === 'primary',
-                    'badge-secondary': getLaneBadgeType(player) === 'secondary',
-                    'badge-autofill': getLaneBadgeType(player) === 'autofill'
-                  }"
-                  [class.blurred]="shouldBlurPlayerInfo(player)"
-                  *ngIf="getLaneBadgeType(player)"
-                >
-                  {{ getLaneBadgeText(getLaneBadgeType(player)) }}
-                </span>
-                <span
-                  class="player-mmr"
-                  [class.blurred]="shouldBlurPlayerInfo(player)"
-                >
-                  {{ shouldShowPlayerDetails(player) ? (player.mmr + ' MMR') :
-                  '*** MMR' }}
-                </span>
+                <div class="badge-mmr-row">
+                  <span
+                    class="lane-badge"
+                    [ngClass]="{
+                      'badge-primary': getLaneBadgeType(player) === 'primary',
+                      'badge-secondary': getLaneBadgeType(player) === 'secondary',
+                      'badge-autofill': getLaneBadgeType(player) === 'autofill'
+                    }"
+                    *ngIf="getLaneBadgeType(player)"
+                  >
+                    {{ getLaneBadgeText(getLaneBadgeType(player)) }}
+                  </span>
+                  <span
+                    class="player-mmr"
+                    [class.mmr-censored]="shouldBlurPlayerInfo(player)"
+                    [attr.data-mmr]="shouldBlurPlayerInfo(player) ? (player.mmr + ' MMR') : null"
+                  >
+                    {{ shouldBlurPlayerInfo(player) ? '*** MMR' : (player.mmr +
+                    ' MMR') }}
+                  </span>
+                </div>
               </div>
               <div class="player-lanes">
                 <span
                   class="lane assigned-lane"
                   [class.autofill]="player.isAutofill"
-                  [class.blurred]="shouldBlurPlayerInfo(player)"
                 >
-                  {{ shouldShowPlayerDetails(player) ?
-                  getAssignedLaneDisplay(player) : '⚔️ Lane' }}
+                  {{ getAssignedLaneDisplay(player) }}
                 </span>
                 <span class="lane-separator">•</span>
-                <span
-                  class="lane preferences-lane"
-                  [class.blurred]="shouldBlurPlayerInfo(player)"
-                >
-                  {{ shouldShowPlayerDetails(player) ?
-                  getLanePreferencesDisplay(player) : '🎯 Preferências' }}
+                <span class="lane preferences-lane">
+                  {{ getLanePreferencesDisplay(player) }}
                 </span>
               </div>
             </div>
@@ -133,11 +126,9 @@
             class="player-card"
             *ngFor="let player of sortedRedTeam"
             [class.current-player]="isCurrentPlayer(player)"
-            [class.blurred-player]="shouldBlurPlayerInfo(player)"
             [class.accepted-player]="hasPlayerAccepted(player)"
             [class.declined-player]="hasPlayerDeclined(player)"
             [class.timeout-player]="hasPlayerTimeout(player)"
-            [title]="shouldBlurPlayerInfo(player) ? getBlurredPlayerTooltip(player) : ''"
           >
             <!-- Status de Aceitação -->
             <div
@@ -176,45 +167,40 @@
                   class="player-name"
                   [class.blurred]="shouldBlurPlayerInfo(player)"
                 >
-                  {{ shouldShowPlayerDetails(player) ? player.summonerName :
-                  'Jogador' }}
+                  {{ player.summonerName }}
                 </span>
-                <span
-                  class="lane-badge"
-                  [ngClass]="{
-                    'badge-primary': getLaneBadgeType(player) === 'primary',
-                    'badge-secondary': getLaneBadgeType(player) === 'secondary',
-                    'badge-autofill': getLaneBadgeType(player) === 'autofill'
-                  }"
-                  [class.blurred]="shouldBlurPlayerInfo(player)"
-                  *ngIf="getLaneBadgeType(player)"
-                >
-                  {{ getLaneBadgeText(getLaneBadgeType(player)) }}
-                </span>
-                <span
-                  class="player-mmr"
-                  [class.blurred]="shouldBlurPlayerInfo(player)"
-                >
-                  {{ shouldShowPlayerDetails(player) ? (player.mmr + ' MMR') :
-                  '*** MMR' }}
-                </span>
+                <div class="badge-mmr-row">
+                  <span
+                    class="lane-badge"
+                    [ngClass]="{
+                      'badge-primary': getLaneBadgeType(player) === 'primary',
+                      'badge-secondary': getLaneBadgeType(player) === 'secondary',
+                      'badge-autofill': getLaneBadgeType(player) === 'autofill'
+                    }"
+                    *ngIf="getLaneBadgeType(player)"
+                  >
+                    {{ getLaneBadgeText(getLaneBadgeType(player)) }}
+                  </span>
+                  <span
+                    class="player-mmr"
+                    [class.mmr-censored]="shouldBlurPlayerInfo(player)"
+                    [attr.data-mmr]="shouldBlurPlayerInfo(player) ? (player.mmr + ' MMR') : null"
+                  >
+                    {{ shouldBlurPlayerInfo(player) ? '*** MMR' : (player.mmr +
+                    ' MMR') }}
+                  </span>
+                </div>
               </div>
               <div class="player-lanes">
                 <span
                   class="lane assigned-lane"
                   [class.autofill]="player.isAutofill"
-                  [class.blurred]="shouldBlurPlayerInfo(player)"
                 >
-                  {{ shouldShowPlayerDetails(player) ?
-                  getAssignedLaneDisplay(player) : '⚔️ Lane' }}
+                  {{ getAssignedLaneDisplay(player) }}
                 </span>
                 <span class="lane-separator">•</span>
-                <span
-                  class="lane preferences-lane"
-                  [class.blurred]="shouldBlurPlayerInfo(player)"
-                >
-                  {{ shouldShowPlayerDetails(player) ?
-                  getLanePreferencesDisplay(player) : '🎯 Preferências' }}
+                <span class="lane preferences-lane">
+                  {{ getLanePreferencesDisplay(player) }}
                 </span>
               </div>
             </div>

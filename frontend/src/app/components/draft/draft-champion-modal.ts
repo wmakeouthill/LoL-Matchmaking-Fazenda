@@ -1,7 +1,6 @@
-import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, OnChanges, SimpleChanges, ChangeDetectorRef } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormsModule } from '@angular/forms';
-import { ChampionService } from '../../services/champion.service';
+import { ChampionService, ChampionData } from '../../services/champion.service';
 import { Subject } from 'rxjs';
 import { debounceTime, distinctUntilChanged } from 'rxjs/operators';
 
@@ -31,7 +30,7 @@ interface CustomPickBanSession {
 @Component({
   selector: 'app-draft-champion-modal',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule],
   templateUrl: './draft-champion-modal.html',
   styleUrl: './draft-champion-modal.scss'
   // ✅ CORREÇÃO: OnPush REMOVIDO - o componente acessa window.appComponent.draftTimer
@@ -46,12 +45,12 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
   // ✅ REMOVIDO: Timer não é mais @Input, vem do window.appComponent
   // @Input() timeRemaining: number = 30;
   @Output() onClose = new EventEmitter<void>();
-  @Output() onanySelected = new EventEmitter<any>();
+  @Output() onanySelected = new EventEmitter<unknown>();
 
   champions: any[] = [];
   championsByRole: any = {};
   searchFilter: string = '';
-  selectedany: any | null = null;
+  selectedany: ChampionData | null = null;
   selectedRole: string = 'all';
   // ✅ REMOVIDO: Timer local - agora vem do componente principal
   // timeRemaining: number = 30;
@@ -70,8 +69,9 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
   private _lastCacheUpdate: number = 0;
   private readonly CACHE_DURATION = 5000;
   private _lastSessionHash: string = '';
+  private _lastCacheKey: string = ''; // ✅ NOVO: Chave para cache mais eficiente
 
-  constructor(private readonly championService: ChampionService, private readonly changeDetectorRef: ChangeDetectorRef) { }
+  constructor(private readonly championService: ChampionService) { }
 
   ngOnInit() {
     this.loadanys();
@@ -79,12 +79,14 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
     // ✅ CORREÇÃO #4: Setup do debounce para pesquisa em tempo real
     this.searchSubject
       .pipe(
-        debounceTime(100),
+        debounceTime(50), // Reduzido para 50ms para resposta mais rápida
         distinctUntilChanged()
       )
       .subscribe((searchTerm) => {
         this.searchFilter = searchTerm;
-        this.changeDetectorRef.markForCheck();
+        this.invalidateCache(); // Invalidar cache apenas quando o termo de pesquisa muda
+        // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
+        setTimeout(() => {}, 0);
       });
 
     // Inicializa com todos os campeões
@@ -128,7 +130,8 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
             console.log(`✅ [DraftanyModal] ${this.champions.length} campeões carregados!`);
             console.log('🔍 [DraftanyModal] Primeiros 5 campeões:', this.champions.slice(0, 5).map(c => ({ id: c.id, name: c.name })));
             this.organizeChampionsByRole();
-            this.changeDetectorRef.detectChanges(); // ✅ Forçar atualização da interface
+            // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
+            setTimeout(() => {}, 0);
 
             // ✅ CORREÇÃO: Verificar status do timer após carregar campeões
             setTimeout(() => {
@@ -166,7 +169,8 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
     });
 
     // ✅ CORREÇÃO: Forçar atualização após organizar por role
-    this.changeDetectorRef.markForCheck();
+    // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
+    setTimeout(() => {}, 0);
   }
 
   // MÉTODOS PARA COMPARAÇÃO DE JOGADORES
@@ -420,6 +424,7 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
 
   // MÉTODOS PARA FILTRAGEM
   getModalFilteredChampions(): any[] {
+    // ✅ OTIMIZAÇÃO: Verificar mudanças de sessão apenas quando necessário
     if (this.session?.currentAction !== undefined) {
       const sessionHash = JSON.stringify({
         currentAction: this.session.currentAction,
@@ -437,62 +442,69 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
       }
     }
 
-    if (this.isCacheValid() && this._cachedModalFilteredanys) {
+    // ✅ OTIMIZAÇÃO: Usar cache mais eficientemente
+    const cacheKey = `${this.searchFilter}-${this.selectedRole}-${this.session?.currentAction || 0}`;
+    if (this.isCacheValid() && this._cachedModalFilteredanys && this._lastCacheKey === cacheKey) {
       return this._cachedModalFilteredanys;
     }
 
     let filtered = this.champions;
 
-    // Filtrar por role
+    // ✅ OTIMIZAÇÃO: Filtrar por role primeiro (mais eficiente)
     if (this.selectedRole !== 'all') {
-      filtered = filtered.filter(champion => {
-        const tags = champion.tags || [];
-        switch (this.selectedRole) {
-          case 'top':
-            return tags.includes('Fighter') || tags.includes('Tank');
-          case 'jungle':
-            return tags.includes('Fighter') || tags.includes('Assassin');
-          case 'mid':
-            return tags.includes('Mage') || tags.includes('Assassin');
-          case 'adc':
-            return tags.includes('Marksman');
-          case 'support':
-            return tags.includes('Support');
-          default:
-            return true;
-        }
-      });
+      filtered = this.getChampionsByRole(this.selectedRole);
     }
 
-    // Filtrar por busca
-    if (this.searchFilter.trim()) {
+    // ✅ OTIMIZAÇÃO: Filtrar por busca apenas se houver termo
+    if (this.searchFilter?.trim()) {
       const searchTerm = this.searchFilter.toLowerCase().trim();
       filtered = filtered.filter(champion =>
         champion.name.toLowerCase().includes(searchTerm)
       );
     }
 
-    // ✅ NOVO: Log temporário removido para melhorar performance
-
+    // ✅ OTIMIZAÇÃO: Atualizar cache com chave
     this._cachedModalFilteredanys = filtered;
     this._lastCacheUpdate = Date.now();
-
-    // ✅ CORREÇÃO: Forçar atualização após filtrar
-    this.changeDetectorRef.markForCheck();
+    this._lastCacheKey = cacheKey;
 
     return filtered;
+  }
+
+  // ✅ NOVO: Método otimizado para buscar campeões por role
+  private getChampionsByRole(role: string): any[] {
+    switch (role) {
+      case 'top':
+        return this.championsByRole.top || [];
+      case 'jungle':
+        return this.championsByRole.jungle || [];
+      case 'mid':
+        return this.championsByRole.mid || [];
+      case 'adc':
+        return this.championsByRole.adc || [];
+      case 'support':
+        return this.championsByRole.support || [];
+      default:
+        return this.champions;
+    }
   }
 
   // MÉTODOS PARA SELEÇÃO
   selectRoleInModal(role: string): void {
     this.selectedRole = role;
-    this.invalidateCache();
-    this.changeDetectorRef.markForCheck();
+    this.invalidateCache(); // ✅ Necessário invalidar quando role muda
+    // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
+    setTimeout(() => {}, 0);
   }
 
   // ✅ CORREÇÃO #4: Método para pesquisa em tempo real com debounce
   onSearchChange(searchTerm: string): void {
     this.searchSubject.next(searchTerm);
+  }
+
+  // ✅ NOVO: Propriedade computada para evitar múltiplas chamadas no template
+  get filteredChampionsList(): any[] {
+    return this.getModalFilteredChampions();
   }
 
   // ✅ NOVO: Método unificado para clique em campeão
@@ -554,7 +566,8 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
     console.log('✅ [DraftanyModal] Campeão selecionado:', champion.name);
 
     // ✅ CORREÇÃO: Forçar atualização da interface
-    this.changeDetectorRef.markForCheck();
+    // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
+    setTimeout(() => {}, 0);
   }
 
   // ✅ NOVO: Feedback visual quando tenta selecionar campeão bloqueado
@@ -654,7 +667,8 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
       this.closeModal();
 
       // ✅ CORREÇÃO: Forçar atualização
-      this.changeDetectorRef.markForCheck();
+      // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
+    setTimeout(() => {}, 0);
 
       console.log('✅ [confirmModalSelection] Modal fechado');
     }, 100); // Delay de 100ms para garantir processamento do evento
@@ -672,7 +686,8 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
 
     this.loadanys();
 
-    this.changeDetectorRef.markForCheck();
+    // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
+    setTimeout(() => {}, 0);
   }
 
   closeModal(): void {
@@ -684,7 +699,8 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
 
     this.onClose.emit();
 
-    this.changeDetectorRef.markForCheck();
+    // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
+    setTimeout(() => {}, 0);
   }
 
   // MÉTODOS PARA INFORMAÇÕES DO JOGADOR ATUAL
@@ -798,11 +814,13 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
       console.log('⏰ [DraftanyModal] Timer atual no modal:', this.getDraftTimer());
       this.invalidateCache();
       this.loadanys(); // ✅ CORREÇÃO: Recarregar campeões quando modal abrir
-      this.changeDetectorRef.markForCheck();
+      // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
+    setTimeout(() => {}, 0);
 
       // ✅ CORREÇÃO: Forçar atualização adicional para garantir que o timer seja exibido
       setTimeout(() => {
-        this.changeDetectorRef.detectChanges();
+        // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
+    setTimeout(() => {}, 0);
         console.log('⏰ [DraftanyModal] Timer após timeout:', this.getDraftTimer());
       }, 100);
 
@@ -816,8 +834,10 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
   // ✅ NOVO: Método para forçar atualização do timer
   forceTimerUpdate(): void {
     console.log('⏰ [DraftanyModal] Forçando atualização do timer:', this.getDraftTimer());
-    this.changeDetectorRef.markForCheck();
-    this.changeDetectorRef.detectChanges();
+    // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
+    setTimeout(() => {}, 0);
+    // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
+    setTimeout(() => {}, 0);
   }
 
   // ✅ NOVO: Método para verificar se o timer está funcionando

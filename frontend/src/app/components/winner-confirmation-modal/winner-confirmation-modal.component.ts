@@ -52,6 +52,11 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
   @Output() onConfirm = new EventEmitter<{ match: CustomMatch, winner: 'blue' | 'red' }>();
   @Output() onCancel = new EventEmitter<void>();
 
+  // ✅ NOVO: Propriedades para special user
+  isSpecialUser: boolean = false;
+  selectedVoteWeight: number = 1;
+  currentSummonerName: string = '';
+
   matchOptions: MatchOption[] = [];
   selectedMatchIndex: number | null = null;
   voteCounts: Map<number, number> = new Map(); // lcuGameId -> voteCount
@@ -70,12 +75,91 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
     this.setupWebSocketListeners();
     this.loadInitialVotes();
     this.identifyCurrentUser(); // ✅ NOVO: Identificar usuário atual
+    this.checkSpecialUserStatus(); // ✅ NOVO: Verificar se é special user
   }
 
   ngOnDestroy() {
     if (this.wsSubscription) {
       this.wsSubscription.unsubscribe();
     }
+  }
+
+  /**
+   * ✅ NOVO: Verificar se o usuário atual é special user
+   */
+  private async checkSpecialUserStatus(): Promise<void> {
+    try {
+      // Obter nome do summoner atual via LCU
+      if (window.electronAPI?.lcu?.getCurrentSummoner) {
+        const currentSummoner = await window.electronAPI.lcu.getCurrentSummoner();
+        if (currentSummoner) {
+          this.currentSummonerName = currentSummoner.displayName || currentSummoner.summonerName || '';
+          
+          // Verificar se é special user via API
+          const isSpecial = await firstValueFrom(
+            this.apiService.checkSpecialUserStatus(this.currentSummonerName)
+          );
+          
+          this.isSpecialUser = isSpecial || false;
+          
+          if (this.isSpecialUser) {
+            console.log('🌟 [WinnerModal] Special user detectado:', this.currentSummonerName);
+            // Carregar configuração atual do special user
+            await this.loadSpecialUserConfig();
+          }
+        }
+      }
+    } catch (error) {
+      console.error('❌ [WinnerModal] Erro ao verificar special user status:', error);
+      this.isSpecialUser = false;
+    }
+  }
+
+  /**
+   * ✅ NOVO: Carregar configuração atual do special user
+   */
+  private async loadSpecialUserConfig(): Promise<void> {
+    try {
+      const config = await firstValueFrom(
+        this.apiService.getSpecialUserConfig(this.currentSummonerName)
+      );
+      
+      if (config && config.voteWeight) {
+        this.selectedVoteWeight = config.voteWeight;
+        console.log('🌟 [WinnerModal] Configuração carregada - peso:', this.selectedVoteWeight);
+      }
+    } catch (error) {
+      console.error('❌ [WinnerModal] Erro ao carregar configuração:', error);
+    }
+  }
+
+  /**
+   * ✅ NOVO: Salvar configuração do special user
+   */
+  private async saveSpecialUserConfig(): Promise<void> {
+    if (!this.isSpecialUser || !this.currentSummonerName) return;
+    
+    try {
+      await firstValueFrom(
+        this.apiService.updateSpecialUserConfig(this.currentSummonerName, {
+          voteWeight: this.selectedVoteWeight,
+          allowMultipleVotes: false, // Por enquanto, não permitir múltiplos votos
+          maxVotes: 1
+        })
+      );
+      
+      console.log('✅ [WinnerModal] Configuração salva - peso:', this.selectedVoteWeight);
+    } catch (error) {
+      console.error('❌ [WinnerModal] Erro ao salvar configuração:', error);
+    }
+  }
+
+  /**
+   * ✅ NOVO: Handler para mudança de peso do voto
+   */
+  onVoteWeightChange(): void {
+    console.log('🌟 [WinnerModal] Peso do voto alterado para:', this.selectedVoteWeight);
+    this.saveSpecialUserConfig();
   }
 
   private setupWebSocketListeners() {

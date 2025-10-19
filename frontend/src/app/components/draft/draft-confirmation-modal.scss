@@ -38,22 +38,7 @@
   overflow: hidden;
 }
 
-// ✅ NOVO: Estilos para confirmação de jogadores
-.confirmation-status {
-  font-size: 12px;
-  margin-top: 4px;
-  display: block;
-
-  &.confirmed {
-    color: #00ff00;
-    font-weight: bold;
-  }
-
-  &.pending {
-    color: #ffaa00;
-    animation: pulse 2s infinite;
-  }
-}
+// ✅ REMOVIDO: Estilos duplicados para confirmação de jogadores
 
 
 .confirmed-player {
@@ -74,10 +59,10 @@
 // ✅ NOVO: Status de confirmação visual
 .confirmation-status {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 24px;
-  height: 24px;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -107,7 +92,7 @@
   }
 
   .status-icon {
-    font-size: 12px;
+    font-size: 10px;
     color: white;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
   }
@@ -141,42 +126,42 @@
 .confirmation-progress {
   background: linear-gradient(135deg, #1e2e4b 0%, #2a3f5f 100%);
   border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 8px;
-  padding: 16px;
-  margin-bottom: 20px;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
 
   .progress-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 12px;
+    margin-bottom: 6px;
 
     h4 {
       margin: 0;
       color: #f0c040;
-      font-size: 16px;
+      font-size: 13px;
       font-weight: bold;
     }
 
     .progress-text {
       color: #c9aa71;
-      font-size: 14px;
+      font-size: 12px;
       font-weight: 500;
     }
   }
 
   .progress-bar {
     width: 100%;
-    height: 8px;
+    height: 6px;
     background: rgba(255, 255, 255, 0.1);
-    border-radius: 4px;
+    border-radius: 3px;
     overflow: hidden;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
 
     .progress-fill {
       height: 100%;
       background: linear-gradient(90deg, #4a90e2 0%, #357abd 100%);
-      border-radius: 4px;
+      border-radius: 3px;
       transition: width 0.5s ease;
       position: relative;
 
@@ -206,6 +191,58 @@
 
     &.error {
       color: #ff6b6b;
+    }
+  }
+}
+
+// ✅ NOVO: Estilos para progresso de confirmação compacto
+.confirmation-progress-compact {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 6px 12px;
+  background: linear-gradient(135deg, #1e2e4b 0%, #2a3f5f 100%);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+
+  .progress-text-compact {
+    color: #c9aa71;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    min-width: 80px;
+  }
+
+  .progress-bar-compact {
+    flex: 1;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    overflow: hidden;
+
+    .progress-fill-compact {
+      height: 100%;
+      background: linear-gradient(90deg, #4a90e2 0%, #357abd 100%);
+      border-radius: 2px;
+      transition: width 0.5s ease;
+      position: relative;
+
+      &.complete {
+        background: linear-gradient(90deg, #00ff00 0%, #00cc00 100%);
+        animation: progressComplete 0.6s ease-out;
+      }
+
+      &::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+        animation: progressShimmer 2s infinite;
+      }
     }
   }
 }
@@ -242,28 +279,48 @@
 .confirmation-header {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 12px;
+  justify-content: space-between;
   padding: 12px 20px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.2);
   background: rgba(255, 255, 255, 0.05);
 
-  .confirmation-icon {
-    font-size: 20px;
-    margin: 0;
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+
+    .confirmation-icon {
+      font-size: 20px;
+      margin: 0;
+    }
+
+    .header-text {
+      h2 {
+        margin: 0;
+        color: #f0c040;
+        font-size: 16px;
+        font-weight: bold;
+      }
+
+      p {
+        margin: 0;
+        color: #c9aa71;
+        font-size: 12px;
+        opacity: 0.8;
+      }
+    }
   }
 
-  h2 {
-    margin: 0;
-    color: #f0c040;
-    font-size: 16px;
-    font-weight: bold;
-  }
-
-  p {
-    margin: 0;
-    color: #c9aa71;
-    font-size: 11px;
+  .header-right {
+    .progress-status-header {
+      color: #c9aa71;
+      font-size: 14px;
+      font-weight: 500;
+      background: rgba(255, 255, 255, 0.1);
+      padding: 4px 8px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
   }
 }
 
@@ -381,6 +438,7 @@
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   transition: all 0.3s ease;
+  position: relative; // ✅ NOVO: Contexto de posicionamento para .confirmation-status
 
   &:hover {
     background: rgba(255, 255, 255, 0.1);

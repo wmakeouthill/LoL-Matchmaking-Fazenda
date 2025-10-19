@@ -16,58 +16,83 @@
   border-radius: 12px;
   border: 1px solid #3c3c41;
 
-  .game-title {
-    h2 {
-      margin: 0 0 8px 0;
-      font-size: 28px;
-      font-weight: 700;
-      color: #f0e6d2;
-    }
+  .header-left {
+    .game-title {
+      h2 {
+        margin: 0 0 8px 0;
+        font-size: 28px;
+        font-weight: 700;
+        color: #f0e6d2;
+      }
 
-    .game-status {
-      margin: 0;
-      font-size: 16px;
-      color: #a09b8c;
+      .game-status {
+        margin: 0;
+        font-size: 16px;
+        color: #a09b8c;
+      }
     }
   }
 
-  .game-info {
+  .header-right {
     display: flex;
     flex-direction: column;
-    gap: 12px;
     align-items: flex-end;
+    gap: 12px;
 
-    .game-timer {
-      .timer-label {
-        color: #a09b8c;
-        margin-right: 8px;
+    .game-info {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 8px;
+
+      .game-timer {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 16px;
+        color: #c9aa71;
+
+        .timer-label {
+          font-weight: 500;
+        }
+
+        .timer-value {
+          font-weight: 700;
+          color: #f0e6d2;
+        }
       }
 
-      .timer-value {
-        font-size: 24px;
-        font-weight: 700;
-        color: #c8aa6e;
-        font-family: 'Courier New', monospace;
+      .lcu-status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        color: #a09b8c;
+
+        .status-indicator {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: #5a5a5a;
+          transition: background-color 0.3s ease;
+
+          &.active {
+            background: #00ff00;
+            box-shadow: 0 0 8px rgba(0, 255, 0, 0.5);
+          }
+        }
       }
     }
 
-    .lcu-status {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 14px;
-
-      .status-indicator {
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        background: #cc5500;
-        transition: background-color 0.3s ease;
-
-        &.active {
-          background: #00d084;
-          box-shadow: 0 0 8px rgba(0, 208, 132, 0.4);
-        }
+    .vote-progress-header {
+      .progress-status-header {
+        color: #c9aa71;
+        font-size: 14px;
+        font-weight: 500;
+        background: rgba(255, 255, 255, 0.1);
+        padding: 4px 8px;
+        border-radius: 4px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
       }
     }
   }
@@ -226,6 +251,7 @@
         border-radius: 8px;
         border-left: 3px solid transparent;
         transition: all 0.3s ease;
+        position: relative; // ✅ NOVO: Para posicionamento absoluto do vote-status
 
         &.current-player {
           border-left-color: #c8aa6e;
@@ -712,16 +738,6 @@
   &.vote-status-voted {
     background: linear-gradient(135deg, #00ff00 0%, #00cc00 100%);
     animation: statusAccepted 0.6s ease;
-  }
-
-  &.vote-status-declined {
-    background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%);
-    animation: statusDeclined 0.6s ease;
-  }
-
-  &.vote-status-timeout {
-    background: linear-gradient(135deg, #ffaa00 0%, #cc8800 100%);
-    animation: statusTimeout 0.6s ease;
   }
 
   &.vote-status-pending {

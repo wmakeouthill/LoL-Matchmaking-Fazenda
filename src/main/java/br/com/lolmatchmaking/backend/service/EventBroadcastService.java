@@ -522,8 +522,8 @@ public class EventBroadcastService {
                 br.com.lolmatchmaking.backend.dto.events.WinnerVoteEvent event = objectMapper.readValue(message,
                         br.com.lolmatchmaking.backend.dto.events.WinnerVoteEvent.class);
 
-                // Broadcast progresso de votação
-                // webSocketService.broadcastWinnerVoteProgress(event);
+                // ✅ CORREÇÃO: Habilitar broadcast de progresso de votação
+                webSocketService.broadcastWinnerVoteProgress(event);
 
                 log.info("✅ [Pub/Sub] game:winner_vote processado: match {} ({} votos: T1={}, T2={})",
                         event.getMatchId(), event.getSummonerName(), event.getVotesTeam1(), event.getVotesTeam2());

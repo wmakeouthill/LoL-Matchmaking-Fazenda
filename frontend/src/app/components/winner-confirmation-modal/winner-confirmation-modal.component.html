@@ -1,7 +1,29 @@
 <div class="modal-overlay" (click)="cancel()">
   <div class="modal-container" (click)="$event.stopPropagation()">
     <div class="modal-header">
-      <h2>🏆 Confirmar Vencedor da Partida</h2>
+      <div class="header-content">
+        <h2>🏆 Confirmar Vencedor da Partida</h2>
+        
+        <!-- ✅ NOVO: Seletor de peso do voto para special users -->
+        <div class="special-user-vote-weight" *ngIf="isSpecialUser">
+          <label for="voteWeight">🌟 Peso do Voto:</label>
+          <select 
+            id="voteWeight" 
+            [(ngModel)]="selectedVoteWeight" 
+            class="vote-weight-selector"
+            (change)="onVoteWeightChange()">
+            <option value="1">1 voto</option>
+            <option value="2">2 votos</option>
+            <option value="3">3 votos</option>
+            <option value="4">4 votos</option>
+            <option value="5">5 votos</option>
+            <option value="6">6 votos</option>
+            <option value="10">10 votos</option>
+          </select>
+          <span class="weight-info">(Seu voto valerá {{ selectedVoteWeight }} voto{{ selectedVoteWeight > 1 ? 's' : '' }})</span>
+        </div>
+      </div>
+      
       <button class="close-btn" (click)="cancel()">&times;</button>
     </div>
 

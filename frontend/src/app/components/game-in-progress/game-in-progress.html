@@ -1,20 +1,37 @@
 <div class="game-in-progress-container">
   <!-- Header -->
   <div class="game-header">
-    <div class="game-title">
-      <h2>{{ getGameStatusIcon() }} Partida em Andamento</h2>
-      <p class="game-status">{{ getGameStatusText() }}</p>
+    <div class="header-left">
+      <div class="game-title">
+        <h2>{{ getGameStatusIcon() }} Partida em Andamento</h2>
+        <p class="game-status">{{ getGameStatusText() }}</p>
+      </div>
     </div>
 
-    <div class="game-info">
-      <div class="game-timer">
-        <span class="timer-label">Duração:</span>
-        <span class="timer-value">{{ getGameDurationFormatted() }}</span>
+    <div class="header-right">
+      <div class="game-info">
+        <div class="game-timer">
+          <span class="timer-label">Duração:</span>
+          <span class="timer-value">{{ getGameDurationFormatted() }}</span>
+        </div>
+
+        <div class="lcu-status" *ngIf="lcuDetectionEnabled">
+          <span
+            class="status-indicator"
+            [class.active]="lcuGameDetected"
+          ></span>
+          <span
+            >{{ lcuGameDetected ? 'LCU Conectado' : 'Aguardando LCU' }}</span
+          >
+        </div>
       </div>
 
-      <div class="lcu-status" *ngIf="lcuDetectionEnabled">
-        <span class="status-indicator" [class.active]="lcuGameDetected"></span>
-        <span>{{ lcuGameDetected ? 'LCU Conectado' : 'Aguardando LCU' }}</span>
+      <!-- ✅ NOVO: Progresso de votação -->
+      <div class="vote-progress-header" *ngIf="showWinnerConfirmationModal">
+        <div class="progress-status-header">
+          {{ getVoteCount().voted }}/{{ getVoteCount().total }} ({{
+          getVoteProgress() }}%)
+        </div>
       </div>
     </div>
   </div>
@@ -59,8 +76,6 @@
           *ngFor="let player of getTeamPlayers('blue')"
           [class.current-player]="currentPlayer && player.id === currentPlayer.id"
           [class.voted-player]="getPlayerVoteStatus(player.summonerName) === 'voted'"
-          [class.declined-player]="getPlayerVoteStatus(player.summonerName) === 'declined'"
-          [class.timeout-player]="getPlayerVoteStatus(player.summonerName) === 'timeout'"
         >
           <!-- Status de votação -->
           <div class="vote-status" [class]="getVoteStatusClass(player)">
@@ -181,8 +196,6 @@
           *ngFor="let player of getTeamPlayers('red')"
           [class.current-player]="currentPlayer && player.id === currentPlayer.id"
           [class.voted-player]="getPlayerVoteStatus(player.summonerName) === 'voted'"
-          [class.declined-player]="getPlayerVoteStatus(player.summonerName) === 'declined'"
-          [class.timeout-player]="getPlayerVoteStatus(player.summonerName) === 'timeout'"
         >
           <!-- Status de votação -->
           <div class="vote-status" [class]="getVoteStatusClass(player)">

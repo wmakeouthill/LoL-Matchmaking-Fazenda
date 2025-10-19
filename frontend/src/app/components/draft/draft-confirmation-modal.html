@@ -9,14 +9,25 @@
     (click)="$event.stopPropagation()"
     (keydown)="$event.stopPropagation()"
   >
-    >
+    
     <!-- Header -->
     <div class="confirmation-header">
-      <div class="confirmation-icon">🎯</div>
-      <h2>Confirmar Seleção Final</h2>
-      <p>
-        - Verifique se todos os picks e bans estão corretos antes de continuar
-      </p>
+      <div class="header-left">
+        <div class="confirmation-icon">🎯</div>
+        <div class="header-text">
+          <h2>Confirmar Seleção Final</h2>
+          <p>
+            - Verifique se todos os picks e bans estão corretos antes de
+            continuar
+          </p>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="progress-status-header">
+          {{ getConfirmationCount().confirmed }}/{{ getConfirmationCount().total
+          }} ({{ getConfirmationProgress() }}%)
+        </div>
+      </div>
     </div>
 
     <!-- Conteúdo -->
@@ -83,13 +94,6 @@
                   </span>
                   <span class="player-lane">
                     {{ getPlayerLaneDisplayForPlayer(slot.player) }}
-                  </span>
-                  <span
-                    class="confirmation-status"
-                    [class.confirmed]="isPlayerConfirmed(slot.player)"
-                    [class.pending]="!isPlayerConfirmed(slot.player)"
-                  >
-                    {{ getConfirmationStatus(slot.player) }}
                   </span>
                 </div>
                 <div class="champion-info" *ngIf="slot.champion">
@@ -167,13 +171,6 @@
                   <span class="player-lane">
                     {{ getPlayerLaneDisplayForPlayer(slot.player) }}
                   </span>
-                  <span
-                    class="confirmation-status"
-                    [class.confirmed]="isPlayerConfirmed(slot.player)"
-                    [class.pending]="!isPlayerConfirmed(slot.player)"
-                  >
-                    {{ getConfirmationStatus(slot.player) }}
-                  </span>
                 </div>
                 <div class="champion-info" *ngIf="slot.champion">
                   <img
@@ -193,35 +190,14 @@
 
     <!-- Ações -->
     <div class="confirmation-actions">
-      <!-- ✅ NOVO: Progresso de confirmação -->
-      <div class="confirmation-progress">
-        <div class="progress-header">
-          <h4>Status de Confirmação</h4>
-          <span class="progress-text">
-            {{ getConfirmationCount().confirmed }}/{{
-            getConfirmationCount().total }} jogadores confirmaram ({{
-            getConfirmationProgress() }}%)
-          </span>
-        </div>
-
-        <!-- Barra de progresso -->
-        <div class="progress-bar">
-          <div
-            class="progress-fill"
-            [style.width.%]="getConfirmationProgress()"
-            [class.complete]="haveAllPlayersConfirmed()"
-          ></div>
-        </div>
-
-        <!-- Mensagem de estado -->
-        <p
-          class="confirmation-message"
-          *ngIf="confirmationMessage"
-          [class.error]="confirmationMessage.includes('Erro')"
-        >
-          {{ confirmationMessage }}
-        </p>
-      </div>
+      <!-- Mensagem de estado -->
+      <p
+        class="confirmation-message"
+        *ngIf="confirmationMessage"
+        [class.error]="confirmationMessage.includes('Erro')"
+      >
+        {{ confirmationMessage }}
+      </p>
 
       <button
         class="btn btn-danger btn-lg"

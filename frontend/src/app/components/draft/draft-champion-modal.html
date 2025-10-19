@@ -94,8 +94,8 @@
             <input
               id="modal-champion-search"
               type="text"
-              [(ngModel)]="searchFilter"
-              (ngModelChange)="onSearchChange($event)"
+              [value]="searchFilter"
+              (input)="onSearchChange($event.target.value)"
               placeholder="Buscar campeão pelo nome..."
               class="modal-champion-search"
               autocomplete="off"
@@ -103,7 +103,7 @@
             <span class="search-icon">🔍</span>
           </div>
           <span class="search-results-count"
-            >{{ getModalFilteredChampions().length }} campeões encontrados</span
+            >{{ filteredChampionsList.length }} campeões encontrados</span
           >
         </div>
       </div>
@@ -112,7 +112,7 @@
       <div class="modal-champions-grid">
         <div
           class="modal-champion-card"
-          *ngFor="let champion of getModalFilteredChampions()"
+          *ngFor="let champion of filteredChampionsList"
           [class.selected]="selectedany?.id === champion.id"
           [class.banned]="isChampionBanned(champion)"
           [class.picked]="isChampionPicked(champion)"
@@ -142,7 +142,7 @@
 
         <!-- Estado vazio -->
         <div
-          *ngIf="getModalFilteredChampions().length === 0"
+          *ngIf="filteredChampionsList.length === 0"
           class="modal-no-champions"
         >
           <div class="no-champions-icon">😔</div>

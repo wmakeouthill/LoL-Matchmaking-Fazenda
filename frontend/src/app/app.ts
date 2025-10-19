@@ -1144,6 +1144,17 @@ export class App implements OnInit, OnDestroy {
         console.log('📋 [App] ========== DRAFT_UPDATED (AÇÕES) ==========');
         console.log('📋 [App] draft_updated recebido:', message);
 
+        // ✅ NOVO: Verificar se é uma atualização de confirmação de draft
+        if (message.data?.type === 'draft_confirmation_update') {
+          console.log('📊 [App] Atualização de confirmação de draft recebida:', message.data);
+
+          // Disparar evento customizado para o modal de confirmação
+          document.dispatchEvent(new CustomEvent('draftConfirmationUpdate', {
+            detail: message.data
+          }));
+          break;
+        }
+
         const debugState = {
           timestamp: new Date().toISOString(),
           inDraftPhase: this.inDraftPhase,
@@ -1307,8 +1318,23 @@ export class App implements OnInit, OnDestroy {
           this.cdr.detectChanges();
         }
         break;
-      case 'all_players_accepted':
-        console.log('✅ [App] Todos jogadores aceitaram:', message);
+      case 'match_vote_progress':
+        console.log('📊 [App] Progresso de votação recebido:', message);
+
+        // Disparar evento customizado para o game-in-progress
+        document.dispatchEvent(new CustomEvent('matchVoteProgress', {
+          detail: message.data || message
+        }));
+        break;
+
+      case 'match_vote_update':
+        console.log('📊 [App] Atualização de votação recebida:', message);
+
+        // Disparar evento customizado para o game-in-progress
+        document.dispatchEvent(new CustomEvent('matchVoteUpdate', {
+          detail: message.data || message
+        }));
+        break;
         // ✅ Esconder modal de match found mas MANTER os dados para o draft
         this.showMatchFound = false;
         this.cdr.detectChanges();

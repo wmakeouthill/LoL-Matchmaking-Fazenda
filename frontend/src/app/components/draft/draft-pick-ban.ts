@@ -148,10 +148,10 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
     // ✅ NOVO: Aguardar ngOnChanges processar primeiro se matchData existir
     if (this.matchData) {
-      // ✅ NOVO: Aguardar um pouco para ngOnChanges processar primeiro
+      // ✅ CORREÇÃO: Aumentar timing para evitar race conditions (100ms → 200ms)
       setTimeout(() => {
         this.finishInitialization();
-      }, 100);
+      }, 200);
     } else {
       this.finishInitialization();
     }
@@ -190,7 +190,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
             saveLogToRoot(`🔄 [finishInitialization] Processando estado inicial do draft`);
             this.updateDraftState();
           }
-        }, 100);
+        }, 200);
       } else {
         saveLogToRoot(`❌ [finishInitialization] matchData não recebido`);
       }

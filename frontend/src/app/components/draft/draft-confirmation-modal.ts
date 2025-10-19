@@ -69,13 +69,6 @@ interface TeamSlot {
   phaseIndex: number;
 }
 
-// ✅ NOVO: Interface para status de confirmação dos jogadores
-interface PlayerConfirmationStatus {
-  summonerName: string;
-  confirmationStatus: 'pending' | 'confirmed' | 'declined' | 'timeout';
-  confirmedAt?: string; // ISO timestamp quando confirmou
-  isCurrentUser?: boolean; // Se é o usuário logado via LCU
-}
 
 @Component({
   selector: 'app-draft-confirmation-modal',
@@ -100,7 +93,6 @@ export class DraftConfirmationModalComponent implements OnChanges {
   confirmationMessage: string = '';
 
   // ✅ NOVO: Status de confirmação dos jogadores
-  playerConfirmationStatuses: Map<string, PlayerConfirmationStatus> = new Map();
   confirmedCount: number = 0;
   totalPlayers: number = 10;
 
@@ -182,6 +174,7 @@ export class DraftConfirmationModalComponent implements OnChanges {
     // ✅ NOVO: Identificar usuário atual quando modal abre
     if (this.isVisible) {
       this.identifyCurrentUser();
+      this.initializeConfirmationStatuses(); // ✅ NOVO: Inicializar status de confirmação
       this.setupWebSocketListeners(); // ✅ NOVO: Configurar listeners WebSocket
     } else {
       this.cleanupWebSocketListeners(); // ✅ NOVO: Limpar listeners quando modal fecha
@@ -1478,15 +1471,23 @@ export class DraftConfirmationModalComponent implements OnChanges {
    * Obtém o status de confirmação de um jogador
    */
   getPlayerConfirmationStatus(summonerName: string): 'pending' | 'confirmed' | 'declined' | 'timeout' {
-    const status = this.playerConfirmationStatuses.get(summonerName);
-    return status?.confirmationStatus || 'pending';
+    // ✅ CORREÇÃO: Usar mesma técnica do match_found - buscar no player.acceptanceStatus
+    const allPlayers = [
+      ...(this.session?.blueTeam || []),
+      ...(this.session?.redTeam || [])
+    ];
+
+    const player = allPlayers.find(p => p.summonerName === summonerName);
+    return player?.acceptanceStatus || 'pending';
   }
+
 
   /**
    * Obtém o ícone de status de confirmação
    */
   getConfirmationStatusIcon(player: any): string {
     const status = this.getPlayerConfirmationStatus(player.summonerName);
+    console.log(`🎯 [ConfirmationModal] Ícone para ${player.summonerName}: ${status}`);
     switch (status) {
       case 'confirmed': return '✅';
       case 'declined': return '❌';
@@ -1500,6 +1501,7 @@ export class DraftConfirmationModalComponent implements OnChanges {
    */
   getConfirmationStatusClass(player: any): string {
     const status = this.getPlayerConfirmationStatus(player.summonerName);
+    console.log(`🎨 [ConfirmationModal] Classe para ${player.summonerName}: confirmation-status-${status}`);
     return `confirmation-status-${status}`;
   }
 
@@ -1514,7 +1516,7 @@ export class DraftConfirmationModalComponent implements OnChanges {
     ];
 
     allPlayers.forEach(player => {
-      if (this.getPlayerConfirmationStatus(player.summonerName) === 'confirmed') {
+      if (player.acceptanceStatus === 'confirmed') {
         confirmed++;
       }
     });
@@ -1552,17 +1554,20 @@ export class DraftConfirmationModalComponent implements OnChanges {
       this.wsSubscription.unsubscribe();
     }
 
+    // ✅ NOVO: Escutar evento customizado do app.ts
+    document.addEventListener('draftConfirmationUpdate', this.handleCustomEvent);
+
     this.wsSubscription = this.apiService.onWebSocketMessage().subscribe({
-      next: (message) => {
+      next: (message: any) => {
         const { type, data } = message;
 
-        if (type === 'draft_confirmation_progress') {
+        if (type === 'draft_updated' && data?.type === 'draft_confirmation_update') {
           this.handleConfirmationProgress(data);
         } else if (type === 'draft_confirmation_update') {
           this.handleConfirmationUpdate(data);
         }
       },
-      error: (error) => {
+      error: (error: any) => {
         console.error('❌ [ConfirmationModal] Erro no WebSocket:', error);
       }
     });
@@ -1579,7 +1584,16 @@ export class DraftConfirmationModalComponent implements OnChanges {
       this.wsSubscription = undefined;
       console.log('🔌 [ConfirmationModal] WebSocket listeners limpos');
     }
+
+    // ✅ NOVO: Remover listener customizado
+    document.removeEventListener('draftConfirmationUpdate', this.handleCustomEvent);
   }
+
+  // ✅ NOVO: Método para lidar com evento customizado
+  private readonly handleCustomEvent = (event: any): void => {
+    console.log('📊 [ConfirmationModal] Evento customizado recebido:', event.detail);
+    this.handleConfirmationProgress(event.detail);
+  };
 
   /**
    * Manipula atualizações de progresso de confirmação
@@ -1587,32 +1601,51 @@ export class DraftConfirmationModalComponent implements OnChanges {
   private handleConfirmationProgress(data: any): void {
     console.log('📊 [ConfirmationModal] Progresso de confirmação recebido:', data);
 
-    if (data.confirmedPlayers && Array.isArray(data.confirmedPlayers)) {
+    if (data.confirmations && Array.isArray(data.confirmations)) {
+      // ✅ CORREÇÃO: Usar mesma técnica do match_found
+      const allPlayers = [
+        ...(this.session?.blueTeam || []),
+        ...(this.session?.redTeam || [])
+      ];
+
+      console.log(`📊 [ConfirmationModal] Processando ${data.confirmations.length} confirmações para ${allPlayers.length} jogadores`);
+
       // Atualizar status de todos os jogadores para 'pending' primeiro
-      this.resetAllPlayerStatuses();
+      allPlayers.forEach(player => {
+        player.acceptanceStatus = 'pending';
+        console.log(`📊 [ConfirmationModal] Resetando ${player.summonerName} para pending`);
+      });
 
       // Marcar jogadores confirmados como 'confirmed'
-      data.confirmedPlayers.forEach((confirmedPlayerName: string) => {
-        const allPlayers = [
-          ...(this.session?.blueTeam || []),
-          ...(this.session?.redTeam || [])
-        ];
-
+      data.confirmations.forEach((confirmedPlayerName: string) => {
         const player = allPlayers.find(p =>
-          p.summonerName === confirmedPlayerName ||
-          (p.riotIdGameName && p.riotIdTagline && `${p.riotIdGameName}#${p.riotIdTagline}` === confirmedPlayerName)
+          p.summonerName?.toLowerCase() === confirmedPlayerName?.toLowerCase() ||
+          (p.riotIdGameName && p.riotIdTagline && `${p.riotIdGameName}#${p.riotIdTagline}`.toLowerCase() === confirmedPlayerName?.toLowerCase())
         );
 
         if (player) {
-          this.playerConfirmationStatuses.set(player.summonerName, {
-            summonerName: player.summonerName,
-            confirmationStatus: 'confirmed',
-            confirmedAt: new Date().toISOString(),
-            isCurrentUser: player.isCurrentUser || false
-          });
+          player.acceptanceStatus = 'confirmed';
+          player.acceptedAt = new Date().toISOString();
           console.log('✅ [ConfirmationModal] Jogador confirmado:', player.summonerName);
+        } else {
+          console.log('⚠️ [ConfirmationModal] Jogador não encontrado:', confirmedPlayerName);
         }
       });
+
+      // Atualizar contadores
+      this.confirmedCount = data.confirmedCount || 0;
+      this.totalPlayers = data.totalPlayers || 10;
+
+      console.log(`📊 [ConfirmationModal] Atualizado: ${this.confirmedCount}/${this.totalPlayers} confirmados`);
+      console.log(`📊 [ConfirmationModal] Progresso: ${this.getConfirmationProgress()}%`);
+
+      // ✅ NOVO: Forçar detecção de mudanças
+      setTimeout(() => {
+        console.log(`🔄 [ConfirmationModal] Re-check progresso: ${this.getConfirmationProgress()}%`);
+        console.log(`🔄 [ConfirmationModal] Re-check contagem: ${this.getConfirmationCount().confirmed}/${this.getConfirmationCount().total}`);
+      }, 100);
+    } else {
+      console.log('⚠️ [ConfirmationModal] Dados de confirmação inválidos:', data);
     }
   }
 
@@ -1623,30 +1656,50 @@ export class DraftConfirmationModalComponent implements OnChanges {
     console.log('🔄 [ConfirmationModal] Atualização de confirmação recebida:', data);
 
     if (data.playerName && data.status) {
-      this.playerConfirmationStatuses.set(data.playerName, {
-        summonerName: data.playerName,
-        confirmationStatus: data.status,
-        confirmedAt: data.status === 'confirmed' ? new Date().toISOString() : undefined,
-        isCurrentUser: false // Será atualizado pela identificação do usuário
-      });
+      const allPlayers = [
+        ...(this.session?.blueTeam || []),
+        ...(this.session?.redTeam || [])
+      ];
+
+      const player = allPlayers.find(p => p.summonerName === data.playerName);
+      if (player) {
+        player.acceptanceStatus = data.status;
+        if (data.status === 'confirmed') {
+          player.acceptedAt = new Date().toISOString();
+        }
+        console.log(`🔄 [ConfirmationModal] Status atualizado para ${data.playerName}: ${data.status}`);
+      }
     }
   }
 
+
   /**
-   * Reseta o status de todos os jogadores para 'pending'
+   * Inicializa os status de confirmação de todos os jogadores
    */
-  private resetAllPlayerStatuses(): void {
+  private initializeConfirmationStatuses(): void {
+    if (!this.session) {
+      console.log('⚠️ [ConfirmationModal] Session não disponível para inicialização');
+      return;
+    }
+
     const allPlayers = [
-      ...(this.session?.blueTeam || []),
-      ...(this.session?.redTeam || [])
+      ...(this.session.blueTeam || []),
+      ...(this.session.redTeam || [])
     ];
 
+    console.log(`🔄 [ConfirmationModal] Inicializando ${allPlayers.length} jogadores`);
+
     allPlayers.forEach(player => {
-      this.playerConfirmationStatuses.set(player.summonerName, {
-        summonerName: player.summonerName,
-        confirmationStatus: 'pending',
-        isCurrentUser: player.isCurrentUser || false
-      });
+      // ✅ CORREÇÃO: Usar mesma técnica do match_found - inicializar como pending
+      player.acceptanceStatus = 'pending';
+      player.isCurrentUser = player.isCurrentUser || false;
+      console.log(`🔄 [ConfirmationModal] Jogador ${player.summonerName} inicializado como pending`);
     });
+
+    this.confirmedCount = 0;
+    this.totalPlayers = allPlayers.length;
+
+    console.log(`🔄 [ConfirmationModal] Status inicializados: ${this.confirmedCount}/${this.totalPlayers} jogadores`);
+    console.log(`🔄 [ConfirmationModal] Progresso inicial: ${this.getConfirmationProgress()}%`);
   }
 }

@@ -1401,3 +1401,75 @@
     }
   }
 }
+
+// ✅ NOVO: Estilos para seletor de peso do voto (special users)
+.modal-header {
+  .header-content {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex: 1;
+
+    h2 {
+      margin: 0;
+      color: #f0e6d2;
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    .special-user-vote-weight {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 16px;
+      background: linear-gradient(135deg, #c9aa71 0%, #f0e6d2 100%);
+      border-radius: 8px;
+      border: 2px solid #463714;
+      box-shadow: 0 2px 8px rgba(201, 170, 113, 0.3);
+
+      label {
+        font-weight: 600;
+        color: #463714;
+        font-size: 14px;
+        margin: 0;
+      }
+
+      .vote-weight-selector {
+        padding: 6px 12px;
+        border: 2px solid #463714;
+        border-radius: 6px;
+        background: #f0e6d2;
+        color: #463714;
+        font-weight: 600;
+        font-size: 14px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+
+        &:hover {
+          background: #e6d7b8;
+          transform: translateY(-1px);
+          box-shadow: 0 4px 12px rgba(201, 170, 113, 0.4);
+        }
+
+        &:focus {
+          outline: none;
+          border-color: #8b7355;
+          box-shadow: 0 0 0 3px rgba(201, 170, 113, 0.3);
+        }
+
+        option {
+          background: #f0e6d2;
+          color: #463714;
+          font-weight: 600;
+        }
+      }
+
+      .weight-info {
+        font-size: 12px;
+        color: #463714;
+        font-weight: 500;
+        font-style: italic;
+      }
+    }
+  }
+}

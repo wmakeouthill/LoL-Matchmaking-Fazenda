@@ -150,7 +150,7 @@ export class ApiService {
       }
 
       console.log('🔧 [ApiService] Configurando LCU via /api/lcu/configure com dados do lockfile...');
-      const url = `${this.baseUrl}/lcu/configure`;
+      const url = this.normalizeUrl(this.baseUrl, 'lcu/configure');
       await firstValueFrom(this.http.post(url, info).pipe(
         catchError(err => {
           console.warn('⚠️ [ApiService] Erro ao configurar LCU:', err);
@@ -258,6 +258,15 @@ export class ApiService {
     }
 
     return headers;
+  }
+
+  /**
+   * ✅ NOVO: Normaliza URL para evitar dupla barra
+   */
+  private normalizeUrl(baseUrl: string, path: string): string {
+    const normalizedBase = baseUrl.replace(/\/+$/, ''); // Remove barras finais
+    const normalizedPath = path.replace(/^\/+/, '');   // Remove barras iniciais
+    return `${normalizedBase}/${normalizedPath}`;
   }
 
   public getBaseUrl(): string {
@@ -1184,10 +1193,10 @@ export class ApiService {
           const merged: any = { ...summoner };
           if (ranked && ranked.queues && Array.isArray(ranked.queues)) {
             // Procurar por ranked solo
-            const soloQueue = ranked.queues.find((q: any) => 
+            const soloQueue = ranked.queues.find((q: any) =>
               q.queueType === 'RANKED_SOLO_5x5' || q.queueType === 'RANKED_SOLO'
             );
-            
+
             if (soloQueue) {
               merged.rank = {
                 tier: soloQueue.tier || 'UNRANKED',
@@ -1198,11 +1207,11 @@ export class ApiService {
               };
               merged.wins = soloQueue.wins || 0;
               merged.losses = soloQueue.losses || 0;
-              
+
               console.log('✅ [ApiService] Rank encontrado:', merged.rank);
             }
           }
-          
+
           // ✅ CRÍTICO: Se ranked tem currentMMR pré-calculado, copiar para merged
           if (ranked && ranked.currentMMR) {
             merged.currentMMR = ranked.currentMMR;
@@ -2122,5 +2131,45 @@ export class ApiService {
     console.error('❌ [API] sessionStorage keys:', Object.keys(sessionStorage));
     console.error('❌ [API] localStorage keys:', Object.keys(localStorage));
     throw new Error('Player ID não encontrado. Faça login primeiro.');
+  }
+
+  // ✅ NOVO: Métodos para special user
+  /**
+   * Verificar se um jogador é special user
+   */
+  checkSpecialUserStatus(summonerName: string): Observable<boolean> {
+    return this.http.get<boolean>(`${this.baseUrl}/api/admin/special-user/${encodeURIComponent(summonerName)}/status`)
+      .pipe(
+        catchError((error: HttpErrorResponse) => {
+          console.error('❌ [API] Erro ao verificar special user status:', error);
+          return of(false); // Fallback para false
+        })
+      );
+  }
+
+  /**
+   * Obter configuração de special user
+   */
+  getSpecialUserConfig(summonerName: string): Observable<any> {
+    return this.http.get<any>(`${this.baseUrl}/api/admin/special-user/${encodeURIComponent(summonerName)}/config`)
+      .pipe(
+        catchError((error: HttpErrorResponse) => {
+          console.error('❌ [API] Erro ao obter configuração de special user:', error);
+          return of({ voteWeight: 1, allowMultipleVotes: false, maxVotes: 1 }); // Fallback
+        })
+      );
+  }
+
+  /**
+   * Atualizar configuração de special user
+   */
+  updateSpecialUserConfig(summonerName: string, config: any): Observable<any> {
+    return this.http.put<any>(`${this.baseUrl}/api/admin/special-user/${encodeURIComponent(summonerName)}/config`, config)
+      .pipe(
+        catchError((error: HttpErrorResponse) => {
+          console.error('❌ [API] Erro ao atualizar configuração de special user:', error);
+          return throwError(() => error);
+        })
+      );
   }
 }

@@ -282,6 +282,55 @@ public class RedisMatchVoteService {
         return status;
     }
 
+    /**
+     * ✅ NOVO: Obter contagem de votos de um special user
+     */
+    public int getSpecialUserVoteCount(Long matchId, String summonerName) {
+        String key = getVoteKey(matchId);
+        Object count = redisTemplate.opsForHash().get(key + ":special_votes", summonerName);
+
+        if (count == null) {
+            return 0;
+        }
+
+        return ((Number) count).intValue();
+    }
+
+    /**
+     * ✅ NOVO: Adicionar voto de special user
+     */
+    public void addSpecialUserVote(Long matchId, String summonerName, Long lcuGameId) {
+        String key = getVoteKey(matchId);
+
+        // Incrementar contagem de votos do special user
+        redisTemplate.opsForHash().increment(key + ":special_votes", summonerName, 1);
+
+        // Adicionar à lista de votos do special user
+        redisTemplate.opsForSet().add(key + ":special_vote_details:" + summonerName, lcuGameId.toString());
+
+        // Incrementar contagem geral do lcuGameId
+        redisTemplate.opsForHash().increment(key + ":vote_counts", lcuGameId.toString(), 1);
+
+        log.info("✅ [RedisMatchVote] Special user {} votou em lcuGameId {} para match {}",
+                summonerName, lcuGameId, matchId);
+    }
+
+    /**
+     * ✅ NOVO: Obter lista de votos de um special user
+     */
+    public Set<String> getSpecialUserVotes(Long matchId, String summonerName) {
+        String key = getVoteKey(matchId);
+        Set<Object> rawMembers = redisTemplate.opsForSet().members(key + ":special_vote_details:" + summonerName);
+
+        if (rawMembers == null) {
+            return new HashSet<>();
+        }
+
+        return rawMembers.stream()
+                .map(Object::toString)
+                .collect(Collectors.toSet());
+    }
+
     private String getVoteKey(Long matchId) {
         return VOTE_PREFIX + matchId;
     }
