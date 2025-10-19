@@ -6,7 +6,7 @@ spring:
   datasource:
     # O Cloud Run vai receber as variáveis de ambiente
     url: jdbc:mysql://${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
-    username: ${MYSQL_USER:wmakeouthill}
+    username: ${MYSQL_USER:}
     password: ${MYSQL_PASSWORD}
     hikari:
       maximum-pool-size: 5

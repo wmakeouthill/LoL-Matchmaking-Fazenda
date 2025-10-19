@@ -29,12 +29,15 @@ spec:
         - name: MYSQL_DATABASE
           value: lolmatchmaking
         - name: MYSQL_USER
-          value: wmakeouthill
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: username
         - name: MYSQL_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: MYSQL_PASSWORD
-              key: latest
+              name: mysql-secret
+              key: password
         resources:
           limits:
             memory: 2Gi

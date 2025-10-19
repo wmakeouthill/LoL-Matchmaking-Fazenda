@@ -177,6 +177,7 @@
   border: 1px solid rgba(255, 255, 255, 0.15);
   transition: all 0.3s ease;
   min-height: 3.2rem;
+  position: relative;
 
   &:hover {
     background: rgba(255, 255, 255, 0.12);
@@ -188,6 +189,81 @@
     background: linear-gradient(135deg, rgba(52, 152, 219, 0.2), rgba(41, 128, 185, 0.2));
     border-color: #3498db;
     box-shadow: 0 0 15px rgba(52, 152, 219, 0.3);
+  }
+
+  // ✅ NOVO: Status de aceitação dos jogadores
+  &.accepted-player {
+    background: linear-gradient(135deg, rgba(0, 184, 148, 0.2), rgba(0, 206, 201, 0.2));
+    border-color: #00b894;
+    box-shadow: 0 0 10px rgba(0, 184, 148, 0.3);
+  }
+
+  &.declined-player {
+    background: linear-gradient(135deg, rgba(225, 112, 85, 0.2), rgba(214, 48, 49, 0.2));
+    border-color: #e17055;
+    box-shadow: 0 0 10px rgba(225, 112, 85, 0.3);
+    opacity: 0.7;
+  }
+
+  &.timeout-player {
+    background: linear-gradient(135deg, rgba(108, 117, 125, 0.2), rgba(73, 80, 87, 0.2));
+    border-color: #6c757d;
+    box-shadow: 0 0 10px rgba(108, 117, 125, 0.3);
+    opacity: 0.6;
+  }
+
+  &.blurred-player {
+    .blurred {
+      filter: blur(3px);
+      transition: filter 0.3s ease;
+    }
+
+    &:hover .blurred {
+      filter: blur(1px);
+    }
+  }
+
+  // ✅ NOVO: Indicador de status de aceitação
+  .acceptance-status {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+    border: 2px solid rgba(255, 255, 255, 0.8);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+
+    &.acceptance-status-pending {
+      background: linear-gradient(135deg, #fdcb6e, #e17055);
+      animation: statusPulse 2s ease-in-out infinite;
+    }
+
+    &.acceptance-status-accepted {
+      background: linear-gradient(135deg, #00b894, #00cec9);
+      animation: statusAccepted 0.6s ease-out;
+    }
+
+    &.acceptance-status-declined {
+      background: linear-gradient(135deg, #e17055, #d63031);
+      animation: statusDeclined 0.6s ease-out;
+    }
+
+    &.acceptance-status-timeout {
+      background: linear-gradient(135deg, #6c757d, #495057);
+      animation: statusTimeout 0.6s ease-out;
+    }
+
+    .status-icon {
+      font-size: 10px;
+      font-weight: bold;
+      color: white;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    }
   }
 
   .player-avatar {
@@ -203,6 +279,11 @@
       border: 2px solid rgba(255, 255, 255, 0.3);
       object-fit: cover;
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      transition: filter 0.3s ease;
+
+      &.blurred {
+        filter: blur(3px);
+      }
     }
   }
 
@@ -315,6 +396,70 @@
   z-index: 1;
   flex-shrink: 0;
 
+  // ✅ NOVO: Barra de progresso de aceitação
+  .acceptance-progress {
+    margin-bottom: 1rem;
+    padding: 0.5rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+
+    .progress-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.4rem;
+
+      .progress-text {
+        color: #e8f4fd;
+        font-size: 0.8rem;
+        font-weight: 600;
+      }
+
+      .progress-percentage {
+        color: #00b894;
+        font-size: 0.8rem;
+        font-weight: 700;
+        text-shadow: 0 0 8px rgba(0, 184, 148, 0.5);
+      }
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+
+      .progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #00b894, #00cec9);
+        border-radius: 4px;
+        transition: width 0.5s ease;
+        position: relative;
+        box-shadow: 0 0 10px rgba(0, 184, 148, 0.3);
+
+        &.complete {
+          background: linear-gradient(90deg, #00b894, #00cec9, #55efc4);
+          animation: progressComplete 0.8s ease-out;
+        }
+
+        // Efeito de brilho animado
+        &::after {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: -100%;
+          width: 100%;
+          height: 100%;
+          background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+          animation: progressShimmer 2s ease-in-out infinite;
+        }
+      }
+    }
+  }
+
   .countdown-timer {
     margin-bottom: 0.7rem;
     position: relative;
@@ -403,7 +548,7 @@
         color: #fff;
         font-size: 1.5rem;
         font-weight: 800;
-        text-shadow: 
+        text-shadow:
           0 2px 8px rgba(0, 0, 0, 0.4),
           0 0 10px rgba(255, 255, 255, 0.3);
         font-family: 'Courier New', monospace;
@@ -784,6 +929,94 @@
 
   20%, 40%, 60%, 80% {
     transform: translateX(2px);
+  }
+}
+
+// ✅ NOVO: Animações para status de aceitação
+@keyframes statusPulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  }
+
+  50% {
+    transform: scale(1.1);
+    box-shadow: 0 4px 12px rgba(253, 203, 110, 0.5);
+  }
+}
+
+@keyframes statusAccepted {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+
+  50% {
+    transform: scale(1.3);
+    opacity: 1;
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes statusDeclined {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+
+  50% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes statusTimeout {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+
+  50% {
+    transform: scale(1.1);
+    opacity: 1;
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes progressComplete {
+  0% {
+    transform: scaleX(1);
+  }
+
+  50% {
+    transform: scaleX(1.02);
+  }
+
+  100% {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes progressShimmer {
+  0% {
+    left: -100%;
+  }
+
+  100% {
+    left: 100%;
   }
 }
 

@@ -21,12 +21,14 @@ spring:
     password: ${MYSQL_PASSWORD:${DB_PASSWORD:password}}
 
   # ✅ NOVO: Configuração Redis (Upstash)
-  redis:
-    host: robust-chow-5628.upstash.io
-    port: 6379
-    password: ARX8AAImcDI1MGM4MjYxZTBiZjY0MWRiODQ5ZGZkZGZjY2FlZjVhM3AyNTYyOA
-    ssl: true
-    timeout: 2000ms
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT}
+      password: ${REDIS_PASSWORD}
+      ssl:
+        enabled: ${REDIS_SSL}
+      timeout: ${REDIS_TIMEOUT}
   jpa:
     database-platform: org.hibernate.dialect.MySQLDialect
     hibernate:
