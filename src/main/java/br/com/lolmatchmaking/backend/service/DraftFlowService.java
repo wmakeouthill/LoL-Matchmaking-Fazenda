@@ -1723,11 +1723,71 @@ public class DraftFlowService {
         } catch (Exception e) {
             log.error("Erro broadcast draft_confirmed", e);
         }
+
+        // ✅ NOVO: Transição automática IN_DRAFT → IN_GAME para todos os jogadores
+        try {
+            log.info("🔄 [DraftFlow] Iniciando transição automática IN_DRAFT → IN_GAME para match {}", st.getMatchId());
+
+            // Buscar todos os jogadores da partida
+            CustomMatch match = customMatchRepository.findById(st.getMatchId()).orElse(null);
+            if (match != null) {
+                List<String> allPlayers = new ArrayList<>();
+
+                // Extrair jogadores do team1 e team2
+                if (match.getTeam1PlayersJson() != null && !match.getTeam1PlayersJson().isEmpty()) {
+                    try {
+                        @SuppressWarnings("unchecked")
+                        List<String> team1 = mapper.readValue(match.getTeam1PlayersJson(), List.class);
+                        allPlayers.addAll(team1);
+                    } catch (Exception e) {
+                        log.warn("⚠️ [DraftFlow] Erro ao parsear team1: {}", e.getMessage());
+                    }
+                }
+
+                if (match.getTeam2PlayersJson() != null && !match.getTeam2PlayersJson().isEmpty()) {
+                    try {
+                        @SuppressWarnings("unchecked")
+                        List<String> team2 = mapper.readValue(match.getTeam2PlayersJson(), List.class);
+                        allPlayers.addAll(team2);
+                    } catch (Exception e) {
+                        log.warn("⚠️ [DraftFlow] Erro ao parsear team2: {}", e.getMessage());
+                    }
+                }
+
+                // ✅ Transição automática para todos os jogadores
+                int successCount = 0;
+                int failCount = 0;
+
+                for (String playerName : allPlayers) {
+                    try {
+                        boolean success = playerStateService.setPlayerState(playerName,
+                                br.com.lolmatchmaking.backend.service.lock.PlayerState.IN_GAME);
+
+                        if (success) {
+                            successCount++;
+                            log.info("✅ [DraftFlow] {} → IN_GAME (transição automática)", playerName);
+                        } else {
+                            failCount++;
+                            log.warn("⚠️ [DraftFlow] Falha na transição {} → IN_GAME", playerName);
+                        }
+                    } catch (Exception e) {
+                        failCount++;
+                        log.error("❌ [DraftFlow] Erro na transição {} → IN_GAME: {}", playerName, e.getMessage());
+                    }
+                }
+
+                log.info("📊 [DraftFlow] Transições automáticas: {} sucessos, {} falhas", successCount, failCount);
+            }
+        } catch (Exception e) {
+            log.error("❌ [DraftFlow] Erro na transição automática IN_DRAFT → IN_GAME: {}", e.getMessage(), e);
+        }
+
         // Transição para fase game_ready
         customMatchRepository.findById(st.getMatchId()).ifPresent(cm -> {
             try {
                 cm.setStatus("game_ready");
                 customMatchRepository.save(cm);
+                log.info("✅ [DraftFlow] Status atualizado: draft_completed → game_ready");
             } catch (Exception ex) {
                 log.warn("Falha atualizar status game_ready matchId={} ", st.getMatchId(), ex);
             }

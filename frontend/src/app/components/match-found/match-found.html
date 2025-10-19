@@ -14,7 +14,7 @@
             {{ getTeamSideName('blue') }}
           </h3>
           <span class="team-mmr"
-            >{{ getRoundedMMR(getBlueTeamMMR()) }} MMR médio</span
+            >{{ getRoundedMMR(blueTeamMMR) }} MMR médio</span
           >
         </div>
 
@@ -38,7 +38,7 @@
             </div>
 
             <div class="player-avatar">
-              <ng-container *ngIf="!(botService.isBot(player)); else botIcon">
+              <ng-container *ngIf="!(isPlayerBot(player)); else botIcon">
                 <img
                   *ngIf="getPlayerProfileIconUrlIfHuman(player) | async as iconUrl"
                   [src]="iconUrl"
@@ -60,13 +60,13 @@
             </div>
             <div class="player-info">
               <div class="player-main-info">
-                <span
-                  class="player-name"
-                  [class.blurred]="shouldBlurPlayerInfo(player)"
-                >
-                  {{ player.summonerName }}
-                </span>
-                <div class="badge-mmr-row">
+                <div class="name-lane-row">
+                  <span
+                    class="player-name"
+                    [class.blurred]="shouldBlurPlayerInfo(player)"
+                  >
+                    {{ player.summonerName }}
+                  </span>
                   <span
                     class="lane-badge"
                     [ngClass]="{
@@ -78,6 +78,8 @@
                   >
                     {{ getLaneBadgeText(getLaneBadgeType(player)) }}
                   </span>
+                </div>
+                <div class="badge-mmr-row">
                   <span
                     class="player-mmr"
                     [class.mmr-censored]="shouldBlurPlayerInfo(player)"
@@ -117,7 +119,7 @@
             {{ getTeamSideName('red') }}
           </h3>
           <span class="team-mmr"
-            >{{ getRoundedMMR(getRedTeamMMR()) }} MMR médio</span
+            >{{ getRoundedMMR(redTeamMMR) }} MMR médio</span
           >
         </div>
 
@@ -141,7 +143,7 @@
             </div>
 
             <div class="player-avatar">
-              <ng-container *ngIf="!(botService.isBot(player)); else botIcon">
+              <ng-container *ngIf="!(isPlayerBot(player)); else botIcon">
                 <img
                   *ngIf="getPlayerProfileIconUrlIfHuman(player) | async as iconUrl"
                   [src]="iconUrl"
@@ -163,13 +165,13 @@
             </div>
             <div class="player-info">
               <div class="player-main-info">
-                <span
-                  class="player-name"
-                  [class.blurred]="shouldBlurPlayerInfo(player)"
-                >
-                  {{ player.summonerName }}
-                </span>
-                <div class="badge-mmr-row">
+                <div class="name-lane-row">
+                  <span
+                    class="player-name"
+                    [class.blurred]="shouldBlurPlayerInfo(player)"
+                  >
+                    {{ player.summonerName }}
+                  </span>
                   <span
                     class="lane-badge"
                     [ngClass]="{
@@ -181,6 +183,8 @@
                   >
                     {{ getLaneBadgeText(getLaneBadgeType(player)) }}
                   </span>
+                </div>
+                <div class="badge-mmr-row">
                   <span
                     class="player-mmr"
                     [class.mmr-censored]="shouldBlurPlayerInfo(player)"
@@ -215,18 +219,16 @@
       <div class="acceptance-progress">
         <div class="progress-header">
           <span class="progress-text">
-            {{ getAcceptedPlayersCount() }} / {{ getTotalPlayersCount() }}
-            jogadores aceitaram
+            {{ acceptedPlayersCount }} / {{ totalPlayersCount }} jogadores
+            aceitaram
           </span>
-          <span class="progress-percentage"
-            >{{ getAcceptanceProgress() }}%</span
-          >
+          <span class="progress-percentage">{{ acceptanceProgress }}%</span>
         </div>
         <div class="progress-bar">
           <div
             class="progress-fill"
-            [style.width.%]="getAcceptanceProgress()"
-            [class.complete]="haveAllPlayersAccepted()"
+            [style.width.%]="acceptanceProgress"
+            [class.complete]="haveAllPlayersAccepted"
           ></div>
         </div>
       </div>
@@ -257,16 +259,14 @@
       <div class="balance-info">
         <span class="balance-label">Balanceamento da Partida:</span>
         <div class="mmr-difference">
-          <span class="mmr-diff">
-            Diferença de MMR: {{ getMMRDifference() }}
-          </span>
+          <span class="mmr-diff"> Diferença de MMR: {{ mmrDifference }} </span>
           <span
             class="balance-rating"
             [class.excellent]="isExcellentBalance()"
             [class.good]="isGoodBalance()"
             [class.fair]="isFairBalance()"
           >
-            {{ getBalanceRating(getMMRDifference()) }}
+            {{ getBalanceRating(mmrDifference) }}
           </span>
         </div>
       </div>

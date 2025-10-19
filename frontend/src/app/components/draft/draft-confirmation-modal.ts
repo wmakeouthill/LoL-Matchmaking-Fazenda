@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter, OnChanges, SimpleChanges } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnChanges, SimpleChanges, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom, Subscription } from 'rxjs';
@@ -75,7 +75,8 @@ interface TeamSlot {
   standalone: true,
   imports: [CommonModule],
   templateUrl: './draft-confirmation-modal.html',
-  styleUrl: './draft-confirmation-modal.scss'
+  styleUrl: './draft-confirmation-modal.scss',
+  changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class DraftConfirmationModalComponent implements OnChanges {
   @Input() session: CustomPickBanSession | null = null;
@@ -114,7 +115,8 @@ export class DraftConfirmationModalComponent implements OnChanges {
   constructor(
     private readonly championService: ChampionService,
     private readonly http: HttpClient,
-    private readonly apiService: ApiService
+    private readonly apiService: ApiService,
+    private readonly cdr: ChangeDetectorRef
   ) {
     this.baseUrl = this.apiService.getBaseUrl();
   }
@@ -1640,6 +1642,7 @@ export class DraftConfirmationModalComponent implements OnChanges {
       console.log(`📊 [ConfirmationModal] Progresso: ${this.getConfirmationProgress()}%`);
 
       // ✅ NOVO: Forçar detecção de mudanças
+      this.cdr.markForCheck();
       setTimeout(() => {
         console.log(`🔄 [ConfirmationModal] Re-check progresso: ${this.getConfirmationProgress()}%`);
         console.log(`🔄 [ConfirmationModal] Re-check contagem: ${this.getConfirmationCount().confirmed}/${this.getConfirmationCount().total}`);
@@ -1668,6 +1671,8 @@ export class DraftConfirmationModalComponent implements OnChanges {
           player.acceptedAt = new Date().toISOString();
         }
         console.log(`🔄 [ConfirmationModal] Status atualizado para ${data.playerName}: ${data.status}`);
+        // ✅ NOVO: Forçar detecção de mudanças
+        this.cdr.markForCheck();
       }
     }
   }

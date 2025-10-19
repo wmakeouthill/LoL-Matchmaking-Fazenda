@@ -99,7 +99,9 @@ public class RedisMatchVoteService {
                     redisTemplate.expire(key + ":vote_counts", VOTE_TTL);
 
                     // Buscar contagem atualizada
-                    Long voteCount = (Long) redisTemplate.opsForHash().get(key + ":vote_counts", lcuGameId.toString());
+                    Object voteCountObj = redisTemplate.opsForHash().get(key + ":vote_counts", lcuGameId.toString());
+                    Long voteCount = voteCountObj instanceof Long ? (Long) voteCountObj
+                            : voteCountObj instanceof Integer ? ((Integer) voteCountObj).longValue() : 0L;
 
                     log.info("✅ Voto registrado! lcuGameId={} agora tem {} voto(s)", lcuGameId, voteCount);
 
@@ -280,6 +282,39 @@ public class RedisMatchVoteService {
         status.put("metadata", redisTemplate.opsForHash().entries(key + ":metadata"));
 
         return status;
+    }
+
+    /**
+     * ✅ NOVO: Obter lista de nomes dos jogadores que votaram
+     */
+    public List<String> getVotedPlayerNames(Long matchId) {
+        String key = getVoteKey(matchId);
+        Map<Object, Object> votes = redisTemplate.opsForHash().entries(key + ":player_votes");
+
+        if (votes == null || votes.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        List<String> votedPlayerNames = new ArrayList<>();
+
+        // Converter playerId para playerName
+        for (Map.Entry<Object, Object> entry : votes.entrySet()) {
+            Long playerId = Long.parseLong(entry.getKey().toString());
+            Object voteInfo = entry.getValue();
+
+            if (voteInfo != null) {
+                // Buscar nome do jogador pelo ID
+                try {
+                    // TODO: Implementar busca de playerName por playerId via PlayerRepository
+                    // Por enquanto, usar playerId como string
+                    votedPlayerNames.add("Player_" + playerId);
+                } catch (Exception e) {
+                    log.warn("⚠️ [RedisMatchVote] Erro ao buscar nome do jogador {}: {}", playerId, e.getMessage());
+                }
+            }
+        }
+
+        return votedPlayerNames;
     }
 
     /**

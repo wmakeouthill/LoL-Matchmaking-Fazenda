@@ -1,3 +1,52 @@
+// ✅ CORREÇÃO GLOBAL ULTRA ESPECÍFICA: Garantir que não há blur aplicado em nenhum lugar do componente
+.match-found-overlay,
+.match-found-modal,
+.teams-container,
+.team-section,
+.players-list,
+.player-card,
+.player-avatar,
+.player-info,
+.acceptance-status,
+.player-lanes,
+.badge-mmr-row,
+.lane-badge,
+.player-mmr,
+.lane,
+.lane-separator {
+  filter: none !important;
+  backdrop-filter: none !important;
+}
+
+// ✅ FORÇAR QUE PLAYER-CARD NUNCA TENHA BLUR - MÁXIMA ESPECIFICIDADE
+.match-found-overlay .match-found-modal .teams-container .team-section .players-list .player-card {
+  filter: none !important;
+  backdrop-filter: none !important;
+  transform: none !important;
+  opacity: 1 !important;
+}
+
+// ✅ REMOVIDO: Esta regra estava impedindo o blur de funcionar
+
+// ✅ APLICAR BLUR APENAS NOS ELEMENTOS ESPECÍFICOS
+.match-found-overlay .player-card .player-avatar .avatar-image.blurred {
+  filter: blur(12px) !important;
+  transition: filter 0.3s ease;
+
+  &:hover {
+    filter: blur(9px) !important;
+  }
+}
+
+.match-found-overlay .player-card .player-info .player-main-info .player-name.blurred {
+  filter: blur(12px) !important;
+  transition: filter 0.3s ease;
+
+  &:hover {
+    filter: blur(9px) !important;
+  }
+}
+
 .match-found-overlay {
   position: fixed;
   top: 0;
@@ -10,7 +59,7 @@
   justify-content: center;
   z-index: 10000;
   animation: fadeIn 0.3s ease;
-  // Removido backdrop-filter: blur(5px) que estava causando blur em todo o conteúdo
+  // SEM backdrop-filter para evitar blur global
 }
 
 .match-found-modal {
@@ -19,7 +68,7 @@
   padding: 1rem;
   max-width: 1200px;
   width: 98%;
-  max-height: 92vh;
+  max-height: 95vh;
   overflow: hidden;
   border: 1px solid rgba(52, 152, 219, 0.3);
   box-shadow: 0 25px 50px rgba(0, 0, 0, 0.6);
@@ -66,12 +115,20 @@
   z-index: 1;
   flex: 1;
   min-height: 0;
+
+  // Garantir que não há blur aplicado
+  filter: none !important;
+  backdrop-filter: none !important;
 }
 
 .team-section {
   display: flex;
   flex-direction: column;
   min-height: 0;
+
+  // Garantir que não há blur aplicado
+  filter: none !important;
+  backdrop-filter: none !important;
 
   .team-header {
     text-align: center;
@@ -106,6 +163,10 @@
     flex: 1;
     overflow-y: auto;
     min-height: 0;
+
+    // Garantir que não há blur aplicado
+    filter: none !important;
+    backdrop-filter: none !important;
 
     &::-webkit-scrollbar {
       width: 3px;
@@ -179,26 +240,26 @@
   min-height: 2.4rem;
   position: relative;
 
-  // Garantir que o card não tenha blur aplicado
+  // CORREÇÃO ROBUSTA: Garantir que o card não tenha blur
   filter: none !important;
   backdrop-filter: none !important;
 
-  // Garantir que todos os elementos filhos não tenham blur por padrão
-  > * {
-    filter: none !important;
-  }
+  // ✅ REMOVIDO: Esta regra estava impedindo o blur nos elementos filhos
 
-  .player-avatar,
-  .player-info,
+  // Resetar blur em elementos específicos (exceto containers que podem ter blur)
   .acceptance-status,
   .player-lanes,
-  .badge-mmr-row {
+  .badge-mmr-row,
+  .lane-badge,
+  .player-mmr,
+  .lane,
+  .lane-separator {
     filter: none !important;
     backdrop-filter: none !important;
   }
 
-  // Aplicar blur APENAS nos elementos específicos com classe .blurred
-  .avatar-image.blurred {
+  // APLICAR BLUR APENAS NOS ELEMENTOS ESPECÍFICOS COM MÁXIMA ESPECIFICIDADE
+  .player-avatar .avatar-image.blurred {
     filter: blur(12px) !important;
     transition: filter 0.3s ease;
 
@@ -207,7 +268,17 @@
     }
   }
 
-  .player-name.blurred {
+  .player-info .player-main-info .player-name.blurred {
+    filter: blur(12px) !important;
+    transition: filter 0.3s ease;
+
+    &:hover {
+      filter: blur(9px) !important;
+    }
+  }
+
+  // ✅ NOVO: Garantir que o blur funcione no name-lane-row
+  .player-info .player-main-info .name-lane-row .player-name.blurred {
     filter: blur(12px) !important;
     transition: filter 0.3s ease;
 
@@ -319,6 +390,13 @@
       flex-direction: column;
       gap: 0.2rem;
       margin-bottom: 0.1rem;
+
+      .name-lane-row {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        margin-bottom: 0.1rem;
+      }
 
       .player-name {
         color: #fff;

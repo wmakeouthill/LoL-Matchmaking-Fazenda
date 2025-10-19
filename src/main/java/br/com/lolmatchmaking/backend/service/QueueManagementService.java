@@ -1041,7 +1041,27 @@ public class QueueManagementService {
 
             log.info("✅ [Validação] Todos os jogadores HUMANOS têm sessão WebSocket ativa - PROSSEGUINDO");
 
-            // ✅ NOVO: ATUALIZAR ESTADO DE TODOS PARA IN_MATCH_FOUND
+            // ✅ CORREÇÃO: Garantir que todos estão em IN_QUEUE primeiro (fluxo correto)
+            for (String playerName : playerNames) {
+                PlayerState currentState = playerStateService.getPlayerState(playerName);
+                if (currentState != PlayerState.IN_QUEUE) {
+                    log.info("🔄 [PlayerState] Colocando {} em IN_QUEUE (estava em {})", playerName, currentState);
+                    if (!playerStateService.setPlayerState(playerName, PlayerState.IN_QUEUE)) {
+                        log.error("❌ [CRÍTICO] Falha ao colocar {} em IN_QUEUE, ABORTANDO criação", playerName);
+                        // Rollback: Voltar acceptance_status
+                        for (String pn : playerNames) {
+                            queuePlayerRepository.findBySummonerName(pn).ifPresent(qp -> {
+                                qp.setAcceptanceStatus(0);
+                                queuePlayerRepository.save(qp);
+                            });
+                        }
+                        return;
+                    }
+                }
+            }
+
+            // ✅ NOVO: ATUALIZAR ESTADO DE TODOS PARA IN_MATCH_FOUND (agora válido: IN_QUEUE
+            // → IN_MATCH_FOUND)
             for (String playerName : playerNames) {
                 if (!playerStateService.setPlayerState(playerName, PlayerState.IN_MATCH_FOUND)) {
                     log.error("❌ [CRÍTICO] Falha ao atualizar estado de {}, ABORTANDO criação", playerName);

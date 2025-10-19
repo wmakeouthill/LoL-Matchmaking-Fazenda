@@ -1686,7 +1686,7 @@ async function handleMatchFoundEvent(json) {
     safeLog(
       "🎯 [session-match-found] ===== MATCH_FOUND RECEBIDO NO ELECTRON ====="
     );
-    safeLog("🎯 [session-match-found] MatchId:", json.matchId);
+    safeLog("🎯 [session-match-found] MatchId:", json.data?.matchId);
     safeLog("🎯 [session-match-found] Timestamp:", json.timestamp);
 
     // ✅ BUSCAR summoner atual do LCU para comparação
@@ -1898,7 +1898,7 @@ async function handleDraftStartedEvent(json) {
     safeLog(
       "🎮 [draft-started] ===== DRAFT_STARTED RECEBIDO NO ELECTRON ====="
     );
-    safeLog("🎮 [draft-started] MatchId:", json.matchId);
+    safeLog("🎮 [draft-started] MatchId:", json.data?.matchId);
     safeLog("🎮 [draft-started] Timestamp:", json.timestamp);
     safeLog("🎮 [draft-started] JSON completo:", JSON.stringify(json, null, 2));
 
@@ -2173,7 +2173,7 @@ async function handleGameInProgressEvent(json) {
     safeLog(
       "🏁 [game-in-progress] ===== GAME_IN_PROGRESS RECEBIDO NO ELECTRON ====="
     );
-    safeLog("🏁 [game-in-progress] MatchId:", json.matchId);
+    safeLog("🏁 [game-in-progress] MatchId:", json.data?.matchId);
     safeLog("🏁 [game-in-progress] Timestamp:", json.timestamp);
 
     const currentSummoner = await getCurrentSummonerFromLCU();
@@ -2217,8 +2217,8 @@ async function handleMatchCancelledEvent(json) {
     safeLog(
       "❌ [match-cancelled] ===== MATCH_CANCELLED RECEBIDO NO ELECTRON ====="
     );
-    safeLog("❌ [match-cancelled] MatchId:", json.matchId);
-    safeLog("❌ [match-cancelled] Reason:", json.reason);
+    safeLog("❌ [match-cancelled] MatchId:", json.data?.matchId);
+    safeLog("❌ [match-cancelled] Reason:", json.data?.reason);
     safeLog("❌ [match-cancelled] Timestamp:", json.timestamp);
 
     const currentSummoner = await getCurrentSummonerFromLCU();
@@ -2249,8 +2249,11 @@ async function handleAcceptanceTimerEvent(json) {
     safeLog(
       "⏰ [acceptance-timer] ===== ACCEPTANCE_TIMER RECEBIDO NO ELECTRON ====="
     );
-    safeLog("⏰ [acceptance-timer] MatchId:", json.matchId);
-    safeLog("⏰ [acceptance-timer] SecondsRemaining:", json.secondsRemaining);
+    safeLog("⏰ [acceptance-timer] MatchId:", json.data?.matchId);
+    safeLog(
+      "⏰ [acceptance-timer] SecondsRemaining:",
+      json.data?.secondsRemaining
+    );
     safeLog("⏰ [acceptance-timer] Timestamp:", json.timestamp);
     safeLog(
       "⏰ [acceptance-timer] JSON completo:",
@@ -2297,10 +2300,16 @@ async function handleAcceptanceProgressEvent(json) {
     safeLog(
       "📊 [acceptance-progress] ===== ACCEPTANCE_PROGRESS RECEBIDO NO ELECTRON ====="
     );
-    safeLog("📊 [acceptance-progress] MatchId:", json.matchId);
-    safeLog("📊 [acceptance-progress] AcceptedCount:", json.acceptedCount);
-    safeLog("📊 [acceptance-progress] TotalPlayers:", json.totalPlayers);
-    safeLog("📊 [acceptance-progress] AcceptedPlayers:", json.acceptedPlayers);
+    safeLog("📊 [acceptance-progress] MatchId:", json.data?.matchId);
+    safeLog(
+      "📊 [acceptance-progress] AcceptedCount:",
+      json.data?.acceptedCount
+    );
+    safeLog("📊 [acceptance-progress] TotalPlayers:", json.data?.totalPlayers);
+    safeLog(
+      "📊 [acceptance-progress] AcceptedPlayers:",
+      json.data?.acceptedPlayers
+    );
     safeLog("📊 [acceptance-progress] Timestamp:", json.timestamp);
 
     const currentSummoner = await getCurrentSummonerFromLCU();
@@ -3025,9 +3034,9 @@ async function handleMatchCancelledEvent(json) {
     safeLog(
       "❌ [match-cancelled] ===== MATCH_CANCELLED RECEBIDO NO ELECTRON ====="
     );
-    safeLog("❌ [match-cancelled] MatchId:", json.matchId);
-    safeLog("❌ [match-cancelled] Reason:", json.reason);
-    safeLog("❌ [match-cancelled] CancelledBy:", json.cancelledBy);
+    safeLog("❌ [match-cancelled] MatchId:", json.data?.matchId);
+    safeLog("❌ [match-cancelled] Reason:", json.data?.reason);
+    safeLog("❌ [match-cancelled] CancelledBy:", json.data?.declinedPlayer);
     safeLog("❌ [match-cancelled] Timestamp:", json.timestamp);
 
     const currentSummoner = await getCurrentSummonerFromLCU();
@@ -3069,9 +3078,9 @@ async function handleDraftCancelledEvent(json) {
     safeLog(
       "🚫 [draft-cancelled] ===== DRAFT_CANCELLED RECEBIDO NO ELECTRON ====="
     );
-    safeLog("🚫 [draft-cancelled] MatchId:", json.matchId);
-    safeLog("🚫 [draft-cancelled] Reason:", json.reason);
-    safeLog("🚫 [draft-cancelled] CancelledBy:", json.cancelledBy);
+    safeLog("🚫 [draft-cancelled] MatchId:", json.data?.matchId);
+    safeLog("🚫 [draft-cancelled] Reason:", json.data?.reason);
+    safeLog("🚫 [draft-cancelled] CancelledBy:", json.data?.cancelledBy);
     safeLog("🚫 [draft-cancelled] Timestamp:", json.timestamp);
 
     const currentSummoner = await getCurrentSummonerFromLCU();
@@ -3113,9 +3122,9 @@ async function handleGameCancelledEvent(json) {
     safeLog(
       "🏳️ [game-cancelled] ===== GAME_CANCELLED RECEBIDO NO ELECTRON ====="
     );
-    safeLog("🏳️ [game-cancelled] MatchId:", json.matchId);
-    safeLog("🏳️ [game-cancelled] Reason:", json.reason);
-    safeLog("🏳️ [game-cancelled] CancelledBy:", json.cancelledBy);
+    safeLog("🏳️ [game-cancelled] MatchId:", json.data?.matchId);
+    safeLog("🏳️ [game-cancelled] Reason:", json.data?.reason);
+    safeLog("🏳️ [game-cancelled] CancelledBy:", json.data?.cancelledBy);
     safeLog("🏳️ [game-cancelled] Timestamp:", json.timestamp);
 
     const currentSummoner = await getCurrentSummonerFromLCU();

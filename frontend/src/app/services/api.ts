@@ -2138,38 +2138,41 @@ export class ApiService {
    * Verificar se um jogador é special user
    */
   checkSpecialUserStatus(summonerName: string): Observable<boolean> {
-    return this.http.get<boolean>(`${this.baseUrl}/api/admin/special-user/${encodeURIComponent(summonerName)}/status`)
-      .pipe(
-        catchError((error: HttpErrorResponse) => {
-          console.error('❌ [API] Erro ao verificar special user status:', error);
-          return of(false); // Fallback para false
-        })
-      );
+    return this.http.get<boolean>(`${this.baseUrl}/admin/special-user/${encodeURIComponent(summonerName)}/status`, {
+      headers: this.getAuthenticatedHeaders()
+    }).pipe(
+      catchError((error: HttpErrorResponse) => {
+        console.error('❌ [API] Erro ao verificar special user status:', error);
+        return of(false); // Fallback para false
+      })
+    );
   }
 
   /**
    * Obter configuração de special user
    */
   getSpecialUserConfig(summonerName: string): Observable<any> {
-    return this.http.get<any>(`${this.baseUrl}/api/admin/special-user/${encodeURIComponent(summonerName)}/config`)
-      .pipe(
-        catchError((error: HttpErrorResponse) => {
-          console.error('❌ [API] Erro ao obter configuração de special user:', error);
-          return of({ voteWeight: 1, allowMultipleVotes: false, maxVotes: 1 }); // Fallback
-        })
-      );
+    return this.http.get<any>(`${this.baseUrl}/admin/special-user/${encodeURIComponent(summonerName)}/config`, {
+      headers: this.getAuthenticatedHeaders()
+    }).pipe(
+      catchError((error: HttpErrorResponse) => {
+        console.error('❌ [API] Erro ao obter configuração de special user:', error);
+        return of({ voteWeight: 1, allowMultipleVotes: false, maxVotes: 1 }); // Fallback
+      })
+    );
   }
 
   /**
    * Atualizar configuração de special user
    */
   updateSpecialUserConfig(summonerName: string, config: any): Observable<any> {
-    return this.http.put<any>(`${this.baseUrl}/api/admin/special-user/${encodeURIComponent(summonerName)}/config`, config)
-      .pipe(
-        catchError((error: HttpErrorResponse) => {
-          console.error('❌ [API] Erro ao atualizar configuração de special user:', error);
-          return throwError(() => error);
-        })
-      );
+    return this.http.put<any>(`${this.baseUrl}/admin/special-user/${encodeURIComponent(summonerName)}/config`, config, {
+      headers: this.getAuthenticatedHeaders()
+    }).pipe(
+      catchError((error: HttpErrorResponse) => {
+        console.error('❌ [API] Erro ao atualizar configuração de special user:', error);
+        return throwError(() => error);
+      })
+    );
   }
 }

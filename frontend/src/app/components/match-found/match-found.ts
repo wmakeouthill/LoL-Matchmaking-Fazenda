@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, OnChanges, SimpleChanges } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, OnChanges, SimpleChanges, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ProfileIconService } from '../../services/profile-icon.service';
 import { Observable, of } from 'rxjs';
@@ -53,7 +53,8 @@ function logMatchFound(...args: any[]) {
   standalone: true,
   imports: [CommonModule],
   templateUrl: './match-found.html',
-  styleUrl: './match-found.scss'
+  styleUrl: './match-found.scss',
+  changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
   @Input() matchData: MatchFoundData | null = null;
@@ -69,7 +70,11 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
 
   private readonly playerIconMap = new Map<string, number>();
 
-  constructor(private readonly profileIconService: ProfileIconService, public botService: BotService) { }
+  constructor(
+    private readonly profileIconService: ProfileIconService,
+    public botService: BotService,
+    private readonly cdr: ChangeDetectorRef
+  ) { }
 
   ngOnInit() {
     if (this.matchData && this.matchData.phase === 'accept') {
@@ -80,6 +85,9 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
     this.setupTimerListener();
     // ✅ NOVO: Identificar usuário atual via LCU
     this.identifyCurrentUser();
+
+    // ✅ CORREÇÃO: Forçar detecção de mudanças para aplicar blur inicial
+    this.cdr.detectChanges();
   }
 
   ngOnChanges(changes: SimpleChanges) {
@@ -149,6 +157,9 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
         this.updateSortedTeams();
         // ✅ NOVO: Re-identificar usuário atual quando dados da partida mudarem
         this.identifyCurrentUser();
+
+        // ✅ CORREÇÃO: Forçar detecção de mudanças para atualizar blur
+        this.cdr.detectChanges();
       } else {
         logMatchFound('🎮 [MatchFound] ❌ MESMA PARTIDA - ignorando ngOnChanges');
         logMatchFound('🎮 [MatchFound] Motivo: previousMatchId =', previousMatchId, ', currentMatchId =', currentMatchId);
@@ -252,6 +263,9 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
         logMatchFound('⏰ [MatchFound] Timer expirou via backend - auto-decline');
         this.onDeclineMatch();
       }
+
+      // ✅ CORREÇÃO: Forçar detecção de mudanças para atualizar timer
+      this.cdr.detectChanges();
     }
   }
 
@@ -657,9 +671,34 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
    * Retorna se deve aplicar blur nas informações do jogador
    * NO MATCH_FOUND: Blur permanente para todos exceto o usuário atual
    */
-  shouldBlurPlayerInfo(player: PlayerInfo): boolean {
-    // Aplicar blur se não for o usuário atual (blur permanente até o draft)
-    return !this.isCurrentUser(player);
+  // ✅ OTIMIZAÇÃO: Propriedades computadas para evitar recálculos
+  get blueTeamMMR(): number {
+    return this.getBlueTeamMMR();
+  }
+
+  get redTeamMMR(): number {
+    return this.getRedTeamMMR();
+  }
+
+  get acceptedPlayersCount(): number {
+    return this.getAcceptedPlayersCount();
+  }
+
+  get totalPlayersCount(): number {
+    return this.getTotalPlayersCount();
+  }
+
+  get acceptanceProgress(): number {
+    return this.getAcceptanceProgress();
+  }
+
+
+  // ✅ OTIMIZAÇÃO: Verificar se é bot sem chamar service repetidamente
+  isPlayerBot(player: PlayerInfo): boolean {
+    if (!player) return false;
+    const playerName = player.summonerName || '';
+    const botPattern = /^Bot\d+$/i;
+    return botPattern.test(playerName);
   }
 
   /**
@@ -714,17 +753,30 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
     return Math.round((accepted / total) * 100);
   }
 
+  /**
+   * Verifica se deve borrar as informações do jogador
+   * (sempre borra exceto para o usuário atual)
+   */
+  shouldBlurPlayerInfo(player: PlayerInfo): boolean {
+    const isCurrent = this.isCurrentUser(player);
+    const shouldBlur = !isCurrent;
+    console.log(`[MatchFound] shouldBlurPlayerInfo(${player.summonerName}): isCurrent=${isCurrent}, shouldBlur=${shouldBlur}`);
+    return shouldBlur;
+  }
+
   // ✅ NOVO: Métodos para integração com LCU
 
   /**
    * Identifica o usuário atual via LCU e marca os jogadores correspondentes
    */
   private identifyCurrentUser(): void {
+    console.log('[MatchFound] 🔍 identifyCurrentUser chamado');
     // Tentar obter dados do usuário atual do window.appComponent
     const appComponent = (window as any).appComponent;
+    console.log('[MatchFound] appComponent:', appComponent);
     if (appComponent?.currentPlayer) {
       const currentUser = appComponent.currentPlayer;
-      logMatchFound('🔍 [MatchFound] Usuário atual identificado via LCU:', {
+      console.log('🔍 [MatchFound] Usuário atual identificado via LCU:', {
         displayName: currentUser.displayName,
         summonerName: currentUser.summonerName,
         gameName: currentUser.gameName,
@@ -741,19 +793,29 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
    * Marca o jogador atual nos dados da partida
    */
   private markCurrentUserInPlayers(currentUser: any): void {
-    if (!this.matchData) return;
+    console.log('[MatchFound] 🔍 markCurrentUserInPlayers chamado com:', currentUser);
+    if (!this.matchData) {
+      console.log('[MatchFound] ❌ matchData não disponível');
+      return;
+    }
 
     const allPlayers = [...this.getBlueTeamPlayers(), ...this.getRedTeamPlayers()];
+    console.log('[MatchFound] 🔍 Total de jogadores:', allPlayers.length);
 
     allPlayers.forEach(player => {
-      if (this.isPlayerCurrentUser(player, currentUser)) {
+      const isCurrent = this.isPlayerCurrentUser(player, currentUser);
+      console.log(`[MatchFound] 🔍 Verificando ${player.summonerName}: isCurrent=${isCurrent}`);
+      if (isCurrent) {
         player.isCurrentUser = true;
-        logMatchFound('✅ [MatchFound] Jogador marcado como usuário atual:', player.summonerName);
+        console.log('✅ [MatchFound] Jogador marcado como usuário atual:', player.summonerName);
       }
     });
 
     // Atualizar os times ordenados
     this.updateSortedTeams();
+
+    // ✅ CORREÇÃO: Forçar detecção de mudanças para atualizar blur
+    this.cdr.detectChanges();
   }
 
   /**
@@ -795,6 +857,8 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
    * Retorna se um jogador é o usuário atual (para uso no template)
    */
   isCurrentUser(player: PlayerInfo): boolean {
-    return player.isCurrentUser || false;
+    const isCurrent = player.isCurrentUser || false;
+    console.log(`[MatchFound] isCurrentUser(${player.summonerName}): isCurrentUser=${isCurrent}, player.isCurrentUser=${player.isCurrentUser}`);
+    return isCurrent;
   }
 }

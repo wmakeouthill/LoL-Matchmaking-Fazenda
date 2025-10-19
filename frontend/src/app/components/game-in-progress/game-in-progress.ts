@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, OnChanges, SimpleChanges } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, OnChanges, SimpleChanges, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ApiService } from '../../services/api';
 import { ChampionService } from '../../services/champion.service';
@@ -63,7 +63,8 @@ function logGameInProgress(...args: any[]) {
   standalone: true,
   imports: [CommonModule, WinnerConfirmationModalComponent, SpectatorsModalComponent],
   templateUrl: './game-in-progress.html',
-  styleUrl: './game-in-progress.scss'
+  styleUrl: './game-in-progress.scss',
+  changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   @Input() gameData: GameData | null = null;
@@ -153,7 +154,8 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     private readonly apiService: ApiService,
     private readonly championService: ChampionService,
     private readonly profileIconService: ProfileIconService,
-    public botService: BotService
+    public botService: BotService,
+    private readonly cdr: ChangeDetectorRef
   ) { } ngOnInit() {
     logGameInProgress('🚀 [GameInProgress] Inicializando componente...');
     logGameInProgress('📊 [GameInProgress] gameData recebido:', {
@@ -863,6 +865,8 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     logGameInProgress('🚫 Confirmação de vencedor cancelada pelo usuário');
     this.showWinnerConfirmationModal = false;
     this.customMatchesForConfirmation = [];
+    this.isAutoDetecting = false;
+    this.cdr.markForCheck();
   }
 
   // ✅ NOVO: Retorna todos os jogadores (team1 + team2)
@@ -895,20 +899,26 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
 
     // Set loading state
     this.isAutoDetecting = true;
+    this.cdr.markForCheck();
 
     try {
       // ✅ Buscar últimas partidas PERSONALIZADAS COM DETALHES COMPLETOS (todos os 10 jogadores)
       // IMPORTANTE: customOnly=true filtra apenas custom games (queueId=0 ou gameType=CUSTOM_GAME)
       // Isso garante que apenas partidas personalizadas apareçam no modal de seleção
       logGameInProgress('📥 Buscando histórico de partidas PERSONALIZADAS do LCU com detalhes completos...');
+      logGameInProgress('📥 Parâmetros da busca: offset=0, limit=20, customOnly=true');
+
       const historyResponse = await firstValueFrom(
         this.apiService.getLCUCustomGamesWithDetails(0, 20, true)
       );
+
+      logGameInProgress('📥 Resposta da API recebida:', historyResponse);
 
       if (!historyResponse?.success || !historyResponse?.matches?.length) {
         logGameInProgress('⚠️ Nenhuma partida encontrada no histórico do LCU');
         alert('Nenhuma partida encontrada no histórico do LCU. Certifique-se de que o League of Legends está aberto e que você jogou partidas recentemente.');
         this.isAutoDetecting = false;
+        this.cdr.markForCheck();
         return;
       }
 
@@ -963,6 +973,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
         logGameInProgress('⚠️ Partidas válidas após filtro:', validMatches.length);
         alert('As partidas encontradas não possuem dados completos. Tente novamente em alguns segundos.');
         this.isAutoDetecting = false;
+        this.cdr.markForCheck();
         return;
       }
 
@@ -972,11 +983,13 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       this.customMatchesForConfirmation = validMatches;
       this.showWinnerConfirmationModal = true;
       this.isAutoDetecting = false;
+      this.cdr.markForCheck();
 
     } catch (error) {
       logGameInProgress('❌ Erro ao buscar histórico do LCU:', error);
       alert('Erro ao acessar o histórico do LCU. Certifique-se de que o League of Legends está aberto.');
       this.isAutoDetecting = false;
+      this.cdr.markForCheck();
     }
   }
 
@@ -2511,6 +2524,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       console.log(`🗳️ [GameInProgress] Progresso: ${this.getVoteProgress()}%`);
 
       // ✅ NOVO: Forçar detecção de mudanças
+      this.cdr.markForCheck();
       setTimeout(() => {
         console.log(`🔄 [GameInProgress] Re-check progresso: ${this.getVoteProgress()}%`);
         console.log(`🔄 [GameInProgress] Re-check contagem: ${this.getVoteCount().voted}/${this.getVoteCount().total}`);
@@ -2541,6 +2555,8 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
           player.votedFor = data.votedFor;
         }
         console.log(`🔄 [GameInProgress] Status atualizado para ${data.playerName}: ${player.voteStatus}`);
+        // ✅ NOVO: Forçar detecção de mudanças
+        this.cdr.markForCheck();
       }
     }
   }

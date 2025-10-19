@@ -2038,26 +2038,8 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             br.com.lolmatchmaking.backend.service.RedisMatchVoteService redisMatchVote = applicationContext
                     .getBean(br.com.lolmatchmaking.backend.service.RedisMatchVoteService.class);
 
-            // Buscar todos os jogadores que votaram
-            Map<String, Object> voteData = redisMatchVote.getVotingStatus(matchId);
-
-            List<String> votedPlayers = new ArrayList<>();
-
-            // Extrair jogadores que votaram dos dados do Redis
-            if (voteData.containsKey("player_votes")) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> playerVotes = (Map<String, Object>) voteData.get("player_votes");
-
-                for (Map.Entry<String, Object> entry : playerVotes.entrySet()) {
-                    String playerName = entry.getKey();
-                    Object voteInfo = entry.getValue();
-
-                    if (voteInfo != null) {
-                        votedPlayers.add(playerName);
-                        log.debug("📊 [WebSocket] Jogador que votou encontrado: {}", playerName);
-                    }
-                }
-            }
+            // Buscar lista de nomes dos jogadores que votaram
+            List<String> votedPlayers = redisMatchVote.getVotedPlayerNames(matchId);
 
             log.info("📊 [WebSocket] {} jogadores que votaram encontrados para match {}", votedPlayers.size(), matchId);
             return votedPlayers;

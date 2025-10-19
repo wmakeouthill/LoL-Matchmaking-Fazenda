@@ -41,10 +41,7 @@ export class BotService {
         }
 
         const isBotPlayer = this.isBot(currentPlayer);
-        console.log(`🤖 [BotService] shouldAutoAcceptMatch:`, {
-            playerName: currentPlayer.summonerName || currentPlayer.gameName,
-            isBot: isBotPlayer
-        });
+        // Log removido para performance
 
         return isBotPlayer;
     }
@@ -54,7 +51,6 @@ export class BotService {
      */
     isBot(player: any): boolean {
         if (!player) {
-            console.log('🤖 [BotService] isBot: player é null/undefined');
             return false;
         }
 
@@ -63,20 +59,7 @@ export class BotService {
 
         // ✅ SIMPLIFICADO: Apenas padrão Bot1, Bot2, Bot3, etc.
         const botPattern = /^Bot\d+$/i;
-        const isBotPlayer = botPattern.test(playerName);
-
-        console.log(`🤖 [BotService] === isBot check ===`, {
-            playerName: playerName,
-            isBotPlayer,
-            id: player.id,
-            summonerName: player.summonerName,
-            name: player.name,
-            displayName: player.displayName,
-            gameName: player.gameName,
-            tagLine: player.tagLine
-        });
-
-        return isBotPlayer;
+        return botPattern.test(playerName);
     }
 
     /**
@@ -255,14 +238,8 @@ export class BotService {
 
         if (phasePlayer) {
             const isBotPlayer = this.isBot(phasePlayer);
-            console.log('🤖 [BotService] É bot?', isBotPlayer);
-            console.log('🤖 [BotService] Detalhes do jogador:', {
-                id: phasePlayer.id,
-                name: phasePlayer.summonerName,
-                teamIndex: phasePlayer.teamIndex,
-                isBot: isBotPlayer,
-                action: phase.action
-            });
+            // Log removido para performance
+            // Log removido para performance
 
             // ✅ MELHORADO: Verificar se é realmente o turno do bot
             const currentActionIndex = session.currentAction;

@@ -1408,7 +1408,16 @@ export class App implements OnInit, OnDestroy {
         this.inDraftPhase = true;
         this.draftTimer = 30; // ✅ RESETAR timer ao iniciar draft
         this.showMatchFound = false; // ✅ CRÍTICO: Destruir componente MatchFound
+
+        // ✅ CORREÇÃO: Preservar matchId antes de limpar matchFoundData
+        const preservedMatchId = this.matchFoundData?.matchId;
         this.matchFoundData = null; // Limpar dados
+
+        // ✅ CORREÇÃO: Armazenar matchId preservado para uso posterior
+        if (preservedMatchId) {
+          this.lastMatchId = preservedMatchId;
+        }
+
         this.cdr.detectChanges();
 
         // ✅ NOVO: Enviar acknowledgment ao backend (para de retry desnecessário)
@@ -2106,17 +2115,26 @@ export class App implements OnInit, OnDestroy {
       timestamp: new Date().toISOString()
     });
 
-    if (!this.matchFoundData?.matchId || !this.currentPlayer?.summonerName) {
+    if (!this.matchFoundData?.matchId && !this.lastMatchId || !this.currentPlayer?.summonerName) {
       console.error('❌ [App] Dados insuficientes para aceitar partida');
       this.addNotification('error', 'Erro', 'Dados da partida não disponíveis');
       return;
     }
 
+    // ✅ CORREÇÃO: Usar lastMatchId como fallback se matchFoundData for null
+    const matchIdToUse = this.matchFoundData?.matchId || this.lastMatchId;
+
+    if (!matchIdToUse) {
+      console.error('❌ [App] MatchId não disponível para aceitar partida');
+      this.addNotification('error', 'Erro', 'ID da partida não disponível');
+      return;
+    }
+
     try {
-      await firstValueFrom(this.apiService.acceptMatch(this.matchFoundData.matchId, this.currentPlayer.id || 0, this.currentPlayer.summonerName));
+      await firstValueFrom(this.apiService.acceptMatch(matchIdToUse, this.currentPlayer.id || 0, this.currentPlayer.summonerName));
       console.log('✅ [App] Aceitação enviada com sucesso');
       logApp('✅ [App] ACCEPT_MATCH_SUCCESS', {
-        matchId: this.matchFoundData.matchId,
+        matchId: matchIdToUse,
         playerName: this.currentPlayer.summonerName,
         timestamp: new Date().toISOString()
       });
@@ -2126,7 +2144,7 @@ export class App implements OnInit, OnDestroy {
     } catch (error: any) {
       console.error('❌ [App] Erro ao aceitar partida:', error);
       logApp('❌ [App] ACCEPT_MATCH_ERROR', {
-        matchId: this.matchFoundData?.matchId,
+        matchId: matchIdToUse,
         playerName: this.currentPlayer?.summonerName,
         error: error.message || error,
         timestamp: new Date().toISOString()
