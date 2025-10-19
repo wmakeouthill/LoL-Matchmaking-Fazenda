@@ -1998,6 +1998,9 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         try {
             Map<String, Object> message = new HashMap<>();
             message.put("type", "match_vote_progress");
+            List<String> votedPlayers = getVotedPlayersList(event.getMatchId());
+            int totalPlayers = 10; // Assumindo 10 jogadores por partida
+
             message.put("data", Map.of(
                     "matchId", event.getMatchId(),
                     "summonerName", event.getSummonerName(),
@@ -2005,7 +2008,9 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                     "votesTeam1", event.getVotesTeam1(),
                     "votesTeam2", event.getVotesTeam2(),
                     "totalNeeded", event.getTotalVotesNeeded(),
-                    "votedPlayers", getVotedPlayersList(event.getMatchId())));
+                    "votedPlayers", votedPlayers,
+                    "votedCount", votedPlayers.size(),
+                    "totalPlayers", totalPlayers));
 
             String jsonMessage = objectMapper.writeValueAsString(message);
 

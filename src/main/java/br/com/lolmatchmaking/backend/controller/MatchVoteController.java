@@ -7,6 +7,8 @@ import br.com.lolmatchmaking.backend.domain.repository.PlayerRepository;
 import br.com.lolmatchmaking.backend.service.EventBroadcastService;
 import br.com.lolmatchmaking.backend.service.LCUService;
 import br.com.lolmatchmaking.backend.service.MatchVoteService;
+import br.com.lolmatchmaking.backend.service.RedisMatchVoteService;
+import br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService;
 import br.com.lolmatchmaking.backend.util.SummonerAuthUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.servlet.http.HttpServletRequest;
@@ -20,6 +22,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -33,6 +36,8 @@ public class MatchVoteController {
     private final MatchRepository matchRepository;
     private final PlayerRepository playerRepository;
     private final EventBroadcastService eventBroadcastService;
+    private final RedisMatchVoteService redisMatchVoteService;
+    private final MatchmakingWebSocketService webSocketService;
 
     private static final String KEY_ERROR = "error";
     private static final String KEY_SUCCESS = "success";
@@ -131,26 +136,24 @@ public class MatchVoteController {
                 Integer votedTeam = 1; // TODO: Implementar lógica para determinar team baseado no lcuGameId
 
                 // ✅ CORREÇÃO: Usar peso do voto para special users ou constante padrão
-                int totalNeeded = isSpecialUserVote ? 
-                    (int) voteResult.getOrDefault("voteWeight", 6) : 6;
+                int totalNeeded = isSpecialUserVote ? (int) voteResult.getOrDefault("voteWeight", 6) : 6;
 
-                // Broadcast do progresso de votação
-                eventBroadcastService.publishWinnerVote(
-                        matchId,
-                        voterName,
-                        votedTeam,
-                        voteCount, // votesTeam1
-                        0, // votesTeam2 (assumir 0 por enquanto)
-                        totalNeeded // totalNeeded - usar peso do special user ou padrão
-                );
+                // ✅ CORREÇÃO: Para special users, usar peso como contagem; para normais, usar
+                // contagem atual
+                int votesTeam1 = isSpecialUserVote ? (int) voteResult.getOrDefault("voteWeight", 1)
+                        : (int) voteResult.getOrDefault("voteCount", 0);
 
-                log.info("📢 [MatchVoteController] Broadcast de votação enviado: {} votou em team {} (peso: {})", 
+                // ✅ NOVO: Broadcast direto via WebSocket (sem Redis Pub/Sub)
+                this.broadcastVoteProgressDirectly(matchId, voterName, votedTeam, votesTeam1, totalNeeded);
+
+                log.info("📢 [MatchVoteController] Broadcast de votação enviado: {} votou em team {} (peso: {})",
                         voterName, votedTeam, totalNeeded);
             } catch (Exception e) {
                 log.error("❌ [MatchVoteController] Erro ao fazer broadcast de votação", e);
             }
 
-            // Se atingiu votos necessários OU é special user, buscar dados do LCU e vincular
+            // Se atingiu votos necessários OU é special user, buscar dados do LCU e
+            // vincular
             if (shouldLink) {
                 if (isSpecialUserVote) {
                     log.info("🌟 SPECIAL USER finalizou a votação! Vinculando partida automaticamente...");
@@ -608,6 +611,100 @@ public class MatchVoteController {
             log.error("❌ Erro ao buscar candidatos LCU: {}", e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of(KEY_ERROR, "Erro ao buscar candidatos LCU: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * ✅ NOVO: Broadcast direto de progresso de votação via WebSocket
+     */
+    private void broadcastVoteProgressDirectly(Long matchId, String voterName, Integer votedTeam,
+            int votesTeam1, int totalNeeded) {
+        try {
+            // Buscar lista de jogadores que votaram
+            List<String> votedPlayers = redisMatchVoteService.getVotedPlayerNames(matchId);
+            int totalPlayers = 10; // Assumindo 10 jogadores por partida
+
+            // ✅ NOVO: Buscar informações dos times da partida
+            Map<String, Object> teamInfo = getMatchTeamInfo(matchId);
+            List<Map<String, Object>> team1 = (List<Map<String, Object>>) teamInfo.get("team1");
+            List<Map<String, Object>> team2 = (List<Map<String, Object>>) teamInfo.get("team2");
+
+            // Criar dados de votação
+            Map<String, Object> voteData = new HashMap<>();
+            voteData.put("matchId", matchId);
+            voteData.put("summonerName", voterName);
+            voteData.put("votedTeam", votedTeam);
+            voteData.put("votesTeam1", votesTeam1);
+            voteData.put("votesTeam2", 0); // Assumir 0 por enquanto
+            voteData.put("totalNeeded", totalNeeded);
+            voteData.put("votedPlayers", votedPlayers);
+            voteData.put("votedCount", votedPlayers.size());
+            voteData.put("totalPlayers", totalPlayers);
+            voteData.put("team1", team1 != null ? team1 : new ArrayList<>());
+            voteData.put("team2", team2 != null ? team2 : new ArrayList<>());
+
+            // Broadcast via WebSocket
+            webSocketService.broadcastMessage("match_vote_progress", voteData);
+
+            log.info("📢 [MatchVoteController] Broadcast direto enviado: {} votou ({} jogadores votaram)",
+                    voterName, votedPlayers.size());
+
+        } catch (Exception e) {
+            log.error("❌ [MatchVoteController] Erro no broadcast direto de votação", e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Buscar informações dos times da partida
+     */
+    private Map<String, Object> getMatchTeamInfo(Long matchId) {
+        try {
+            // Buscar partida do banco
+            Optional<br.com.lolmatchmaking.backend.domain.entity.Match> matchOpt = matchRepository.findById(matchId);
+            if (matchOpt.isEmpty()) {
+                log.warn("⚠️ [MatchVoteController] Partida {} não encontrada", matchId);
+                return Map.of("team1", new ArrayList<>(), "team2", new ArrayList<>());
+            }
+
+            br.com.lolmatchmaking.backend.domain.entity.Match match = matchOpt.get();
+
+            // ✅ SIMPLIFICADO: Usar dados JSON dos times
+            List<Map<String, Object>> team1 = parsePlayersFromJson(match.getTeam1PlayersJson());
+            List<Map<String, Object>> team2 = parsePlayersFromJson(match.getTeam2PlayersJson());
+
+            return Map.of("team1", team1, "team2", team2);
+
+        } catch (Exception e) {
+            log.error("❌ [MatchVoteController] Erro ao buscar informações dos times", e);
+            return Map.of("team1", new ArrayList<>(), "team2", new ArrayList<>());
+        }
+    }
+
+    /**
+     * ✅ NOVO: Parsear jogadores do JSON
+     */
+    private List<Map<String, Object>> parsePlayersFromJson(String playersJson) {
+        try {
+            if (playersJson == null || playersJson.trim().isEmpty()) {
+                return new ArrayList<>();
+            }
+
+            // Parsear JSON e converter para formato esperado pelo Electron
+            List<String> playerNames = List.of(playersJson.split(","));
+            return playerNames.stream()
+                    .map(name -> {
+                        Map<String, Object> playerData = new HashMap<>();
+                        String cleanName = name.trim();
+                        playerData.put("summonerName", cleanName);
+                        playerData.put("gameName", cleanName.split("#")[0]);
+                        playerData.put("name", cleanName);
+                        return playerData;
+                    })
+                    .collect(Collectors.toList());
+
+        } catch (Exception e) {
+            log.error("❌ [MatchVoteController] Erro ao parsear jogadores do JSON: {}", playersJson, e);
+            return new ArrayList<>();
         }
     }
 }
