@@ -23,7 +23,22 @@
             class="player-card"
             *ngFor="let player of sortedBlueTeam"
             [class.current-player]="isCurrentPlayer(player)"
+            [class.blurred-player]="shouldBlurPlayerInfo(player)"
+            [class.accepted-player]="hasPlayerAccepted(player)"
+            [class.declined-player]="hasPlayerDeclined(player)"
+            [class.timeout-player]="hasPlayerTimeout(player)"
+            [title]="shouldBlurPlayerInfo(player) ? getBlurredPlayerTooltip(player) : ''"
           >
+            <!-- Status de Aceitação -->
+            <div
+              class="acceptance-status"
+              [ngClass]="getAcceptanceStatusClass(player)"
+            >
+              <span class="status-icon"
+                >{{ getAcceptanceStatusIcon(player) }}</span
+              >
+            </div>
+
             <div class="player-avatar">
               <ng-container *ngIf="!(botService.isBot(player)); else botIcon">
                 <img
@@ -31,6 +46,7 @@
                   [src]="iconUrl"
                   alt="Avatar"
                   class="avatar-image"
+                  [class.blurred]="shouldBlurPlayerInfo(player)"
                   (error)="onProfileIconError($event, player)"
                 />
               </ng-container>
@@ -39,13 +55,20 @@
                   src="/assets/images/champion-placeholder.svg"
                   alt="Bot"
                   class="avatar-image"
+                  [class.blurred]="shouldBlurPlayerInfo(player)"
                   style="opacity: 0.5"
                 />
               </ng-template>
             </div>
             <div class="player-info">
               <div class="player-main-info">
-                <span class="player-name">{{ player.summonerName }}</span>
+                <span
+                  class="player-name"
+                  [class.blurred]="shouldBlurPlayerInfo(player)"
+                >
+                  {{ shouldShowPlayerDetails(player) ? player.summonerName :
+                  'Jogador' }}
+                </span>
                 <span
                   class="lane-badge"
                   [ngClass]="{
@@ -53,22 +76,35 @@
                     'badge-secondary': getLaneBadgeType(player) === 'secondary',
                     'badge-autofill': getLaneBadgeType(player) === 'autofill'
                   }"
+                  [class.blurred]="shouldBlurPlayerInfo(player)"
                   *ngIf="getLaneBadgeType(player)"
                 >
                   {{ getLaneBadgeText(getLaneBadgeType(player)) }}
                 </span>
-                <span class="player-mmr">{{ player.mmr }} MMR</span>
+                <span
+                  class="player-mmr"
+                  [class.blurred]="shouldBlurPlayerInfo(player)"
+                >
+                  {{ shouldShowPlayerDetails(player) ? (player.mmr + ' MMR') :
+                  '*** MMR' }}
+                </span>
               </div>
               <div class="player-lanes">
                 <span
                   class="lane assigned-lane"
                   [class.autofill]="player.isAutofill"
+                  [class.blurred]="shouldBlurPlayerInfo(player)"
                 >
-                  {{ getAssignedLaneDisplay(player) }}
+                  {{ shouldShowPlayerDetails(player) ?
+                  getAssignedLaneDisplay(player) : '⚔️ Lane' }}
                 </span>
                 <span class="lane-separator">•</span>
-                <span class="lane preferences-lane">
-                  {{ getLanePreferencesDisplay(player) }}
+                <span
+                  class="lane preferences-lane"
+                  [class.blurred]="shouldBlurPlayerInfo(player)"
+                >
+                  {{ shouldShowPlayerDetails(player) ?
+                  getLanePreferencesDisplay(player) : '🎯 Preferências' }}
                 </span>
               </div>
             </div>
@@ -97,7 +133,22 @@
             class="player-card"
             *ngFor="let player of sortedRedTeam"
             [class.current-player]="isCurrentPlayer(player)"
+            [class.blurred-player]="shouldBlurPlayerInfo(player)"
+            [class.accepted-player]="hasPlayerAccepted(player)"
+            [class.declined-player]="hasPlayerDeclined(player)"
+            [class.timeout-player]="hasPlayerTimeout(player)"
+            [title]="shouldBlurPlayerInfo(player) ? getBlurredPlayerTooltip(player) : ''"
           >
+            <!-- Status de Aceitação -->
+            <div
+              class="acceptance-status"
+              [ngClass]="getAcceptanceStatusClass(player)"
+            >
+              <span class="status-icon"
+                >{{ getAcceptanceStatusIcon(player) }}</span
+              >
+            </div>
+
             <div class="player-avatar">
               <ng-container *ngIf="!(botService.isBot(player)); else botIcon">
                 <img
@@ -105,6 +156,7 @@
                   [src]="iconUrl"
                   alt="Avatar"
                   class="avatar-image"
+                  [class.blurred]="shouldBlurPlayerInfo(player)"
                   (error)="onProfileIconError($event, player)"
                 />
               </ng-container>
@@ -113,13 +165,20 @@
                   src="/assets/images/champion-placeholder.svg"
                   alt="Bot"
                   class="avatar-image"
+                  [class.blurred]="shouldBlurPlayerInfo(player)"
                   style="opacity: 0.5"
                 />
               </ng-template>
             </div>
             <div class="player-info">
               <div class="player-main-info">
-                <span class="player-name">{{ player.summonerName }}</span>
+                <span
+                  class="player-name"
+                  [class.blurred]="shouldBlurPlayerInfo(player)"
+                >
+                  {{ shouldShowPlayerDetails(player) ? player.summonerName :
+                  'Jogador' }}
+                </span>
                 <span
                   class="lane-badge"
                   [ngClass]="{
@@ -127,22 +186,35 @@
                     'badge-secondary': getLaneBadgeType(player) === 'secondary',
                     'badge-autofill': getLaneBadgeType(player) === 'autofill'
                   }"
+                  [class.blurred]="shouldBlurPlayerInfo(player)"
                   *ngIf="getLaneBadgeType(player)"
                 >
                   {{ getLaneBadgeText(getLaneBadgeType(player)) }}
                 </span>
-                <span class="player-mmr">{{ player.mmr }} MMR</span>
+                <span
+                  class="player-mmr"
+                  [class.blurred]="shouldBlurPlayerInfo(player)"
+                >
+                  {{ shouldShowPlayerDetails(player) ? (player.mmr + ' MMR') :
+                  '*** MMR' }}
+                </span>
               </div>
               <div class="player-lanes">
                 <span
                   class="lane assigned-lane"
                   [class.autofill]="player.isAutofill"
+                  [class.blurred]="shouldBlurPlayerInfo(player)"
                 >
-                  {{ getAssignedLaneDisplay(player) }}
+                  {{ shouldShowPlayerDetails(player) ?
+                  getAssignedLaneDisplay(player) : '⚔️ Lane' }}
                 </span>
                 <span class="lane-separator">•</span>
-                <span class="lane preferences-lane">
-                  {{ getLanePreferencesDisplay(player) }}
+                <span
+                  class="lane preferences-lane"
+                  [class.blurred]="shouldBlurPlayerInfo(player)"
+                >
+                  {{ shouldShowPlayerDetails(player) ?
+                  getLanePreferencesDisplay(player) : '🎯 Preferências' }}
                 </span>
               </div>
             </div>
@@ -153,6 +225,26 @@
 
     <!-- Accept/Decline Phase -->
     <div class="accept-phase" *ngIf="matchData.phase === 'accept'">
+      <!-- Progresso de Aceitação -->
+      <div class="acceptance-progress">
+        <div class="progress-header">
+          <span class="progress-text">
+            {{ getAcceptedPlayersCount() }} / {{ getTotalPlayersCount() }}
+            jogadores aceitaram
+          </span>
+          <span class="progress-percentage"
+            >{{ getAcceptanceProgress() }}%</span
+          >
+        </div>
+        <div class="progress-bar">
+          <div
+            class="progress-fill"
+            [style.width.%]="getAcceptanceProgress()"
+            [class.complete]="haveAllPlayersAccepted()"
+          ></div>
+        </div>
+      </div>
+
       <div class="countdown-timer">
         <div class="timer-circle" [class.urgent]="isTimerUrgent">
           <span class="time-left">{{ acceptTimeLeft }}</span>

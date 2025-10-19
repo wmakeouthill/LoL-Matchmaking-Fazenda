@@ -36,6 +36,10 @@ export interface PlayerInfo {
   riotIdGameName?: string;
   riotIdTagline?: string;
   profileIconId?: number;
+  // ✅ NOVO: Status de aceitação do jogador
+  acceptanceStatus?: 'pending' | 'accepted' | 'declined' | 'timeout';
+  acceptedAt?: string; // ISO timestamp quando aceitou
+  isCurrentUser?: boolean; // Se é o usuário logado via LCU
 }
 
 // ✅ DESABILITADO: Salvamento de logs em arquivo (por solicitação do usuário)
@@ -63,9 +67,9 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
   private countdownTimer?: number;
   isTimerUrgent = false;
 
-  private playerIconMap = new Map<string, number>();
+  private readonly playerIconMap = new Map<string, number>();
 
-  constructor(private profileIconService: ProfileIconService, public botService: BotService) { }
+  constructor(private readonly profileIconService: ProfileIconService, public botService: BotService) { }
 
   ngOnInit() {
     if (this.matchData && this.matchData.phase === 'accept') {
@@ -74,11 +78,13 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
     this.updateSortedTeams();
     // ✅ NOVO: Escutar atualizações de timer do backend
     this.setupTimerListener();
+    // ✅ NOVO: Identificar usuário atual via LCU
+    this.identifyCurrentUser();
   }
 
   ngOnChanges(changes: SimpleChanges) {
     // ✅ CORREÇÃO CRÍTICA: Só reiniciar timer se for uma nova partida REAL
-    if (changes['matchData'] && changes['matchData'].currentValue) {
+    if (changes['matchData']?.currentValue) {
       const previousMatchData = changes['matchData'].previousValue;
       const currentMatchData = changes['matchData'].currentValue;
 
@@ -141,6 +147,8 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
         }
 
         this.updateSortedTeams();
+        // ✅ NOVO: Re-identificar usuário atual quando dados da partida mudarem
+        this.identifyCurrentUser();
       } else {
         logMatchFound('🎮 [MatchFound] ❌ MESMA PARTIDA - ignorando ngOnChanges');
         logMatchFound('🎮 [MatchFound] Motivo: previousMatchId =', previousMatchId, ', currentMatchId =', currentMatchId);
@@ -214,7 +222,7 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   // ✅ CORREÇÃO: Handler para atualizações de timer do backend - ÚNICA fonte de verdade
-  private onTimerUpdate = (event: any): void => {
+  private readonly onTimerUpdate = (event: any): void => {
     if (event.detail && this.matchData) {
       logMatchFound('⏰ [MatchFound] Timer atualizado pelo backend:', event.detail);
 
@@ -506,17 +514,11 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
 
   /**
    * Determina se um jogador é o jogador atual
+   * ✅ ATUALIZADO: Agora usa a identificação via LCU
    */
   isCurrentPlayer(player: PlayerInfo): boolean {
-    if (!this.matchData) return false;
-
-    // ✅ CORREÇÃO: Usar lógica mais robusta para identificar o jogador atual
-    // O jogador atual deve estar nos teammates (não nos enemies)
-    const isInTeammates = this.matchData.teammates.some(teammate =>
-      teammate.summonerName === player.summonerName
-    );
-
-    return isInTeammates;
+    // Usar a nova lógica de identificação via LCU
+    return this.isCurrentUser(player);
   }
 
   /**
@@ -581,5 +583,216 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
     return this.matchData.playerSide === 'blue'
       ? this.matchData.averageMMR.enemyTeam
       : this.matchData.averageMMR.yourTeam;
+  }
+
+  // ✅ NOVO: Métodos para gerenciar status de aceitação
+
+  /**
+   * Retorna o status de aceitação de um jogador
+   */
+  getPlayerAcceptanceStatus(player: PlayerInfo): 'pending' | 'accepted' | 'declined' | 'timeout' {
+    return player.acceptanceStatus || 'pending';
+  }
+
+  /**
+   * Retorna se um jogador aceitou a partida
+   */
+  hasPlayerAccepted(player: PlayerInfo): boolean {
+    return this.getPlayerAcceptanceStatus(player) === 'accepted';
+  }
+
+  /**
+   * Retorna se um jogador recusou a partida
+   */
+  hasPlayerDeclined(player: PlayerInfo): boolean {
+    return this.getPlayerAcceptanceStatus(player) === 'declined';
+  }
+
+  /**
+   * Retorna se um jogador está pendente (não respondeu ainda)
+   */
+  isPlayerPending(player: PlayerInfo): boolean {
+    return this.getPlayerAcceptanceStatus(player) === 'pending';
+  }
+
+  /**
+   * Retorna se um jogador teve timeout
+   */
+  hasPlayerTimeout(player: PlayerInfo): boolean {
+    return this.getPlayerAcceptanceStatus(player) === 'timeout';
+  }
+
+  /**
+   * Retorna o ícone do status de aceitação
+   */
+  getAcceptanceStatusIcon(player: PlayerInfo): string {
+    const status = this.getPlayerAcceptanceStatus(player);
+    switch (status) {
+      case 'accepted': return '✅';
+      case 'declined': return '❌';
+      case 'timeout': return '⏰';
+      case 'pending':
+      default: return '⏳';
+    }
+  }
+
+  /**
+   * Retorna a classe CSS para o status de aceitação
+   */
+  getAcceptanceStatusClass(player: PlayerInfo): string {
+    const status = this.getPlayerAcceptanceStatus(player);
+    return `acceptance-status-${status}`;
+  }
+
+  /**
+   * Retorna se deve mostrar informações completas do jogador (não borradas)
+   */
+  shouldShowPlayerDetails(player: PlayerInfo): boolean {
+    // Mostrar detalhes se for o usuário atual ou se aceitou
+    return this.isCurrentUser(player) || this.hasPlayerAccepted(player);
+  }
+
+  /**
+   * Retorna se deve aplicar blur nas informações do jogador
+   */
+  shouldBlurPlayerInfo(player: PlayerInfo): boolean {
+    // Aplicar blur se não for o usuário atual e ainda não aceitou
+    return !this.isCurrentUser(player) && !this.hasPlayerAccepted(player);
+  }
+
+  /**
+   * Retorna o texto do tooltip para jogadores borrados
+   */
+  getBlurredPlayerTooltip(player: PlayerInfo): string {
+    const status = this.getPlayerAcceptanceStatus(player);
+    switch (status) {
+      case 'pending': return 'Jogador aguardando aceitação...';
+      case 'declined': return 'Jogador recusou a partida';
+      case 'timeout': return 'Jogador não respondeu a tempo';
+      case 'accepted': return 'Jogador aceitou a partida';
+      default: return 'Status desconhecido';
+    }
+  }
+
+  /**
+   * Retorna o número de jogadores que aceitaram
+   */
+  getAcceptedPlayersCount(): number {
+    if (!this.matchData) return 0;
+
+    const allPlayers = [...this.getBlueTeamPlayers(), ...this.getRedTeamPlayers()];
+    return allPlayers.filter(player => this.hasPlayerAccepted(player)).length;
+  }
+
+  /**
+   * Retorna o número total de jogadores
+   */
+  getTotalPlayersCount(): number {
+    if (!this.matchData) return 0;
+
+    const allPlayers = [...this.getBlueTeamPlayers(), ...this.getRedTeamPlayers()];
+    return allPlayers.length;
+  }
+
+  /**
+   * Retorna se todos os jogadores aceitaram
+   */
+  haveAllPlayersAccepted(): boolean {
+    return this.getAcceptedPlayersCount() === this.getTotalPlayersCount();
+  }
+
+  /**
+   * Retorna o progresso de aceitação (0-100)
+   */
+  getAcceptanceProgress(): number {
+    const total = this.getTotalPlayersCount();
+    if (total === 0) return 0;
+
+    const accepted = this.getAcceptedPlayersCount();
+    return Math.round((accepted / total) * 100);
+  }
+
+  // ✅ NOVO: Métodos para integração com LCU
+
+  /**
+   * Identifica o usuário atual via LCU e marca os jogadores correspondentes
+   */
+  private identifyCurrentUser(): void {
+    // Tentar obter dados do usuário atual do window.appComponent
+    const appComponent = (window as any).appComponent;
+    if (appComponent?.currentPlayer) {
+      const currentUser = appComponent.currentPlayer;
+      logMatchFound('🔍 [MatchFound] Usuário atual identificado via LCU:', {
+        displayName: currentUser.displayName,
+        summonerName: currentUser.summonerName,
+        gameName: currentUser.gameName,
+        tagLine: currentUser.tagLine
+      });
+
+      this.markCurrentUserInPlayers(currentUser);
+    } else {
+      logMatchFound('⚠️ [MatchFound] Usuário atual não disponível via LCU');
+    }
+  }
+
+  /**
+   * Marca o jogador atual nos dados da partida
+   */
+  private markCurrentUserInPlayers(currentUser: any): void {
+    if (!this.matchData) return;
+
+    const allPlayers = [...this.getBlueTeamPlayers(), ...this.getRedTeamPlayers()];
+
+    allPlayers.forEach(player => {
+      if (this.isPlayerCurrentUser(player, currentUser)) {
+        player.isCurrentUser = true;
+        logMatchFound('✅ [MatchFound] Jogador marcado como usuário atual:', player.summonerName);
+      }
+    });
+
+    // Atualizar os times ordenados
+    this.updateSortedTeams();
+  }
+
+  /**
+   * Verifica se um jogador é o usuário atual baseado nos dados do LCU
+   */
+  private isPlayerCurrentUser(player: PlayerInfo, currentUser: any): boolean {
+    if (!player || !currentUser) return false;
+
+    // Comparar por displayName (formato completo com #)
+    if (currentUser.displayName && player.summonerName === currentUser.displayName) {
+      return true;
+    }
+
+    // Comparar por summonerName
+    if (currentUser.summonerName && player.summonerName === currentUser.summonerName) {
+      return true;
+    }
+
+    // Comparar por gameName#tagLine
+    if (currentUser.gameName && currentUser.tagLine) {
+      const currentUserRiotId = `${currentUser.gameName}#${currentUser.tagLine}`;
+      if (player.summonerName === currentUserRiotId) {
+        return true;
+      }
+    }
+
+    // Comparar apenas gameName (sem tag)
+    if (currentUser.gameName && player.summonerName.includes('#')) {
+      const playerGameName = player.summonerName.split('#')[0];
+      if (playerGameName === currentUser.gameName) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Retorna se um jogador é o usuário atual (para uso no template)
+   */
+  isCurrentUser(player: PlayerInfo): boolean {
+    return player.isCurrentUser || false;
   }
 }

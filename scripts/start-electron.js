@@ -37,8 +37,8 @@ function startWsTestServer() {
 
   // If backend is not reachable and .start-ws-test exists, start the ws test server and
   // point BACKEND_URL to test server
-  const defaultBackend = process.env.BACKEND_URL || 'http://localhost:8080';
-  const testServerUrl = 'http://localhost:8090';
+  const defaultBackend = process.env.BACKEND_URL || "http://192.168.1.8:8080/";
+  const testServerUrl = "http://192.168.1.8:8080/";
 
   const http = require('http');
   const checkBackend = () => new Promise((resolve) => {

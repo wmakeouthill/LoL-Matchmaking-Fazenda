@@ -111,14 +111,26 @@ public class DiscordService extends ListenerAdapter {
 
     private void loadDiscordSettings() {
         try {
-            Optional<Setting> tokenSetting = settingRepository.findByKey("discord_token");
-            Optional<Setting> channelSetting = settingRepository.findByKey("discord_channel_id");
+            // ✅ PRIORIDADE 1: Tentar buscar do Secret Manager/Variável de Ambiente
+            discordToken = getDiscordTokenFromEnvironment();
 
-            if (tokenSetting.isPresent()) {
-                discordToken = tokenSetting.get().getValue();
-                log.info("🔑 [DiscordService] Token do Discord carregado");
+            // ✅ FALLBACK: Se não encontrar, buscar do banco (para compatibilidade)
+            if (discordToken == null || discordToken.trim().isEmpty()) {
+                Optional<Setting> tokenSetting = settingRepository.findByKey("discord_token");
+                if (tokenSetting.isPresent()) {
+                    discordToken = tokenSetting.get().getValue();
+                    log.warn(
+                            "⚠️ [DiscordService] Token carregado do banco de dados (FALLBACK - configure DISCORD_TOKEN no Secret Manager)");
+                } else {
+                    log.warn(
+                            "⚠️ [DiscordService] Token do Discord não encontrado nem no Secret Manager nem no banco de dados");
+                }
+            } else {
+                log.info("🔑 [DiscordService] Token do Discord carregado do Secret Manager/Variável de Ambiente");
             }
 
+            // Configurações de canal (mantém no banco por enquanto)
+            Optional<Setting> channelSetting = settingRepository.findByKey("discord_channel_id");
             if (channelSetting.isPresent()) {
                 discordChannelName = channelSetting.get().getValue();
                 log.info("🎯 [DiscordService] Nome do canal Discord carregado: {}", discordChannelName);
@@ -126,6 +138,23 @@ public class DiscordService extends ListenerAdapter {
         } catch (Exception e) {
             log.error("❌ [DiscordService] Erro ao carregar configurações do Discord", e);
         }
+    }
+
+    /**
+     * ✅ NOVO: Busca token do Discord do Secret Manager/Variável de Ambiente
+     */
+    private String getDiscordTokenFromEnvironment() {
+        // Tentar buscar da variável de ambiente (Secret Manager do GCP)
+        String envToken = System.getenv("DISCORD_TOKEN");
+        if (envToken != null && !envToken.trim().isEmpty()) {
+            return envToken;
+        }
+
+        // Nota: Para usar propriedades Spring, seria melhor injetar
+        // @Value("${discord.token:}")
+        // mas mantemos compatibilidade com a estrutura atual usando apenas variáveis de
+        // ambiente
+        return null;
     }
 
     public void connectToDiscord() {

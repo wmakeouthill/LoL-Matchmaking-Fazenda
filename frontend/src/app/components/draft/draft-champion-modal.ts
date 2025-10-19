@@ -79,7 +79,7 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
     // ✅ CORREÇÃO #4: Setup do debounce para pesquisa em tempo real
     this.searchSubject
       .pipe(
-        debounceTime(500),
+        debounceTime(100),
         distinctUntilChanged()
       )
       .subscribe((searchTerm) => {
