@@ -1058,6 +1058,46 @@ export class App implements OnInit, OnDestroy {
           const progressData = message.data || message;
           this.matchFoundData.acceptedCount = progressData.acceptedCount || 0;
           this.matchFoundData.totalPlayers = progressData.totalPlayers || 10;
+
+          // ✅ NOVO: Atualizar status individual dos jogadores
+          if (progressData.acceptedPlayers && Array.isArray(progressData.acceptedPlayers)) {
+            console.log('📊 [App] Atualizando status dos jogadores aceitos:', progressData.acceptedPlayers);
+
+            // Atualizar status de todos os jogadores para 'pending' primeiro
+            if (this.matchFoundData.teammates) {
+              this.matchFoundData.teammates.forEach(player => {
+                player.acceptanceStatus = 'pending';
+              });
+            }
+            if (this.matchFoundData.enemies) {
+              this.matchFoundData.enemies.forEach(player => {
+                player.acceptanceStatus = 'pending';
+              });
+            }
+
+            // Marcar jogadores aceitos como 'accepted'
+            progressData.acceptedPlayers.forEach((acceptedPlayerName: string) => {
+              const allPlayers = [
+                ...(this.matchFoundData?.teammates || []),
+                ...(this.matchFoundData?.enemies || [])
+              ];
+
+              const player = allPlayers.find(p =>
+                p.displayName === acceptedPlayerName ||
+                p.summonerName === acceptedPlayerName ||
+                `${p.gameName}#${p.tagLine}` === acceptedPlayerName
+              );
+
+              if (player) {
+                player.acceptanceStatus = 'accepted';
+                player.acceptedAt = new Date().toISOString();
+                console.log(`📊 [App] Jogador ${acceptedPlayerName} marcado como aceito`);
+              } else {
+                console.warn(`📊 [App] Jogador ${acceptedPlayerName} não encontrado na lista`);
+              }
+            });
+          }
+
           this.cdr.detectChanges();
         }
         break;
@@ -1500,7 +1540,9 @@ export class App implements OnInit, OnDestroy {
         assignedLane: p.assignedLane || p.primaryLane || 'fill',
         teamIndex: p.teamIndex !== undefined ? p.teamIndex : (isInTeam1 ? index : (index + 5)),
         isAutofill: p.isAutofill || false,
-        profileIconId: p.profileIconId || 29
+        profileIconId: p.profileIconId || 29,
+        acceptanceStatus: 'pending' as 'pending' | 'accepted' | 'declined' | 'timeout',
+        isCurrentUser: false
       })),
       enemies: enemies.map((p: any, index: number) => ({
         id: p.playerId || p.id || (index + 100),
@@ -1511,7 +1553,9 @@ export class App implements OnInit, OnDestroy {
         assignedLane: p.assignedLane || p.primaryLane || 'fill',
         teamIndex: p.teamIndex !== undefined ? p.teamIndex : (isInTeam1 ? (index + 5) : index),
         isAutofill: p.isAutofill || false,
-        profileIconId: p.profileIconId || 29
+        profileIconId: p.profileIconId || 29,
+        acceptanceStatus: 'pending' as 'pending' | 'accepted' | 'declined' | 'timeout',
+        isCurrentUser: false
       })),
       averageMMR: {
         yourTeam: isInTeam1 ? (data.averageMmrTeam1 || 0) : (data.averageMmrTeam2 || 0),
