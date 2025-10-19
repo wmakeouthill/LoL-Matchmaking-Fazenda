@@ -34,6 +34,8 @@ declare global {
       onGameStarted: (callback: (event: any, data: any) => void) => void;
       onWinnerModal: (callback: (event: any, data: any) => void) => void;
       onVoteWinner: (callback: (event: any, data: any) => void) => void;
+      onMatchVoteProgress: (callback: (event: any, data: any) => void) => void;
+      onMatchVoteUpdate: (callback: (event: any, data: any) => void) => void;
 
       // === SPECTATOR EVENTS ===
       onSpectatorMuted: (callback: (event: any, data: any) => void) => void;

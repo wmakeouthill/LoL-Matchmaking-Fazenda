@@ -136,6 +136,10 @@ const electronAPI = {
   onGameStarted: (callback) => ipcRenderer.on("game-started", callback),
   onWinnerModal: (callback) => ipcRenderer.on("winner-modal", callback),
   onVoteWinner: (callback) => ipcRenderer.on("vote-winner", callback),
+  onMatchVoteProgress: (callback) =>
+    ipcRenderer.on("match-vote-progress", callback),
+  onMatchVoteUpdate: (callback) =>
+    ipcRenderer.on("match-vote-update", callback),
 
   // ✅ SPECTATOR EVENTS
   onSpectatorMuted: (callback) => ipcRenderer.on("spectator-muted", callback),

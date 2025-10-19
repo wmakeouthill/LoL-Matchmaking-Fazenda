@@ -160,6 +160,8 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             case "draft_acknowledged" -> handleDraftAcknowledged(session, root);
             case "game_acknowledged" -> handleGameAcknowledged(session, root);
             case "reconnect_check_response" -> handleReconnectCheckResponse(session, root);
+            case "match_vote_progress" -> handleMatchVoteProgress(session, root);
+            case "match_vote_update" -> handleMatchVoteUpdate(session, root);
             default -> session.sendMessage(new TextMessage("{\"error\":\"unknown_type\"}"));
         }
     }
@@ -1360,5 +1362,21 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         } catch (Exception e) {
             log.error("❌ [ReconnectCheck] Erro ao processar resposta de reconexão da sessão {}", sessionId, e);
         }
+    }
+
+    /**
+     * ✅ NOVO: Handler para match_vote_progress
+     */
+    private void handleMatchVoteProgress(WebSocketSession session, JsonNode root) throws IOException {
+        log.debug("📊 [WS] match_vote_progress recebido de session {}", session.getId());
+        // Este é um evento de broadcast, não precisa de resposta
+    }
+
+    /**
+     * ✅ NOVO: Handler para match_vote_update
+     */
+    private void handleMatchVoteUpdate(WebSocketSession session, JsonNode root) throws IOException {
+        log.debug("🔄 [WS] match_vote_update recebido de session {}", session.getId());
+        // Este é um evento de broadcast, não precisa de resposta
     }
 }

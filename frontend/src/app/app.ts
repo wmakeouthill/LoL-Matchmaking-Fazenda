@@ -220,6 +220,22 @@ export class App implements OnInit, OnDestroy {
       }
     });
 
+    // ✅ MATCH_VOTE_PROGRESS: Atualizar progresso de votação
+    this.electronEvents.matchVoteProgress$.subscribe(voteData => {
+      if (voteData) {
+        console.log('🎯 [App] match-vote-progress recebido do Electron:', voteData);
+        this.handleMatchVoteProgress(voteData);
+      }
+    });
+
+    // ✅ MATCH_VOTE_UPDATE: Atualizar voto individual
+    this.electronEvents.matchVoteUpdate$.subscribe(voteData => {
+      if (voteData) {
+        console.log('🎯 [App] match-vote-update recebido do Electron:', voteData);
+        this.handleMatchVoteUpdate(voteData);
+      }
+    });
+
     // ✅ MATCH_CANCELLED: Voltar para fila
     this.electronEvents.matchCancelled$.subscribe(cancelData => {
       if (cancelData) {
@@ -476,6 +492,30 @@ export class App implements OnInit, OnDestroy {
   private updateSpectatorUnmuted(unmuteData: any) {
     console.log('🔊 [App] Espectador desmutado:', unmuteData.spectator, 'por', unmuteData.unmutedBy);
     // TODO: Implementar lógica de unmute
+  }
+
+  /**
+   * ✅ NOVO: Manipula progresso de votação recebido do Electron
+   */
+  private handleMatchVoteProgress(voteData: any) {
+    console.log('🗳️ [App] Processando progresso de votação:', voteData);
+
+    // Disparar evento customizado para o game-in-progress
+    document.dispatchEvent(new CustomEvent('matchVoteProgress', {
+      detail: voteData
+    }));
+  }
+
+  /**
+   * ✅ NOVO: Manipula atualização de voto individual recebido do Electron
+   */
+  private handleMatchVoteUpdate(voteData: any) {
+    console.log('🔄 [App] Processando atualização de voto:', voteData);
+
+    // Disparar evento customizado para o game-in-progress
+    document.dispatchEvent(new CustomEvent('matchVoteUpdate', {
+      detail: voteData
+    }));
   }
 
   ngOnInit(): void {

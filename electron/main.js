@@ -1373,6 +1373,10 @@ function startWebSocketGateway(backendBase) {
           await handleWinnerModalEvent(json);
         } else if (json.type === "vote_winner") {
           await handleVoteWinnerEvent(json);
+        } else if (json.type === "match_vote_progress") {
+          await handleMatchVoteProgressEvent(json);
+        } else if (json.type === "match_vote_update") {
+          await handleMatchVoteUpdateEvent(json);
         }
         // ✅ SPECTATOR EVENTS
         else if (json.type === "spectator_muted") {
@@ -2935,6 +2939,105 @@ async function handleVoteWinnerEvent(json) {
     }
   } catch (error) {
     safeLog("❌ [vote-winner] Erro ao processar vote_winner:", error);
+  }
+}
+
+// ✅ NOVO: Handler para match_vote_progress
+async function handleMatchVoteProgressEvent(json) {
+  try {
+    safeLog(
+      "🗳️ [match-vote-progress] ===== MATCH_VOTE_PROGRESS RECEBIDO NO ELECTRON ====="
+    );
+    safeLog("🗳️ [match-vote-progress] MatchId:", json.matchId);
+    safeLog(
+      "🗳️ [match-vote-progress] VotedPlayers:",
+      json.votedPlayers?.length || 0
+    );
+
+    const currentSummoner = await getCurrentSummonerFromLCU();
+    safeLog(
+      "🗳️ [match-vote-progress] Current summoner:",
+      currentSummoner || "UNKNOWN"
+    );
+
+    // ✅ CORREÇÃO: Usar função específica para votação
+    const isForThisPlayer = await isVoteWinnerForThisPlayer(
+      json,
+      currentSummoner
+    );
+
+    if (!isForThisPlayer) {
+      safeLog(
+        "🗳️ [match-vote-progress] ❌ Match_vote_progress NÃO é para este jogador - ignorando"
+      );
+      return;
+    }
+
+    safeLog(
+      "🗳️ [match-vote-progress] ✅ Match_vote_progress É para este jogador!"
+    );
+    safeLog(
+      "🗳️ [match-vote-progress] ================================================"
+    );
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("match-vote-progress", json);
+      safeLog(
+        "🗳️ [match-vote-progress] ✅ Match_vote_progress enviado para o frontend via IPC"
+      );
+    }
+  } catch (error) {
+    safeLog(
+      "❌ [match-vote-progress] Erro ao processar match_vote_progress:",
+      error
+    );
+  }
+}
+
+// ✅ NOVO: Handler para match_vote_update
+async function handleMatchVoteUpdateEvent(json) {
+  try {
+    safeLog(
+      "🔄 [match-vote-update] ===== MATCH_VOTE_UPDATE RECEBIDO NO ELECTRON ====="
+    );
+    safeLog("🔄 [match-vote-update] MatchId:", json.matchId);
+    safeLog("🔄 [match-vote-update] PlayerName:", json.playerName);
+
+    const currentSummoner = await getCurrentSummonerFromLCU();
+    safeLog(
+      "🔄 [match-vote-update] Current summoner:",
+      currentSummoner || "UNKNOWN"
+    );
+
+    // ✅ CORREÇÃO: Usar função específica para votação
+    const isForThisPlayer = await isVoteWinnerForThisPlayer(
+      json,
+      currentSummoner
+    );
+
+    if (!isForThisPlayer) {
+      safeLog(
+        "🔄 [match-vote-update] ❌ Match_vote_update NÃO é para este jogador - ignorando"
+      );
+      return;
+    }
+
+    safeLog("🔄 [match-vote-update] ✅ Match_vote_update É para este jogador!");
+    safeLog(
+      "🔄 [match-vote-update] ================================================"
+    );
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("match-vote-update", json);
+      safeLog(
+        "🔄 [match-vote-update] ✅ Match_vote_update enviado para o frontend via IPC"
+      );
+    }
+  } catch (error) {
+    safeLog(
+      "❌ [match-vote-update] Erro ao processar match_vote_update:",
+      error
+    );
   }
 }
 

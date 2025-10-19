@@ -375,6 +375,43 @@ public class LCUService {
     }
 
     /**
+     * Configura conexão com LCU sem validar conectividade.
+     * Usado quando configuração vem do Electron (que já validou a conexão).
+     * Não tenta conectar diretamente ao LCU, apenas armazena a configuração.
+     */
+    public synchronized boolean configureWithoutValidation(String host, int port, String protocol, String password) {
+        try {
+            // ✅ Garantir cliente inicializado
+            if (this.lcuClient == null) {
+                setupLCUClient();
+            }
+
+            this.lcuHost = host != null && !host.isBlank() ? host : "127.0.0.1";
+            this.lcuPort = port > 0 ? port : this.lcuPort;
+            this.lcuProtocol = protocol != null && !protocol.isBlank() ? protocol : "https";
+            this.lcuPassword = password != null ? password : this.lcuPassword;
+
+            // Atualizar URL base
+            this.lcuBaseUrl = this.lcuProtocol + "://" + this.lcuHost + ":" + this.lcuPort;
+
+            log.info("🔧 LCU configurado via Electron (sem validação): {}:{} ({})", this.lcuHost, this.lcuPort,
+                    this.lcuProtocol);
+
+            // Marcar como conectado baseado na confiança do Electron
+            isConnected = true;
+            lcuStatus.put("connected", true);
+            lcuStatus.put("host", this.lcuHost);
+            lcuStatus.put("port", this.lcuPort);
+            lcuStatus.put("protocol", this.lcuProtocol);
+
+            return true;
+        } catch (Exception e) {
+            log.error("❌ Erro ao configurar LCU via Electron", e);
+            return false;
+        }
+    }
+
+    /**
      * Verifica status do LCU
      */
     public boolean checkLCUStatus() {
@@ -1346,8 +1383,9 @@ public class LCUService {
             String normalizedName = summonerName.toLowerCase().trim();
 
             // Buscar conexão LCU do summoner via LCUConnectionRegistry
-            Optional<LCUConnectionRegistry.LCUConnectionInfo> connectionOpt = lcuConnectionRegistry.getConnection(normalizedName);
-            
+            Optional<LCUConnectionRegistry.LCUConnectionInfo> connectionOpt = lcuConnectionRegistry
+                    .getConnection(normalizedName);
+
             if (connectionOpt.isPresent()) {
                 LCUConnectionRegistry.LCUConnectionInfo connection = connectionOpt.get();
                 // Por enquanto, retornar sessionId como identificador único
@@ -1376,11 +1414,12 @@ public class LCUService {
             String normalizedName = summonerName.toLowerCase().trim();
 
             // Buscar conexão LCU do summoner via LCUConnectionRegistry
-            Optional<LCUConnectionRegistry.LCUConnectionInfo> connectionOpt = lcuConnectionRegistry.getConnection(normalizedName);
-            
+            Optional<LCUConnectionRegistry.LCUConnectionInfo> connectionOpt = lcuConnectionRegistry
+                    .getConnection(normalizedName);
+
             if (connectionOpt.isPresent()) {
                 LCUConnectionRegistry.LCUConnectionInfo connection = connectionOpt.get();
-                
+
                 // Converter LCUConnectionInfo para Map
                 Map<String, Object> lcuData = new HashMap<>();
                 lcuData.put("sessionId", connection.getSessionId());
@@ -1389,8 +1428,9 @@ public class LCUService {
                 lcuData.put("authToken", connection.getAuthToken());
                 lcuData.put("registeredAt", connection.getRegisteredAt());
                 lcuData.put("lastActivityAt", connection.getLastActivityAt());
-                
-                log.debug("🔗 [Player-Sessions] [LCU] Dados LCU encontrados para {}: {}", summonerName, lcuData.keySet());
+
+                log.debug("🔗 [Player-Sessions] [LCU] Dados LCU encontrados para {}: {}", summonerName,
+                        lcuData.keySet());
                 return Optional.of(lcuData);
             }
 

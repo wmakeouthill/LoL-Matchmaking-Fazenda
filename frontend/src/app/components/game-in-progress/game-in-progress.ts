@@ -2492,6 +2492,8 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       ];
 
       console.log(`🗳️ [GameInProgress] Processando ${data.votedPlayers.length} votos para ${allPlayers.length} jogadores`);
+      console.log(`🗳️ [GameInProgress] Jogadores disponíveis:`, allPlayers.map(p => p.summonerName));
+      console.log(`🗳️ [GameInProgress] Jogadores que votaram:`, data.votedPlayers);
 
       // Atualizar status de todos os jogadores para 'pending' primeiro
       allPlayers.forEach(player => {
@@ -2510,7 +2512,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
           player.voteStatus = 'voted';
           player.votedAt = new Date().toISOString();
           player.votedFor = data.winnerTeam || 'blue';
-          console.log('✅ [GameInProgress] Jogador votou:', player.summonerName);
+          console.log('✅ [GameInProgress] Jogador votou:', player.summonerName, 'Status:', player.voteStatus);
         } else {
           console.log('⚠️ [GameInProgress] Jogador não encontrado:', votedPlayerName);
         }
@@ -2522,6 +2524,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
 
       console.log(`🗳️ [GameInProgress] Atualizado: ${this.votedCount}/${this.totalPlayers} votaram`);
       console.log(`🗳️ [GameInProgress] Progresso: ${this.getVoteProgress()}%`);
+      console.log(`🗳️ [GameInProgress] Status final dos jogadores:`, allPlayers.map(p => ({ name: p.summonerName, status: p.voteStatus })));
 
       // ✅ NOVO: Forçar detecção de mudanças
       this.cdr.markForCheck();

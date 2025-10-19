@@ -1,5 +1,7 @@
 package br.com.lolmatchmaking.backend.service;
 
+import br.com.lolmatchmaking.backend.domain.entity.Player;
+import br.com.lolmatchmaking.backend.domain.repository.PlayerRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
@@ -31,6 +33,7 @@ public class RedisMatchVoteService {
 
     private final RedisTemplate<String, Object> redisTemplate;
     private final RedissonClient redissonClient;
+    private final PlayerRepository playerRepository;
 
     private static final Duration VOTE_TTL = Duration.ofHours(2);
     private static final String VOTE_PREFIX = "match_vote:";
@@ -249,8 +252,27 @@ public class RedisMatchVoteService {
      */
     public int getTotalVoters(Long matchId) {
         String key = getVoteKey(matchId);
-        Long size = redisTemplate.opsForHash().size(key + ":player_votes");
-        return size != null ? size.intValue() : 0;
+
+        // Contar jogadores normais
+        Long normalVoters = redisTemplate.opsForHash().size(key + ":player_votes");
+        int normalCount = normalVoters != null ? normalVoters.intValue() : 0;
+
+        // Contar special users que votaram
+        Map<Object, Object> specialVotes = redisTemplate.opsForHash().entries(key + ":special_votes");
+        int specialCount = 0;
+        if (specialVotes != null && !specialVotes.isEmpty()) {
+            for (Map.Entry<Object, Object> entry : specialVotes.entrySet()) {
+                Object voteCount = entry.getValue();
+                if (voteCount != null && ((Number) voteCount).intValue() > 0) {
+                    specialCount++;
+                }
+            }
+        }
+
+        int total = normalCount + specialCount;
+        log.debug("📊 [RedisMatchVote] Total de votantes: {} normais + {} special = {}", normalCount, specialCount,
+                total);
+        return total;
     }
 
     /**
@@ -264,6 +286,13 @@ public class RedisMatchVoteService {
         redisTemplate.delete(key + ":metadata");
         redisTemplate.delete(key + ":player_votes");
         redisTemplate.delete(key + ":vote_counts");
+        redisTemplate.delete(key + ":special_votes");
+
+        // Limpar detalhes de votos de special users
+        Set<String> specialKeys = redisTemplate.keys(key + ":special_vote_details:*");
+        if (specialKeys != null && !specialKeys.isEmpty()) {
+            redisTemplate.delete(specialKeys);
+        }
 
         log.info("✅ Votos limpos para partida {}", matchId);
     }
@@ -289,31 +318,45 @@ public class RedisMatchVoteService {
      */
     public List<String> getVotedPlayerNames(Long matchId) {
         String key = getVoteKey(matchId);
-        Map<Object, Object> votes = redisTemplate.opsForHash().entries(key + ":player_votes");
-
-        if (votes == null || votes.isEmpty()) {
-            return new ArrayList<>();
-        }
-
         List<String> votedPlayerNames = new ArrayList<>();
 
-        // Converter playerId para playerName
-        for (Map.Entry<Object, Object> entry : votes.entrySet()) {
-            Long playerId = Long.parseLong(entry.getKey().toString());
-            Object voteInfo = entry.getValue();
+        // ✅ CORREÇÃO: Buscar jogadores normais que votaram
+        Map<Object, Object> normalVotes = redisTemplate.opsForHash().entries(key + ":player_votes");
+        if (normalVotes != null && !normalVotes.isEmpty()) {
+            for (Map.Entry<Object, Object> entry : normalVotes.entrySet()) {
+                Long playerId = Long.parseLong(entry.getKey().toString());
+                Object voteInfo = entry.getValue();
 
-            if (voteInfo != null) {
-                // Buscar nome do jogador pelo ID
-                try {
-                    // TODO: Implementar busca de playerName por playerId via PlayerRepository
-                    // Por enquanto, usar playerId como string
-                    votedPlayerNames.add("Player_" + playerId);
-                } catch (Exception e) {
-                    log.warn("⚠️ [RedisMatchVote] Erro ao buscar nome do jogador {}: {}", playerId, e.getMessage());
+                if (voteInfo != null) {
+                    try {
+                        Player player = playerRepository.findById(playerId).orElse(null);
+                        if (player != null) {
+                            votedPlayerNames.add(player.getSummonerName());
+                        } else {
+                            log.warn("⚠️ [RedisMatchVote] Jogador com ID {} não encontrado", playerId);
+                        }
+                    } catch (Exception e) {
+                        log.warn("⚠️ [RedisMatchVote] Erro ao buscar nome do jogador {}: {}", playerId, e.getMessage());
+                    }
                 }
             }
         }
 
+        // ✅ CORREÇÃO: Buscar special users que votaram
+        Map<Object, Object> specialVotes = redisTemplate.opsForHash().entries(key + ":special_votes");
+        if (specialVotes != null && !specialVotes.isEmpty()) {
+            for (Map.Entry<Object, Object> entry : specialVotes.entrySet()) {
+                String summonerName = entry.getKey().toString();
+                Object voteCount = entry.getValue();
+
+                if (voteCount != null && ((Number) voteCount).intValue() > 0) {
+                    votedPlayerNames.add(summonerName);
+                }
+            }
+        }
+
+        log.info("📊 [RedisMatchVote] {} jogadores que votaram encontrados para match {}: {}", votedPlayerNames.size(),
+                matchId, votedPlayerNames);
         return votedPlayerNames;
     }
 

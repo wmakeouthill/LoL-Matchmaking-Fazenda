@@ -67,6 +67,12 @@ export class ElectronEventsService {
   private voteWinnerSubject = new BehaviorSubject<any>(null);
   public voteWinner$: Observable<any> = this.voteWinnerSubject.asObservable();
 
+  private matchVoteProgressSubject = new BehaviorSubject<any>(null);
+  public matchVoteProgress$: Observable<any> = this.matchVoteProgressSubject.asObservable();
+
+  private matchVoteUpdateSubject = new BehaviorSubject<any>(null);
+  public matchVoteUpdate$: Observable<any> = this.matchVoteUpdateSubject.asObservable();
+
   // === SPECTATOR EVENTS ===
   private spectatorMutedSubject = new BehaviorSubject<any>(null);
   public spectatorMuted$: Observable<any> = this.spectatorMutedSubject.asObservable();
@@ -197,6 +203,16 @@ export class ElectronEventsService {
         window.electronAPI.onVoteWinner((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] vote-winner recebido:', data);
           this.voteWinnerSubject.next(data);
+        });
+
+        window.electronAPI.onMatchVoteProgress((event: any, data: any) => {
+          console.log('🎯 [ElectronEvents] match-vote-progress recebido:', data);
+          this.matchVoteProgressSubject.next(data);
+        });
+
+        window.electronAPI.onMatchVoteUpdate((event: any, data: any) => {
+          console.log('🎯 [ElectronEvents] match-vote-update recebido:', data);
+          this.matchVoteUpdateSubject.next(data);
         });
 
         // ✅ SPECTATOR EVENTS

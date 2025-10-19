@@ -414,7 +414,18 @@ public class LCUController {
             int port = Integer.parseInt(String.valueOf(body.getOrDefault("port", 0)));
             String password = (String) body.getOrDefault("password", "");
 
-            boolean configured = lcuService.configure(host, port, protocol, password);
+            // ✅ CORREÇÃO: Detectar se configuração vem do Electron
+            // Se tem password (lockfile) e port > 0, provavelmente é do Electron
+            boolean isFromElectron = !password.isEmpty() && port > 0 && "127.0.0.1".equals(host);
+
+            boolean configured;
+            if (isFromElectron) {
+                log.info("🔧 Configuração LCU detectada como vinda do Electron - usando método sem validação");
+                configured = lcuService.configureWithoutValidation(host, port, protocol, password);
+            } else {
+                log.info("🔧 Configuração LCU manual - usando método com validação");
+                configured = lcuService.configure(host, port, protocol, password);
+            }
 
             // Dev-only: if not configured but running in local/dev profile, accept and
             // persist configuration
@@ -425,10 +436,8 @@ public class LCUController {
                     log.warn(
                             "⚠️ Running in dev profile ({}). Accepting LCU configuration despite connectivity check failure.",
                             activeProfiles);
-                    // Persist the values in the service (best-effort)
-                    lcuService.configure(host, port, protocol, password); // second call may still return false, but
-                                                                          // will set values
-                    configured = true;
+                    // Use configureWithoutValidation for dev profile fallback
+                    configured = lcuService.configureWithoutValidation(host, port, protocol, password);
                 }
             }
 
