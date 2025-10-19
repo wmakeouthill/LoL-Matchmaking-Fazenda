@@ -39,7 +39,7 @@ public class MatchVoteService {
     // ✅ NOVO: Lock service para prevenir race conditions em votação
     private final br.com.lolmatchmaking.backend.service.lock.MatchVoteLockService matchVoteLockService;
 
-    private static final int VOTES_REQUIRED_FOR_AUTO_LINK = 6; // ✅ ALTERADO: De 5 para 6 votos
+    private static final int VOTES_REQUIRED_FOR_AUTO_LINK = 6; // ✅ PADRÃO: 6 votos para usuários normais
 
     // ✅ REMOVIDO: HashMap local removido - Redis é fonte única da verdade
     // Use redisMatchVote para todas as operações de votação
@@ -126,15 +126,30 @@ public class MatchVoteService {
                             player.getSummonerName(), currentVotes + 1, config.getVoteWeight());
                 }
 
+                // ✅ CORREÇÃO: Verificar se o peso do voto atinge o limite necessário
+                boolean shouldLink = config.getVoteWeight() >= VOTES_REQUIRED_FOR_AUTO_LINK;
+                
+                log.info("🔍 [MatchVote] Verificação de peso: voteWeight={}, required={}, shouldLink={}", 
+                        config.getVoteWeight(), VOTES_REQUIRED_FOR_AUTO_LINK, shouldLink);
+                
                 Map<String, Object> result = new HashMap<>();
                 result.put("success", true);
-                result.put("shouldLink", true);
+                result.put("shouldLink", shouldLink);
                 result.put("lcuGameId", lcuGameId);
                 result.put("specialUserVote", true);
                 result.put("voteWeight", config.getVoteWeight());
                 result.put("voteCount", config.getVoteWeight()); // ✅ CORREÇÃO: Usar peso como contagem
                 result.put("playerVote", lcuGameId);
                 result.put("totalVoters", redisMatchVote.getTotalVoters(matchId));
+                
+                if (shouldLink) {
+                    log.info("🎯 Special user {} com peso {} atingiu limite de {} votos! Finalizando partida...", 
+                            player.getSummonerName(), config.getVoteWeight(), VOTES_REQUIRED_FOR_AUTO_LINK);
+                } else {
+                    log.info("⏳ Special user {} com peso {} ainda não atingiu limite de {} votos", 
+                            player.getSummonerName(), config.getVoteWeight(), VOTES_REQUIRED_FOR_AUTO_LINK);
+                }
+                
                 return result;
             }
 

@@ -94,14 +94,14 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
         const currentSummoner = await window.electronAPI.lcu.getCurrentSummoner();
         if (currentSummoner) {
           this.currentSummonerName = currentSummoner.displayName || currentSummoner.summonerName || '';
-          
+
           // Verificar se é special user via API
           const isSpecial = await firstValueFrom(
             this.apiService.checkSpecialUserStatus(this.currentSummonerName)
           );
-          
+
           this.isSpecialUser = isSpecial || false;
-          
+
           if (this.isSpecialUser) {
             console.log('🌟 [WinnerModal] Special user detectado:', this.currentSummonerName);
             // Carregar configuração atual do special user
@@ -123,7 +123,7 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
       const config = await firstValueFrom(
         this.apiService.getSpecialUserConfig(this.currentSummonerName)
       );
-      
+
       if (config && config.voteWeight) {
         this.selectedVoteWeight = config.voteWeight;
         console.log('🌟 [WinnerModal] Configuração carregada - peso:', this.selectedVoteWeight);
@@ -138,7 +138,7 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
    */
   private async saveSpecialUserConfig(): Promise<void> {
     if (!this.isSpecialUser || !this.currentSummonerName) return;
-    
+
     try {
       await firstValueFrom(
         this.apiService.updateSpecialUserConfig(this.currentSummonerName, {
@@ -147,7 +147,7 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
           maxVotes: 1
         })
       );
-      
+
       console.log('✅ [WinnerModal] Configuração salva - peso:', this.selectedVoteWeight);
     } catch (error) {
       console.error('❌ [WinnerModal] Erro ao salvar configuração:', error);
@@ -427,6 +427,12 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
 
     console.log('✅ [WinnerModal] currentPlayer disponível, prosseguindo com votação...');
 
+    // ✅ NOVO: Garantir que a configuração do special user esteja salva antes de votar
+    if (this.isSpecialUser) {
+      console.log('🌟 [WinnerModal] Special user detectado, salvando configuração antes de votar...');
+      await this.saveSpecialUserConfig();
+    }
+
     // ✅ VOTAÇÃO: Enviar voto ao backend
     if (!this.matchId) {
       console.warn('⚠️ [DEBUG 8/10] FALHOU: Match ID não fornecido, pulando votação');
@@ -457,33 +463,42 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
       console.log('✅ [WinnerModal] Voto registrado para LCU game:', lcuGameId);
       console.log('📊 [WinnerModal] Resposta do voto:', voteResponse);
 
-      // ✅ Verificar se é voto de special user
-      if (voteResponse?.specialUserVote === true) {
-        console.log('🌟 [WinnerModal] SPECIAL USER detectado! Partida finalizada automaticamente!');
+      // ✅ Verificar se deve finalizar a partida (shouldLink = true)
+      if (voteResponse?.shouldLink === true) {
+        if (voteResponse?.specialUserVote === true) {
+          console.log('🌟 [WinnerModal] SPECIAL USER finalizou a partida!');
 
-        // Fechar modal automaticamente
-        setTimeout(() => {
-          alert(`🌟 ${voteResponse.voterName || 'Você'} é um SPECIAL USER!\nA partida foi finalizada automaticamente.`);
-          this.onConfirm.emit({
-            match: selectedOption.match,
-            winner: (selectedOption.winningTeam || 'blue') as 'blue' | 'red'
-          });
-        }, 500);
-      } else if (voteResponse?.shouldLink === true) {
-        console.log('🎯 [WinnerModal] 5 votos atingidos! Finalizando automaticamente...');
+          // Fechar modal automaticamente
+          setTimeout(() => {
+            alert(`🌟 ${voteResponse.voterName || 'Você'} é um SPECIAL USER!\nA partida foi finalizada automaticamente.`);
+            this.onConfirm.emit({
+              match: selectedOption.match,
+              winner: (selectedOption.winningTeam || 'blue') as 'blue' | 'red'
+            });
+          }, 500);
+        } else {
+          console.log('🎯 [WinnerModal] Votos suficientes atingidos! Finalizando automaticamente...');
 
-        // Fechar modal automaticamente
-        setTimeout(() => {
-          alert('🎯 5 votos atingidos! A partida foi finalizada automaticamente.');
-          this.onConfirm.emit({
-            match: selectedOption.match,
-            winner: (selectedOption.winningTeam || 'blue') as 'blue' | 'red'
-          });
-        }, 500);
+          // Fechar modal automaticamente
+          setTimeout(() => {
+            alert('🎯 Votos suficientes atingidos! A partida foi finalizada automaticamente.');
+            this.onConfirm.emit({
+              match: selectedOption.match,
+              winner: (selectedOption.winningTeam || 'blue') as 'blue' | 'red'
+            });
+          }, 500);
+        }
       } else {
         // Voto registrado, mas aguardando mais votos
-        console.log('⏳ [WinnerModal] Voto registrado, aguardando mais votos...');
-        alert(`✅ Seu voto foi registrado!\nAguardando mais ${5 - (voteResponse.voteCount || 1)} votos para finalizar automaticamente.`);
+        if (voteResponse?.specialUserVote === true) {
+          console.log('⏳ [WinnerModal] Special user votou, mas peso insuficiente. Aguardando mais votos...');
+          const remainingVotes = 6 - (voteResponse.voteCount || 1);
+          alert(`🌟 ${voteResponse.voterName || 'Você'} é um SPECIAL USER!\nSeu voto valeu ${voteResponse.voteWeight || 1} voto(s).\nAguardando mais ${remainingVotes} votos para finalizar automaticamente.`);
+        } else {
+          console.log('⏳ [WinnerModal] Voto registrado, aguardando mais votos...');
+          const remainingVotes = 6 - (voteResponse.voteCount || 1);
+          alert(`✅ Seu voto foi registrado!\nAguardando mais ${remainingVotes} votos para finalizar automaticamente.`);
+        }
 
         // Não fechar o modal, deixar aberto para outros votarem
       }

@@ -683,6 +683,12 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             String gameName = root.path("gameName").asText(null);
             String tagLine = root.path("tagLine").asText(null);
             String summonerId = root.path("summonerId").asText(null);
+            Integer profileIconId = root.has("profileIconId") && !root.get("profileIconId").isNull()
+                    ? root.get("profileIconId").asInt()
+                    : null;
+            Integer summonerLevel = root.has("summonerLevel") && !root.get("summonerLevel").isNull()
+                    ? root.get("summonerLevel").asInt()
+                    : null;
 
             if (rawSummonerName == null || puuid == null) {
                 log.error("❌ [CoreWS] Identificação incompleta! summonerName={}, puuid={}", rawSummonerName, puuid);
@@ -750,6 +756,23 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             if (success) {
                 log.info("✅ [CoreWS] {} identificado via Electron (PUUID: {}...) - Sessão registrada com validação",
                         summonerName, puuid.substring(0, Math.min(8, puuid.length())));
+
+                // ✅ NOVO: Salvar player info completo (incluindo PUUID)
+                try {
+                    Map<String, Object> playerInfoMap = new HashMap<>();
+                    playerInfoMap.put("puuid", puuid);
+                    playerInfoMap.put("summonerId", summonerId);
+                    playerInfoMap.put("profileIconId", profileIconId);
+                    playerInfoMap.put("gameName", gameName);
+                    playerInfoMap.put("tagLine", tagLine);
+                    playerInfoMap.put("summonerLevel", summonerLevel);
+
+                    String playerInfoJson = mapper.writeValueAsString(playerInfoMap);
+                    redisWSSession.storePlayerInfo(session.getId(), playerInfoJson);
+                    log.debug("✅ [CoreWS] Player info completo salvo para {}", summonerName);
+                } catch (Exception e) {
+                    log.warn("⚠️ [CoreWS] Erro ao salvar player info completo: {}", e.getMessage());
+                }
             } else {
                 log.warn(
                         "⚠️ [CoreWS] {} identificado via Electron mas falha na validação de sessão (duplicação detectada)",

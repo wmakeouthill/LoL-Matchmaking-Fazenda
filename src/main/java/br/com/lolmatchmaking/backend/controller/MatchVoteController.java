@@ -130,6 +130,10 @@ public class MatchVoteController {
                 // Determinar qual time foi votado (assumir team1 por enquanto)
                 Integer votedTeam = 1; // TODO: Implementar lógica para determinar team baseado no lcuGameId
 
+                // ✅ CORREÇÃO: Usar peso do voto para special users ou constante padrão
+                int totalNeeded = isSpecialUserVote ? 
+                    (int) voteResult.getOrDefault("voteWeight", 6) : 6;
+
                 // Broadcast do progresso de votação
                 eventBroadcastService.publishWinnerVote(
                         matchId,
@@ -137,21 +141,21 @@ public class MatchVoteController {
                         votedTeam,
                         voteCount, // votesTeam1
                         0, // votesTeam2 (assumir 0 por enquanto)
-                        6 // totalNeeded - ✅ ALTERADO: De 5 para 6 votos
+                        totalNeeded // totalNeeded - usar peso do special user ou padrão
                 );
 
-                log.info("📢 [MatchVoteController] Broadcast de votação enviado: {} votou em team {}", voterName,
-                        votedTeam);
+                log.info("📢 [MatchVoteController] Broadcast de votação enviado: {} votou em team {} (peso: {})", 
+                        voterName, votedTeam, totalNeeded);
             } catch (Exception e) {
                 log.error("❌ [MatchVoteController] Erro ao fazer broadcast de votação", e);
             }
 
-            // Se atingiu 6 votos OU é special user, buscar dados do LCU e vincular
+            // Se atingiu votos necessários OU é special user, buscar dados do LCU e vincular
             if (shouldLink) {
                 if (isSpecialUserVote) {
                     log.info("🌟 SPECIAL USER finalizou a votação! Vinculando partida automaticamente...");
                 } else {
-                    log.info("🎯 Limite de 6 votos atingido! Vinculando partida automaticamente...");
+                    log.info("🎯 Limite de votos atingido! Vinculando partida automaticamente...");
                 }
 
                 try {

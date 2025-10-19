@@ -1701,8 +1701,9 @@ async function handleMatchFoundEvent(json) {
     );
 
     // ✅ VERIFICAR se este match_found é para o jogador atual
+    // ✅ CORREÇÃO CRÍTICA: Passar json.data (não json) pois os teams estão em data
     const isForThisPlayer = await isMatchFoundForThisPlayer(
-      json,
+      json.data || json,
       currentSummoner
     );
 
@@ -1716,9 +1717,10 @@ async function handleMatchFoundEvent(json) {
     safeLog("🎯 [session-match-found] ✅ Match_found É para este jogador!");
 
     // ✅ LOG detalhado dos jogadores na partida
-    if (json.team1 && Array.isArray(json.team1)) {
+    const data = json.data || json;
+    if (data.team1 && Array.isArray(data.team1)) {
       safeLog("🎯 [session-match-found] Team 1:");
-      json.team1.forEach((player, index) => {
+      data.team1.forEach((player, index) => {
         safeLog(
           `🎯 [session-match-found]   [${index}] ${
             player.summonerName || player.name || "UNKNOWN"
@@ -1727,9 +1729,9 @@ async function handleMatchFoundEvent(json) {
       });
     }
 
-    if (json.team2 && Array.isArray(json.team2)) {
+    if (data.team2 && Array.isArray(data.team2)) {
       safeLog("🎯 [session-match-found] Team 2:");
-      json.team2.forEach((player, index) => {
+      data.team2.forEach((player, index) => {
         safeLog(
           `🎯 [session-match-found]   [${index}] ${
             player.summonerName || player.name || "UNKNOWN"
@@ -3045,8 +3047,9 @@ async function handleMatchCancelledEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
+    // ✅ CORREÇÃO CRÍTICA: Passar json.data (não json) pois os teams estão em data
     const isForThisPlayer = await isMatchFoundForThisPlayer(
-      json,
+      json.data || json,
       currentSummoner
     );
 
@@ -3089,8 +3092,9 @@ async function handleDraftCancelledEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
+    // ✅ CORREÇÃO CRÍTICA: Passar json.data (não json) pois os teams estão em data
     const isForThisPlayer = await isMatchFoundForThisPlayer(
-      json,
+      json.data || json,
       currentSummoner
     );
 
@@ -3133,8 +3137,9 @@ async function handleGameCancelledEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
+    // ✅ CORREÇÃO CRÍTICA: Passar json.data (não json) pois os teams estão em data
     const isForThisPlayer = await isMatchFoundForThisPlayer(
-      json,
+      json.data || json,
       currentSummoner
     );
 

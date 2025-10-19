@@ -37,12 +37,17 @@ public class QueueController {
     /**
      * GET /api/queue/status
      * Obtém status da fila
+     * ✅ CORREÇÃO CRÍTICA: Adicionar autenticação via X-Summoner-Name header
      */
     @GetMapping("/status")
     public ResponseEntity<Map<String, Object>> getQueueStatus(
-            @RequestParam(required = false) String currentPlayerDisplayName) {
+            @RequestParam(required = false) String currentPlayerDisplayName,
+            HttpServletRequest httpRequest) {
         try {
-            log.info("📊 Obtendo status da fila (currentPlayer: {})", currentPlayerDisplayName);
+            // ✅ CORREÇÃO CRÍTICA: Validar header X-Summoner-Name
+            String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
+            log.info("📊 [{}] Obtendo status da fila (currentPlayer: {})", authenticatedSummoner,
+                    currentPlayerDisplayName);
 
             QueueStatusDTO status = queueManagementService.getQueueStatus(currentPlayerDisplayName);
 
@@ -442,7 +447,7 @@ public class QueueController {
                 if (sessionIdOpt.isPresent()) {
                     String sessionId = sessionIdOpt.get();
                     WebSocketSession session = webSocketService.getSession(sessionId);
-                    
+
                     if (session != null && session.isOpen()) {
                         log.info("✅ [Player-Sessions] [BACKEND] Vinculação encontrada: {} → {}", normalizedName,
                                 session.getId());

@@ -14,7 +14,7 @@ import java.time.Duration;
  * Previne race conditions em:
  * - Votação de vencedor (múltiplos votos simultâneos)
  * - Vinculação de match com LCU (múltiplas vinculações)
- * - Detecção de "5 votos atingidos" por múltiplas instâncias
+ * - Detecção de "6 votos atingidos" por múltiplas instâncias
  */
 @Slf4j
 @Service
@@ -34,7 +34,7 @@ public class MatchVoteLockService {
      * Previne:
      * - Duplo voto do mesmo jogador (duplo-clique)
      * - Múltiplas instâncias processando mesmo voto
-     * - Race condition ao detectar "5 votos atingidos"
+     * - Race condition ao detectar "6 votos atingidos"
      * 
      * @param matchId  ID da partida
      * @param playerId ID do jogador

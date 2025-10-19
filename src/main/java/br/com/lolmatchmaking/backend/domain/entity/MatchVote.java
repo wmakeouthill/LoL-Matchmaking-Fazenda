@@ -10,7 +10,7 @@ import java.time.Instant;
  * 
  * Quando uma partida customizada termina, os jogadores votam em qual
  * partida do histórico do LCU corresponde à partida jogada.
- * Ao atingir 5 votos na mesma partida, ela é vinculada automaticamente.
+ * Ao atingir 6 votos na mesma partida, ela é vinculada automaticamente.
  */
 @Entity
 @Table(name = "match_votes", uniqueConstraints = {

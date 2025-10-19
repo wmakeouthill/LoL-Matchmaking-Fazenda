@@ -1998,6 +1998,9 @@ export class App implements OnInit, OnDestroy {
       await firstValueFrom(this.apiService.joinQueue(this.currentPlayer, preferences));
       console.log('✅ [App] Solicitação de entrada na fila enviada');
 
+      // ✅ NOVO: Notificar Electron sobre entrada na fila (PROATIVO)
+      this.notifyElectronQueueEntry();
+
       // ✅ NOVO: Solicitar lista de sessões ativas após entrar na fila
       this.requestActiveSessionsList();
 

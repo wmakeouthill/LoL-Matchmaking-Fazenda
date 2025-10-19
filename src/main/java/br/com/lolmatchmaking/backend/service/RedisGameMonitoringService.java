@@ -301,15 +301,12 @@ public class RedisGameMonitoringService {
 
         log.info("❌ Cancelando monitoramento de jogo: {}", matchId);
 
-        // Atualizar status
-        redisTemplate.opsForHash().put(key, "status", "cancelled");
-        redisTemplate.opsForHash().put(key, "endTime", Instant.now().toEpochMilli());
+        // ✅ CORREÇÃO: Remover COMPLETAMENTE a chave do Redis
+        // Isso evita que o cleanup detecte como "jogo fantasma"
+        redisTemplate.delete(key);
 
         // Remover da lista de jogos ativos
         redisTemplate.opsForSet().remove(ACTIVE_GAMES_KEY, matchId);
-
-        // Reduzir TTL para 5 minutos (dados ainda disponíveis para consulta)
-        redisTemplate.expire(key, Duration.ofMinutes(5));
 
         log.info("✅ Jogo {} cancelado no Redis", matchId);
     }

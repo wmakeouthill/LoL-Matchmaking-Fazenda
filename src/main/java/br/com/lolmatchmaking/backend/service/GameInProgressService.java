@@ -453,10 +453,11 @@ public class GameInProgressService {
                 log.error("❌ [cancelGame] Erro ao limpar canais Discord: {}", e.getMessage());
             }
 
+            // ✅ CORREÇÃO: DELETAR partida do banco (não apenas marcar como cancelled)
             if (match != null) {
-                match.setStatus("cancelled");
-                match.setUpdatedAt(Instant.now());
-                customMatchRepository.save(match);
+                log.info("🗑️ [GameInProgress] DELETANDO partida {} do banco de dados (cancelada)", matchId);
+                customMatchRepository.deleteById(matchId);
+                log.info("✅ [GameInProgress] Partida {} EXCLUÍDA do banco de dados", matchId);
             }
 
             // ✅ NOVO: Limpar PlayerState de TODOS os jogadores
