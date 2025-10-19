@@ -1083,9 +1083,8 @@ export class App implements OnInit, OnDestroy {
               ];
 
               const player = allPlayers.find(p =>
-                p.displayName === acceptedPlayerName ||
                 p.summonerName === acceptedPlayerName ||
-                `${p.gameName}#${p.tagLine}` === acceptedPlayerName
+                (p.riotIdGameName && p.riotIdTagline && `${p.riotIdGameName}#${p.riotIdTagline}` === acceptedPlayerName)
               );
 
               if (player) {
