@@ -1083,8 +1083,14 @@ export class App implements OnInit, OnDestroy {
               ];
 
               const player = allPlayers.find(p =>
+<<<<<<< HEAD
                 p.summonerName === acceptedPlayerName ||
                 (p.riotIdGameName && p.riotIdTagline && `${p.riotIdGameName}#${p.riotIdTagline}` === acceptedPlayerName)
+=======
+                p.displayName === acceptedPlayerName ||
+                p.summonerName === acceptedPlayerName ||
+                `${p.gameName}#${p.tagLine}` === acceptedPlayerName
+>>>>>>> 92ec633e84211440c8d4b8c04018877689719411
               );
 
               if (player) {
