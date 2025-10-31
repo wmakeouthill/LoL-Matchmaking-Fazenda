@@ -659,15 +659,16 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
             allConfirmed: data.allConfirmed
           });
 
-          // ✅ Atualizar dados de confirmação
+          // ✅ CRÍTICO: Criar NOVA referência de objeto para disparar ngOnChanges no modal (OnPush)
           this.confirmationData = {
-            confirmations: data.confirmations || [],
+            confirmations: [...(data.confirmations || [])], // ✅ Nova referência de array
             confirmedCount: data.confirmedCount || 0,
             totalPlayers: data.totalPlayers || 10,
             allConfirmed: data.allConfirmed || false
           };
 
           console.log('📊 [draftConfirmationUpdate$] Progresso atualizado:', this.confirmationData);
+          console.log('📊 [draftConfirmationUpdate$] Nova referência criada para OnPush detection');
           
           // ✅ Se todos confirmaram, apenas aguardar game_started (não fechar modal ainda)
           if (data.allConfirmed) {

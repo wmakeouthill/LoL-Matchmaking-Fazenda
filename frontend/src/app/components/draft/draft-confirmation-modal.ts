@@ -182,6 +182,26 @@ export class DraftConfirmationModalComponent implements OnChanges {
       this.cleanupWebSocketListeners(); // ✅ NOVO: Limpar listeners quando modal fecha
     }
 
+    // ✅ CRÍTICO: Atualizar dados de confirmação quando confirmationData mudar
+    if (changes['confirmationData']) {
+      const newData = changes['confirmationData'].currentValue;
+      if (newData) {
+        this.confirmedCount = newData.confirmedCount || newData.confirmations?.length || 0;
+        this.totalPlayers = newData.totalPlayers || 10;
+        
+        console.log('📊 [CONFIRMATION-MODAL] confirmationData atualizado:', {
+          confirmedCount: this.confirmedCount,
+          totalPlayers: this.totalPlayers,
+          allConfirmed: newData.allConfirmed,
+          confirmations: newData.confirmations
+        });
+        
+        // ✅ Forçar detecção de mudanças (OnPush requer)
+        this.cdr.markForCheck();
+        this.cdr.detectChanges();
+      }
+    }
+
     // ✅ NOVO: Invalidar cache quando session ou isVisible mudam
     if (changes['session'] || changes['isVisible']) {
       logConfirmationModal('🔄 [ngOnChanges] Detectada mudança na session ou visibilidade');
@@ -312,19 +332,22 @@ export class DraftConfirmationModalComponent implements OnChanges {
       return false;
     }
 
+    // ✅ CORREÇÃO: confirmations é um array de strings (nomes de jogadores)
     const playerId = this.getPlayerIdentifier(player);
-    return this.confirmationData.confirmations[playerId]?.confirmed === true;
+    const confirmationsArray = Array.isArray(this.confirmationData.confirmations) 
+      ? this.confirmationData.confirmations 
+      : [];
+    
+    // ✅ Verificar se o jogador está no array de confirmados (comparação case-insensitive)
+    return confirmationsArray.some((confirmedPlayer: string) => 
+      confirmedPlayer?.toLowerCase().trim() === playerId.toLowerCase().trim()
+    );
   }
 
   // ✅ NOVO: Verificar se jogador é bot e foi auto-confirmado
   isPlayerAutoConfirmed(player: any): boolean {
-    if (!this.confirmationData?.confirmations) {
-      return false;
-    }
-
-    const playerId = this.getPlayerIdentifier(player);
-    const confirmation = this.confirmationData.confirmations[playerId];
-    return confirmation?.confirmed === true && confirmation?.autoConfirmed === true;
+    // ✅ Se o jogador confirmou e é bot, assume-se auto-confirmado
+    return this.isPlayerBot(player) && this.isPlayerConfirmed(player);
   }
 
   // ✅ NOVO: Obter identificador do jogador
@@ -1471,16 +1494,37 @@ export class DraftConfirmationModalComponent implements OnChanges {
 
   /**
    * Obtém o status de confirmação de um jogador
+   * ✅ CORREÇÃO: Usar confirmationData.confirmations (array de strings) para verificar status
    */
   getPlayerConfirmationStatus(summonerName: string): 'pending' | 'confirmed' | 'declined' | 'timeout' {
-    // ✅ CORREÇÃO: Usar mesma técnica do match_found - buscar no player.acceptanceStatus
+    // ✅ PRIORIDADE 1: Verificar em confirmationData.confirmations (fonte mais atualizada)
+    if (this.confirmationData?.confirmations && Array.isArray(this.confirmationData.confirmations)) {
+      const normalizedSummonerName = summonerName?.toLowerCase().trim();
+      const isConfirmed = this.confirmationData.confirmations.some((confirmedPlayer: string) => 
+        confirmedPlayer?.toLowerCase().trim() === normalizedSummonerName
+      );
+      
+      if (isConfirmed) {
+        return 'confirmed';
+      }
+    }
+    
+    // ✅ FALLBACK: Tentar buscar no session (menos confiável)
     const allPlayers = [
       ...(this.session?.blueTeam || []),
       ...(this.session?.redTeam || [])
     ];
 
-    const player = allPlayers.find(p => p.summonerName === summonerName);
-    return player?.acceptanceStatus || 'pending';
+    const player = allPlayers.find(p => {
+      const pName = p.summonerName || p.gameName || p.name || '';
+      return pName.toLowerCase().trim() === summonerName.toLowerCase().trim();
+    });
+    
+    if (player?.acceptanceStatus) {
+      return player.acceptanceStatus;
+    }
+    
+    return 'pending';
   }
 
 
@@ -1509,8 +1553,26 @@ export class DraftConfirmationModalComponent implements OnChanges {
 
   /**
    * Obtém contagem de confirmações
+   * ✅ CORREÇÃO: Usar confirmationData se disponível (fonte mais atualizada)
    */
   getConfirmationCount(): { confirmed: number; total: number } {
+    // ✅ PRIORIDADE 1: Usar confirmationData (vem do WebSocket em tempo real)
+    if (this.confirmationData) {
+      return {
+        confirmed: this.confirmationData.confirmedCount || this.confirmationData.confirmations?.length || 0,
+        total: this.confirmationData.totalPlayers || 10
+      };
+    }
+    
+    // ✅ FALLBACK: Usar valores internos atualizados
+    if (this.confirmedCount > 0 || this.totalPlayers > 0) {
+      return {
+        confirmed: this.confirmedCount,
+        total: this.totalPlayers
+      };
+    }
+
+    // ✅ FALLBACK 2: Tentar contar do session (menos confiável)
     let confirmed = 0;
     const allPlayers = [
       ...(this.session?.blueTeam || []),
@@ -1525,7 +1587,7 @@ export class DraftConfirmationModalComponent implements OnChanges {
 
     return {
       confirmed,
-      total: allPlayers.length
+      total: allPlayers.length || 10
     };
   }
 
@@ -1539,11 +1601,22 @@ export class DraftConfirmationModalComponent implements OnChanges {
 
   /**
    * Obtém progresso de confirmação em porcentagem
+   * ✅ CORREÇÃO: Usar confirmationData se disponível
    */
   getConfirmationProgress(): number {
     const count = this.getConfirmationCount();
     if (count.total === 0) return 0;
-    return Math.round((count.confirmed / count.total) * 100);
+    const progress = Math.round((count.confirmed / count.total) * 100);
+    
+    // ✅ LOG para debug
+    console.log('📊 [getConfirmationProgress]', {
+      confirmed: count.confirmed,
+      total: count.total,
+      progress: progress + '%',
+      hasConfirmationData: !!this.confirmationData
+    });
+    
+    return progress;
   }
 
   // ✅ NOVO: Métodos WebSocket para atualizações em tempo real
