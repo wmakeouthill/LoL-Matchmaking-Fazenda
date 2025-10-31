@@ -29,6 +29,7 @@ declare global {
       onPickChampion: (callback: (event: any, data: any) => void) => void;
       onBanChampion: (callback: (event: any, data: any) => void) => void;
       onDraftConfirmed: (callback: (event: any, data: any) => void) => void;
+      onDraftConfirmationUpdate: (callback: (event: any, data: any) => void) => void;
 
       // === GAME EVENTS ===
       onGameStarted: (callback: (event: any, data: any) => void) => void;

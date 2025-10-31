@@ -37,6 +37,9 @@ public class GameInProgressService {
     private final ApplicationContext applicationContext;
     private final br.com.lolmatchmaking.backend.websocket.SessionRegistry sessionRegistry;
     private final LPCalculationService lpCalculationService;
+    
+    // ✅ CRÍTICO: Mapper centralizado do JacksonConfig (reutilizável, sem criar novas instâncias)
+    private final br.com.lolmatchmaking.backend.mapper.UnifiedMatchDataMapper matchDataMapper;
 
     // ✅ NOVO: Redis para monitoramento distribuído de jogos
     private final RedisGameMonitoringService redisGameMonitoring;
@@ -132,15 +135,15 @@ public class GameInProgressService {
                 return;
             }
 
-            // ✅ CRÍTICO: Parsear pick_ban_data (fonte de verdade)
+            // ✅ CRÍTICO: Parsear pick_ban_data usando mapper centralizado (fonte de verdade)
             if (match.getPickBanDataJson() == null || match.getPickBanDataJson().isEmpty()) {
                 throw new RuntimeException("pick_ban_data não encontrado para match " + matchId);
             }
 
-            @SuppressWarnings("unchecked")
-            Map<String, Object> pickBanData = objectMapper.readValue(match.getPickBanDataJson(), Map.class);
+            // ✅ CORREÇÃO: Usar UnifiedMatchDataMapper centralizado (JacksonConfig)
+            Map<String, Object> pickBanData = matchDataMapper.jsonToMap(match.getPickBanDataJson());
 
-            log.info("✅ [GameInProgress] pick_ban_data parseado com sucesso");
+            log.info("✅ [GameInProgress] pick_ban_data parseado com sucesso usando mapper centralizado");
 
             // ✅ Delegar para método existente
             startGame(matchId, pickBanData);
@@ -720,15 +723,14 @@ public class GameInProgressService {
                     gameData.put("status", "in_progress");
                     gameData.put("startTime", match.getCreatedAt());
 
-                    // ✅ Adicionar pick_ban_data completo
+                    // ✅ Adicionar pick_ban_data completo usando mapper centralizado
                     if (match.getPickBanDataJson() != null && !match.getPickBanDataJson().isEmpty()) {
                         try {
-                            @SuppressWarnings("unchecked")
-                            Map<String, Object> pickBanData = objectMapper.readValue(
-                                    match.getPickBanDataJson(), Map.class);
+                            // ✅ CORREÇÃO: Usar UnifiedMatchDataMapper centralizado (JacksonConfig)
+                            Map<String, Object> pickBanData = matchDataMapper.jsonToMap(match.getPickBanDataJson());
                             gameData.put("pickBanData", pickBanData);
                         } catch (Exception e) {
-                            log.warn("⚠️ [GameInProgress] Erro ao parsear pick_ban_data", e);
+                            log.warn("⚠️ [GameInProgress] Erro ao parsear pick_ban_data usando mapper centralizado", e);
                         }
                     }
 

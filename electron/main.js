@@ -1396,6 +1396,8 @@ async function startWebSocketGateway(backendBase) {
           await handleBanChampionEvent(json);
         } else if (json.type === "draft_confirmed") {
           await handleDraftConfirmedEvent(json);
+        } else if (json.type === "draft_confirmation_update") {
+          await handleDraftConfirmationUpdateEvent(json);
         }
         // ✅ GAME EVENTS
         else if (json.type === "game_started") {
@@ -2161,19 +2163,25 @@ async function isGameInProgressForThisPlayer(json, currentSummoner) {
   // ✅ CORREÇÃO: Verificar diferentes estruturas de dados
   let team1, team2;
 
-  // Estrutura 1: json.data.gameData.team1/team2
-  if (json.data && json.data.gameData) {
+  // Estrutura 1: json.gameData.team1/team2 (enviado pelo backend dentro de data)
+  if (json.gameData && (json.gameData.team1 || json.gameData.team2)) {
+    team1 = json.gameData.team1;
+    team2 = json.gameData.team2;
+    safeLog("🔍 [game-in-progress] Usando estrutura gameData.team1/team2");
+  }
+  // Estrutura 2: json.data.gameData.team1/team2 (camada extra de data)
+  else if (json.data && json.data.gameData) {
     team1 = json.data.gameData.team1;
     team2 = json.data.gameData.team2;
     safeLog("🔍 [game-in-progress] Usando estrutura data.gameData.team1/team2");
   }
-  // Estrutura 2: json.data.team1/team2 (nova estrutura)
+  // Estrutura 3: json.team1/team2 (direta)
   else if (json.team1 || json.team2) {
     team1 = json.team1;
     team2 = json.team2;
     safeLog("🔍 [game-in-progress] Usando estrutura direta team1/team2");
   }
-  // Estrutura 3: json.teams.blue/red.players
+  // Estrutura 4: json.teams.blue/red.players
   else if (json.teams && json.teams.blue && json.teams.red) {
     // Converter teams para team1/team2
     team1 = json.teams.blue.players || [];
@@ -2181,6 +2189,7 @@ async function isGameInProgressForThisPlayer(json, currentSummoner) {
     safeLog("🔍 [game-in-progress] Usando estrutura teams.blue/red.players");
   } else {
     safeLog("⚠️ [game-in-progress] Nenhuma estrutura de times encontrada");
+    safeLog("🔍 [game-in-progress] DEBUG - Estrutura do JSON:", JSON.stringify(Object.keys(json)));
   }
 
   // ✅ PRIORIDADE 1: Verificar em team1 e team2
@@ -3082,6 +3091,26 @@ async function handleDraftConfirmedEvent(json) {
     }
   } catch (error) {
     safeLog("❌ [draft-confirmed] Erro ao processar draft_confirmed:", error);
+  }
+}
+
+// ✅ NOVO: Handler para progresso de confirmação do draft
+async function handleDraftConfirmationUpdateEvent(json) {
+  try {
+    const data = json.data || json;
+    
+    safeLog("📊 [draft-confirmation-update] ===== CONFIRMAÇÃO DO DRAFT ATUALIZADA =====");
+    safeLog("📊 [draft-confirmation-update] MatchId:", data.matchId);
+    safeLog("📊 [draft-confirmation-update] Confirmados:", data.confirmedCount, "/", data.totalPlayers);
+    safeLog("📊 [draft-confirmation-update] Todos confirmaram:", data.allConfirmed);
+    
+    // ✅ SEMPRE enviar para o frontend (todos na partida devem ver o progresso)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("draft-confirmation-update", data);
+      safeLog("✅ [draft-confirmation-update] Progresso enviado para o frontend via IPC");
+    }
+  } catch (error) {
+    safeLog("❌ [draft-confirmation-update] Erro ao processar:", error);
   }
 }
 

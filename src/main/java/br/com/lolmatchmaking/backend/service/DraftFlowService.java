@@ -3003,7 +3003,7 @@ public class DraftFlowService {
 
             // ✅ CORREÇÃO: Enviar para jogadores específicos da partida
             List<String> allPlayers = getAllPlayersFromDraftState(st);
-            webSocketService.sendToPlayers("draft_updated", payload, allPlayers);
+            webSocketService.sendToPlayers("draft_confirmation_update", payload, allPlayers);
 
             log.info("📡 [DraftFlow] Broadcast para 10 jogadores: {}/{} confirmaram", confirmations.size(),
                     totalPlayers);

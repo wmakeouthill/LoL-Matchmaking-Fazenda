@@ -57,6 +57,9 @@ export class ElectronEventsService {
   private draftConfirmedSubject = new BehaviorSubject<any>(null);
   public draftConfirmed$: Observable<any> = this.draftConfirmedSubject.asObservable();
 
+  private draftConfirmationUpdateSubject = new BehaviorSubject<any>(null);
+  public draftConfirmationUpdate$: Observable<any> = this.draftConfirmationUpdateSubject.asObservable();
+
   // === GAME EVENTS ===
   private gameStartedSubject = new BehaviorSubject<any>(null);
   public gameStarted$: Observable<any> = this.gameStartedSubject.asObservable();
@@ -187,6 +190,11 @@ export class ElectronEventsService {
         window.electronAPI.onDraftConfirmed((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] draft-confirmed recebido:', data);
           this.draftConfirmedSubject.next(data);
+        });
+
+        window.electronAPI.onDraftConfirmationUpdate((event: any, data: any) => {
+          console.log('📊 [ElectronEvents] draft-confirmation-update recebido:', data);
+          this.draftConfirmationUpdateSubject.next(data);
         });
 
         // ✅ GAME EVENTS

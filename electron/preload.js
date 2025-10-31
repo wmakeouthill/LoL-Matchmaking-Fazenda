@@ -131,6 +131,7 @@ const electronAPI = {
   onPickChampion: (callback) => ipcRenderer.on("pick-champion", callback),
   onBanChampion: (callback) => ipcRenderer.on("ban-champion", callback),
   onDraftConfirmed: (callback) => ipcRenderer.on("draft-confirmed", callback),
+  onDraftConfirmationUpdate: (callback) => ipcRenderer.on("draft-confirmation-update", callback),
 
   // ✅ GAME EVENTS
   onGameStarted: (callback) => ipcRenderer.on("game-started", callback),
