@@ -790,7 +790,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             redisWSEvent.clearPendingEvents(sessionId);
         }
     }
-    
+
     /**
      * ✅ PÚBLICO: Envia eventos pendentes após identificação do Electron
      * Chamado pelo CoreWebSocketHandler após registrar customSessionId
@@ -801,7 +801,8 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                     .getPendingEvents(customSessionId);
 
             if (!pendingFromRedis.isEmpty()) {
-                log.info("📬 [PendingEvents] {} eventos pendentes encontrados para customSessionId: {} (randomSessionId: {})",
+                log.info(
+                        "📬 [PendingEvents] {} eventos pendentes encontrados para customSessionId: {} (randomSessionId: {})",
                         pendingFromRedis.size(), customSessionId, randomSessionId);
 
                 for (RedisWebSocketEventService.PendingEvent event : pendingFromRedis) {
@@ -822,7 +823,8 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                 log.debug("📭 [PendingEvents] Nenhum evento pendente para customSessionId: {}", customSessionId);
             }
         } catch (Exception e) {
-            log.error("❌ [PendingEvents] Erro ao processar eventos pendentes para {}: {}", customSessionId, e.getMessage(), e);
+            log.error("❌ [PendingEvents] Erro ao processar eventos pendentes para {}: {}", customSessionId,
+                    e.getMessage(), e);
         }
     }
 
@@ -1222,7 +1224,8 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             int totalPlayers = (int) playerNames.stream().filter(name -> !isBotPlayer(name)).count();
             int failedPlayers = 0;
 
-            log.info("🎯 [Directed Broadcast] Enviando {} para {} jogadores específicos (bots excluídos)", eventType, totalPlayers);
+            log.info("🎯 [Directed Broadcast] Enviando {} para {} jogadores específicos (bots excluídos)", eventType,
+                    totalPlayers);
 
             // ✅ ENVIO PARALELO para jogadores específicos
             List<CompletableFuture<Boolean>> sendFutures = new ArrayList<>();
@@ -1233,7 +1236,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                     log.trace("🤖 [Directed] Bot {} pulado (sem WebSocket)", playerName);
                     continue; // Pular bots completamente - SEM logar warnings
                 }
-                
+
                 CompletableFuture<Boolean> future = CompletableFuture.supplyAsync(() -> {
                     try {
                         // ✅ Buscar sessionId do jogador via Redis
@@ -1243,6 +1246,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                             String sessionId = sessionIdOpt.get();
                             // ✅ CRÍTICO: Converter customSessionId → randomSessionId se necessário
                             String actualSessionId = getRandomSessionId(sessionId);
+
                             WebSocketSession session = sessions.get(actualSessionId);
 
                             if (session != null && session.isOpen()) {
@@ -1279,20 +1283,27 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                                         // ✅ MELHORIA: LOG ESTRUTURADO COM VALIDAÇÃO
                                         if (log.isDebugEnabled()) {
                                             try {
-                                                Optional<String> customOpt = redisWSSession.getCustomSessionId(actualSessionId);
+                                                Optional<String> customOpt = redisWSSession
+                                                        .getCustomSessionId(actualSessionId);
                                                 String customSessionId = customOpt.orElse("N/A");
-                                                
-                                                log.debug("📤 [BACKEND→ELECTRON] Evento: {} → {} | RandomSID: {} | CustomSID: {}", 
-                                                    eventType, playerName, 
-                                                    actualSessionId.substring(0, Math.min(8, actualSessionId.length())),
-                                                    customSessionId.substring(0, Math.min(20, customSessionId.length())));
-                                                
+
+                                                log.debug(
+                                                        "📤 [BACKEND→ELECTRON] Evento: {} → {} | RandomSID: {} | CustomSID: {}",
+                                                        eventType, playerName,
+                                                        actualSessionId.substring(0,
+                                                                Math.min(8, actualSessionId.length())),
+                                                        customSessionId.substring(0,
+                                                                Math.min(20, customSessionId.length())));
+
                                                 // ✅ VALIDAÇÃO: Verificar se customSessionId corresponde ao summonerName
                                                 if (!customSessionId.equals("N/A")) {
-                                                    String expectedCustomId = generateCustomSessionIdForSummoner(playerName);
-                                                    if (expectedCustomId != null && !customSessionId.equals(expectedCustomId)) {
+                                                    String expectedCustomId = generateCustomSessionIdForSummoner(
+                                                            playerName);
+                                                    if (expectedCustomId != null
+                                                            && !customSessionId.equals(expectedCustomId)) {
                                                         log.warn("⚠️ [BACKEND→ELECTRON] INCONSISTÊNCIA DE SESSION ID!");
-                                                        log.warn("   Player: {}, Expected: {}, Got: {}", playerName, expectedCustomId, customSessionId);
+                                                        log.warn("   Player: {}, Expected: {}, Got: {}", playerName,
+                                                                expectedCustomId, customSessionId);
                                                     }
                                                 }
                                             } catch (Exception e) {
@@ -1985,27 +1996,30 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         // Electron gerencia sua própria identificação proativamente
         log.warn("⚠️ [WebSocket] requestIdentityConfirmation_DEPRECATED foi chamado (NÃO DEVERIA!)");
         return;
-        
-        /* CÓDIGO ORIGINAL COMENTADO:
-        log.debug("🔍 [WebSocket] Solicitando confirmação de identidade...");
 
-        try {
-            // Para CADA sessão identificada
-            Map<String, Object> allClientInfo = redisWSSession.getAllClientInfo();
-
-            for (String sessionId : allClientInfo.keySet()) {
-                Map<String, Object> info = (Map<String, Object>) allClientInfo.get(sessionId);
-                String summonerName = (String) info.get("summonerName");
-
-                if (summonerName == null || summonerName.isEmpty()) {
-                    continue; // Sessão não identificada
-                }
-
-                // ✅ NOVO: Verificar estado do jogador para determinar intervalo
-                long lastConfirmation = (Long) info.getOrDefault("lastIdentityConfirmation", 0L);
-                long currentTime = System.currentTimeMillis();
-                long timeSinceLastConfirmation = currentTime - lastConfirmation;
-        */
+        /*
+         * CÓDIGO ORIGINAL COMENTADO:
+         * log.debug("🔍 [WebSocket] Solicitando confirmação de identidade...");
+         * 
+         * try {
+         * // Para CADA sessão identificada
+         * Map<String, Object> allClientInfo = redisWSSession.getAllClientInfo();
+         * 
+         * for (String sessionId : allClientInfo.keySet()) {
+         * Map<String, Object> info = (Map<String, Object>)
+         * allClientInfo.get(sessionId);
+         * String summonerName = (String) info.get("summonerName");
+         * 
+         * if (summonerName == null || summonerName.isEmpty()) {
+         * continue; // Sessão não identificada
+         * }
+         * 
+         * // ✅ NOVO: Verificar estado do jogador para determinar intervalo
+         * long lastConfirmation = (Long) info.getOrDefault("lastIdentityConfirmation",
+         * 0L);
+         * long currentTime = System.currentTimeMillis();
+         * long timeSinceLastConfirmation = currentTime - lastConfirmation;
+         */
     }
 
     /**
@@ -2447,7 +2461,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                 log.trace("🤖 [Security] Bot {} - validação de ownership pulada", expectedPlayerName);
                 return true; // Bots sempre passam (não têm sessão real)
             }
-            
+
             // Buscar summonerName registrado para esta sessão no Redis
             Optional<String> actualPlayerNameOpt = redisWSSession.getSummonerBySession(session.getId());
 

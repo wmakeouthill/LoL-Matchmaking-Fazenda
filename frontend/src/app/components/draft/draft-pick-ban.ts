@@ -8,8 +8,9 @@ import { DraftanyModalComponent } from './draft-champion-modal';
 import { DraftConfirmationModalComponent } from './draft-confirmation-modal';
 import { DraftPlayerHelpModalComponent } from './draft-player-help-modal';
 import { SpectatorsModalComponent } from '../spectators-modal/spectators-modal.component';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, Subscription } from 'rxjs';
 import { ApiService } from '../../services/api';
+import { ElectronEventsService } from '../../services/electron-events.service';
 
 // ✅ MELHORADO: Sistema de logs mais robusto
 function logDraft(...args: any[]) {
@@ -118,13 +119,17 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
   @ViewChild('confirmationModal') confirmationModal!: DraftConfirmationModalComponent;
   private readonly baseUrl: string;
+  
+  // ✅ NOVO: Array para gerenciar subscrições de observables
+  private subscriptions: Subscription[] = [];
 
   constructor(
     public championService: ChampionService,
     public botService: BotService,
     public cdr: ChangeDetectorRef,
     private readonly http: HttpClient,
-    private readonly apiService: ApiService
+    private readonly apiService: ApiService,
+    private electronEvents: ElectronEventsService
   ) {
     this.baseUrl = this.apiService.getBaseUrl();
     logDraft('[DraftPickBan] Constructor inicializado');
@@ -204,6 +209,11 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   ngOnDestroy() {
     logDraft('[DraftPickBan] === ngOnDestroy INICIADO ===');
     saveLogToRoot(`🔄 [ngOnDestroy] Destruindo componente. Session exists: ${!!this.session}, actions: ${this.session?.actions?.length || 0}`);
+
+    // ✅ CRÍTICO: Limpar todas as subscrições de observables
+    this.subscriptions.forEach(sub => sub.unsubscribe());
+    this.subscriptions = [];
+    logDraft('[DraftPickBan] ✅ Subscrições de observables limpas');
 
     // ✅ NOVO: Fechar modal de ajuda se estiver aberto
     if (this.showPlayerHelpModal) {
@@ -408,6 +418,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           });
 
           saveLogToRoot(`⏭️ [processNgOnChanges] Session atualizada: currentAction=${this.session.currentAction}, currentPlayer=${this.session.currentPlayer}, phases=${this.session.phases?.length || 0}`);
+
+          // ✅ CRÍTICO: Chamar updateDraftState() para verificar se é o turno do jogador
+          this.updateDraftState();
         }
       } finally {
         this.updateInProgress = false;
@@ -459,7 +472,44 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       }
     });
 
-    // Listener para draftUpdate via WebSocket
+    // ✅ CRÍTICO: Listener para draft-updated (AÇÕES COMPLETAS)
+    this.subscriptions.push(
+      this.electronEvents.draftUpdated$.subscribe((data: any) => {
+        if (data && data.matchId === this.matchId) {
+          console.log('✅✅✅ [draftUpdated$] EVENTO RECEBIDO via ElectronEventsService!', {
+            matchId: data.matchId,
+            currentPlayer: data.currentPlayer,
+            currentAction: data.currentAction,
+            hasPhases: !!(data.phases || data.actions)
+          });
+
+          // ✅ Atualizar session completo com ações
+          this.session = {
+            ...this.session,
+            phases: data.phases || data.actions || this.session.phases,
+            actions: data.phases || data.actions || this.session.actions,
+            currentAction: data.currentAction !== undefined ? data.currentAction : this.session.currentAction,
+            currentIndex: data.currentIndex !== undefined ? data.currentIndex : this.session.currentIndex,
+            currentPlayer: data.currentPlayer || this.session.currentPlayer,
+            teams: data.teams || this.session.teams
+          };
+
+          console.log('✅ [draftUpdated$] Session atualizado:', {
+            phases: this.session.phases?.length || 0,
+            currentAction: this.session.currentAction,
+            currentPlayer: this.session.currentPlayer
+          });
+
+          // ✅ CRÍTICO: Chamar updateDraftState() para verificar se é o turno do jogador
+          this.updateDraftState();
+
+          this.cdr.markForCheck();
+          this.cdr.detectChanges();
+        }
+      })
+    );
+
+    // Listener para draftUpdate via WebSocket (TIMER)
     document.addEventListener('draftUpdate', (event: any) => {
       console.log('🔄🔄🔄 [draftUpdate] EVENTO RECEBIDO!', {
         eventMatchId: event.detail?.matchId,

@@ -752,12 +752,52 @@ function startLockfileWatcher(backendBase) {
 // -------------------------------------------------------------------------------
 
 // --- WebSocket gateway client ---------------------------------------------------
-function startWebSocketGateway(backendBase) {
+async function startWebSocketGateway(backendBase) {
   // Log direto para garantir que aparece mesmo se safeLog falhar
   console.log("[electron] === startWebSocketGateway CHAMADO ===");
   console.log("[electron] backendBase:", backendBase);
 
   try {
+    // ✅ CRÍTICO: Fechar conexão anterior se existir para evitar duplicatas
+    if (wsClient) {
+      const previousState = wsClient.readyState;
+      console.log(
+        `[electron] ⚠️ Fechando conexão WebSocket anterior (state: ${previousState})`
+      );
+      safeLog(
+        `⚠️ [ELECTRON MAIN] Fechando conexão WebSocket anterior antes de criar nova (state: ${previousState})`
+      );
+
+      // ✅ CRÍTICO: Marcar como desconexão intencional para evitar reconexão automática
+      isIntentionalDisconnect = true;
+
+      try {
+        // Remover listeners para evitar reconexão recursiva
+        wsClient.removeAllListeners();
+
+        // Fechar conexão apenas se não estiver já fechada
+        if (
+          previousState !== WebSocket.CLOSED &&
+          previousState !== WebSocket.CLOSING
+        ) {
+          wsClient.close(1000, "new-connection");
+        }
+      } catch (closeError) {
+        console.error(
+          "[electron] ❌ Erro ao fechar conexão anterior:",
+          closeError
+        );
+      }
+
+      wsClient = null;
+
+      // ✅ Aguardar um momento para garantir que a conexão foi totalmente fechada
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // ✅ Resetar flag após fechar
+      isIntentionalDisconnect = false;
+    }
+
     // backendBase is like http://localhost:8080/ -> ws url replace protocol
     const parsed = new URL(backendBase);
     const wsProtocol = parsed.protocol === "https:" ? "wss:" : "ws:";
@@ -1407,14 +1447,14 @@ function startWebSocketGateway(backendBase) {
           const skipReidentificationEvents = [
             "electron_identified",
             "player_identified",
-            "player_session_updated",  // ← CAUSA LOOP
-            "session_sync_confirmed",  // ← CAUSA LOOP
-            "draft_update",            // ← Evento de timer, não requer reidentificação
-            "draft_updated",           // ← Evento de draft, não requer reidentificação
-            "draft_starting",          // ← Evento de draft, não requer reidentificação
-            "draft_started",           // ← Evento de draft, não requer reidentificação
+            "player_session_updated", // ← CAUSA LOOP
+            "session_sync_confirmed", // ← CAUSA LOOP
+            "draft_update", // ← Evento de timer, não requer reidentificação
+            "draft_updated", // ← Evento de draft, não requer reidentificação
+            "draft_starting", // ← Evento de draft, não requer reidentificação
+            "draft_started", // ← Evento de draft, não requer reidentificação
           ];
-          
+
           if (!skipReidentificationEvents.includes(json.type)) {
             // Verificar se a mensagem menciona o summoner atual e revincular
             checkAndRebindOnSummonerEvent(json.type || "unknown", json);
@@ -1437,7 +1477,15 @@ function startWebSocketGateway(backendBase) {
       stopSessionSyncMonitor(); // ✅ NOVO: Parar monitor de sincronização
       stopHeartbeat(); // ✅ NOVO: Parar heartbeat com dados
       wsClient = null;
-      scheduleWebSocketReconnect(backendBase);
+
+      // ✅ CRÍTICO: Só agendar reconexão se NÃO for uma desconexão intencional
+      if (!isIntentionalDisconnect) {
+        scheduleWebSocketReconnect(backendBase);
+      } else {
+        safeLog(
+          "⏭️ [ELECTRON MAIN] Desconexão intencional, não agendando reconexão"
+        );
+      }
     });
     wsClient.on("error", (err) => {
       safeLog("❌ [ELECTRON MAIN] Erro no WebSocket gateway:", String(err));
@@ -1458,6 +1506,9 @@ let wsReconnectAttempts = 0;
 
 // ✅ NOVO: Flag para logs unificados habilitados
 let unifiedLogsEnabled = false;
+
+// ✅ CRÍTICO: Flag para evitar reconexão durante troca intencional de conexão
+let isIntentionalDisconnect = false;
 let redisSubscriber = null;
 let wsReconnectTimer = null;
 let wsHeartbeatTimer = null;
@@ -1513,15 +1564,17 @@ async function sendProactiveIdentification(reason) {
     // ✅ CRÍTICO: Verificar cooldown para evitar reidentificações excessivas
     const now = Date.now();
     const timeSinceLastIdentification = now - lastIdentificationTime;
-    
+
     if (timeSinceLastIdentification < IDENTIFICATION_COOLDOWN_MS) {
-      const remainingCooldown = Math.ceil((IDENTIFICATION_COOLDOWN_MS - timeSinceLastIdentification) / 1000);
+      const remainingCooldown = Math.ceil(
+        (IDENTIFICATION_COOLDOWN_MS - timeSinceLastIdentification) / 1000
+      );
       safeLog(
         `⏳ [Player-Sessions] [ELECTRON] Reidentificação bloqueada por cooldown (${remainingCooldown}s restantes). Motivo ignorado: ${reason}`
       );
       return; // Bloquear reidentificação
     }
-    
+
     safeLog(
       "🔗 [Player-Sessions] [ELECTRON] Enviando identificação proativa (motivo: " +
         reason +
