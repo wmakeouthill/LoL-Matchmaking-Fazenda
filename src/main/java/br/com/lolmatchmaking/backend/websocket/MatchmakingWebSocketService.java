@@ -2281,42 +2281,34 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     }
 
     /**
-     * ✅ NOVO: Broadcast progresso de votação de winner
+     * ✅ CORRIGIDO: Broadcast progresso de votação de winner - usa sendToPlayers
+     * (mesma técnica do draft)
      */
     public void broadcastWinnerVoteProgress(br.com.lolmatchmaking.backend.dto.events.WinnerVoteEvent event) {
         try {
-            Map<String, Object> message = new HashMap<>();
-            message.put("type", "match_vote_progress");
             List<String> votedPlayers = getVotedPlayersList(event.getMatchId());
-            int totalPlayers = 10; // Assumindo 10 jogadores por partida
 
-            message.put("data", Map.of(
-                    "matchId", event.getMatchId(),
-                    "summonerName", event.getSummonerName(),
-                    "votedTeam", event.getVotedTeam(),
-                    "votesTeam1", event.getVotesTeam1(),
-                    "votesTeam2", event.getVotesTeam2(),
-                    "totalNeeded", event.getTotalVotesNeeded(),
-                    "votedPlayers", votedPlayers,
-                    "votedCount", votedPlayers.size(),
-                    "totalPlayers", totalPlayers));
+            // ✅ CORREÇÃO: Buscar lista de jogadores da partida (mesma técnica do draft)
+            List<String> allPlayers = getAllPlayersFromMatch(event.getMatchId());
+            int totalPlayers = allPlayers.size() > 0 ? allPlayers.size() : 10; // Fallback para 10 se não encontrar
 
-            String jsonMessage = objectMapper.writeValueAsString(message);
+            Map<String, Object> data = new HashMap<>();
+            data.put("matchId", event.getMatchId());
+            data.put("summonerName", event.getSummonerName());
+            data.put("votedTeam", event.getVotedTeam());
+            data.put("votesTeam1", event.getVotesTeam1());
+            data.put("votesTeam2", event.getVotesTeam2());
+            data.put("totalNeeded", event.getTotalVotesNeeded());
+            data.put("votedPlayers", votedPlayers);
+            data.put("votedCount", votedPlayers.size());
+            data.put("totalPlayers", totalPlayers);
 
-            // Broadcast para todos os clientes conectados
-            for (WebSocketSession session : sessions.values()) {
-                if (session.isOpen()) {
-                    try {
-                        session.sendMessage(new TextMessage(jsonMessage));
-                        log.debug("📡 [WebSocket] match_vote_progress enviado para sessão: {}", session.getId());
-                    } catch (Exception e) {
-                        log.warn("⚠️ [WebSocket] Erro ao enviar match_vote_progress para sessão {}: {}",
-                                session.getId(), e.getMessage());
-                    }
-                }
-            }
+            // ✅ CORREÇÃO: Usar sendToPlayers() (mesma técnica do draft confirmation)
+            // Envia apenas para os jogadores da partida, não para todos
+            sendToPlayers("match_vote_progress", data, allPlayers);
 
-            log.info("📢 [WebSocket] match_vote_progress broadcast enviado para {} sessões", sessions.size());
+            log.info("📢 [WebSocket] match_vote_progress enviado para {} jogadores da partida {}",
+                    allPlayers.size(), event.getMatchId());
 
         } catch (Exception e) {
             log.error("❌ [WebSocket] Erro ao fazer broadcast de match_vote_progress", e);
@@ -2516,20 +2508,82 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     /**
      * ✅ NOVO: Obtém todos os jogadores de uma partida
      */
+    /**
+     * ✅ CORRIGIDO: Obtém todos os jogadores de uma partida (Redis primeiro, MySQL
+     * como fallback)
+     * Usado para enviar eventos apenas para jogadores da partida (mesma técnica do
+     * draft)
+     */
     private List<String> getAllPlayersFromMatch(Long matchId) {
         List<String> allPlayers = new ArrayList<>();
 
         try {
-            // Buscar dados da partida via Redis primeiro
+            // ✅ TENTAR 1: Buscar dados da partida via Redis primeiro (para partidas ativas)
             List<String> team1Names = getRedisAcceptanceService().getTeam1Players(matchId);
             List<String> team2Names = getRedisAcceptanceService().getTeam2Players(matchId);
 
-            if (team1Names != null)
+            if (team1Names != null && !team1Names.isEmpty()) {
                 allPlayers.addAll(team1Names);
-            if (team2Names != null)
+            }
+            if (team2Names != null && !team2Names.isEmpty()) {
                 allPlayers.addAll(team2Names);
+            }
 
-            log.debug("🎯 [WebSocket] Jogadores encontrados para match {}: {}", matchId, allPlayers);
+            // ✅ TENTAR 2: Se não encontrou no Redis, buscar do MySQL (fallback para
+            // partidas finalizadas/votação)
+            if (allPlayers.isEmpty()) {
+                try {
+                    br.com.lolmatchmaking.backend.domain.repository.CustomMatchRepository customMatchRepository = applicationContext
+                            .getBean(br.com.lolmatchmaking.backend.domain.repository.CustomMatchRepository.class);
+
+                    java.util.Optional<br.com.lolmatchmaking.backend.domain.entity.CustomMatch> matchOpt = customMatchRepository
+                            .findById(matchId);
+                    if (matchOpt.isPresent()) {
+                        br.com.lolmatchmaking.backend.domain.entity.CustomMatch match = matchOpt.get();
+
+                        // Parsear team1PlayersJson
+                        if (match.getTeam1PlayersJson() != null && !match.getTeam1PlayersJson().isEmpty()) {
+                            try {
+                                JsonNode team1Node = objectMapper.readTree(match.getTeam1PlayersJson());
+                                if (team1Node.isArray()) {
+                                    for (JsonNode playerNode : team1Node) {
+                                        if (playerNode.has("summonerName")) {
+                                            allPlayers.add(playerNode.get("summonerName").asText());
+                                        } else if (playerNode.has("displayName")) {
+                                            allPlayers.add(playerNode.get("displayName").asText());
+                                        }
+                                    }
+                                }
+                            } catch (Exception e) {
+                                log.debug("⚠️ [WebSocket] Erro ao parsear team1PlayersJson: {}", e.getMessage());
+                            }
+                        }
+
+                        // Parsear team2PlayersJson
+                        if (match.getTeam2PlayersJson() != null && !match.getTeam2PlayersJson().isEmpty()) {
+                            try {
+                                JsonNode team2Node = objectMapper.readTree(match.getTeam2PlayersJson());
+                                if (team2Node.isArray()) {
+                                    for (JsonNode playerNode : team2Node) {
+                                        if (playerNode.has("summonerName")) {
+                                            allPlayers.add(playerNode.get("summonerName").asText());
+                                        } else if (playerNode.has("displayName")) {
+                                            allPlayers.add(playerNode.get("displayName").asText());
+                                        }
+                                    }
+                                }
+                            } catch (Exception e) {
+                                log.debug("⚠️ [WebSocket] Erro ao parsear team2PlayersJson: {}", e.getMessage());
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    log.warn("⚠️ [WebSocket] Erro ao buscar partida do MySQL para match {}: {}", matchId,
+                            e.getMessage());
+                }
+            }
+
+            log.debug("🎯 [WebSocket] {} jogadores encontrados para match {}", allPlayers.size(), matchId);
         } catch (Exception e) {
             log.error("❌ [WebSocket] Erro ao obter jogadores da partida {}", matchId, e);
         }

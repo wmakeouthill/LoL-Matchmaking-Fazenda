@@ -9,6 +9,7 @@ import { BotService } from '../../services/bot.service';
 import { LcuMatchConfirmationModalComponent } from '../lcu-match-confirmation-modal/lcu-match-confirmation-modal';
 import { WinnerConfirmationModalComponent } from '../winner-confirmation-modal/winner-confirmation-modal.component';
 import { SpectatorsModalComponent } from '../spectators-modal/spectators-modal.component';
+import { ElectronEventsService } from '../../services/electron-events.service';
 
 type TeamColor = 'blue' | 'red';
 
@@ -100,6 +101,9 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   // ✅ NOVO: WebSocket subscription para atualizações em tempo real
   private voteWsSubscription?: Subscription;
 
+  // ✅ NOVO: Array para gerenciar subscrições de observables (mesma técnica do draft confirmation)
+  private subscriptions: Subscription[] = [];
+
   // ✅ NOVO: Getter para obter o matchId com fallback robusto
   get matchId(): number | undefined {
     // Tentar todas as propriedades possíveis onde o backend pode enviar o ID
@@ -155,7 +159,8 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     private readonly championService: ChampionService,
     private readonly profileIconService: ProfileIconService,
     public botService: BotService,
-    private readonly cdr: ChangeDetectorRef
+    private readonly cdr: ChangeDetectorRef,
+    private electronEvents: ElectronEventsService
   ) { } ngOnInit() {
     logGameInProgress('🚀 [GameInProgress] Inicializando componente...');
     logGameInProgress('📊 [GameInProgress] gameData recebido:', {
@@ -173,8 +178,9 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     // ✅ NOVO: Identificar usuário atual
     this.identifyCurrentUser();
 
-    // ✅ NOVO: Configurar listeners WebSocket para votação
+    // ✅ NOVO: Configurar listeners WebSocket para votação (migrando para observables)
     this.setupVoteWebSocketListeners();
+    this.setupVoteObservables(); // ✅ NOVO: Usar observables do ElectronEventsService (mesma técnica do draft)
 
     // ✅ CORREÇÃO: Só inicializar se temos gameData
     if (this.gameData) {
@@ -241,6 +247,11 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   ngOnDestroy() {
     this.stopTimers();
     this.cleanupVoteWebSocketListeners(); // ✅ NOVO: Limpar listeners WebSocket
+
+    // ✅ CRÍTICO: Limpar todas as subscrições de observables
+    this.subscriptions.forEach(sub => sub.unsubscribe());
+    this.subscriptions = [];
+    logGameInProgress('[GameInProgress] ✅ Subscrições de observables limpas');
   } private initializeGame() {
     logGameInProgress('🎮 [GameInProgress] Inicializando jogo...');
     this.logGameDataSnapshot();
@@ -2423,14 +2434,50 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   // ✅ NOVO: Métodos WebSocket para atualizações de votação em tempo real
 
   /**
-   * Configura os listeners WebSocket para atualizações de votação
+   * ✅ NOVO: Configura observables do ElectronEventsService (mesma técnica do draft confirmation)
+   */
+  private setupVoteObservables(): void {
+    // ✅ Listener para progresso de votação via Observable
+    this.subscriptions.push(
+      this.electronEvents.matchVoteProgress$.subscribe((data: any) => {
+        if (data && data.matchId === this.matchId) {
+          console.log('📊📊📊 [matchVoteProgress$] PROGRESSO RECEBIDO via ElectronEventsService!', {
+            matchId: data.matchId,
+            votedCount: data.votedCount,
+            totalPlayers: data.totalPlayers
+          });
+          this.handleVoteProgress(data);
+          this.cdr.markForCheck();
+          this.cdr.detectChanges();
+        }
+      })
+    );
+
+    // ✅ Listener para atualizações individuais de votação via Observable
+    this.subscriptions.push(
+      this.electronEvents.matchVoteUpdate$.subscribe((data: any) => {
+        if (data && data.matchId === this.matchId) {
+          console.log('📊📊📊 [matchVoteUpdate$] ATUALIZAÇÃO RECEBIDA via ElectronEventsService!', data);
+          this.handleVoteUpdate(data);
+          this.cdr.markForCheck();
+          this.cdr.detectChanges();
+        }
+      })
+    );
+
+    logGameInProgress('✅ [GameInProgress] Observables de votação configurados (mesma técnica do draft)');
+  }
+
+  /**
+   * Configura os listeners WebSocket para atualizações de votação (LEGADO - manter para compatibilidade)
    */
   private setupVoteWebSocketListeners(): void {
+    // ✅ MANTIDO: Para compatibilidade, mas observables são a fonte principal agora
     if (this.voteWsSubscription) {
       this.voteWsSubscription.unsubscribe();
     }
 
-    // ✅ NOVO: Escutar eventos customizados do app.ts
+    // ✅ NOVO: Escutar eventos customizados do app.ts (fallback)
     document.addEventListener('matchVoteProgress', this.handleVoteProgressEvent);
     document.addEventListener('matchVoteUpdate', this.handleVoteUpdateEvent);
 
@@ -2449,7 +2496,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       }
     });
 
-    console.log('🔌 [GameInProgress] WebSocket listeners de votação configurados');
+    console.log('🔌 [GameInProgress] WebSocket listeners de votação configurados (legado)');
   }
 
   /**

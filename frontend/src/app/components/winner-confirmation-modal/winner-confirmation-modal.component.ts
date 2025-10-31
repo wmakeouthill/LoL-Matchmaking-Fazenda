@@ -1,5 +1,6 @@
 import { Component, EventEmitter, Input, OnInit, OnDestroy, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { HttpClient } from '@angular/common/http';
 import { Subscription, firstValueFrom } from 'rxjs';
 import { ApiService } from '../../services/api';
 import { getChampionKeyById } from '../../utils/champion-data';
@@ -68,7 +69,15 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
   votedCount: number = 0;
   totalPlayers: number = 10;
 
-  constructor(private apiService: ApiService) { }
+  // ✅ NOVO: baseUrl para HTTP POST direto (mesma técnica do draft)
+  private readonly baseUrl: string;
+
+  constructor(
+    private apiService: ApiService,
+    private readonly http: HttpClient
+  ) {
+    this.baseUrl = this.apiService.getBaseUrl();
+  }
 
   ngOnInit() {
     this.processMatches();
@@ -449,15 +458,53 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
     console.log('🔍 [DEBUG 10/10] lcuGameId:', lcuGameId);
 
     try {
-      console.log('🗳️ [WinnerModal] >>> CHAMANDO voteForMatch() <<<');
+      // ✅ PADRONIZAÇÃO: Usar HTTP POST direto (mesma técnica do draft pick/ban e draft confirmation)
+      console.log('🗳️ [WinnerModal] >>> ENVIANDO VOTO VIA HTTP POST DIRETO <<<');
       console.log('🗳️ [WinnerModal] Parametros:', {
         matchId: this.matchId,
-        lcuGameId: lcuGameId
+        lcuGameId: lcuGameId,
+        currentPlayer: this.currentPlayer
       });
 
-      // Enviar voto ao backend
-      const voteResponse = await firstValueFrom(this.apiService.voteForMatch(this.matchId, lcuGameId));
-      console.log('✅ [WinnerModal] <<< voteForMatch() RETORNOU <<<');
+      // ✅ MESMA TÉCNICA DO DRAFT: Construir summonerName do currentPlayer (prioridade igual ao draft)
+      let summonerName = '';
+
+      // Prioridade 1: gameName#tagLine (formato completo com tag, usado no backend)
+      if (this.currentPlayer?.gameName && this.currentPlayer?.tagLine) {
+        summonerName = `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`;
+        console.log('🎯 [WinnerModal] Usando gameName#tagLine:', summonerName);
+      } else if (this.currentPlayer?.displayName) {
+        // Prioridade 2: displayName (pode incluir tag)
+        summonerName = this.currentPlayer.displayName;
+        console.log('🎯 [WinnerModal] Usando displayName:', summonerName);
+      } else if (this.currentPlayer?.summonerName) {
+        // Prioridade 3: summonerName (pode não ter tag)
+        summonerName = this.currentPlayer.summonerName;
+        console.log('🎯 [WinnerModal] Usando summonerName:', summonerName);
+      }
+
+      if (!summonerName) {
+        console.error('❌ [WinnerModal] Não foi possível identificar summonerName do currentPlayer');
+        alert('Erro: Não foi possível identificar o jogador. Tente novamente.');
+        return;
+      }
+
+      // ✅ HTTP POST DIRETO (igual ao draft pick/ban e draft confirmation)
+      const url = `${this.baseUrl}/match/${this.matchId}/vote`;
+      const body = {
+        summonerName: summonerName,
+        lcuGameId: lcuGameId
+      };
+
+      console.log('📡 [WinnerModal] ENVIANDO HTTP POST:', { url, body });
+
+      const voteResponse: any = await firstValueFrom(
+        this.http.post(url, body, {
+          headers: this.apiService.getAuthenticatedHeaders()
+        })
+      );
+
+      console.log('✅ [WinnerModal] <<< HTTP POST RETORNOU <<<');
       this.myVotedGameId = lcuGameId;
 
       console.log('✅ [WinnerModal] Voto registrado para LCU game:', lcuGameId);

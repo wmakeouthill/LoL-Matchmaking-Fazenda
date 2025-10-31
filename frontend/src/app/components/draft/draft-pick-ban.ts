@@ -483,16 +483,48 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
             hasPhases: !!(data.phases || data.actions)
           });
 
-          // ✅ Atualizar session completo com ações
+          // ✅ Atualizar session completo com ações (CRIAR NOVA REFERÊNCIA para OnPush)
+          // ✅ CRÍTICO: Criar nova referência completa para que o modal de confirmação detecte mudanças
           this.session = {
             ...this.session,
+            id: data.id || this.session.id,
+            matchId: data.matchId || this.session.matchId,
+            phase: data.phase || this.session.phase,
             phases: data.phases || data.actions || this.session.phases,
             actions: data.phases || data.actions || this.session.actions,
             currentAction: data.currentAction !== undefined ? data.currentAction : this.session.currentAction,
             currentIndex: data.currentIndex !== undefined ? data.currentIndex : this.session.currentIndex,
             currentPlayer: data.currentPlayer || this.session.currentPlayer,
-            teams: data.teams || this.session.teams
+            teams: data.teams ? { ...data.teams } : this.session.teams, // ✅ NOVA REFERÊNCIA para teams também
+            blueTeam: data.blueTeam || this.session.blueTeam,
+            redTeam: data.redTeam || this.session.redTeam
           };
+          
+          // ✅ CRÍTICO: Se teams foi atualizado, criar nova referência para arrays também
+          if (data.teams) {
+            if (data.teams.blue) {
+              this.session.teams = {
+                ...this.session.teams,
+                blue: {
+                  ...data.teams.blue,
+                  players: data.teams.blue.players ? [...data.teams.blue.players] : [],
+                  allBans: data.teams.blue.allBans ? [...data.teams.blue.allBans] : [],
+                  allPicks: data.teams.blue.allPicks ? [...data.teams.blue.allPicks] : []
+                }
+              };
+            }
+            if (data.teams.red) {
+              this.session.teams = {
+                ...this.session.teams,
+                red: {
+                  ...data.teams.red,
+                  players: data.teams.red.players ? [...data.teams.red.players] : [],
+                  allBans: data.teams.red.allBans ? [...data.teams.red.allBans] : [],
+                  allPicks: data.teams.red.allPicks ? [...data.teams.red.allPicks] : []
+                }
+              };
+            }
+          }
 
           console.log('✅ [draftUpdated$] Session atualizado:', {
             phases: this.session.phases?.length || 0,

@@ -1,9 +1,10 @@
-import { Component, Input, Output, EventEmitter, OnChanges, SimpleChanges, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnChanges, OnDestroy, SimpleChanges, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom, Subscription } from 'rxjs';
 import { ChampionService } from '../../services/champion.service';
 import { ApiService } from '../../services/api';
+import { ElectronEventsService } from '../../services/electron-events.service';
 
 // ✅ DESABILITADO: Salvamento de logs em arquivo (por solicitação do usuário)
 function logConfirmationModal(...args: any[]) {
@@ -23,6 +24,7 @@ interface PickBanPhase {
 
 interface CustomPickBanSession {
   id: string;
+  matchId?: number | string; // ✅ NOVO: matchId opcional (pode vir do backend)
   phase: 'bans' | 'picks' | 'completed';
   currentAction: number;
   extendedTime: number;
@@ -78,7 +80,7 @@ interface TeamSlot {
   styleUrl: './draft-confirmation-modal.scss',
   changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class DraftConfirmationModalComponent implements OnChanges {
+export class DraftConfirmationModalComponent implements OnChanges, OnDestroy {
   @Input() session: CustomPickBanSession | null = null;
   @Input() currentPlayer: any = null;
   @Input() isVisible: boolean = false;
@@ -100,6 +102,9 @@ export class DraftConfirmationModalComponent implements OnChanges {
   // ✅ NOVO: WebSocket subscription para atualizações em tempo real
   private wsSubscription?: Subscription;
 
+  // ✅ NOVO: Array para gerenciar subscrições de observables (mesma técnica do draft)
+  private subscriptions: Subscription[] = [];
+
   // PROPRIEDADES PARA CACHE
   private _cachedBannedanys: any[] | null = null;
   private _cachedBlueTeamPicks: any[] | null = null;
@@ -116,9 +121,17 @@ export class DraftConfirmationModalComponent implements OnChanges {
     private readonly championService: ChampionService,
     private readonly http: HttpClient,
     private readonly apiService: ApiService,
-    private readonly cdr: ChangeDetectorRef
+    private readonly cdr: ChangeDetectorRef,
+    private electronEvents: ElectronEventsService
   ) {
     this.baseUrl = this.apiService.getBaseUrl();
+  }
+
+  // ✅ NOVO: Cleanup de subscrições (OnDestroy necessário para limpar subscrições)
+  ngOnDestroy(): void {
+    this.subscriptions.forEach(sub => sub.unsubscribe());
+    this.subscriptions = [];
+    this.cleanupWebSocketListeners();
   }
 
   // ✅ NOVO: Buscar campeão no cache pelo ID
@@ -178,8 +191,10 @@ export class DraftConfirmationModalComponent implements OnChanges {
       this.identifyCurrentUser();
       this.initializeConfirmationStatuses(); // ✅ NOVO: Inicializar status de confirmação
       this.setupWebSocketListeners(); // ✅ NOVO: Configurar listeners WebSocket
+      this.setupObservableListeners(); // ✅ NOVO: Configurar observables (mesma técnica do draft)
     } else {
       this.cleanupWebSocketListeners(); // ✅ NOVO: Limpar listeners quando modal fecha
+      // Subscrições são limpas no ngOnDestroy
     }
 
     // ✅ CRÍTICO: Atualizar dados de confirmação quando confirmationData mudar
@@ -188,14 +203,14 @@ export class DraftConfirmationModalComponent implements OnChanges {
       if (newData) {
         this.confirmedCount = newData.confirmedCount || newData.confirmations?.length || 0;
         this.totalPlayers = newData.totalPlayers || 10;
-        
+
         console.log('📊 [CONFIRMATION-MODAL] confirmationData atualizado:', {
           confirmedCount: this.confirmedCount,
           totalPlayers: this.totalPlayers,
           allConfirmed: newData.allConfirmed,
           confirmations: newData.confirmations
         });
-        
+
         // ✅ Forçar detecção de mudanças (OnPush requer)
         this.cdr.markForCheck();
         this.cdr.detectChanges();
@@ -218,6 +233,12 @@ export class DraftConfirmationModalComponent implements OnChanges {
         newSession: changes['session']?.currentValue ? 'presente' : 'ausente',
         newVisibility: changes['isVisible']?.currentValue
       });
+
+      // ✅ CRÍTICO: Invalidar cache quando session muda (para refletir picks editados)
+      if (changes['session']) {
+        console.log('🔄 [CONFIRMATION-MODAL] Session mudou - invalidando cache de picks/bans');
+        this.invalidateCache();
+      }
 
       // ✅ LOG DETALHADO: Mostrar estrutura teams recebida do backend
       if (changes['session']?.currentValue) {
@@ -334,12 +355,12 @@ export class DraftConfirmationModalComponent implements OnChanges {
 
     // ✅ CORREÇÃO: confirmations é um array de strings (nomes de jogadores)
     const playerId = this.getPlayerIdentifier(player);
-    const confirmationsArray = Array.isArray(this.confirmationData.confirmations) 
-      ? this.confirmationData.confirmations 
+    const confirmationsArray = Array.isArray(this.confirmationData.confirmations)
+      ? this.confirmationData.confirmations
       : [];
-    
+
     // ✅ Verificar se o jogador está no array de confirmados (comparação case-insensitive)
-    return confirmationsArray.some((confirmedPlayer: string) => 
+    return confirmationsArray.some((confirmedPlayer: string) =>
       confirmedPlayer?.toLowerCase().trim() === playerId.toLowerCase().trim()
     );
   }
@@ -1500,15 +1521,15 @@ export class DraftConfirmationModalComponent implements OnChanges {
     // ✅ PRIORIDADE 1: Verificar em confirmationData.confirmations (fonte mais atualizada)
     if (this.confirmationData?.confirmations && Array.isArray(this.confirmationData.confirmations)) {
       const normalizedSummonerName = summonerName?.toLowerCase().trim();
-      const isConfirmed = this.confirmationData.confirmations.some((confirmedPlayer: string) => 
+      const isConfirmed = this.confirmationData.confirmations.some((confirmedPlayer: string) =>
         confirmedPlayer?.toLowerCase().trim() === normalizedSummonerName
       );
-      
+
       if (isConfirmed) {
         return 'confirmed';
       }
     }
-    
+
     // ✅ FALLBACK: Tentar buscar no session (menos confiável)
     const allPlayers = [
       ...(this.session?.blueTeam || []),
@@ -1519,11 +1540,11 @@ export class DraftConfirmationModalComponent implements OnChanges {
       const pName = p.summonerName || p.gameName || p.name || '';
       return pName.toLowerCase().trim() === summonerName.toLowerCase().trim();
     });
-    
+
     if (player?.acceptanceStatus) {
       return player.acceptanceStatus;
     }
-    
+
     return 'pending';
   }
 
@@ -1563,7 +1584,7 @@ export class DraftConfirmationModalComponent implements OnChanges {
         total: this.confirmationData.totalPlayers || 10
       };
     }
-    
+
     // ✅ FALLBACK: Usar valores internos atualizados
     if (this.confirmedCount > 0 || this.totalPlayers > 0) {
       return {
@@ -1607,7 +1628,7 @@ export class DraftConfirmationModalComponent implements OnChanges {
     const count = this.getConfirmationCount();
     if (count.total === 0) return 0;
     const progress = Math.round((count.confirmed / count.total) * 100);
-    
+
     // ✅ LOG para debug
     console.log('📊 [getConfirmationProgress]', {
       confirmed: count.confirmed,
@@ -1615,14 +1636,73 @@ export class DraftConfirmationModalComponent implements OnChanges {
       progress: progress + '%',
       hasConfirmationData: !!this.confirmationData
     });
-    
+
     return progress;
   }
 
   // ✅ NOVO: Métodos WebSocket para atualizações em tempo real
 
   /**
-   * Configura os listeners WebSocket para atualizações em tempo real
+   * ✅ NOVO: Configura observables do ElectronEventsService (mesma técnica do draft)
+   */
+  private setupObservableListeners(): void {
+    // ✅ Listener para draft_updated (quando picks são editados)
+    this.subscriptions.push(
+      this.electronEvents.draftUpdated$.subscribe((data: any) => {
+        // ✅ CORREÇÃO: Verificar matchId de múltiplas formas (session.id pode não existir)
+        const sessionMatchId = this.session?.id || this.session?.matchId;
+        const dataMatchId = data?.matchId || data?.id;
+
+        if (data && dataMatchId && sessionMatchId && String(dataMatchId) === String(sessionMatchId)) {
+          console.log('🔄 [CONFIRMATION-MODAL] draft_updated recebido - picks podem ter mudado!', {
+            matchId: dataMatchId,
+            sessionMatchId: sessionMatchId,
+            hasPhases: !!(data.phases || data.actions),
+            hasTeams: !!data.teams,
+            sessionId: this.session?.id
+          });
+
+          // ✅ CRÍTICO: Invalidar cache imediatamente quando recebe draft_updated
+          // Isso força o modal a recalcular picks/bans com os dados atualizados
+          this.invalidateCache();
+
+          // ✅ CRÍTICO: Forçar detecção de mudanças (OnPush requer)
+          this.cdr.markForCheck();
+          this.cdr.detectChanges();
+
+          console.log('✅ [CONFIRMATION-MODAL] Cache invalidado após draft_updated');
+        } else {
+          console.log('⚠️ [CONFIRMATION-MODAL] draft_updated ignorado - matchId não confere:', {
+            dataMatchId: dataMatchId,
+            sessionMatchId: sessionMatchId,
+            sessionId: this.session?.id,
+            hasSession: !!this.session
+          });
+        }
+      })
+    );
+
+    // ✅ Listener para draft_confirmation_update (progresso de confirmação)
+    this.subscriptions.push(
+      this.electronEvents.draftConfirmationUpdate$.subscribe((data: any) => {
+        // ✅ CORREÇÃO: Verificar matchId de múltiplas formas
+        const sessionMatchId = this.session?.id || this.session?.matchId;
+        const dataMatchId = data?.matchId || data?.id;
+
+        if (data && dataMatchId && sessionMatchId && String(dataMatchId) === String(sessionMatchId)) {
+          console.log('📊 [CONFIRMATION-MODAL] draft_confirmation_update recebido via Observable!', data);
+          this.handleConfirmationProgress(data);
+          this.cdr.markForCheck();
+          this.cdr.detectChanges();
+        }
+      })
+    );
+
+    console.log('✅ [CONFIRMATION-MODAL] Observables configurados (mesma técnica do draft)');
+  }
+
+  /**
+   * Configura os listeners WebSocket para atualizações em tempo real (LEGADO - manter para compatibilidade)
    */
   private setupWebSocketListeners(): void {
     if (this.wsSubscription) {
@@ -1716,6 +1796,8 @@ export class DraftConfirmationModalComponent implements OnChanges {
 
       // ✅ NOVO: Forçar detecção de mudanças
       this.cdr.markForCheck();
+      this.cdr.detectChanges(); // ✅ CRÍTICO: Forçar detecção imediata (OnPush requer)
+
       setTimeout(() => {
         console.log(`🔄 [ConfirmationModal] Re-check progresso: ${this.getConfirmationProgress()}%`);
         console.log(`🔄 [ConfirmationModal] Re-check contagem: ${this.getConfirmationCount().confirmed}/${this.getConfirmationCount().total}`);
