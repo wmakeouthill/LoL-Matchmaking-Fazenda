@@ -1286,51 +1286,24 @@ function startWebSocketGateway(backendBase) {
           // ✅ PROATIVO: Enviar identificação LCU imediatamente
           await sendProactiveIdentification(json.reason);
         }
-        // ✅ NOVO: Handler para entrada na fila (detectar via frontend)
+        // ✅ REMOVIDO: Reidentificação ao entrar na fila é DESNECESSÁRIA
+        // A sessão já deve estar ativa - o backend tem o customSessionId
         else if (json.type === "queue_entry_requested") {
           safeLog(
-            "🔗 [Player-Sessions] [FRONTEND→ELECTRON] Entrada na fila solicitada - enviando identificação proativa"
+            "🔗 [Player-Sessions] [FRONTEND→ELECTRON] Entrada na fila detectada (reidentificação NÃO necessária)"
           );
-
-          // ✅ PROATIVO: Enviar identificação LCU antes do backend solicitar
-          await sendProactiveIdentification("queue_entry_proactive");
+          // ❌ REMOVIDO: sendProactiveIdentification("queue_entry_proactive");
+          // Motivo: Se a sessão WebSocket está ativa, o backend já tem todos os dados
         }
-        // ✅ NOVO: Handler para solicitação de verificação de identidade (LÓGICA CORRETA)
+        // ❌ REMOVIDO: Backend NÃO DEVE solicitar identificação
+        // Electron se identifica PROATIVAMENTE ao conectar e ao reconectar
         else if (json.type === "request_identity_verification") {
           safeLog(
-            "🔗 [Player-Sessions] [BACKEND→ELECTRON] Solicitação de verificação de identidade recebida"
+            "⚠️ [Player-Sessions] [ELECTRON] Evento DEPRECIADO: request_identity_verification - IGNORANDO"
           );
-
-          // ✅ CORREÇÃO: Extrair dados corretamente (pode estar em json.data ou json)
-          const data = json.data || json;
-          const summonerName = data.summonerName;
-          const reason = data.reason;
-          const redisKey = data.redisKey;
-
           safeLog(
-            `🔗 [Player-Sessions] [BACKEND→ELECTRON] Summoner solicitado: ${summonerName}`
+            "⚠️ Backend NÃO DEVE solicitar identificação - Electron gerencia proativamente"
           );
-          safeLog(`🔗 [Player-Sessions] [BACKEND→ELECTRON] Motivo: ${reason}`);
-          safeLog(
-            `🔗 [Player-Sessions] [BACKEND→ELECTRON] Redis Key: ${redisKey}`
-          );
-
-          // ✅ VERIFICAR: Se a solicitação é para este jogador
-          const isForThisPlayer = await verifyIfRequestIsForThisPlayer(
-            summonerName
-          );
-
-          if (isForThisPlayer) {
-            safeLog(
-              "✅ [Player-Sessions] [ELECTRON] Solicitação é para este jogador - enviando identificação"
-            );
-            // ✅ PROATIVO: Enviar identificação LCU imediatamente
-            await sendProactiveIdentification("identity_verification_request");
-          } else {
-            safeLog(
-              "🔕 [Player-Sessions] [ELECTRON] Solicitação NÃO é para este jogador - ignorando"
-            );
-          }
         }
         // ✅ NOVO: Handler para match_found (CRÍTICO PARA DEBUG)
         else if (json.type === "match_found") {
@@ -1421,38 +1394,28 @@ function startWebSocketGateway(backendBase) {
             json.data
           );
         }
-        // ✅ DEPRECIADO: Mantido para compatibilidade
+        // ❌ REMOVIDO: queue_entry_request (lógica incorreta)
         else if (json.type === "queue_entry_request") {
           safeLog(
-            "🔗 [Player-Sessions] [BACKEND→ELECTRON] Solicitação direta de entrada na fila recebida via Redis (DEPRECIADO)"
+            "⚠️ [Player-Sessions] [ELECTRON] Evento DEPRECIADO: queue_entry_request - IGNORANDO"
           );
-          safeLog(
-            `🔗 [Player-Sessions] [BACKEND→ELECTRON] Summoner: ${json.summonerName}`
-          );
-
-          // ✅ VERIFICAR: Se a solicitação é para este jogador
-          const isForThisPlayer = await verifyIfRequestIsForThisPlayer(
-            json.summonerName
-          );
-
-          if (isForThisPlayer) {
-            safeLog(
-              "✅ [Player-Sessions] [ELECTRON] Solicitação é para este jogador - enviando identificação"
-            );
-            await sendProactiveIdentification("backend_direct_request_redis");
-          } else {
-            safeLog(
-              "🔕 [Player-Sessions] [ELECTRON] Solicitação NÃO é para este jogador - ignorando"
-            );
-          }
         }
         // ✅ NOVO: Monitoramento proativo - qualquer mensagem que mencione summoner atual
         else {
           // ✅ CORRIGIDO: Não processar mensagens de confirmação para evitar loop infinito
-          if (
-            json.type !== "electron_identified" &&
-            json.type !== "player_identified"
-          ) {
+          // ✅ CRÍTICO: Não reidentificar em resposta a eventos que já são consequência da identificação
+          const skipReidentificationEvents = [
+            "electron_identified",
+            "player_identified",
+            "player_session_updated",  // ← CAUSA LOOP
+            "session_sync_confirmed",  // ← CAUSA LOOP
+            "draft_update",            // ← Evento de timer, não requer reidentificação
+            "draft_updated",           // ← Evento de draft, não requer reidentificação
+            "draft_starting",          // ← Evento de draft, não requer reidentificação
+            "draft_started",           // ← Evento de draft, não requer reidentificação
+          ];
+          
+          if (!skipReidentificationEvents.includes(json.type)) {
             // Verificar se a mensagem menciona o summoner atual e revincular
             checkAndRebindOnSummonerEvent(json.type || "unknown", json);
           }
@@ -1540,9 +1503,25 @@ let discordStatus = {
   channelName: null,
 };
 
-// ✅ NOVO: Função proativa para enviar identificação LCU
+// ✅ NOVO: Variável para controlar cooldown de reidentificação
+let lastIdentificationTime = 0;
+const IDENTIFICATION_COOLDOWN_MS = 5000; // 5 segundos entre reidentificações
+
+// ✅ NOVO: Função proativa para enviar identificação LCU com cooldown
 async function sendProactiveIdentification(reason) {
   try {
+    // ✅ CRÍTICO: Verificar cooldown para evitar reidentificações excessivas
+    const now = Date.now();
+    const timeSinceLastIdentification = now - lastIdentificationTime;
+    
+    if (timeSinceLastIdentification < IDENTIFICATION_COOLDOWN_MS) {
+      const remainingCooldown = Math.ceil((IDENTIFICATION_COOLDOWN_MS - timeSinceLastIdentification) / 1000);
+      safeLog(
+        `⏳ [Player-Sessions] [ELECTRON] Reidentificação bloqueada por cooldown (${remainingCooldown}s restantes). Motivo ignorado: ${reason}`
+      );
+      return; // Bloquear reidentificação
+    }
+    
     safeLog(
       "🔗 [Player-Sessions] [ELECTRON] Enviando identificação proativa (motivo: " +
         reason +
@@ -1551,6 +1530,7 @@ async function sendProactiveIdentification(reason) {
 
     const lockfileInfo = readLockfileInfo();
     if (lockfileInfo) {
+      lastIdentificationTime = now; // Atualizar timestamp ANTES de enviar
       await identifyPlayerToBackend(lockfileInfo);
       safeLog(
         "✅ [Player-Sessions] [ELECTRON] Identificação proativa enviada com sucesso"

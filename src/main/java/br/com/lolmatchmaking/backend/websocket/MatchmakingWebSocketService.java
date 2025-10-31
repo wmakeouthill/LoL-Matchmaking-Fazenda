@@ -1975,9 +1975,18 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         requestIdentityFromAllElectrons(summonerName, reason, requestData);
     }
 
-    // ✅ NOVO: Confirmação periódica de identidade DINÂMICA baseada no estado
-    @Scheduled(fixedRate = 30000) // 30 segundos (verifica estado de todos)
-    public void requestIdentityConfirmation() {
+    // ❌ DESABILITADO: Confirmação periódica de identidade é DESNECESSÁRIA
+    // Electron se identifica PROATIVAMENTE ao conectar e ao reconectar
+    // Backend NÃO DEVE solicitar identificação periodicamente
+    // @Scheduled(fixedRate = 30000) // DESABILITADO - loop desnecessário
+    public void requestIdentityConfirmation_DEPRECATED_DO_NOT_USE() {
+        // ❌ MÉTODO DEPRECIADO E DESABILITADO
+        // Mantido apenas para referência histórica
+        // Electron gerencia sua própria identificação proativamente
+        log.warn("⚠️ [WebSocket] requestIdentityConfirmation_DEPRECATED foi chamado (NÃO DEVERIA!)");
+        return;
+        
+        /* CÓDIGO ORIGINAL COMENTADO:
         log.debug("🔍 [WebSocket] Solicitando confirmação de identidade...");
 
         try {
@@ -1996,48 +2005,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                 long lastConfirmation = (Long) info.getOrDefault("lastIdentityConfirmation", 0L);
                 long currentTime = System.currentTimeMillis();
                 long timeSinceLastConfirmation = currentTime - lastConfirmation;
-
-                // ✅ CONFIRMAÇÃO DINÂMICA baseada no estado
-                long requiredInterval = getRequiredConfirmationInterval(summonerName);
-
-                if (timeSinceLastConfirmation < requiredInterval) {
-                    continue; // Ainda não é hora de confirmar
-                }
-
-                // ✅ SOLICITAR confirmação
-                String requestId = UUID.randomUUID().toString();
-
-                Map<String, Object> request = Map.of(
-                        "type", "confirm_identity",
-                        "id", requestId,
-                        "expectedSummoner", summonerName,
-                        "timestamp", currentTime);
-
-                // ✅ CORREÇÃO: NÃO armazenar request pendente no Redis - DESNECESSÁRIO!
-                // O sessionId já está disponível localmente e as informações do jogador
-                // já estão nas chaves centralizadas (ws:client_info:{sessionId})
-
-                // Enviar via WebSocket
-                // ✅ CRÍTICO: Converter customSessionId → randomSessionId se necessário
-                String actualSessionId = getRandomSessionId(sessionId);
-                WebSocketSession session = sessions.get(actualSessionId);
-                if (session != null && session.isOpen()) {
-                    sendMessage(actualSessionId, "confirm_identity", request);
-                    log.debug("🔍 [WebSocket] Confirmação solicitada: {} (session: {}) - intervalo: {}ms",
-                            summonerName, sessionId, requiredInterval);
-                } else {
-                    // Sessão não existe mais, limpar Redis
-                    redisWSSession.removeSession(sessionId);
-                    log.debug("🧹 [WebSocket] Sessão removida (não existe): {}", sessionId);
-                }
-            }
-
-            log.debug("✅ [WebSocket] Verificação de confirmação concluída para {} sessões",
-                    allClientInfo.size());
-
-        } catch (Exception e) {
-            log.error("❌ [WebSocket] Erro ao solicitar confirmação de identidade", e);
-        }
+        */
     }
 
     /**

@@ -139,28 +139,23 @@ public class QueueController {
                                 "Não é possível entrar na fila. Verifique se o LCU está conectado, o Discord bot está ativo e você está no canal monitorado"));
             }
 
-            // ✅ NOVO: Enviar diretamente para Electron via WebSocket (COMUNICAÇÃO DIRETA)
-            log.info("🔗 [Player-Sessions] [BACKEND] Enviando solicitação direta para Electron via WebSocket...");
-            // ✅ CORRIGIDO: Usar apenas Redis (sem HashMap local)
-            // Enviar dados via Redis para comunicação segura e distribuída
-            webSocketService.sendDirectToElectronViaRedis("queue_entry_request", request.getSummonerName(),
-                    "queue_entry", request);
-
-            // ✅ NOVO: Aguardar vinculação (Electron proativo responde)
-            boolean sessionBound = waitForSessionBinding(request.getSummonerName(), 3000); // 3 segundos timeout
-
-            if (!sessionBound) {
-                log.error("❌ [Player-Sessions] [BACKEND] Electron não respondeu à solicitação direta para {}",
-                        request.getSummonerName());
-                return ResponseEntity.badRequest()
-                        .body(Map.of("success", false, "error",
-                                "Electron não respondeu. Verifique se o Electron está conectado e o LCU está ativo."));
-            }
-
-            // ✅ NOVO: Obter informações da sessão Electron vinculada
+            // ✅ CORREÇÃO: NÃO solicitar identificação - Electron deve estar PROATIVAMENTE identificado
+            // Backend apenas VERIFICA se a sessão existe (Electron já se identificou ao conectar)
+            log.info("🔍 [QueueController] Verificando sessão existente para {}...", request.getSummonerName());
+            
+            // ✅ NOVO: Obter informações da sessão Electron vinculada (que já deve existir)
             String sessionId = getSessionIdForPlayer(request.getSummonerName());
             String puuid = getPuuidForPlayer(request.getSummonerName());
             Map<String, Object> lcuData = getLcuDataForPlayer(request.getSummonerName());
+            
+            // Se sessão não existe, Electron não está conectado/identificado
+            if (sessionId == null || puuid == null) {
+                log.error("❌ [QueueController] Sessão não encontrada para {} - Electron não está identificado",
+                        request.getSummonerName());
+                return ResponseEntity.badRequest()
+                        .body(Map.of("success", false, "error",
+                                "Sessão não encontrada. Certifique-se de que o Electron está conectado e o LCU está ativo."));
+            }
 
             log.info(
                     "✅ [Player-Sessions] [BACKEND] Electron respondeu e vinculação confirmada para {} (sessionId: {}, puuid: {})",

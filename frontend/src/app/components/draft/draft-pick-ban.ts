@@ -1294,12 +1294,10 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       }
     };
 
-    console.log('🔍 [checkIfMyTurn] DEBUG COMPLETO:', debugInfo);
-    console.log('🔍 [checkIfMyTurn] Comparando:', {
-      currentPlayerIdentifiers,
-      turnPlayerIdentifiers,
-      sessionCurrentPlayer: this.session.currentPlayer
-    });
+    console.warn('🚨🚨🚨 [checkIfMyTurn] DEBUG COMPLETO:', debugInfo);
+    console.warn('🚨 [checkIfMyTurn] currentPlayerIdentifiers:', currentPlayerIdentifiers);
+    console.warn('🚨 [checkIfMyTurn] turnPlayerIdentifiers:', turnPlayerIdentifiers);
+    console.warn('🚨 [checkIfMyTurn] sessionCurrentPlayer:', this.session.currentPlayer);
     logDraft('🔄 [checkIfMyTurn] Verificando turno:', debugInfo);
     saveLogToRoot(`🔍 [checkIfMyTurn] Debug: ${JSON.stringify(debugInfo)}`);
 
@@ -1311,10 +1309,14 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       )
     );
 
+    console.warn(`🚨🚨🚨 [checkIfMyTurn] RESULTADO: isMyTurn = ${isMyTurn}`);
+
     if (isMyTurn) {
-      saveLogToRoot(`✅ [checkIfMyTurn] É minha vez! currentPlayerIdentifiers=${currentPlayerIdentifiers}, turnPlayerIdentifiers=${turnPlayerIdentifiers}`);
+      console.warn('✅✅✅ [checkIfMyTurn] É MINHA VEZ! Abrindo modal...');
+      saveLogToRoot(`✅ [checkIfMyTurn] É minha vez! currentPlayerIdentifiers=${JSON.stringify(currentPlayerIdentifiers)}, turnPlayerIdentifiers=${JSON.stringify(turnPlayerIdentifiers)}`);
     } else {
-      saveLogToRoot(`❌ [checkIfMyTurn] Não é minha vez. currentPlayerIdentifiers=${currentPlayerIdentifiers}, turnPlayerIdentifiers=${turnPlayerIdentifiers}`);
+      console.warn('❌❌❌ [checkIfMyTurn] NÃO É MINHA VEZ');
+      saveLogToRoot(`❌ [checkIfMyTurn] Não é minha vez. currentPlayerIdentifiers=${JSON.stringify(currentPlayerIdentifiers)}, turnPlayerIdentifiers=${JSON.stringify(turnPlayerIdentifiers)}`);
     }
 
     return isMyTurn;
