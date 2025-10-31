@@ -127,10 +127,10 @@ function checkReachable(u, timeout = 2000) {
 async function pickBackendUrl() {
   // CONFIGURAÇÃO DE REDE: Altere esta URL para o IP do servidor na rede
   // Para testes locais: 'http://localhost:8080/'
-  // Para rede local: 'http://192.168.1.4:8080/' (seu IP)
+  // Para rede local: 'http://192.168.1.15:8080/' (seu IP)
   // Para cloud: 'https://lol-matchmaking-368951732227.southamerica-east1.run.app/'
   // ✅ CORREÇÃO: URL correta do Cloud Run (nome do serviço é 'lol-matchmaking')
-  const HARDCODED_BACKEND_URL = "http://192.168.1.15:8080/";
+  const HARDCODED_BACKEND_URL = "http://localhost:8080/";
   const env = process.env.BACKEND_URL || "";
   const defaultBase = env || HARDCODED_BACKEND_URL;
   const baseNoSlash = defaultBase.replace(/\/+$/, "");
@@ -790,6 +790,10 @@ function startWebSocketGateway(backendBase) {
       safeLog("✅ [ELECTRON MAIN] WebSocket gateway conectado:", wsUrl);
       resetWebSocketReconnect(); // Reset tentativas de reconexão
       startWebSocketHeartbeat(); // Iniciar heartbeat
+
+      // ✅ NOVO: Iniciar monitores de sincronização e heartbeat
+      startSessionSyncMonitor(); // Monitor de sincronização (60s)
+      startHeartbeat(); // Heartbeat com dados atualizados (30s)
       // send a register/identify message
       const info = readLockfileInfo();
       const register = {
@@ -1184,6 +1188,20 @@ function startWebSocketGateway(backendBase) {
             );
           }
         }
+        // ✅ NOVO: Handler para confirmação de migração de sessão
+        else if (json.type === "session_migrated") {
+          safeLog(
+            `✅ [Electron] Backend confirmou migração de sessão: ${json.oldSessionId} → ${json.newSessionId}`
+          );
+          // Atualizar referência local se necessário
+          if (lastKnownCustomSessionId) {
+            safeLog(
+              `✅ [Electron] Sessão customizada ativa: ${lastKnownCustomSessionId}`
+            );
+          }
+        } else if (json.type === "session_migration_failed") {
+          safeLog(`❌ [Electron] Falha na migração de sessão: ${json.error}`);
+        }
         // ✅ NOVO: Handler para lista de sessões ativas
         else if (json.type === "active_sessions_list") {
           safeLog("📋 [Player-Sessions] ===== LISTA DE SESSÕES ATIVAS =====");
@@ -1392,6 +1410,17 @@ function startWebSocketGateway(backendBase) {
         } else if (json.type === "game_cancelled") {
           await handleGameCancelledEvent(json);
         }
+        // ✅ NOVO: Session sync status response
+        else if (json.type === "session_sync_status") {
+          handleSessionSyncStatus(json);
+        }
+        // ✅ NOVO: Session sync confirmed
+        else if (json.type === "session_sync_confirmed") {
+          safeLog(
+            "✅ [Session Sync] Backend confirmou sincronização:",
+            json.data
+          );
+        }
         // ✅ DEPRECIADO: Mantido para compatibilidade
         else if (json.type === "queue_entry_request") {
           safeLog(
@@ -1440,8 +1469,10 @@ function startWebSocketGateway(backendBase) {
         "reason:",
         reason && reason.toString()
       );
-      stopWebSocketHeartbeat(); // Parar heartbeat
-      stopIdentityMonitor(); // ✅ NOVO: Parar monitor de identidade
+      stopWebSocketHeartbeat(); // Parar heartbeat original
+      stopIdentityMonitor(); // Parar monitor de identidade
+      stopSessionSyncMonitor(); // ✅ NOVO: Parar monitor de sincronização
+      stopHeartbeat(); // ✅ NOVO: Parar heartbeat com dados
       wsClient = null;
       scheduleWebSocketReconnect(backendBase);
     });
@@ -1475,6 +1506,7 @@ const WS_HEARTBEAT_INTERVAL = 60000; // 60 segundos
 // ✅ NOVO: Variáveis para identificação automática
 let lastKnownPuuid = null;
 let lastKnownSummoner = null;
+let lastKnownCustomSessionId = null;
 let identityMonitorTimer = null;
 
 // ✅ NOVO: Variáveis para configuração personalizada do League
@@ -1834,12 +1866,25 @@ async function isDraftForThisPlayer(json, currentSummoner) {
   }
 
   const currentNormalized = currentSummoner.toLowerCase().trim();
+  safeLog(`🎮 [isDraftForThisPlayer] Buscando jogador: ${currentNormalized}`);
+  safeLog(`🎮 [isDraftForThisPlayer] JSON tem teams:`, !!json.teams);
+  safeLog(`🎮 [isDraftForThisPlayer] JSON tem team1:`, !!json.team1);
+  safeLog(`🎮 [isDraftForThisPlayer] JSON tem team2:`, !!json.team2);
 
   // ✅ PRIORIDADE 1: Verificar em teams.blue.players e teams.red.players
   if (json.teams) {
+    safeLog(
+      `🎮 [isDraftForThisPlayer] Teams structure:`,
+      Object.keys(json.teams)
+    );
     if (json.teams.blue && json.teams.blue.players) {
+      safeLog(
+        `🎮 [isDraftForThisPlayer] Blue players count:`,
+        json.teams.blue.players.length
+      );
       for (const player of json.teams.blue.players) {
         const playerName = player.summonerName || player.gameName;
+        safeLog(`🎮 [isDraftForThisPlayer] Checking player: ${playerName}`);
         if (
           playerName &&
           playerName.toLowerCase().trim() === currentNormalized
@@ -1852,8 +1897,13 @@ async function isDraftForThisPlayer(json, currentSummoner) {
       }
     }
     if (json.teams.red && json.teams.red.players) {
+      safeLog(
+        `🎮 [isDraftForThisPlayer] Red players count:`,
+        json.teams.red.players.length
+      );
       for (const player of json.teams.red.players) {
         const playerName = player.summonerName || player.gameName;
+        safeLog(`🎮 [isDraftForThisPlayer] Checking player: ${playerName}`);
         if (
           playerName &&
           playerName.toLowerCase().trim() === currentNormalized
@@ -1906,6 +1956,12 @@ async function handleDraftStartedEvent(json) {
     );
     safeLog("🎮 [draft-started] MatchId:", json.data?.matchId);
     safeLog("🎮 [draft-started] Timestamp:", json.timestamp);
+    safeLog("🎮 [draft-started] Type:", json.type);
+    safeLog("🎮 [draft-started] Has data:", !!json.data);
+    safeLog(
+      "🎮 [draft-started] Data keys:",
+      json.data ? Object.keys(json.data) : "NO DATA"
+    );
     safeLog("🎮 [draft-started] JSON completo:", JSON.stringify(json, null, 2));
 
     const currentSummoner = await getCurrentSummonerFromLCU();
@@ -1914,41 +1970,78 @@ async function handleDraftStartedEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
+    // ✅ CORREÇÃO: Os dados estão em json.data, mas também precisamos preservar matchId
+    safeLog("🔍 [draft-started] json.data existe?", !!json.data);
+    safeLog("🔍 [draft-started] json.data tem teams?", !!json.data?.teams);
+    safeLog(
+      "🔍 [draft-started] json.data keys:",
+      json.data ? Object.keys(json.data) : "NO DATA"
+    );
+
+    let draftData = json.data || json;
+    safeLog("🎮 [draft-started] draftData type:", typeof draftData);
+    safeLog("🎮 [draft-started] draftData tem teams:", !!draftData.teams);
+    safeLog("🎮 [draft-started] draftData.matchId:", draftData.matchId);
+    safeLog("🎮 [draft-started] json.matchId:", json.matchId);
+
+    // ✅ CORREÇÃO: Se matchId não está em draftData, buscar em json
+    if (!draftData.matchId && json.matchId) {
+      // Fazer cópia para não modificar json.data diretamente
+      draftData = { ...draftData, matchId: json.matchId };
+      safeLog("🎮 [draft-started] matchId adicionado do json:", json.matchId);
+    }
+
     // ✅ DIAGNÓSTICO: Verificar se há dados de times no JSON
-    if (json.team1) {
+    if (draftData.team1) {
       safeLog(
         "🎮 [draft-started] Team1 players:",
-        json.team1.map((p) => p.summonerName || p.gameName || p).join(", ")
+        draftData.team1.map((p) => p.summonerName || p.gameName || p).join(", ")
       );
     }
-    if (json.team2) {
+    if (draftData.team2) {
       safeLog(
         "🎮 [draft-started] Team2 players:",
-        json.team2.map((p) => p.summonerName || p.gameName || p).join(", ")
+        draftData.team2.map((p) => p.summonerName || p.gameName || p).join(", ")
       );
     }
-    if (json.teams) {
-      safeLog("🎮 [draft-started] Teams structure:", Object.keys(json.teams));
-      if (json.teams.blue && json.teams.blue.players) {
+    if (draftData.teams) {
+      safeLog(
+        "🎮 [draft-started] Teams structure:",
+        Object.keys(draftData.teams)
+      );
+      if (draftData.teams.blue && draftData.teams.blue.players) {
         safeLog(
           "🎮 [draft-started] Blue players:",
-          json.teams.blue.players
+          draftData.teams.blue.players
             .map((p) => p.summonerName || p.gameName)
             .join(", ")
         );
       }
-      if (json.teams.red && json.teams.red.players) {
+      if (draftData.teams.red && draftData.teams.red.players) {
         safeLog(
           "🎮 [draft-started] Red players:",
-          json.teams.red.players
+          draftData.teams.red.players
             .map((p) => p.summonerName || p.gameName)
             .join(", ")
         );
       }
     }
 
-    // ✅ CORREÇÃO: Usar função específica para draft
-    const isForThisPlayer = await isDraftForThisPlayer(json, currentSummoner);
+    // ✅ DIAGNÓSTICO CRÍTICO: Ver exatamente o que será passado para validação
+    safeLog(
+      "🔍 [draft-started] ANTES da validação - draftData tem teams?",
+      !!draftData.teams
+    );
+    safeLog(
+      "🔍 [draft-started] ANTES da validação - draftData keys:",
+      Object.keys(draftData)
+    );
+
+    // ✅ CORREÇÃO: Usar função específica para draft passando draftData
+    const isForThisPlayer = await isDraftForThisPlayer(
+      draftData,
+      currentSummoner
+    );
 
     if (!isForThisPlayer) {
       safeLog(
@@ -1963,12 +2056,55 @@ async function handleDraftStartedEvent(json) {
     );
 
     if (mainWindow && !mainWindow.isDestroyed()) {
+      // ✅ CORREÇÃO CRÍTICA: Converter teams.blue/teams.red para team1/team2
+      let frontendData = { ...draftData };
+
+      // Se o backend enviou teams.blue e teams.red, converter para team1 e team2
+      if (
+        frontendData.teams &&
+        (frontendData.teams.blue || frontendData.teams.red)
+      ) {
+        safeLog(
+          "🔄 [draft-started] Convertendo teams.blue/red para team1/team2"
+        );
+
+        frontendData.team1 =
+          frontendData.team1 || frontendData.teams.blue.players || [];
+        frontendData.team2 =
+          frontendData.team2 || frontendData.teams.red.players || [];
+
+        safeLog(
+          `🔄 [draft-started] Team1 length: ${frontendData.team1.length}`
+        );
+        safeLog(
+          `🔄 [draft-started] Team2 length: ${frontendData.team2.length}`
+        );
+
+        // ✅ CRÍTICO: Também passar a estrutura teams para compatibilidade
+        if (
+          !frontendData.teams ||
+          !frontendData.teams.blue ||
+          !frontendData.teams.red
+        ) {
+          frontendData.teams = {
+            blue: { players: frontendData.team1 },
+            red: { players: frontendData.team2 },
+          };
+        }
+      }
+
       // ✅ CORREÇÃO: Detectar tipo de evento e enviar o correto
       const eventType =
         json.type === "draft_starting" ? "draft-starting" : "draft-started";
-      mainWindow.webContents.send(eventType, json);
+      // ✅ CORREÇÃO: Enviar draftData completo (já com matchId)
+      mainWindow.webContents.send(eventType, frontendData);
       safeLog(
         `🎮 [draft-started] ✅ ${eventType} enviado para o frontend via IPC`
+      );
+      safeLog(
+        `🎮 [draft-started] FrontendData keys: ${Object.keys(frontendData).join(
+          ", "
+        )}`
       );
     } else {
       safeLog(
@@ -1989,17 +2125,29 @@ async function isGameInProgressForThisPlayer(json, currentSummoner) {
 
   const currentNormalized = currentSummoner.toLowerCase().trim();
 
-  // ✅ CORREÇÃO: Verificar estrutura game_started: data.gameData.team1/team2
+  // ✅ CORREÇÃO: Verificar diferentes estruturas de dados
   let team1, team2;
+
+  // Estrutura 1: json.data.gameData.team1/team2
   if (json.data && json.data.gameData) {
     team1 = json.data.gameData.team1;
     team2 = json.data.gameData.team2;
     safeLog("🔍 [game-in-progress] Usando estrutura data.gameData.team1/team2");
-  } else {
-    // ✅ FALLBACK: Estrutura direta team1/team2
+  }
+  // Estrutura 2: json.data.team1/team2 (nova estrutura)
+  else if (json.team1 || json.team2) {
     team1 = json.team1;
     team2 = json.team2;
     safeLog("🔍 [game-in-progress] Usando estrutura direta team1/team2");
+  }
+  // Estrutura 3: json.teams.blue/red.players
+  else if (json.teams && json.teams.blue && json.teams.red) {
+    // Converter teams para team1/team2
+    team1 = json.teams.blue.players || [];
+    team2 = json.teams.red.players || [];
+    safeLog("🔍 [game-in-progress] Usando estrutura teams.blue/red.players");
+  } else {
+    safeLog("⚠️ [game-in-progress] Nenhuma estrutura de times encontrada");
   }
 
   // ✅ PRIORIDADE 1: Verificar em team1 e team2
@@ -2272,13 +2420,31 @@ async function handleAcceptanceTimerEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
-    // ✅ Para acceptance_timer, sempre enviar para o jogador atual
-    // (o backend já filtra quem deve receber)
+    // ✅ CRÍTICO: VALIDAR se este evento é para o jogador atual via LCU
+    // CustomSessionId é imutável e baseado em gameName#tagLine do LCU
     if (!currentSummoner) {
       safeLog(
         "⏰ [acceptance-timer] ❌ Current summoner não disponível - ignorando"
       );
       return;
+    }
+
+    // ✅ NOVO: VALIDAR ownership via customSessionId
+    // Backend enviou este evento para um summonerName específico
+    // Verificar se corresponde ao nosso jogador atual do LCU
+    const backendTargetSummoner = json.targetSummoner || currentSummoner;
+
+    // Normalizar para comparação
+    const normalizedBackend = backendTargetSummoner.toLowerCase().trim();
+    const normalizedCurrent = currentSummoner.toLowerCase().trim();
+
+    if (normalizedBackend !== normalizedCurrent) {
+      safeLog(
+        "⏰ [acceptance-timer] ⚠️ Evento NÃO é para este jogador (ignorando)"
+      );
+      safeLog(`   Backend enviou para: ${backendTargetSummoner}`);
+      safeLog(`   Jogador atual (LCU): ${currentSummoner}`);
+      return; // ✅ IGNORAR - não é para este jogador
     }
 
     safeLog("⏰ [acceptance-timer] ✅ Acceptance_timer É para este jogador!");
@@ -2324,13 +2490,26 @@ async function handleAcceptanceProgressEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
-    // ✅ Para acceptance_progress, sempre enviar para o jogador atual
-    // (o backend já filtra quem deve receber)
+    // ✅ CRÍTICO: VALIDAR se este evento é para o jogador atual via LCU
     if (!currentSummoner) {
       safeLog(
         "📊 [acceptance-progress] ❌ Current summoner não disponível - ignorando"
       );
       return;
+    }
+
+    // ✅ NOVO: VALIDAR ownership via customSessionId
+    const backendTargetSummoner = json.targetSummoner || currentSummoner;
+    const normalizedBackend = backendTargetSummoner.toLowerCase().trim();
+    const normalizedCurrent = currentSummoner.toLowerCase().trim();
+
+    if (normalizedBackend !== normalizedCurrent) {
+      safeLog(
+        "📊 [acceptance-progress] ⚠️ Evento NÃO é para este jogador (ignorando)"
+      );
+      safeLog(`   Backend enviou para: ${backendTargetSummoner}`);
+      safeLog(`   Jogador atual (LCU): ${currentSummoner}`);
+      return; // ✅ IGNORAR
     }
 
     safeLog(
@@ -2539,47 +2718,8 @@ async function handleRestoreActiveMatchEvent(json) {
 }
 
 // ✅ DRAFT EVENT HANDLERS
-async function handleDraftStartedEvent(json) {
-  try {
-    safeLog(
-      "🎬 [draft-started] ===== DRAFT_STARTED RECEBIDO NO ELECTRON ====="
-    );
-    safeLog("🎬 [draft-started] MatchId:", json.matchId);
-    safeLog("🎬 [draft-started] Timestamp:", json.timestamp);
-
-    const currentSummoner = await getCurrentSummonerFromLCU();
-    safeLog(
-      "🎬 [draft-started] Current summoner:",
-      currentSummoner || "UNKNOWN"
-    );
-
-    const isForThisPlayer = await isMatchFoundForThisPlayer(
-      json,
-      currentSummoner
-    );
-
-    if (!isForThisPlayer) {
-      safeLog(
-        "🎬 [draft-started] ❌ Draft_started NÃO é para este jogador - ignorando"
-      );
-      return;
-    }
-
-    safeLog("🎬 [draft-started] ✅ Draft_started É para este jogador!");
-    safeLog(
-      "🎬 [draft-started] ================================================"
-    );
-
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("draft-started", json);
-      safeLog(
-        "🎬 [draft-started] ✅ Draft_started enviado para o frontend via IPC"
-      );
-    }
-  } catch (error) {
-    safeLog("❌ [draft-started] Erro ao processar draft_started:", error);
-  }
-}
+// ✅ REMOVIDO: Função handleDraftStartedEvent duplicada (versão antiga)
+// Usar a versão atualizada nas linhas 1934-2046
 
 async function handleDraftTimerEvent(json) {
   try {
@@ -2621,10 +2761,14 @@ async function handleDraftTimerEvent(json) {
 
 async function handleDraftUpdateEvent(json) {
   try {
-    safeLog("🔄 [draft-update] ===== DRAFT_UPDATE RECEBIDO NO ELECTRON =====");
-    safeLog("🔄 [draft-update] MatchId:", json.matchId);
-    safeLog("🔄 [draft-update] CurrentPlayer:", json.currentPlayer);
-    safeLog("🔄 [draft-update] ActionType:", json.actionType);
+    // ✅ CORREÇÃO CRÍTICA: Extrair dados de json.data
+    const draftData = json.data || json;
+
+    safeLog(
+      "🔄 [draft-update] ===== DRAFT_UPDATE (TIMER) RECEBIDO NO ELECTRON ====="
+    );
+    safeLog("🔄 [draft-update] MatchId:", draftData.matchId);
+    safeLog("🔄 [draft-update] TimeRemaining:", draftData.timeRemaining);
     safeLog("🔄 [draft-update] Timestamp:", json.timestamp);
 
     const currentSummoner = await getCurrentSummonerFromLCU();
@@ -2633,8 +2777,27 @@ async function handleDraftUpdateEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
-    // ✅ CORREÇÃO: Usar função específica para draft
-    const isForThisPlayer = await isDraftForThisPlayer(json, currentSummoner);
+    // ✅ CORREÇÃO: draft_update é apenas timer - validar por allowedSummoners ou targetSummoner
+    let isForThisPlayer = false;
+    if (
+      draftData.allowedSummoners &&
+      Array.isArray(draftData.allowedSummoners)
+    ) {
+      isForThisPlayer = draftData.allowedSummoners.some(
+        (player) =>
+          player.toLowerCase().trim() === currentSummoner.toLowerCase().trim()
+      );
+      safeLog(
+        `🔄 [draft-update] Validação por allowedSummoners: ${isForThisPlayer}`
+      );
+    } else if (json.targetSummoner) {
+      isForThisPlayer =
+        json.targetSummoner.toLowerCase().trim() ===
+        currentSummoner.toLowerCase().trim();
+      safeLog(
+        `🔄 [draft-update] Validação por targetSummoner: ${isForThisPlayer}`
+      );
+    }
 
     if (!isForThisPlayer) {
       safeLog(
@@ -2649,7 +2812,34 @@ async function handleDraftUpdateEvent(json) {
     );
 
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("draft-update", json);
+      // ✅ draftData já foi extraído no início
+      let frontendData = { ...draftData };
+
+      // ✅ CRÍTICO: Garantir que matchId seja preservado
+      if (!frontendData.matchId && json.matchId) {
+        frontendData.matchId = json.matchId;
+        safeLog("🔄 [draft-update] matchId adicionado do json:", json.matchId);
+      }
+
+      // Se o backend enviou teams.blue e teams.red, converter para team1 e team2
+      if (
+        frontendData.teams &&
+        (frontendData.teams.blue || frontendData.teams.red)
+      ) {
+        safeLog(
+          "🔄 [draft-update] Convertendo teams.blue/red para team1/team2"
+        );
+
+        frontendData.team1 =
+          frontendData.team1 || frontendData.teams.blue?.players || [];
+        frontendData.team2 =
+          frontendData.team2 || frontendData.teams.red?.players || [];
+
+        safeLog(`🔄 [draft-update] Team1 length: ${frontendData.team1.length}`);
+        safeLog(`🔄 [draft-update] Team2 length: ${frontendData.team2.length}`);
+      }
+
+      mainWindow.webContents.send("draft-update", frontendData);
       safeLog(
         "🔄 [draft-update] ✅ Draft_update enviado para o frontend via IPC"
       );
@@ -2661,12 +2851,19 @@ async function handleDraftUpdateEvent(json) {
 
 async function handleDraftUpdatedEvent(json) {
   try {
+    // ✅ CORREÇÃO CRÍTICA: Extrair dados de json.data
+    const draftData = json.data || json;
+
     safeLog(
       "✅ [draft-updated] ===== DRAFT_UPDATED RECEBIDO NO ELECTRON ====="
     );
-    safeLog("✅ [draft-updated] MatchId:", json.matchId);
-    safeLog("✅ [draft-updated] UpdatedBy:", json.updatedBy);
-    safeLog("✅ [draft-updated] ActionType:", json.actionType);
+    safeLog("✅ [draft-updated] MatchId:", draftData.matchId);
+    safeLog("✅ [draft-updated] CurrentPlayer:", draftData.currentPlayer);
+    safeLog(
+      "✅ [draft-updated] CurrentActionType:",
+      draftData.currentActionType
+    );
+    safeLog("✅ [draft-updated] CurrentAction:", draftData.currentAction);
     safeLog("✅ [draft-updated] Timestamp:", json.timestamp);
 
     const currentSummoner = await getCurrentSummonerFromLCU();
@@ -2675,8 +2872,11 @@ async function handleDraftUpdatedEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
-    // ✅ CORREÇÃO: Usar função específica para draft
-    const isForThisPlayer = await isDraftForThisPlayer(json, currentSummoner);
+    // ✅ CORREÇÃO: Passar draftData ao invés de json
+    const isForThisPlayer = await isDraftForThisPlayer(
+      draftData,
+      currentSummoner
+    );
 
     if (!isForThisPlayer) {
       safeLog(
@@ -2691,7 +2891,38 @@ async function handleDraftUpdatedEvent(json) {
     );
 
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("draft-updated", json);
+      // ✅ draftData já foi extraído no início
+      let frontendData = { ...draftData };
+
+      // ✅ CRÍTICO: Garantir que matchId seja preservado
+      if (!frontendData.matchId && json.matchId) {
+        frontendData.matchId = json.matchId;
+        safeLog("✅ [draft-updated] matchId adicionado do json:", json.matchId);
+      }
+
+      // Se o backend enviou teams.blue e teams.red, converter para team1 e team2
+      if (
+        frontendData.teams &&
+        (frontendData.teams.blue || frontendData.teams.red)
+      ) {
+        safeLog(
+          "🔄 [draft-updated] Convertendo teams.blue/red para team1/team2"
+        );
+
+        frontendData.team1 =
+          frontendData.team1 || frontendData.teams.blue?.players || [];
+        frontendData.team2 =
+          frontendData.team2 || frontendData.teams.red?.players || [];
+
+        safeLog(
+          `🔄 [draft-updated] Team1 length: ${frontendData.team1.length}`
+        );
+        safeLog(
+          `🔄 [draft-updated] Team2 length: ${frontendData.team2.length}`
+        );
+      }
+
+      mainWindow.webContents.send("draft-updated", frontendData);
       safeLog(
         "✅ [draft-updated] ✅ Draft_updated enviado para o frontend via IPC"
       );
@@ -2825,7 +3056,7 @@ async function handleDraftConfirmedEvent(json) {
 async function handleGameStartedEvent(json) {
   try {
     safeLog("🎮 [game-started] ===== GAME_STARTED RECEBIDO NO ELECTRON =====");
-    safeLog("🎮 [game-started] MatchId:", json.matchId);
+    safeLog("🎮 [game-started] MatchId:", json.data?.matchId || json.matchId);
     safeLog("🎮 [game-started] Timestamp:", json.timestamp);
 
     const currentSummoner = await getCurrentSummonerFromLCU();
@@ -2834,8 +3065,16 @@ async function handleGameStartedEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
+    // ✅ CORREÇÃO: Preservar estrutura de dados (igual ao draft)
+    const gameData = json.data || json;
+
+    // ✅ CORREÇÃO: Se matchId não está em gameData, buscar em json
+    if (!gameData.matchId && json.matchId) {
+      gameData.matchId = json.matchId;
+    }
+
     const isForThisPlayer = await isGameInProgressForThisPlayer(
-      json,
+      gameData,
       currentSummoner
     );
 
@@ -2852,7 +3091,8 @@ async function handleGameStartedEvent(json) {
     );
 
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("game-started", json);
+      // ✅ CORREÇÃO: Enviar gameData completo
+      mainWindow.webContents.send("game-started", gameData);
       safeLog(
         "🎮 [game-started] ✅ Game_started enviado para o frontend via IPC"
       );
@@ -3150,17 +3390,18 @@ async function handleMatchCancelledEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
-    // ✅ CORREÇÃO CRÍTICA: Passar json.data (não json) pois os teams estão em data
-    const isForThisPlayer = await isMatchFoundForThisPlayer(
-      json.data || json,
-      currentSummoner
-    );
+    // ✅ CRÍTICO: VALIDAR via targetSummoner (não usar isMatchFoundForThisPlayer que requer teams)
+    const backendTargetSummoner = json.targetSummoner || currentSummoner;
+    const normalizedBackend = backendTargetSummoner.toLowerCase().trim();
+    const normalizedCurrent = currentSummoner.toLowerCase().trim();
 
-    if (!isForThisPlayer) {
+    if (normalizedBackend !== normalizedCurrent) {
       safeLog(
-        "❌ [match-cancelled] ❌ Match_cancelled NÃO é para este jogador - ignorando"
+        "❌ [match-cancelled] ⚠️ Evento NÃO é para este jogador (ignorando)"
       );
-      return;
+      safeLog(`   Backend enviou para: ${backendTargetSummoner}`);
+      safeLog(`   Jogador atual (LCU): ${currentSummoner}`);
+      return; // ✅ IGNORAR
     }
 
     safeLog("❌ [match-cancelled] ✅ Match_cancelled É para este jogador!");
@@ -3421,10 +3662,19 @@ async function identifyPlayerToBackend(lockfileInfo) {
     // 3. Construir payload COMPLETO
     const fullName = `${summoner.gameName}#${summoner.tagLine}`;
 
+    // ✅ NOVO: Criar sessionId customizado baseado no summonerName#tag
+    const customSessionId = `player_${fullName
+      .replace("#", "_")
+      .replace(/[^a-zA-Z0-9_]/g, "_")
+      .toLowerCase()}`;
+
     const payload = {
       type: "electron_identify",
       source: "electron_main", // ✅ Fonte confiável!
       timestamp: Date.now(),
+
+      // ✅ CRÍTICO: SessionId customizado baseado no jogador real
+      customSessionId: customSessionId,
 
       // Dados do summoner
       summonerName: fullName,
@@ -3450,11 +3700,15 @@ async function identifyPlayerToBackend(lockfileInfo) {
         : null,
     };
 
-    // ✅ NOVO: LOG DETALHADO DA VINCULAÇÃO PLAYER-SESSÃO (ELECTRON → BACKEND)
+    // ✅ NOVO: LOG DETALHADO DA VINCULAÇÃO PLAYER-SESSÃO CUSTOMIZADA (ELECTRON → BACKEND)
     safeLog(
-      "🔗 [Player-Sessions] ===== ELECTRON → BACKEND: IDENTIFICAÇÃO LCU ====="
+      "🔗 [Player-Sessions] ===== ELECTRON → BACKEND: IDENTIFICAÇÃO COM SESSION CUSTOMIZADA ====="
     );
     safeLog("🔗 [Player-Sessions] [ELECTRON] Summoner:", fullName);
+    safeLog(
+      "🔗 [Player-Sessions] [ELECTRON] Custom SessionId:",
+      customSessionId
+    );
     safeLog("🔗 [Player-Sessions] [ELECTRON] PUUID:", summoner.puuid);
     safeLog(
       "🔗 [Player-Sessions] [ELECTRON] Summoner ID:",
@@ -3476,21 +3730,24 @@ async function identifyPlayerToBackend(lockfileInfo) {
     );
     safeLog("🔗 [Player-Sessions] [ELECTRON] LCU Port:", lockfileInfo?.port);
     safeLog(
-      "🔗 [Player-Sessions] [ELECTRON] WebSocket Session ID:",
+      "🔗 [Player-Sessions] [ELECTRON] WebSocket Status:",
       wsClient?.readyState === WebSocket.OPEN ? "CONECTADO" : "DESCONECTADO"
     );
     safeLog(
       "🔗 [Player-Sessions] ======================================================"
     );
 
-    // 4. ✅ ENVIAR ao backend
+    // 4. ✅ ENVIAR ao backend com sessionId customizado
     if (wsClient && wsClient.readyState === WebSocket.OPEN) {
       wsClient.send(JSON.stringify(payload));
-      safeLog("✅ [Electron] Identificação automática enviada:", fullName);
+      safeLog(
+        `✅ [Electron] Identificação com sessionId customizado enviada: ${fullName} → ${customSessionId}`
+      );
 
-      // Armazenar PUUID localmente para detectar mudanças
+      // Armazenar dados localmente para detectar mudanças
       lastKnownPuuid = summoner.puuid;
       lastKnownSummoner = fullName;
+      lastKnownCustomSessionId = customSessionId;
 
       // ✅ NOVO: SOLICITAR LISTA DE SESSÕES ATIVAS APÓS IDENTIFICAÇÃO
       setTimeout(() => {
@@ -3523,15 +3780,33 @@ function startIdentityMonitor() {
 
       if (summoner && summoner.puuid !== lastKnownPuuid) {
         // 🚨 SUMMONER MUDOU!
+        const oldSummoner = lastKnownSummoner;
+        const oldCustomSessionId = lastKnownCustomSessionId;
+
         safeLog(
           "🔄 [Electron] Summoner mudou! Antigo:",
           lastKnownPuuid,
           "Novo:",
           summoner.puuid
         );
-        lastKnownPuuid = summoner.puuid;
 
-        // ✅ Reenviar identificação
+        // ✅ ATUALIZAR todas as referências locais
+        lastKnownPuuid = summoner.puuid;
+        lastKnownSummoner = `${summoner.gameName}#${summoner.tagLine}`;
+
+        // ✅ NOVO: Criar novo sessionId customizado para o novo jogador
+        const newCustomSessionId = `player_${lastKnownSummoner
+          .replace("#", "_")
+          .replace(/[^a-zA-Z0-9_]/g, "_")
+          .toLowerCase()}`;
+
+        lastKnownCustomSessionId = newCustomSessionId;
+
+        safeLog(
+          `🔄 [Electron] SessionId customizado atualizado: ${oldCustomSessionId} → ${newCustomSessionId}`
+        );
+
+        // ✅ Reenviar identificação com novo sessionId
         const lockfileInfo = readLockfileInfo();
         if (lockfileInfo) {
           await identifyPlayerToBackend(lockfileInfo);
@@ -3548,6 +3823,7 @@ function startIdentityMonitor() {
         safeLog("⚠️ [Electron] LCU desconectado, limpando identificação");
         lastKnownPuuid = null;
         lastKnownSummoner = null;
+        lastKnownCustomSessionId = null; // ✅ NOVO: Limpar sessionId customizado também
       }
     }
   }, 30000); // A cada 30s
@@ -3561,6 +3837,160 @@ function stopIdentityMonitor() {
     clearInterval(identityMonitorTimer);
     identityMonitorTimer = null;
     safeLog("🛑 [Electron] Monitor de identidade parado");
+  }
+}
+
+// ✅ NOVO: Monitor de sincronização de sessão com backend (a cada 60s)
+let sessionSyncMonitorTimer = null;
+let lastSyncCheckTime = 0;
+const SYNC_CHECK_INTERVAL_MS = 60000; // 60 segundos
+
+function startSessionSyncMonitor() {
+  if (sessionSyncMonitorTimer) {
+    clearInterval(sessionSyncMonitorTimer);
+  }
+
+  sessionSyncMonitorTimer = setInterval(async () => {
+    try {
+      // Verificar se WebSocket está conectado
+      if (!wsClient || wsClient.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      // Verificar se temos dados de identificação
+      if (!lastKnownCustomSessionId || !lastKnownSummoner) {
+        return;
+      }
+
+      // ✅ Solicitar verificação de sincronização ao backend
+      const verifyRequest = {
+        type: "verify_session_sync",
+        customSessionId: lastKnownCustomSessionId,
+        summonerName: lastKnownSummoner,
+        timestamp: Date.now(),
+      };
+
+      wsClient.send(JSON.stringify(verifyRequest));
+      lastSyncCheckTime = Date.now();
+
+      safeLog(
+        `🔍 [Session Sync] Verificando sincronização: ${lastKnownCustomSessionId}`
+      );
+    } catch (error) {
+      safeLog("❌ [Session Sync] Erro ao verificar sincronização:", error);
+    }
+  }, SYNC_CHECK_INTERVAL_MS);
+
+  safeLog("✅ [Session Sync] Monitor de sincronização iniciado (60s)");
+}
+
+function stopSessionSyncMonitor() {
+  if (sessionSyncMonitorTimer) {
+    clearInterval(sessionSyncMonitorTimer);
+    sessionSyncMonitorTimer = null;
+    safeLog("🛑 [Session Sync] Monitor de sincronização parado");
+  }
+}
+
+// ✅ NOVO: Handler para resposta de session_sync_status
+function handleSessionSyncStatus(data) {
+  try {
+    const {
+      isSynced,
+      issues,
+      actualCustomSessionId,
+      actualSummonerName,
+      randomSessionId,
+    } = data;
+
+    if (isSynced) {
+      safeLog("✅ [Session Sync] Sessão sincronizada com backend");
+    } else {
+      safeLog(
+        "⚠️ [Session Sync] Sessão DESSINCRONIZADA com backend! Issues:",
+        issues
+      );
+      safeLog(
+        `   Expected: customSID=${lastKnownCustomSessionId}, summoner=${lastKnownSummoner}`
+      );
+      safeLog(
+        `   Actual: customSID=${actualCustomSessionId}, summoner=${actualSummonerName}`
+      );
+
+      // ✅ RE-SINCRONIZAR: Reenviar identificação
+      safeLog(
+        "🔄 [Session Sync] Re-enviando identificação para sincronizar..."
+      );
+      const lockfileInfo = readLockfileInfo();
+      if (lockfileInfo) {
+        identifyPlayerToBackend(lockfileInfo);
+      }
+    }
+  } catch (error) {
+    safeLog("❌ [Session Sync] Erro ao processar session_sync_status:", error);
+  }
+}
+
+// ✅ NOVO: Heartbeat periódico com dados atualizados (a cada 30s)
+let heartbeatTimer = null;
+const HEARTBEAT_INTERVAL_MS = 30000; // 30 segundos
+
+function startHeartbeat() {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+  }
+
+  heartbeatTimer = setInterval(async () => {
+    try {
+      // Verificar se WebSocket está conectado
+      if (!wsClient || wsClient.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      // Verificar se temos dados de identificação
+      if (!lastKnownCustomSessionId || !lastKnownSummoner) {
+        return;
+      }
+
+      // ✅ Buscar dados atualizados do LCU
+      const summoner = await performLcuRequest(
+        "GET",
+        "/lol-summoner/v1/current-summoner"
+      ).catch(() => null);
+
+      if (!summoner) {
+        return; // LCU desconectado
+      }
+
+      // ✅ Enviar heartbeat com dados atualizados
+      const heartbeatData = {
+        type: "electron_heartbeat",
+        customSessionId: lastKnownCustomSessionId,
+        summonerName: lastKnownSummoner,
+        puuid: summoner.puuid,
+        profileIconId: summoner.profileIconId,
+        summonerLevel: summoner.summonerLevel,
+        timestamp: Date.now(),
+      };
+
+      wsClient.send(JSON.stringify(heartbeatData));
+
+      safeLog(
+        `💓 [Heartbeat] Enviado: ${lastKnownSummoner} (${lastKnownCustomSessionId})`
+      );
+    } catch (error) {
+      // Não logar erro para não poluir logs (heartbeat é opcional)
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+
+  safeLog("✅ [Heartbeat] Heartbeat iniciado (30s)");
+}
+
+function stopHeartbeat() {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+    safeLog("🛑 [Heartbeat] Heartbeat parado");
   }
 }
 

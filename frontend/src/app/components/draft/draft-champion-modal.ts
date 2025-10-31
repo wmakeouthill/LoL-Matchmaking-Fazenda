@@ -86,7 +86,7 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
         this.searchFilter = searchTerm;
         this.invalidateCache(); // Invalidar cache apenas quando o termo de pesquisa muda
         // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
-        setTimeout(() => {}, 0);
+        setTimeout(() => { }, 0);
       });
 
     // Inicializa com todos os campeões
@@ -131,7 +131,7 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
             console.log('🔍 [DraftanyModal] Primeiros 5 campeões:', this.champions.slice(0, 5).map(c => ({ id: c.id, name: c.name })));
             this.organizeChampionsByRole();
             // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
-            setTimeout(() => {}, 0);
+            setTimeout(() => { }, 0);
 
             // ✅ CORREÇÃO: Verificar status do timer após carregar campeões
             setTimeout(() => {
@@ -170,7 +170,7 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
 
     // ✅ CORREÇÃO: Forçar atualização após organizar por role
     // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
-    setTimeout(() => {}, 0);
+    setTimeout(() => { }, 0);
   }
 
   // MÉTODOS PARA COMPARAÇÃO DE JOGADORES
@@ -494,7 +494,7 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
     this.selectedRole = role;
     this.invalidateCache(); // ✅ Necessário invalidar quando role muda
     // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
-    setTimeout(() => {}, 0);
+    setTimeout(() => { }, 0);
   }
 
   // ✅ CORREÇÃO #4: Método para pesquisa em tempo real com debounce
@@ -567,7 +567,7 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
 
     // ✅ CORREÇÃO: Forçar atualização da interface
     // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
-    setTimeout(() => {}, 0);
+    setTimeout(() => { }, 0);
   }
 
   // ✅ NOVO: Feedback visual quando tenta selecionar campeão bloqueado
@@ -668,7 +668,7 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
 
       // ✅ CORREÇÃO: Forçar atualização
       // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
-    setTimeout(() => {}, 0);
+      setTimeout(() => { }, 0);
 
       console.log('✅ [confirmModalSelection] Modal fechado');
     }, 100); // Delay de 100ms para garantir processamento do evento
@@ -687,7 +687,7 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
     this.loadanys();
 
     // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
-    setTimeout(() => {}, 0);
+    setTimeout(() => { }, 0);
   }
 
   closeModal(): void {
@@ -700,7 +700,7 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
     this.onClose.emit();
 
     // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
-    setTimeout(() => {}, 0);
+    setTimeout(() => { }, 0);
   }
 
   // MÉTODOS PARA INFORMAÇÕES DO JOGADOR ATUAL
@@ -815,12 +815,12 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
       this.invalidateCache();
       this.loadanys(); // ✅ CORREÇÃO: Recarregar campeões quando modal abrir
       // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
-    setTimeout(() => {}, 0);
+      setTimeout(() => { }, 0);
 
       // ✅ CORREÇÃO: Forçar atualização adicional para garantir que o timer seja exibido
       setTimeout(() => {
         // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
-    setTimeout(() => {}, 0);
+        setTimeout(() => { }, 0);
         console.log('⏰ [DraftanyModal] Timer após timeout:', this.getDraftTimer());
       }, 100);
 
@@ -835,9 +835,9 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
   forceTimerUpdate(): void {
     console.log('⏰ [DraftanyModal] Forçando atualização do timer:', this.getDraftTimer());
     // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
-    setTimeout(() => {}, 0);
+    setTimeout(() => { }, 0);
     // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
-    setTimeout(() => {}, 0);
+    setTimeout(() => { }, 0);
   }
 
   // ✅ NOVO: Método para verificar se o timer está funcionando

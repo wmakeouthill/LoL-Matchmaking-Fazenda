@@ -22,8 +22,12 @@ COPY --from=build /workspace/target/*.jar app.jar
 EXPOSE 8080
 
 # Variáveis de ambiente para configuração
-ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -XX:+UseContainerSupport"
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -XX:+UseContainerSupport -XX:+OptimizeStringConcat -XX:+UseStringDeduplication"
 ENV SPRING_PROFILES_ACTIVE="gcp"
+
+# Health check para Cloud Run
+HEALTHCHECK --interval=30s --timeout=3s --start-period=60s --retries=3 \
+  CMD wget --quiet --tries=1 --spider http://localhost:${PORT:-8080}/actuator/health || exit 1
 
 # Iniciar aplicacao e respeitar PORT do ambiente (Cloud Run fornece PORT)
 # Cloud Run injeta PORT automaticamente, Spring Boot precisa de --server.port

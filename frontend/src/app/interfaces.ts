@@ -84,13 +84,68 @@ export interface LCUStatus {
   lobby?: any;
 }
 
+// ✅ ESTRUTURA UNIFICADA: Backend envia estrutura hierárquica moderna
+export interface UnifiedTeamPlayer {
+  playerId: number;
+  summonerName: string;
+  gameName?: string;
+  tagLine?: string;
+  mmr: number;
+  customLp?: number;
+  profileIconId?: number;
+  teamIndex: number;
+  assignedLane: string;
+  primaryLane?: string;
+  secondaryLane?: string;
+  isAutofill?: boolean;
+  laneBadge?: 'primary' | 'secondary' | 'autofill';
+  acceptanceStatus?: number | 'pending' | 'accepted' | 'declined' | 'timeout'; // Backend: number, Frontend UI: string
+  hasAccepted?: boolean;
+  championId?: number;
+  championName?: string;
+
+  // ✅ Campos UI adicionados dinamicamente no frontend
+  id?: number; // Alias para playerId
+  riotIdGameName?: string; // Alias para gameName
+  riotIdTagline?: string; // Alias para tagLine
+  acceptedAt?: string; // ISO timestamp quando aceitou
+  isCurrentUser?: boolean; // Se é o usuário logado via LCU
+}
+
+export interface UnifiedTeam {
+  name: string;
+  side: 'blue' | 'red';
+  players: UnifiedTeamPlayer[];
+}
+
+export interface UnifiedTeams {
+  blue: UnifiedTeam;
+  red: UnifiedTeam;
+}
+
 export interface MatchFound {
   matchId: number;
-  team1: any[];
-  team2: any[];
-  yourTeam: number;
-  averageMMR1: number;
-  averageMMR2: number;
+  teams: UnifiedTeams; // ✅ NOVA estrutura hierárquica
+  team1?: any[]; // ⚠️ Mantido para compatibilidade temporária
+  team2?: any[]; // ⚠️ Mantido para compatibilidade temporária
+  phase: 'match_found' | 'draft' | 'in_game' | 'post_game';
+  averageMmrTeam1?: number;
+  averageMmrTeam2?: number;
+  timeoutSeconds?: number;
+  acceptedCount?: number;
+  totalPlayers?: number;
+
+  // ✅ Campos UI adicionados dinamicamente no frontend
+  playerSide?: 'blue' | 'red'; // Qual time o jogador está
+  acceptanceTimer?: number; // Timer de aceitação (segundos)
+  acceptTimeout?: number; // Timeout de aceitação (compatibilidade)
+  averageMMR?: { // Estrutura legada para compatibilidade
+    yourTeam: number;
+    enemyTeam: number;
+  };
+  teammates?: any[]; // Legado (usar teams.blue/red.players)
+  enemies?: any[]; // Legado (usar teams.blue/red.players)
+  estimatedGameDuration?: number;
 }
 
 export interface Notification {
@@ -116,8 +171,9 @@ export interface Match {
   createdAt?: Date;
   timestamp?: number;
   duration: number;
-  team1?: any[];
-  team2?: any[];
+  teams?: UnifiedTeams; // ✅ NOVA estrutura unificada
+  team1?: any[]; // ⚠️ Mantido para compatibilidade com histórico
+  team2?: any[]; // ⚠️ Mantido para compatibilidade com histórico
   winner?: number;
   averageMMR1?: number;
   averageMMR2?: number;
@@ -132,7 +188,7 @@ export interface Match {
 
   // Dados expandidos da Riot API
   participants?: any[]; // Todos os 10 jogadores
-  teams?: any[]; // Dados dos times
+  riotTeams?: any[]; // Dados dos times da Riot API (team100/team200)
   gameVersion?: string;
   mapId?: number;
   // Campos específicos para partidas customizadas

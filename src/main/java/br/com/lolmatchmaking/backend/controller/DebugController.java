@@ -32,6 +32,7 @@ public class DebugController {
     private final QueueManagementService queueManagementService;
     private final PlayerService playerService;
     private final GameInProgressService gameInProgressService;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     /**
      * Obtém informações das tabelas do banco
@@ -298,7 +299,7 @@ public class DebugController {
                         "error", "Dados da partida não fornecidos"));
             }
 
-            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            com.fasterxml.jackson.databind.ObjectMapper mapper = objectMapper;
 
             // ✅ DEBUG: Log dos dados recebidos
             log.info("🔍 [DEBUG] Dados recebidos do LCU:");

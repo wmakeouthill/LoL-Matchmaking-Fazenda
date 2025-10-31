@@ -32,17 +32,15 @@ public class RiotChampionStatsService {
     private static final String RIOT_AMERICAS_URL = "https://americas.api.riotgames.com";
 
     /**
-     * Busca a Riot API Key da tabela settings
+     * Busca a Riot API Key da variável de ambiente
      */
     private String getRiotApiKey() {
         try {
-            log.info("🔑 Buscando Riot API Key da tabela settings...");
-            String apiKey = jdbcTemplate.queryForObject(
-                    "SELECT value FROM settings WHERE settings_key = 'riot_api_key' LIMIT 1",
-                    String.class);
+            log.info("🔑 Buscando Riot API Key da variável de ambiente...");
+            String apiKey = System.getenv("RIOT_API_KEY");
 
             if (apiKey == null || apiKey.trim().isEmpty()) {
-                log.warn("⚠️ Riot API Key não encontrada na tabela settings");
+                log.warn("⚠️ Riot API Key não encontrada na variável de ambiente RIOT_API_KEY");
                 return null;
             }
 

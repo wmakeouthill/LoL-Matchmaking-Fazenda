@@ -13,12 +13,14 @@ import { DraftPickBanComponent } from './components/draft/draft-pick-ban';
 import { GameInProgressComponent } from './components/game-in-progress/game-in-progress';
 import { AdjustLpModalComponent } from './components/settings/adjust-lp-modal';
 import { ChampionshipModalComponent } from './components/settings/championship-modal';
+import { GlobalNotificationsComponent } from './components/global-notifications/global-notifications.component';
 import { ApiService } from './services/api';
 import { QueueStateService } from './services/queue-state';
 import { DiscordIntegrationService } from './services/discord-integration.service';
 import { BotService } from './services/bot.service';
 import { CurrentSummonerService } from './services/current-summoner.service';
 import { ElectronEventsService } from './services/electron-events.service';
+import { GlobalNotificationService } from './services/global-notification.service';
 import { Player, QueueStatus, LCUStatus, QueuePreferences } from './interfaces';
 import type { Notification } from './interfaces';
 import { logApp } from './utils/app-logger';
@@ -37,7 +39,8 @@ import { logApp } from './utils/app-logger';
     DraftPickBanComponent,
     GameInProgressComponent,
     AdjustLpModalComponent,
-    ChampionshipModalComponent
+    ChampionshipModalComponent,
+    GlobalNotificationsComponent
   ],
   templateUrl: './app-simple.html',
   styleUrl: './app.scss'
@@ -160,6 +163,7 @@ export class App implements OnInit, OnDestroy {
     private readonly botService: BotService,
     private readonly currentSummonerService: CurrentSummonerService,
     private readonly electronEvents: ElectronEventsService,
+    private readonly notificationService: GlobalNotificationService,
     private readonly cdr: ChangeDetectorRef
   ) {
     console.log(`[App] Constructor`);
@@ -190,24 +194,34 @@ export class App implements OnInit, OnDestroy {
     // ✅ DRAFT_STARTED: Ir para tela de draft
     this.electronEvents.draftStarted$.subscribe(draftData => {
       if (draftData) {
-        console.log('🎯 [App] draft-started recebido do Electron:', draftData);
-        console.log('🎯 [App] MatchId:', draftData.matchId);
-        console.log('🎯 [App] Teams:', draftData.teams);
-        console.log('🎯 [App] Team1:', draftData.team1);
-        console.log('🎯 [App] Team2:', draftData.team2);
+        console.log('🎯 [App] draft-started recebido:', {
+          matchId: draftData.matchId,
+          hasTeams: !!draftData.teams,
+          actionsCount: draftData.actions?.length || draftData.phases?.length || 0
+        });
 
-        // ✅ CRÍTICO: Esconder modal de match_found
+        // ✅ SIMPLIFICADO: Usar dados diretamente (backend já envia estrutura correta)
+        this.draftData = {
+          matchId: draftData.matchId,
+          teams: draftData.teams,
+          team1: draftData.teams?.blue?.players || draftData.team1 || [], // Fallback para compatibilidade
+          team2: draftData.teams?.red?.players || draftData.team2 || [],
+          phases: draftData.actions || draftData.phases || [],
+          actions: draftData.actions || draftData.phases || [],
+          currentAction: draftData.currentIndex ?? draftData.currentAction ?? 0,
+          currentIndex: draftData.currentIndex ?? draftData.currentAction ?? 0,
+          currentPlayer: draftData.currentPlayer,
+          timeRemaining: draftData.timeRemaining ?? 30,
+          currentPhase: draftData.currentPhase,
+          currentTeam: draftData.currentTeam,
+          currentActionType: draftData.currentActionType
+        };
+
         this.showMatchFound = false;
-
-        // ✅ CRÍTICO: Ir para fase de draft
         this.inDraftPhase = true;
-
-        // ✅ CRÍTICO: Forçar detecção de mudanças
         this.cdr.detectChanges();
 
-        console.log('🎯 [App] ✅ Transição para draft concluída!');
-        console.log('🎯 [App] showMatchFound:', this.showMatchFound);
-        console.log('🎯 [App] inDraftPhase:', this.inDraftPhase);
+        console.log('✅ [App] Transição para draft concluída');
       }
     });
 
@@ -372,34 +386,75 @@ export class App implements OnInit, OnDestroy {
    * ✅ NOVO: Atualizar timer de aceitação
    */
   private updateAcceptanceTimer(timerData: any) {
+    console.log('⏰ [App] ==========================================');
     console.log('⏰ [App] updateAcceptanceTimer chamado:', timerData);
     console.log('⏰ [App] matchFoundData:', this.matchFoundData);
-    console.log('⏰ [App] timerData.matchId:', timerData.matchId);
+
+    // ✅ CORREÇÃO: timerData pode ter a estrutura {data: {matchId, secondsRemaining}}
+    const matchId = timerData.matchId || timerData.data?.matchId;
+    const secondsRemaining = timerData.secondsRemaining || timerData.data?.secondsRemaining;
+
+    console.log('⏰ [App] Extraídos - matchId:', matchId, 'secondsRemaining:', secondsRemaining);
+    console.log('⏰ [App] matchFoundData existe:', !!this.matchFoundData);
     console.log('⏰ [App] matchFoundData?.matchId:', this.matchFoundData?.matchId);
 
-    if (this.matchFoundData && this.matchFoundData.matchId === timerData.matchId) {
-      console.log('⏰ [App] ✅ MatchIds coincidem - atualizando timer');
-      this.matchFoundData.acceptanceTimer = timerData.secondsRemaining;
-      this.cdr.detectChanges();
-      console.log('⏰ [App] Timer de aceitação atualizado:', timerData.secondsRemaining);
-    } else {
-      console.log('⏰ [App] ❌ MatchIds não coincidem ou matchFoundData não existe');
-      console.log('⏰ [App] matchFoundData existe:', !!this.matchFoundData);
-      if (this.matchFoundData) {
-        console.log('⏰ [App] matchFoundData.matchId:', this.matchFoundData.matchId);
-      }
+    if (!this.matchFoundData) {
+      console.log('⏰ [App] ❌ matchFoundData NÃO EXISTE');
+      return;
     }
+
+    if (this.matchFoundData.matchId !== matchId) {
+      console.log('⏰ [App] ❌ MatchIds NÃO COINCIDEM');
+      console.log('⏰ [App] matchFoundData.matchId:', this.matchFoundData.matchId);
+      console.log('⏰ [App] timerData.matchId:', matchId);
+      return;
+    }
+
+    console.log('⏰ [App] ✅ MatchIds coincidem - atualizando timer');
+    this.matchFoundData.acceptanceTimer = secondsRemaining;
+    // ✅ Com Default strategy, detectChanges() é chamado automaticamente
+    console.log('⏰ [App] Timer de aceitação atualizado:', secondsRemaining);
+    console.log('⏰ [App] ==========================================');
   }
 
   /**
    * ✅ NOVO: Atualizar progresso de aceitação
    */
   private updateAcceptanceProgress(progressData: any) {
-    if (this.matchFoundData && this.matchFoundData.matchId === progressData.matchId) {
-      this.matchFoundData.acceptedCount = progressData.acceptedCount;
-      this.matchFoundData.totalPlayers = progressData.totalPlayers;
-      this.cdr.detectChanges();
-      console.log('📊 [App] Progresso de aceitação atualizado:', progressData.acceptedCount + '/' + progressData.totalPlayers);
+    // ✅ CORREÇÃO: Extrair data se vier aninhado
+    const data = progressData.data || progressData;
+    const matchId = data.matchId || progressData.matchId;
+
+    if (this.matchFoundData && this.matchFoundData.matchId === matchId) {
+      this.matchFoundData.acceptedCount = data.acceptedCount;
+      this.matchFoundData.totalPlayers = data.totalPlayers;
+
+      // ✅ OTIMIZADO: Atualizar status individual dos jogadores usando teams.blue/red
+      if (data.acceptedPlayers && Array.isArray(data.acceptedPlayers)) {
+        console.log('📊 [App] Atualizando status dos jogadores aceitos:', data.acceptedPlayers);
+
+        const allPlayers = [
+          ...(this.matchFoundData?.teams?.blue?.players || []),
+          ...(this.matchFoundData?.teams?.red?.players || [])
+        ];
+
+        // Marcar jogadores que aceitaram como 'accepted'
+        data.acceptedPlayers.forEach((acceptedPlayerName: string) => {
+          const player = allPlayers.find(p =>
+            p.summonerName === acceptedPlayerName ||
+            (p.riotIdGameName && p.riotIdTagline && `${p.riotIdGameName}#${p.riotIdTagline}` === acceptedPlayerName)
+          );
+
+          if (player) {
+            player.acceptanceStatus = 'accepted';
+            player.acceptedAt = new Date().toISOString();
+            console.log(`📊 [App] Jogador ${acceptedPlayerName} marcado como aceito`);
+          }
+        });
+      }
+
+      // ✅ Com Default strategy, detectChanges() é chamado automaticamente
+      console.log('📊 [App] Progresso de aceitação atualizado:', data.acceptedCount + '/' + data.totalPlayers);
     }
   }
 
@@ -415,16 +470,66 @@ export class App implements OnInit, OnDestroy {
    * ✅ NOVO: Atualizar estado do draft (quando é a vez do jogador)
    */
   private updateDraftUpdate(updateData: any) {
-    console.log('🔄 [App] Draft update - é a vez do jogador:', updateData.currentPlayer);
-    // TODO: Implementar lógica de "é sua vez" no draft
+    // ✅ CORREÇÃO: draft_update é APENAS para timer (não contém currentPlayer ou actionType)
+    const timerData = updateData.data || updateData;
+    console.log('🔄 [App] Draft update (timer) recebido:', timerData.timeRemaining);
+
+    // ✅ CORREÇÃO: Atualizar timer do draft
+    if (this.inDraftPhase && this.draftData) {
+      const newTimeRemaining = timerData.timeRemaining !== undefined ? timerData.timeRemaining : 30;
+
+      this.draftTimer = newTimeRemaining;
+
+      // ✅ CRÍTICO: Atualizar matchData.timeRemaining para o componente detectar
+      if (this.draftData) {
+        this.draftData.timeRemaining = newTimeRemaining;
+      }
+
+      console.log(`⏰ [App] Timer atualizado: ${this.draftTimer}s`);
+      this.cdr.detectChanges();
+    }
   }
 
   /**
    * ✅ NOVO: Atualizar draft após ação (todos os jogadores recebem)
    */
   private updateDraftUpdated(updatedData: any) {
-    console.log('✅ [App] Draft updated - ação realizada:', updatedData.actionType, 'por', updatedData.updatedBy);
-    // TODO: Implementar atualização do estado do draft
+    console.log('✅ [App] Draft updated - ação realizada:', updatedData.currentActionType, 'por', updatedData.currentPlayer);
+
+    // ✅ CRÍTICO: Atualizar estado do draft com novas ações
+    if (this.inDraftPhase && this.draftData) {
+      const data = updatedData.data || updatedData;
+
+      // ✅ Extrair phases/actions
+      const phases = (data.phases && data.phases.length > 0) ? data.phases :
+        (data.actions && data.actions.length > 0) ? data.actions : [];
+
+      const currentAction = data.currentAction !== undefined ? data.currentAction :
+        data.currentIndex !== undefined ? data.currentIndex : 0;
+
+      // ✅ Atualizar draftData
+      this.draftData = {
+        ...this.draftData,
+        phases: phases,
+        actions: phases,
+        currentAction: currentAction,
+        currentIndex: currentAction,
+        currentPlayer: data.currentPlayer,
+        timeRemaining: data.timeRemaining !== undefined ? data.timeRemaining : this.draftData.timeRemaining,
+        teams: data.teams || this.draftData.teams,
+        currentPhase: data.currentPhase,
+        currentTeam: data.currentTeam,
+        currentActionType: data.currentActionType
+      };
+
+      console.log('✅ [App] DraftData atualizado:', {
+        phasesLength: this.draftData.phases?.length,
+        currentAction: this.draftData.currentAction,
+        currentPlayer: this.draftData.currentPlayer
+      });
+
+      this.cdr.detectChanges();
+    }
   }
 
   /**
@@ -1099,29 +1204,19 @@ export class App implements OnInit, OnDestroy {
           this.matchFoundData.acceptedCount = progressData.acceptedCount || 0;
           this.matchFoundData.totalPlayers = progressData.totalPlayers || 10;
 
-          // ✅ NOVO: Atualizar status individual dos jogadores
+          // ✅ OTIMIZADO: Atualizar status individual dos jogadores usando teams.blue/red
           if (progressData.acceptedPlayers && Array.isArray(progressData.acceptedPlayers)) {
             console.log('📊 [App] Atualizando status dos jogadores aceitos:', progressData.acceptedPlayers);
 
-            // Atualizar status de todos os jogadores para 'pending' primeiro
-            if (this.matchFoundData.teammates) {
-              this.matchFoundData.teammates.forEach(player => {
-                player.acceptanceStatus = 'pending';
-              });
-            }
-            if (this.matchFoundData.enemies) {
-              this.matchFoundData.enemies.forEach(player => {
-                player.acceptanceStatus = 'pending';
-              });
-            }
+            // ✅ CORREÇÃO: NÃO resetar todos para 'pending' (causa flash visual)
+            // Apenas atualizar os jogadores que ainda não aceitaram
+            const allPlayers = [
+              ...(this.matchFoundData?.teams?.blue?.players || []),
+              ...(this.matchFoundData?.teams?.red?.players || [])
+            ];
 
-            // Marcar jogadores aceitos como 'accepted'
+            // Marcar jogadores que aceitaram como 'accepted'
             progressData.acceptedPlayers.forEach((acceptedPlayerName: string) => {
-              const allPlayers = [
-                ...(this.matchFoundData?.teammates || []),
-                ...(this.matchFoundData?.enemies || [])
-              ];
-
               const player = allPlayers.find(p =>
                 p.summonerName === acceptedPlayerName ||
                 (p.riotIdGameName && p.riotIdTagline && `${p.riotIdGameName}#${p.riotIdTagline}` === acceptedPlayerName)
@@ -1165,6 +1260,28 @@ export class App implements OnInit, OnDestroy {
 
         this.cdr.detectChanges();
         break;
+
+      case 'player_session_updated':
+        console.log('🔔 [App] Evento de sessão recebido:', message);
+
+        // ✅ NOVO: Notificação de reconexão/sincronização
+        const sessionData = message.data || message;
+        if (sessionData) {
+          this.notificationService.showSessionUpdate({
+            eventType: sessionData.eventType || (sessionData.isReconnection ? 'reconnected' : 'connected'),
+            summonerName: sessionData.summonerName || sessionData.gameName,
+            customSessionId: sessionData.customSessionId,
+            randomSessionId: sessionData.randomSessionId,
+            isReconnection: sessionData.isReconnection
+          });
+
+          console.log('🔔 [App] Notificação de sessão exibida:', {
+            type: sessionData.eventType,
+            summoner: sessionData.summonerName,
+            customId: sessionData.customSessionId
+          });
+        }
+        break;
       case 'draft_update': // ✅ APENAS Timer (leve, a cada 1s)
         console.log('⏰ [App] draft_update (TIMER) recebido:', message);
 
@@ -1174,6 +1291,11 @@ export class App implements OnInit, OnDestroy {
           this.draftTimer = timerData.timeRemaining !== undefined
             ? timerData.timeRemaining
             : 30;
+
+          // ✅ CRÍTICO: Atualizar matchData.timeRemaining para o componente detectar
+          if (this.draftData) {
+            this.draftData.timeRemaining = this.draftTimer;
+          }
 
           console.log(`⏰ [App] Timer atualizado: ${this.draftTimer}s`);
           this.cdr.detectChanges();
@@ -1381,6 +1503,17 @@ export class App implements OnInit, OnDestroy {
         // Nota: matchFoundData será usado quando draft_started chegar
         console.log('⏳ [App] Aguardando mensagem draft_started do backend...');
         break;
+      case 'all_players_accepted':
+        console.log('✅ [App] Todos os jogadores aceitaram:', message);
+        // Aguardar evento draft_started para iniciar o draft
+        // Por enquanto, apenas esconder o match found e preparar para o draft
+        if (this.showMatchFound) {
+          console.log('🎯 [App] Preparando para iniciar draft...');
+          this.showMatchFound = false;
+          // Aguardar draft_started será disparado pelo backend
+        }
+        break;
+
       case 'draft_started':
       case 'draft_starting':
         console.log('🎯 [App] Draft iniciando:', message);
@@ -1419,8 +1552,8 @@ export class App implements OnInit, OnDestroy {
         // ✅ Preparar dados do draft com informações completas dos times
         this.draftData = {
           matchId: effectiveMatchId,
-          team1: draftData.team1 || this.matchFoundData?.teammates || [],
-          team2: draftData.team2 || this.matchFoundData?.enemies || [],
+          team1: draftData.team1 || this.matchFoundData?.teams?.blue?.players || [],
+          team2: draftData.team2 || this.matchFoundData?.teams?.red?.players || [],
           phases: phases,  // ✅ Usar o array extraído corretamente
           actions: phases,  // ✅ Adicionar também como "actions" para compatibilidade
           currentAction: currentAction,  // ✅ Passar currentAction explicitamente
@@ -1575,89 +1708,61 @@ export class App implements OnInit, OnDestroy {
   private handleMatchFound(message: any): void {
     console.log('🎯 [App] Processando match found:', message);
 
-    // ✅ CORREÇÃO: Dados vêm em message.data
     const data = message.data || message;
-
-    console.log('🎯 [App] matchId recebido:', data.matchId);
 
     // ✅ CRÍTICO: Não duplicar modal se já estiver sendo exibido para o MESMO matchId
     if (this.showMatchFound && this.matchFoundData?.matchId === data.matchId) {
       console.log('⏭️ [App] Match found JÁ está sendo exibido para matchId:', data.matchId);
-      console.log('⏭️ [App] Ignorando evento duplicado (retry do backend)');
       return;
     }
 
-    console.log('🎯 [App] team1:', data.team1?.length, 'jogadores');
-    console.log('🎯 [App] team2:', data.team2?.length, 'jogadores');
-
-    // ✅ Converter formato do backend para formato do componente
-    const team1 = data.team1 || [];
-    const team2 = data.team2 || [];
-
-    // Determinar qual time o jogador está
-    const currentPlayerName = this.currentPlayer?.displayName || this.currentPlayer?.summonerName || '';
-    const isInTeam1 = team1.some((p: any) => p.summonerName === currentPlayerName);
-
-    const teammates = isInTeam1 ? team1 : team2;
-    const enemies = isInTeam1 ? team2 : team1;
-    const playerSide: 'blue' | 'red' = isInTeam1 ? 'blue' : 'red';
-
-    this.matchFoundData = {
-      matchId: data.matchId,
-      playerSide,
-      teammates: teammates.map((p: any, index: number) => ({
-        id: p.playerId || p.id || index,
-        summonerName: p.summonerName || p.name || 'Desconhecido',
-        mmr: p.customLp || p.mmr || 1200,
-        primaryLane: p.primaryLane || 'fill',
-        secondaryLane: p.secondaryLane || 'fill',
-        assignedLane: p.assignedLane || p.primaryLane || 'fill',
-        teamIndex: p.teamIndex !== undefined ? p.teamIndex : (isInTeam1 ? index : (index + 5)),
-        isAutofill: p.isAutofill || false,
-        profileIconId: p.profileIconId || 29,
-        acceptanceStatus: 'pending' as 'pending' | 'accepted' | 'declined' | 'timeout',
-        isCurrentUser: false
-      })),
-      enemies: enemies.map((p: any, index: number) => ({
-        id: p.playerId || p.id || (index + 100),
-        summonerName: p.summonerName || p.name || 'Desconhecido',
-        mmr: p.customLp || p.mmr || 1200,
-        primaryLane: p.primaryLane || 'fill',
-        secondaryLane: p.secondaryLane || 'fill',
-        assignedLane: p.assignedLane || p.primaryLane || 'fill',
-        teamIndex: p.teamIndex !== undefined ? p.teamIndex : (isInTeam1 ? (index + 5) : index),
-        isAutofill: p.isAutofill || false,
-        profileIconId: p.profileIconId || 29,
-        acceptanceStatus: 'pending' as 'pending' | 'accepted' | 'declined' | 'timeout',
-        isCurrentUser: false
-      })),
-      averageMMR: {
-        yourTeam: isInTeam1 ? (data.averageMmrTeam1 || 0) : (data.averageMmrTeam2 || 0),
-        enemyTeam: isInTeam1 ? (data.averageMmrTeam2 || 0) : (data.averageMmrTeam1 || 0)
-      },
-      estimatedGameDuration: 30,
-      phase: 'accept',
-      acceptanceTimer: data.timeoutSeconds || 30,
-      acceptedCount: 0,
-      totalPlayers: 10
-    } as any;
-
-    this.showMatchFound = true;
-
-    if (this.matchFoundData) {
-      console.log('✅ [App] matchFoundData criado:', {
-        matchId: this.matchFoundData.matchId,
-        phase: this.matchFoundData.phase,
-        teammatesCount: this.matchFoundData.teammates?.length || 0,
-        enemiesCount: this.matchFoundData.enemies?.length || 0
-      });
+    // ✅ OTIMIZADO: Validar estrutura unificada
+    if (!data?.teams?.blue?.players || !data?.teams?.red?.players) {
+      console.error('❌ [App] Estrutura teams inválida:', data);
+      return;
     }
 
+    console.log('✅ [App] Teams recebidos:', {
+      blue: data.teams.blue.players.length,
+      red: data.teams.red.players.length
+    });
+
+    // ✅ OTIMIZADO: Enriquecer pick_ban_data com campos UI (não duplica!)
+    const currentPlayerName = this.currentPlayer?.displayName || this.currentPlayer?.summonerName || '';
+    const isInBlue = data.teams.blue.players.some((p: any) => p.summonerName === currentPlayerName);
+
+    // Enriquecer players com dados UI-only (in-place)
+    const enrichPlayer = (p: any) => {
+      p.id = p.playerId || p.id;
+      p.acceptanceStatus = 'pending';
+      p.isCurrentUser = p.summonerName === currentPlayerName;
+      return p;
+    };
+
+    data.teams.blue.players.forEach(enrichPlayer);
+    data.teams.red.players.forEach(enrichPlayer);
+
+    // ✅ OTIMIZADO: Adicionar apenas campos auxiliares (não duplica dados!)
+    data.playerSide = isInBlue ? 'blue' : 'red';
+    data.phase = data.phase || 'match_found';
+    data.acceptanceTimer = data.timeoutSeconds || 30;
+    data.acceptedCount = 0;
+    data.totalPlayers = 10;
+
+    // ✅ Estrutura legada averageMMR para componentes antigos
+    data.averageMMR = {
+      yourTeam: isInBlue ? (data.averageMmrTeam1 || 0) : (data.averageMmrTeam2 || 0),
+      enemyTeam: isInBlue ? (data.averageMmrTeam2 || 0) : (data.averageMmrTeam1 || 0)
+    };
+
+    // ✅ CRÍTICO: Usar pick_ban_data DIRETAMENTE (zero cópias!)
+    this.matchFoundData = data;
+
+    this.showMatchFound = true;
     this.cdr.detectChanges();
 
-    console.log('✅ [App] Modal Match Found exibido (showMatchFound =', this.showMatchFound, ')');
+    console.log('✅ [App] Modal Match Found exibido');
 
-    // ✅ NOVO: Enviar acknowledgment ao backend (para de retry desnecessário)
     this.sendMatchFoundAcknowledgment(data.matchId);
   }
 
@@ -3839,10 +3944,10 @@ export class App implements OnInit, OnDestroy {
       enemies: this.convertBasicPlayersToPlayerInfo(isInTeam1 ? team2Players : team1Players),
       averageMMR: { yourTeam: 1200, enemyTeam: 1200 },
       estimatedGameDuration: 25,
-      phase: 'accept',
+      phase: 'match_found',
       acceptTimeout: 30,
       acceptanceTimer: 30
-    };
+    } as any; // ✅ Estrutura legada para polling (será substituída pelo WebSocket)
 
     // ✅ ATUALIZAR: Estado local
     this.matchFoundData = matchFoundData;
@@ -3853,8 +3958,8 @@ export class App implements OnInit, OnDestroy {
     console.log('✅ [App] Match found processado via polling:', {
       matchId: response.matchId,
       playerSide: matchFoundData.playerSide,
-      teammatesCount: matchFoundData.teammates.length,
-      enemiesCount: matchFoundData.enemies.length
+      teammatesCount: matchFoundData.teammates?.length || 0,
+      enemiesCount: matchFoundData.enemies?.length || 0
     });
 
     this.addNotification('success', 'Partida Encontrada!', 'Você tem 30 segundos para aceitar.');

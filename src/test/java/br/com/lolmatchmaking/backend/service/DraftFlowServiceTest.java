@@ -92,8 +92,14 @@ class DraftFlowServiceTest {
                 br.com.lolmatchmaking.backend.domain.repository.QueuePlayerRepository queuePlayerRepository = mock(
                                 br.com.lolmatchmaking.backend.domain.repository.QueuePlayerRepository.class);
 
+                // ✅ NOVO: Adicionar UnifiedMatchDataMapper e ObjectMapper mocks (arquitetura
+                // unificada)
+                br.com.lolmatchmaking.backend.mapper.UnifiedMatchDataMapper matchDataMapper = mock(
+                                br.com.lolmatchmaking.backend.mapper.UnifiedMatchDataMapper.class);
+                com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+
                 draftFlowService = new DraftFlowService(customMatchRepository, queuePlayerRepository, sessionRegistry,
-                                dataDragonService,
+                                dataDragonService, matchDataMapper, objectMapper,
                                 gameInProgressService, discordService, redisDraftFlowService, webSocketService,
                                 playerStateService, redisPlayerMatchService, redisTemplate, redisWSSession,
                                 playerLockService,

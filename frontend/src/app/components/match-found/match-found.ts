@@ -3,44 +3,15 @@ import { CommonModule } from '@angular/common';
 import { ProfileIconService } from '../../services/profile-icon.service';
 import { Observable, of } from 'rxjs';
 import { BotService } from '../../services/bot.service';
+import { MatchFound, UnifiedTeamPlayer } from '../../interfaces';
 
-export interface MatchFoundData {
-  matchId: number;
-  playerSide: 'blue' | 'red';
-  teammates: PlayerInfo[];
-  enemies: PlayerInfo[];
-  averageMMR: {
-    yourTeam: number;
-    enemyTeam: number;
-  };
-  estimatedGameDuration: number;
-  phase: 'accept' | 'draft' | 'in_game';
-  acceptTimeout?: number; // ✅ CORREÇÃO: Compatibilidade com dados antigos
-  acceptanceTimer?: number; // ✅ NOVO: Timer em segundos do backend
-  acceptanceDeadline?: string; // ✅ NOVO: Deadline ISO string
-  teamStats?: any; // ✅ NOVO: Estatísticas dos times
-  balancingInfo?: any; // ✅ NOVO: Informações de balanceamento
-  acceptedCount?: number; // ✅ NOVO: Contador de jogadores que aceitaram
-  totalPlayers?: number; // ✅ NOVO: Total de jogadores na partida
-}
+// ✅ OTIMIZADO: Usar MatchFound (pick_ban_data) diretamente - reduz duplicação de memória
+export type MatchFoundData = MatchFound & {
+  playerSide?: 'blue' | 'red'; // Campo auxiliar UI
+};
 
-export interface PlayerInfo {
-  id: number;
-  summonerName: string;
-  mmr: number;
-  primaryLane: string;
-  secondaryLane: string;
-  assignedLane: string;
-  teamIndex?: number; // ✅ NOVO: Índice para o draft (0-4)
-  isAutofill: boolean;
-  riotIdGameName?: string;
-  riotIdTagline?: string;
-  profileIconId?: number;
-  // ✅ NOVO: Status de aceitação do jogador
-  acceptanceStatus?: 'pending' | 'accepted' | 'declined' | 'timeout';
-  acceptedAt?: string; // ISO timestamp quando aceitou
-  isCurrentUser?: boolean; // Se é o usuário logado via LCU
-}
+// ✅ Alias para compatibilidade
+export type PlayerInfo = UnifiedTeamPlayer;
 
 // ✅ DESABILITADO: Salvamento de logs em arquivo (por solicitação do usuário)
 function logMatchFound(...args: any[]) {
@@ -54,7 +25,9 @@ function logMatchFound(...args: any[]) {
   imports: [CommonModule],
   templateUrl: './match-found.html',
   styleUrl: './match-found.scss',
-  changeDetection: ChangeDetectionStrategy.OnPush
+  // ✅ CORREÇÃO: Removido OnPush porque o componente atualiza propriedades internas
+  // baseado em eventos WebSocket (timer, progress, etc) que não são @Input
+  // changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
   @Input() matchData: MatchFoundData | null = null;
@@ -62,7 +35,19 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
   @Output() acceptMatch = new EventEmitter<number>();
   @Output() declineMatch = new EventEmitter<number>();
 
-  acceptTimeLeft = 30;
+  private _acceptTimeLeft = 30;
+
+  // ✅ NOVO: Getter que sempre lê de matchData (fonte de verdade do backend)
+  get acceptTimeLeft(): number {
+    if (this.matchData?.acceptanceTimer !== undefined) {
+      return this.matchData.acceptanceTimer;
+    }
+    return this._acceptTimeLeft;
+  }
+
+  set acceptTimeLeft(value: number) {
+    this._acceptTimeLeft = value;
+  }
   sortedBlueTeam: PlayerInfo[] = [];
   sortedRedTeam: PlayerInfo[] = [];
   private countdownTimer?: number;
@@ -77,7 +62,7 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
   ) { }
 
   ngOnInit() {
-    if (this.matchData && this.matchData.phase === 'accept') {
+    if (this.matchData && this.matchData.phase === 'match_found') {
       this.startAcceptCountdown();
     }
     this.updateSortedTeams();
@@ -136,7 +121,7 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
         }
 
         // ✅ CORREÇÃO: Configurar timer apenas se backend não está controlando
-        if (this.matchData && this.matchData.phase === 'accept') {
+        if (this.matchData && this.matchData.phase === 'match_found') {
           // ✅ CORREÇÃO: Usar acceptanceTimer do backend primeiro, depois acceptTimeout como fallback
           const backendTimer = this.matchData.acceptanceTimer || this.matchData.acceptTimeout || 30;
 
@@ -177,8 +162,8 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
       this.countdownTimer = undefined;
     }
 
-    // ✅ CORREÇÃO: Remover listener de timer do backend
-    document.removeEventListener('matchTimerUpdate', this.onTimerUpdate);
+    // ✅ REMOVIDO: Listeners não são mais necessários com Default strategy
+    // document.removeEventListener('matchTimerUpdate', this.onTimerUpdate);
 
     logMatchFound('✅ [MatchFound] Recursos limpos com sucesso');
   }
@@ -197,8 +182,8 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
     logMatchFound('🎯 [MatchFound] Dados do matchData:', {
       matchId: this.matchData.matchId,
       playerSide: this.matchData.playerSide,
-      teammatesCount: this.matchData.teammates?.length || 0,
-      enemiesCount: this.matchData.enemies?.length || 0
+      blueCount: this.matchData.teams?.blue?.players?.length || 0,
+      redCount: this.matchData.teams?.red?.players?.length || 0
     });
 
     const blueTeamPlayers = this.getBlueTeamPlayers();
@@ -227,46 +212,11 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
     });
   }
 
-  // ✅ NOVO: Configurar listener para atualizações de timer do backend
+  // ✅ REMOVIDO: Listeners de eventos customizados não são mais necessários
+  // Com Default strategy, as mudanças nos @Inputs são detectadas automaticamente
   private setupTimerListener(): void {
-    document.addEventListener('matchTimerUpdate', this.onTimerUpdate);
-  }
-
-  // ✅ CORREÇÃO: Handler para atualizações de timer do backend - ÚNICA fonte de verdade
-  private readonly onTimerUpdate = (event: any): void => {
-    if (event.detail && this.matchData) {
-      logMatchFound('⏰ [MatchFound] Timer atualizado pelo backend:', event.detail);
-
-      // Verificar se a atualização é para esta partida
-      if (event.detail.matchId && event.detail.matchId !== this.matchData.matchId) {
-        logMatchFound('⏰ [MatchFound] Timer para partida diferente - ignorando');
-        return;
-      }
-
-      // ✅ CORREÇÃO: Backend é a ÚNICA fonte de verdade - sempre atualizar
-      const newTimeLeft = event.detail.timeLeft;
-      const oldTimeLeft = this.acceptTimeLeft;
-
-      logMatchFound(`⏰ [MatchFound] Timer do backend: ${oldTimeLeft}s → ${newTimeLeft}s`);
-      this.acceptTimeLeft = newTimeLeft;
-      this.isTimerUrgent = event.detail.isUrgent || newTimeLeft <= 10;
-
-      // ✅ CORREÇÃO: Garantir que timer local não existe
-      if (this.countdownTimer) {
-        logMatchFound('⏰ [MatchFound] Removendo timer local - backend é a fonte de verdade');
-        clearInterval(this.countdownTimer);
-        this.countdownTimer = undefined;
-      }
-
-      // Auto-decline se tempo esgotar
-      if (this.acceptTimeLeft <= 0) {
-        logMatchFound('⏰ [MatchFound] Timer expirou via backend - auto-decline');
-        this.onDeclineMatch();
-      }
-
-      // ✅ CORREÇÃO: Forçar detecção de mudanças para atualizar timer
-      this.cdr.detectChanges();
-    }
+    // Com OnPush removido, detecção de mudanças acontece automaticamente
+    logMatchFound('ℹ️ [MatchFound] SetupTimerListener chamado - listeners não necessários com Default strategy');
   }
 
   /**
@@ -405,8 +355,10 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   getLanePreferencesDisplay(player: PlayerInfo): string {
-    const primary = `${this.getLaneIcon(player.primaryLane)} ${this.getLaneName(player.primaryLane)}`;
-    const secondary = `${this.getLaneIcon(player.secondaryLane)} ${this.getLaneName(player.secondaryLane)}`;
+    const primaryLane = player.primaryLane || player.assignedLane || 'fill';
+    const secondaryLane = player.secondaryLane || player.assignedLane || 'fill';
+    const primary = `${this.getLaneIcon(primaryLane)} ${this.getLaneName(primaryLane)}`;
+    const secondary = `${this.getLaneIcon(secondaryLane)} ${this.getLaneName(secondaryLane)}`;
     return `${primary} • ${secondary}`;
   }
 
@@ -509,7 +461,7 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   getMMRDifference(): number {
-    if (!this.matchData) return 0;
+    if (!this.matchData?.averageMMR) return 0;
     return Math.abs(Math.round(this.matchData.averageMMR.yourTeam - this.matchData.averageMMR.enemyTeam));
   }
 
@@ -536,46 +488,30 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   /**
-   * Retorna os jogadores do time azul (sempre à esquerda)
+   * ✅ OTIMIZADO: Acessa teams.blue.players diretamente (pick_ban_data)
    */
   getBlueTeamPlayers(): PlayerInfo[] {
-    if (!this.matchData) return [];
+    if (!this.matchData?.teams?.blue?.players) return [];
 
-    // Time azul = sempre teamIndex 0-4 (independente de onde o jogador está)
-    // Combinar teammates e enemies para ter todos os jogadores
-    const allPlayers = [...this.matchData.teammates, ...this.matchData.enemies];
-
-    // Filtrar apenas jogadores com teamIndex 0-4 (time azul)
-    const blueTeam = allPlayers.filter(player =>
-      player.teamIndex !== undefined && player.teamIndex >= 0 && player.teamIndex <= 4
-    );
-
-    return blueTeam;
+    // ✅ OTIMIZADO: Usar teams.blue.players diretamente (pick_ban_data)
+    return this.matchData.teams.blue.players;
   }
 
   /**
-   * Retorna os jogadores do time vermelho (sempre à direita)
+   * ✅ OTIMIZADO: Acessa teams.red.players diretamente (pick_ban_data)
    */
   getRedTeamPlayers(): PlayerInfo[] {
-    if (!this.matchData) return [];
+    if (!this.matchData?.teams?.red?.players) return [];
 
-    // Time vermelho = sempre teamIndex 5-9 (independente de onde o jogador está)
-    // Combinar teammates e enemies para ter todos os jogadores
-    const allPlayers = [...this.matchData.teammates, ...this.matchData.enemies];
-
-    // Filtrar apenas jogadores com teamIndex 5-9 (time vermelho)
-    const redTeam = allPlayers.filter(player =>
-      player.teamIndex !== undefined && player.teamIndex >= 5 && player.teamIndex <= 9
-    );
-
-    return redTeam;
+    // ✅ OTIMIZADO: Usar teams.red.players diretamente (pick_ban_data)
+    return this.matchData.teams.red.players;
   }
 
   /**
    * Retorna o MMR médio do time azul
    */
   getBlueTeamMMR(): number {
-    if (!this.matchData) return 0;
+    if (!this.matchData?.averageMMR) return 0;
 
     // Time azul = sempre teamIndex 0-4
     // Se o jogador está no time azul (playerSide === 'blue'), usar yourTeam
@@ -589,7 +525,7 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
    * Retorna o MMR médio do time vermelho
    */
   getRedTeamMMR(): number {
-    if (!this.matchData) return 0;
+    if (!this.matchData?.averageMMR) return 0;
 
     // Time vermelho = sempre teamIndex 5-9
     // Se o jogador está no time azul (playerSide === 'blue'), usar enemyTeam
@@ -605,7 +541,11 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
    * Retorna o status de aceitação de um jogador
    */
   getPlayerAcceptanceStatus(player: PlayerInfo): 'pending' | 'accepted' | 'declined' | 'timeout' {
-    return player.acceptanceStatus || 'pending';
+    // Backend envia number, frontend usa string
+    if (typeof player.acceptanceStatus === 'string') {
+      return player.acceptanceStatus;
+    }
+    return 'pending';
   }
 
   /**
@@ -759,8 +699,9 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
    */
   shouldBlurPlayerInfo(player: PlayerInfo): boolean {
     const isCurrent = this.isCurrentUser(player);
-    const shouldBlur = !isCurrent;
-    console.log(`[MatchFound] shouldBlurPlayerInfo(${player.summonerName}): isCurrent=${isCurrent}, shouldBlur=${shouldBlur}`);
+    const isBot = this.isPlayerBot(player); // ✅ Verificar se é bot
+    const shouldBlur = !isCurrent && !isBot; // ✅ BOTS NUNCA são borrados
+    console.log(`[MatchFound] shouldBlurPlayerInfo(${player.summonerName}): isCurrent=${isCurrent}, isBot=${isBot}, shouldBlur=${shouldBlur}`);
     return shouldBlur;
   }
 

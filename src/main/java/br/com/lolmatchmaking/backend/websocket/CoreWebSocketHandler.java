@@ -21,8 +21,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import br.com.lolmatchmaking.backend.service.QueueService;
-import br.com.lolmatchmaking.backend.service.AcceptanceService;
-import br.com.lolmatchmaking.backend.service.MatchmakingOrchestrator;
+// ✅ REMOVIDO: Imports de serviços deprecated
+// import br.com.lolmatchmaking.backend.service.AcceptanceService;
+// import br.com.lolmatchmaking.backend.service.MatchmakingOrchestrator;
 import br.com.lolmatchmaking.backend.service.DraftFlowService;
 import br.com.lolmatchmaking.backend.service.LCUConnectionRegistry;
 import br.com.lolmatchmaking.backend.service.RedisLCUConnectionService;
@@ -55,7 +56,7 @@ import lombok.RequiredArgsConstructor;
 public class CoreWebSocketHandler extends TextWebSocketHandler {
 
     private static final Logger log = LoggerFactory.getLogger(CoreWebSocketHandler.class);
-    private final ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
+    private final ObjectMapper objectMapper;
 
     private static final String FIELD_SUMMONER_NAME = "summonerName";
     private static final String FIELD_STATUS = "status";
@@ -130,7 +131,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     protected void handleTextMessage(@NonNull WebSocketSession session, @NonNull TextMessage message) throws Exception {
-        JsonNode root = mapper.readTree(message.getPayload());
+        JsonNode root = objectMapper.readTree(message.getPayload());
         String type = root.path("type").asText();
         switch (type) {
             case "identify_player" -> handleIdentify(session, root);
@@ -162,6 +163,8 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             case "reconnect_check_response" -> handleReconnectCheckResponse(session, root);
             case "match_vote_progress" -> handleMatchVoteProgress(session, root);
             case "match_vote_update" -> handleMatchVoteUpdate(session, root);
+            case "verify_session_sync" -> handleVerifySessionSync(session, root);
+            case "electron_heartbeat" -> handleElectronHeartbeat(session, root);
             default -> session.sendMessage(new TextMessage("{\"error\":\"unknown_type\"}"));
         }
     }
@@ -185,6 +188,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         String authToken = root.path("authToken").asText(null);
 
         // ✅ NOVO: Extrair profileIconId, puuid e summonerId do payload
+        // Nota: gameName e tagLine virão em electron_identify
         Integer profileIconId = root.has("profileIconId") && !root.get("profileIconId").isNull()
                 ? root.get("profileIconId").asInt()
                 : null;
@@ -214,48 +218,10 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             return;
         }
 
-        // ✅ NOVO: ADQUIRIR PLAYER LOCK (prevenir múltiplas instâncias do mesmo jogador)
-        String lockedSession = playerLockService.acquirePlayerLock(summonerName, session.getId());
-        if (lockedSession == null) {
-            // ✅ CORREÇÃO: Verificar se sessão antiga ainda existe
-            String oldSessionId = playerLockService.getPlayerSession(summonerName);
-
-            if (oldSessionId != null) {
-                // Verificar se sessão antiga ainda está ativa no SessionRegistry
-                boolean oldSessionExists = sessionRegistry.get(oldSessionId) != null;
-
-                if (!oldSessionExists) {
-                    // ✅ Sessão antiga não existe mais, forçar release e tentar novamente
-                    log.warn("⚠️ [WS] Jogador {} tinha lock de sessão antiga {} (não existe mais), forçando release...",
-                            summonerName, oldSessionId);
-
-                    playerLockService.forceReleasePlayerLock(summonerName);
-
-                    // Tentar adquirir lock novamente
-                    lockedSession = playerLockService.acquirePlayerLock(summonerName, session.getId());
-
-                    if (lockedSession == null) {
-                        log.error("❌ [WS] Falha ao adquirir lock mesmo após force release: {}", summonerName);
-                        session.sendMessage(new TextMessage(
-                                "{\"type\":\"lcu_connection_registered\",\"success\":false,\"error\":\"Erro ao reconectar\"}"));
-                        session.close(CloseStatus.SERVER_ERROR);
-                        return;
-                    }
-
-                    log.info("✅ [WS] Lock readquirido após force release: {}", summonerName);
-
-                } else {
-                    // Sessão antiga ainda existe - REALMENTE duplicado
-                    log.warn("❌ [WS] Jogador {} JÁ está conectado em sessão ativa: {}", summonerName, oldSessionId);
-                    session.sendMessage(new TextMessage(
-                            "{\"type\":\"lcu_connection_registered\",\"success\":false,\"error\":\"Você já está conectado em outro dispositivo\"}"));
-                    session.close(CloseStatus.NOT_ACCEPTABLE);
-                    return;
-                }
-            }
-        }
-
-        log.info("✅ [WS] Player lock adquirido para: {}", summonerName);
+        // ⚠️ NOTE: handleRegisterLcuConnection é chamado ANTES de electron_identify
+        // Por isso NÃO criamos lock aqui - lock será criado em handleElectronIdentify
+        // que é chamado logo depois pelo Electron com customSessionId correto
+        log.info("📝 [WS] register_lcu_connection: Aguardando electron_identify para criar lock");
 
         // Registrar no registry
         lcuConnectionRegistry.registerConnection(
@@ -380,7 +346,8 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         try {
             Map<String, Object> data = new HashMap<>();
             data.put(FIELD_SUMMONER_NAME, finalSummonerName);
-            webSocketService.broadcastToAll("lcu_connection_registered", data);
+            // ✅ CORREÇÃO: Enviar apenas para o jogador específico
+            webSocketService.sendToPlayer("lcu_connection_registered", data, finalSummonerName);
             log.info("📡 [WS] Notificação lcu_connection_registered enviada GLOBALMENTE");
         } catch (Exception e) {
             log.warn("⚠️ [WS] Erro ao enviar broadcast de lcu_connection_registered: {}", e.getMessage());
@@ -431,7 +398,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         String summonerName = sessionRegistry.getSummonerBySession(session.getId());
         if (summonerName != null && !summonerName.isEmpty()) {
             try {
-                String lcuStatusJson = mapper.writeValueAsString(data);
+                String lcuStatusJson = objectMapper.writeValueAsString(data);
                 redisLCUConnection.storeLcuStatus(summonerName, lcuStatusJson);
                 log.debug("✅ [CoreWS] LCU status armazenado no Redis: summonerName={}", summonerName);
             } catch (Exception e) {
@@ -492,17 +459,18 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                 sessionDetails.put("ip", clientInfo.get("ip"));
                 sessionDetails.put("userAgent", clientInfo.get("userAgent"));
 
-                // Buscar PUUID se disponível
+                // ✅ NOVO: Buscar dados adicionais do ClientInfo via summonerName
                 try {
-                    String playerInfoJson = redisWSSession.getPlayerInfo(sessionId);
-                    if (playerInfoJson != null && !playerInfoJson.isEmpty()) {
-                        JsonNode playerInfo = mapper.readTree(playerInfoJson);
-                        sessionDetails.put("puuid", playerInfo.path("puuid").asText(null));
-                        sessionDetails.put("summonerId", playerInfo.path("summonerId").asText(null));
-                        sessionDetails.put("profileIconId", playerInfo.path("profileIconId").asText(null));
+                    Optional<RedisWebSocketSessionService.ClientInfo> playerInfoOpt = redisWSSession
+                            .getClientInfo(sessionId);
+                    if (playerInfoOpt.isPresent()) {
+                        var playerInfo = playerInfoOpt.get();
+                        sessionDetails.put("puuid", playerInfo.getPuuid());
+                        sessionDetails.put("summonerId", playerInfo.getSummonerId());
+                        sessionDetails.put("profileIconId", playerInfo.getProfileIconId());
                     }
                 } catch (Exception e) {
-                    log.debug("Erro ao buscar PUUID para sessão {}: {}", sessionId, e.getMessage());
+                    log.debug("Erro ao buscar dados adicionais para sessão {}: {}", sessionId, e.getMessage());
                 }
 
                 sessionsList.add(sessionDetails);
@@ -517,7 +485,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             response.put("sessions", sessionsList);
             response.put("timestamp", System.currentTimeMillis());
 
-            String responseJson = mapper.writeValueAsString(response);
+            String responseJson = objectMapper.writeValueAsString(response);
             session.sendMessage(new TextMessage(responseJson));
 
             log.info("✅ [Player-Sessions] Lista de {} sessões ativas enviada para sessionId={}",
@@ -531,7 +499,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                         "error", "Erro interno",
                         "totalSessions", 0,
                         "sessions", new ArrayList<>());
-                session.sendMessage(new TextMessage(mapper.writeValueAsString(errorResponse)));
+                session.sendMessage(new TextMessage(objectMapper.writeValueAsString(errorResponse)));
             } catch (IOException ioException) {
                 log.error("❌ [CoreWS] Erro ao enviar resposta de erro", ioException);
             }
@@ -582,16 +550,17 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                 playerInfo.put("ip", clientInfo.get("ip"));
                 playerInfo.put("userAgent", clientInfo.get("userAgent"));
 
-                // Buscar dados adicionais do jogador
+                // ✅ NOVO: Buscar dados adicionais do ClientInfo via sessionId
                 try {
-                    String playerInfoJson = redisWSSession.getPlayerInfo(clientSessionId);
-                    if (playerInfoJson != null && !playerInfoJson.isEmpty()) {
-                        JsonNode playerInfoNode = mapper.readTree(playerInfoJson);
-                        playerInfo.put("puuid", playerInfoNode.path("puuid").asText(null));
-                        playerInfo.put("summonerId", playerInfoNode.path("summonerId").asText(null));
-                        playerInfo.put("profileIconId", playerInfoNode.path("profileIconId").asText(null));
-                        playerInfo.put("gameName", playerInfoNode.path("gameName").asText(null));
-                        playerInfo.put("tagLine", playerInfoNode.path("tagLine").asText(null));
+                    Optional<RedisWebSocketSessionService.ClientInfo> playerDataOpt = redisWSSession
+                            .getClientInfo(clientSessionId);
+                    if (playerDataOpt.isPresent()) {
+                        var playerData = playerDataOpt.get();
+                        playerInfo.put("puuid", playerData.getPuuid());
+                        playerInfo.put("summonerId", playerData.getSummonerId());
+                        playerInfo.put("profileIconId", playerData.getProfileIconId());
+                        playerInfo.put("gameName", playerData.getGameName());
+                        playerInfo.put("tagLine", playerData.getTagLine());
                     }
                 } catch (Exception e) {
                     log.debug("Erro ao buscar dados adicionais para sessão {}: {}", clientSessionId, e.getMessage());
@@ -637,7 +606,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                     "timestamp", System.currentTimeMillis(),
                     "message", "Logs [Player-Sessions] habilitados para esta sessão");
 
-            String responseJson = mapper.writeValueAsString(response);
+            String responseJson = objectMapper.writeValueAsString(response);
             session.sendMessage(new TextMessage(responseJson));
 
             log.info("✅ [Player-Sessions] [UNIFIED-LOGS] Logs [Player-Sessions] habilitados para sessionId={}",
@@ -654,7 +623,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                         "type", "unified_logs_error",
                         "error", "Erro interno",
                         "timestamp", System.currentTimeMillis());
-                session.sendMessage(new TextMessage(mapper.writeValueAsString(errorResponse)));
+                session.sendMessage(new TextMessage(objectMapper.writeValueAsString(errorResponse)));
             } catch (IOException ioException) {
                 log.error("❌ [Player-Sessions] [UNIFIED-LOGS] Erro ao enviar resposta de erro", ioException);
             }
@@ -664,6 +633,10 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
     private void handleElectronIdentify(WebSocketSession session, JsonNode root) throws IOException {
         try {
             log.info("🔍 [CoreWS] Recebendo electron_identify de sessionId={}", session.getId());
+
+            // ✅ NOVO: Extrair customSessionId se fornecido
+            String customSessionId = root.path("customSessionId").asText(null);
+            log.info("🔍 [CoreWS] CustomSessionId recebido: {}", customSessionId);
 
             // ✅ PRINCÍPIO FUNDAMENTAL: Backend NUNCA tenta resolver dados de sessão
             // Electron é a ÚNICA fonte da verdade para:
@@ -709,7 +682,70 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             log.debug("✅ [CoreWS] PUUID validado via ClientInfo: {} → {}",
                     summonerName, puuid.substring(0, Math.min(8, puuid.length())));
 
-            // ✅ REGISTRAR com VERIFICAÇÃO
+            // ✅ NOVO: Gerar customSessionId se não foi fornecido pelo Electron
+            if (customSessionId == null || customSessionId.isBlank()) {
+                if (gameName != null && tagLine != null) {
+                    customSessionId = br.com.lolmatchmaking.backend.service.lock.PlayerLockService
+                            .generateCustomSessionId(gameName, tagLine);
+                    log.info("🔧 [CoreWS] CustomSessionId gerado: {}", customSessionId);
+                } else {
+                    // Fallback: usar summonerName normalizado
+                    customSessionId = "player_" + summonerName.replaceAll("[^a-zA-Z0-9_]", "_");
+                    log.warn("⚠️ [CoreWS] CustomSessionId gerado com fallback: {}", customSessionId);
+                }
+            }
+
+            // ✅ NOVO: Adquirir lock usando customSessionId
+            String lockedSession = playerLockService.acquirePlayerLock(customSessionId, session.getId());
+            if (lockedSession == null) {
+                String oldSessionId = playerLockService.getPlayerSession(customSessionId);
+                if (oldSessionId != null) {
+                    boolean oldSessionExists = sessionRegistry.get(oldSessionId) != null;
+                    if (!oldSessionExists) {
+                        log.warn(
+                                "⚠️ [CoreWS] Jogador {} tinha lock de sessão antiga {} (não existe mais), forçando release...",
+                                customSessionId, oldSessionId);
+                        playerLockService.forceReleasePlayerLock(customSessionId);
+                        lockedSession = playerLockService.acquirePlayerLock(customSessionId, session.getId());
+
+                        if (lockedSession == null) {
+                            log.error("❌ [CoreWS] Falha ao adquirir lock mesmo após force release: {}",
+                                    customSessionId);
+                            session.sendMessage(new TextMessage(
+                                    "{\"type\":\"electron_identified\",\"success\":false,\"error\":\"Erro ao reconectar\"}"));
+                            session.close();
+                            return;
+                        }
+                    } else {
+                        log.warn("❌ [CoreWS] Jogador {} JÁ está conectado em sessão ativa: {}", customSessionId,
+                                oldSessionId);
+                        session.sendMessage(new TextMessage(
+                                "{\"type\":\"electron_identified\",\"success\":false,\"error\":\"Você já está conectado em outro dispositivo\"}"));
+                        session.close();
+                        return;
+                    }
+                }
+            }
+            log.info("🔒 [CoreWS] Lock adquirido: customSessionId={} → randomSessionId={}", customSessionId,
+                    session.getId());
+
+            // ✅ NOVO: LOG COMPLETO DE IDENTIFICAÇÃO
+            log.info("🔗 [ELECTRON→BACKEND] ===== IDENTIFICAÇÃO COMPLETA =====");
+            log.info("🔗 [ELECTRON→BACKEND] RandomSessionId (WS): {}", session.getId());
+            log.info("🔗 [ELECTRON→BACKEND] CustomSessionId (LOCK): {}", customSessionId);
+            log.info("🔗 [ELECTRON→BACKEND] SummonerName: {}", summonerName);
+            log.info("🔗 [ELECTRON→BACKEND] PUUID: {}",
+                    puuid != null ? puuid.substring(0, Math.min(12, puuid.length())) + "..." : "N/A");
+            log.info("🔗 [ELECTRON→BACKEND] SummonerId: {}", summonerId);
+            log.info("🔗 [ELECTRON→BACKEND] ProfileIconId: {}", profileIconId);
+            log.info("🔗 [ELECTRON→BACKEND] Level: {}", summonerLevel);
+            log.info("🔗 [ELECTRON→BACKEND] GameName: {}", gameName);
+            log.info("🔗 [ELECTRON→BACKEND] TagLine: {}", tagLine);
+            log.info("🔗 [ELECTRON→BACKEND] =============================================");
+
+            // ✅ REGISTRAR com VERIFICAÇÃO usando randomSessionId (session.getId())
+            // effectiveSessionId é usado apenas para lógica interna, registro usa sempre o
+            // random
             sessionRegistry.registerPlayer(summonerName, session.getId());
 
             // ✅ REMOVIDO: registerPuuidConstraint deprecated - usar ClientInfo
@@ -752,8 +788,33 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                     userAgent = "unknown";
             }
 
-            // ✅ CRÍTICO: Usar registerSession() em vez de storePlayerInfo() direto
-            boolean success = redisWSSession.registerSession(session.getId(), summonerName, ipAddress, userAgent);
+            // ✅ CRÍTICO: Se usar customSessionId, armazenar mapeamento e LIMPAR antigos
+            if (customSessionId != null && !customSessionId.isBlank()) {
+                // 1. LIMPAR mappings antigos deste customSessionId
+                redisWSSession.cleanupOldMappingsForPlayer(customSessionId);
+
+                // 2. Armazenar novo mapeamento no Redis (persistente)
+                redisWSSession.storeSessionMapping(session.getId(), customSessionId);
+
+                // 3. Armazenar mapeamento reverso no MatchmakingWebSocketService (cache local)
+                // Isso permite conversão rápida de customSessionId → randomSessionId
+                webSocketService.storeCustomToRandomMapping(customSessionId, session.getId());
+
+                log.info("🔗 [CoreWS] Mapeamento ARMazenado: {} → {} (Redis + cache local, mappings antigos limpos)",
+                        session.getId(), customSessionId);
+                
+                // ✅ CRÍTICO: Enviar eventos pendentes AGORA que customSessionId está registrado!
+                webSocketService.sendPendingEventsForSession(customSessionId, session.getId());
+            }
+
+            // ✅ CRÍTICO: SEMPRE registrar usando randomSessionId (session.getId())
+            // effectiveSessionId pode ser customSessionId, mas o registro Redis deve usar o
+            // random
+            // O customSessionId é usado apenas para lógica interna, não para armazenamento
+            // Redis
+            // ✅ NOVO: Passar customSessionId para armazenar no ClientInfo
+            boolean success = redisWSSession.registerSession(session.getId(), summonerName, ipAddress, userAgent,
+                    customSessionId);
 
             if (success) {
                 log.info("✅ [CoreWS] {} identificado via Electron (PUUID: {}...) - Sessão registrada com validação",
@@ -769,9 +830,25 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                     playerInfoMap.put("tagLine", tagLine);
                     playerInfoMap.put("summonerLevel", summonerLevel);
 
-                    String playerInfoJson = mapper.writeValueAsString(playerInfoMap);
-                    redisWSSession.storePlayerInfo(session.getId(), playerInfoJson);
-                    log.debug("✅ [CoreWS] Player info completo salvo para {}", summonerName);
+                    // ✅ NOVO: Usar updatePlayerData incluindo customSessionId
+                    // Isso atualiza a chave ws:client_info:{summonerName} com todos os dados
+                    boolean updated = redisWSSession.updatePlayerData(
+                            summonerName,
+                            puuid,
+                            summonerId,
+                            profileIconId,
+                            summonerLevel,
+                            gameName,
+                            tagLine,
+                            customSessionId);
+
+                    if (updated) {
+                        log.info("✅ [CoreWS] Dados do jogador atualizados no Redis: {} (customSessionId: {})",
+                                summonerName, customSessionId);
+                    } else {
+                        log.warn("⚠️ [CoreWS] Falha ao atualizar dados do jogador no Redis: {} (customSessionId: {})",
+                                summonerName, customSessionId);
+                    }
                 } catch (Exception e) {
                     log.warn("⚠️ [CoreWS] Erro ao salvar player info completo: {}", e.getMessage());
                 }
@@ -783,6 +860,95 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
 
             // Responder
             session.sendMessage(new TextMessage("{\"type\":\"electron_identified\",\"success\":true}"));
+
+            // ✅ CRÍTICO: Verificar e enviar eventos pendentes APÓS identificação bem-sucedida
+            // Agora temos o customSessionId correto, podemos buscar eventos pendentes
+            try {
+                String randomSessionId = session.getId();
+                List<br.com.lolmatchmaking.backend.service.redis.RedisWebSocketEventService.PendingEvent> pendingEvents = webSocketService
+                        .getPendingEventsByCustomSessionId(customSessionId);
+
+                if (!pendingEvents.isEmpty()) {
+                    log.info("📬 [CoreWS] ╔═══════════════════════════════════════════════════════════════╗");
+                    log.info("📬 [CoreWS] ║ {} eventos pendentes encontrados", pendingEvents.size());
+                    log.info("📬 [CoreWS] ║ CustomSessionId: {}", customSessionId);
+                    log.info("📬 [CoreWS] ║ RandomSessionId: {}", randomSessionId);
+                    log.info("📬 [CoreWS] ╚═══════════════════════════════════════════════════════════════╝");
+
+                    for (var event : pendingEvents) {
+                        try {
+                            webSocketService.sendMessage(randomSessionId, event.getEventType(), event.getPayload());
+                            log.info("✅ [CoreWS] Evento pendente enviado: {} → {}", event.getEventType(), customSessionId);
+                        } catch (Exception e) {
+                            log.error("❌ [CoreWS] Erro ao enviar evento pendente: {}", event.getEventType(), e);
+                        }
+                    }
+
+                    // Limpar eventos após envio
+                    webSocketService.clearPendingEventsByCustomSessionId(customSessionId);
+                    log.info("🗑️ [CoreWS] {} eventos pendentes limpos para customSessionId: {}", pendingEvents.size(), customSessionId);
+                } else {
+                    log.debug("📭 [CoreWS] Nenhum evento pendente para customSessionId: {}", customSessionId);
+                }
+            } catch (Exception e) {
+                log.error("❌ [CoreWS] Erro ao verificar eventos pendentes: {}", e.getMessage());
+            }
+            
+            // ✅ NOVO: Enviar confirmação de sincronização de sessão para Electron
+            try {
+                Map<String, Object> syncConfirmation = new HashMap<>();
+                syncConfirmation.put("randomSessionId", session.getId());
+                syncConfirmation.put("customSessionId", customSessionId);
+                syncConfirmation.put("summonerName", summonerName);
+                syncConfirmation.put("synced", true);
+                syncConfirmation.put("timestamp", System.currentTimeMillis());
+                
+                session.sendMessage(new TextMessage(
+                    objectMapper.writeValueAsString(Map.of(
+                        "type", "session_sync_confirmed",
+                        "data", syncConfirmation
+                    ))
+                ));
+                
+                log.info("✅ [CoreWS] session_sync_confirmed enviado: {} ↔ {}", session.getId(), customSessionId);
+            } catch (Exception e) {
+                log.warn("⚠️ [CoreWS] Erro ao enviar session_sync_confirmed: {}", e.getMessage());
+            }
+
+            // ✅ NOVO: Enviar notificação de sessão atualizada para FRONTEND
+            try {
+                // Verificar se é reconexão (se já existia customSessionId para outro randomSessionId)
+                boolean isReconnection = false;
+                String eventType = "connected";
+                
+                // Buscar sessões antigas deste jogador
+                Optional<String> oldSessionOpt = redisWSSession.getSessionBySummoner(summonerName);
+                if (oldSessionOpt.isPresent() && !oldSessionOpt.get().equals(session.getId())) {
+                    isReconnection = true;
+                    eventType = "reconnected";
+                    log.info("🔄 [Session Notification] Reconexão detectada: {} (old: {}, new: {})", 
+                        summonerName, oldSessionOpt.get(), session.getId());
+                }
+
+                Map<String, Object> notificationData = new HashMap<>();
+                notificationData.put("eventType", eventType);
+                notificationData.put("summonerName", summonerName);
+                notificationData.put("gameName", gameName);
+                notificationData.put("tagLine", tagLine);
+                notificationData.put("customSessionId", customSessionId);
+                notificationData.put("randomSessionId", session.getId());
+                notificationData.put("isReconnection", isReconnection);
+                notificationData.put("profileIconId", profileIconId);
+                notificationData.put("timestamp", System.currentTimeMillis());
+
+                // Enviar notificação apenas para este jogador (frontend)
+                webSocketService.sendToPlayer("player_session_updated", notificationData, summonerName);
+                
+                log.info("🔔 [Session Notification] Notificação enviada: {} - {} ({})", 
+                    eventType, summonerName, customSessionId);
+            } catch (Exception e) {
+                log.debug("⚠️ [Session Notification] Erro ao enviar notificação: {}", e.getMessage());
+            }
 
         } catch (Exception e) {
             log.error("❌ [CoreWS] Erro ao processar electron_identify", e);
@@ -863,17 +1029,23 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         // Busca summonerName antes de remover
         String summonerName = sessionRegistry.getSummonerBySession(sessionId);
 
-        // Remove player info do Redis
-        redisWSSession.removePlayerInfo(sessionId);
+        // ✅ NOVO: Remove sessão via removeSession (que já remove ClientInfo)
+        redisWSSession.removeSession(sessionId);
 
         // ✅ REDIS ONLY: Remove LCU status do Redis (fonte única da verdade)
         if (summonerName != null && !summonerName.isEmpty()) {
             redisLCUConnection.removeLastLcuStatus(summonerName);
             log.debug("✅ [CoreWS] Dados Redis removidos: sessionId={}, summonerName={}", sessionId, summonerName);
 
-            // ✅ NOVO: LIBERAR PLAYER LOCK ao desconectar
-            playerLockService.releasePlayerLock(summonerName);
-            log.info("🔓 [WS] Player lock liberado para: {}", summonerName);
+            // ✅ NOVO: LIBERAR PLAYER LOCK ao desconectar usando customSessionId
+            // Buscar customSessionId a partir do sessionId
+            String customSessionId = redisWSSession.getCustomSessionId(sessionId).orElse(null);
+            if (customSessionId != null) {
+                playerLockService.releasePlayerLock(customSessionId);
+                log.info("🔓 [WS] Player lock liberado para: {}", customSessionId);
+            } else {
+                log.warn("⚠️ [WS] CustomSessionId não encontrado para sessionId: {}", sessionId);
+            }
         }
 
         sessionRegistry.remove(sessionId);
@@ -1185,7 +1357,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         // ✅ REMOVIDO: acceptanceService deprecated - usar MatchFoundService
         // TODO: Implementar status usando MatchFoundService
         var status = Map.of("status", "unknown", "message", "Service deprecated - use MatchFoundService");
-        session.sendMessage(new TextMessage(mapper.writeValueAsString(Map.of(
+        session.sendMessage(new TextMessage(objectMapper.writeValueAsString(Map.of(
                 "type", "acceptance_status",
                 "success", true,
                 FIELD_STATUS, status))));
@@ -1194,7 +1366,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
     private void broadcastQueueUpdate() {
         var status = queueService.queueStatus(null);
         try {
-            String json = mapper.writeValueAsString(Map.of(
+            String json = objectMapper.writeValueAsString(Map.of(
                     "type", "queue_status",
                     FIELD_STATUS, status));
             sessionRegistry.all().forEach(ws -> {
@@ -1216,7 +1388,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             currentSummoner = dataNode.path(FIELD_SUMMONER_NAME).asText(null);
         }
         var status = queueService.queueStatus(currentSummoner);
-        session.sendMessage(new TextMessage(mapper.writeValueAsString(Map.of(
+        session.sendMessage(new TextMessage(objectMapper.writeValueAsString(Map.of(
                 "type", "queue_status",
                 FIELD_STATUS, status))));
     }
@@ -1314,7 +1486,7 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
         }
 
         var snap = draftFlowService.snapshot(matchId);
-        session.sendMessage(new TextMessage(mapper.writeValueAsString(Map.of(
+        session.sendMessage(new TextMessage(objectMapper.writeValueAsString(Map.of(
                 "type", "draft_snapshot",
                 "success", true,
                 "snapshot", snap))));
@@ -1378,5 +1550,165 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
     private void handleMatchVoteUpdate(WebSocketSession session, JsonNode root) throws IOException {
         log.debug("🔄 [WS] match_vote_update recebido de session {}", session.getId());
         // Este é um evento de broadcast, não precisa de resposta
+    }
+
+    /**
+     * ✅ NOVO: Handler para verificar sincronização de sessão
+     * Permite ao Electron verificar se seu session ID está sincronizado
+     */
+    private void handleVerifySessionSync(WebSocketSession session, JsonNode root) throws IOException {
+        try {
+            String randomSessionId = session.getId();
+            String requestedCustomSessionId = root.path("customSessionId").asText(null);
+            String requestedSummonerName = root.path("summonerName").asText(null);
+
+            log.debug("🔍 [Session Sync] Verificação solicitada: randomSID={}, customSID={}, summoner={}",
+                    randomSessionId, requestedCustomSessionId, requestedSummonerName);
+
+            // ✅ Buscar customSessionId atual do Redis
+            Optional<String> actualCustomSessionIdOpt = redisWSSession.getCustomSessionId(randomSessionId);
+            String actualCustomSessionId = actualCustomSessionIdOpt.orElse(null);
+
+            // ✅ Buscar summonerName atual do Redis
+            String actualSummonerName = sessionRegistry.getSummonerBySession(randomSessionId);
+
+            // ✅ Verificar se está sincronizado
+            boolean isSynced = true;
+            List<String> issues = new ArrayList<>();
+
+            if (requestedCustomSessionId != null && actualCustomSessionId != null) {
+                if (!requestedCustomSessionId.equals(actualCustomSessionId)) {
+                    isSynced = false;
+                    issues.add("CustomSessionId mismatch");
+                    log.warn("⚠️ [Session Sync] CustomSessionId não sincronizado: expected={}, actual={}",
+                            requestedCustomSessionId, actualCustomSessionId);
+                }
+            }
+
+            if (requestedSummonerName != null && actualSummonerName != null) {
+                if (!requestedSummonerName.equalsIgnoreCase(actualSummonerName)) {
+                    isSynced = false;
+                    issues.add("SummonerName mismatch");
+                    log.warn("⚠️ [Session Sync] SummonerName não sincronizado: expected={}, actual={}",
+                            requestedSummonerName, actualSummonerName);
+                }
+            }
+
+            // ✅ Montar resposta
+            Map<String, Object> response = new HashMap<>();
+            response.put("type", "session_sync_status");
+            response.put("randomSessionId", randomSessionId);
+            response.put("requestedCustomSessionId", requestedCustomSessionId);
+            response.put("actualCustomSessionId", actualCustomSessionId);
+            response.put("requestedSummonerName", requestedSummonerName);
+            response.put("actualSummonerName", actualSummonerName);
+            response.put("isSynced", isSynced);
+            response.put("issues", issues);
+            response.put("timestamp", System.currentTimeMillis());
+
+            session.sendMessage(new TextMessage(objectMapper.writeValueAsString(response)));
+
+            if (isSynced) {
+                log.info("✅ [Session Sync] Sessão sincronizada: {}", randomSessionId);
+            } else {
+                log.warn("⚠️ [Session Sync] Sessão DESSINCRONIZADA: {} - Issues: {}", randomSessionId, issues);
+            }
+
+        } catch (Exception e) {
+            log.error("❌ [Session Sync] Erro ao verificar sincronização", e);
+            try {
+                Map<String, Object> errorResponse = Map.of(
+                        "type", "session_sync_status",
+                        "error", "Erro interno",
+                        "isSynced", false,
+                        "timestamp", System.currentTimeMillis());
+                session.sendMessage(new TextMessage(objectMapper.writeValueAsString(errorResponse)));
+            } catch (IOException ioException) {
+                log.error("❌ [Session Sync] Erro ao enviar resposta de erro", ioException);
+            }
+        }
+    }
+
+    /**
+     * ✅ NOVO: Handler para heartbeat do Electron com dados atualizados
+     */
+    private void handleElectronHeartbeat(WebSocketSession session, JsonNode root) {
+        try {
+            String customSessionId = root.path("customSessionId").asText(null);
+            String summonerName = root.path("summonerName").asText(null);
+            String puuid = root.path("puuid").asText(null);
+            Integer profileIconId = root.has("profileIconId") && !root.get("profileIconId").isNull()
+                    ? root.get("profileIconId").asInt()
+                    : null;
+            Integer summonerLevel = root.has("summonerLevel") && !root.get("summonerLevel").isNull()
+                    ? root.get("summonerLevel").asInt()
+                    : null;
+
+            if (customSessionId == null || summonerName == null) {
+                log.debug("⚠️ [Heartbeat] Heartbeat incompleto recebido");
+                return;
+            }
+
+            log.debug("💓 [Heartbeat] Recebido de: {} ({})", summonerName, customSessionId);
+
+            // ✅ Atualizar lastActivity no Redis
+            try {
+                redisWSSession.updateHeartbeat(summonerName);
+                log.trace("✅ [Heartbeat] LastActivity atualizado para: {}", summonerName);
+            } catch (Exception e) {
+                log.debug("⚠️ [Heartbeat] Erro ao atualizar lastActivity: {}", e.getMessage());
+            }
+
+            // ✅ Atualizar dados do jogador se mudaram
+            if (puuid != null || profileIconId != null || summonerLevel != null) {
+                try {
+                    // Buscar dados atuais
+                    Optional<br.com.lolmatchmaking.backend.service.redis.RedisWebSocketSessionService.ClientInfo> currentInfoOpt = 
+                        redisWSSession.getClientInfo(summonerName);
+
+                    if (currentInfoOpt.isPresent()) {
+                        var currentInfo = currentInfoOpt.get();
+                        
+                        // Verificar se houve mudança
+                        boolean hasChanges = false;
+                        if (puuid != null && !puuid.equals(currentInfo.getPuuid())) {
+                            hasChanges = true;
+                            log.info("🔄 [Heartbeat] PUUID mudou para {}: {} → {}", 
+                                summonerName, currentInfo.getPuuid(), puuid);
+                        }
+                        if (profileIconId != null && !profileIconId.equals(currentInfo.getProfileIconId())) {
+                            hasChanges = true;
+                            log.debug("🔄 [Heartbeat] ProfileIcon mudou para {}: {} → {}", 
+                                summonerName, currentInfo.getProfileIconId(), profileIconId);
+                        }
+                        if (summonerLevel != null && !summonerLevel.equals(currentInfo.getSummonerLevel())) {
+                            hasChanges = true;
+                            log.debug("🔄 [Heartbeat] Level mudou para {}: {} → {}", 
+                                summonerName, currentInfo.getSummonerLevel(), summonerLevel);
+                        }
+
+                        // Atualizar se houve mudanças
+                        if (hasChanges) {
+                            redisWSSession.updatePlayerData(
+                                summonerName,
+                                puuid != null ? puuid : currentInfo.getPuuid(),
+                                currentInfo.getSummonerId(),
+                                profileIconId != null ? profileIconId : currentInfo.getProfileIconId(),
+                                summonerLevel != null ? summonerLevel : currentInfo.getSummonerLevel(),
+                                currentInfo.getGameName(),
+                                currentInfo.getTagLine(),
+                                customSessionId
+                            );
+                            log.info("✅ [Heartbeat] Dados atualizados para: {}", summonerName);
+                        }
+                    }
+                } catch (Exception e) {
+                    log.debug("⚠️ [Heartbeat] Erro ao atualizar dados: {}", e.getMessage());
+                }
+            }
+
+        } catch (Exception e) {
+            log.debug("❌ [Heartbeat] Erro ao processar heartbeat: {}", e.getMessage());
+        }
     }
 }

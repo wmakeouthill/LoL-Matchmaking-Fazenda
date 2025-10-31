@@ -87,7 +87,7 @@ desktop.ini
 *.swp
 /redis/
 /redis-new/
-
+src/main/resources/riot.txt
 # Local docker / env overrides (developer-specific)
 docker-compose.override.yml
 docker-compose.override.yaml

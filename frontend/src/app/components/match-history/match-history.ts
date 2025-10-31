@@ -380,7 +380,7 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
         gameVersion: matchData.info.gameVersion,
         mapId: matchData.info.mapId,
         participants: enhancedParticipants,
-        teams: matchData.info.teams,
+        riotTeams: matchData.info.teams,
         team1: team1,
         team2: team2,
         winner: matchWinner, playerStats: {
@@ -616,7 +616,7 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
         averageMMR1: 1200,
         averageMMR2: 1200,
         participants: [...team1Participants, ...team2Participants],
-        teams: [
+        riotTeams: [
           { teamId: 100, win: match.winnerTeam === 'team1' },
           { teamId: 200, win: match.winnerTeam === 'team2' }
         ],
@@ -839,7 +839,7 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
         team1: team1,
         team2: team2,
         participants: [...team1, ...team2],
-        teams: [
+        riotTeams: [
           { teamId: 100, win: isWin },
           { teamId: 200, win: !isWin }
         ],
@@ -2122,7 +2122,7 @@ export class MatchHistoryComponent implements OnInit, OnDestroy {
         gameVersion: lcuMatch.gameVersion,
         mapId: lcuMatch.mapId,
         participants: normalizedParticipants,
-        teams: lcuMatch.teams,
+        riotTeams: lcuMatch.teams,
         team1: team1,
         team2: team2,
         winner: computedWinner,

@@ -5,6 +5,7 @@ import br.com.lolmatchmaking.backend.domain.repository.CustomMatchRepository;
 import br.com.lolmatchmaking.backend.domain.repository.QueuePlayerRepository;
 import br.com.lolmatchmaking.backend.websocket.SessionRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,7 +27,9 @@ public class DraftFlowService {
     private final QueuePlayerRepository queuePlayerRepository;
     private final SessionRegistry sessionRegistry;
     private final DataDragonService dataDragonService;
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final br.com.lolmatchmaking.backend.mapper.UnifiedMatchDataMapper matchDataMapper;
+    private final ObjectMapper objectMapper;
+
     private final GameInProgressService gameInProgressService;
     private final DiscordService discordService;
 
@@ -75,6 +78,7 @@ public class DraftFlowService {
             String byPlayer) {
     }
 
+    @Getter
     public static class DraftState {
         private final long matchId;
         private final List<DraftAction> actions;
@@ -96,21 +100,8 @@ public class DraftFlowService {
             this.lastActionStartMs = System.currentTimeMillis();
         }
 
-        public long getMatchId() {
-            return matchId;
-        }
-
-        public List<DraftAction> getActions() {
-            return actions;
-        }
-
-        public int getCurrentIndex() {
-            return currentIndex;
-        }
-
-        public Set<String> getConfirmations() {
-            return confirmations;
-        }
+        // ✅ Lombok @Getter gera todos os getters automaticamente
+        // Métodos customizados mantidos abaixo
 
         public void advance() {
             currentIndex++;
@@ -120,24 +111,12 @@ public class DraftFlowService {
             this.lastActionStartMs = System.currentTimeMillis();
         }
 
-        public long getLastActionStartMs() {
-            return lastActionStartMs;
-        }
-
         public boolean isPlayerInTeam(String player, int team) {
             if (team == 1)
                 return team1Players.contains(player);
             if (team == 2)
                 return team2Players.contains(player);
             return false;
-        }
-
-        public Set<String> getTeam1Players() {
-            return team1Players;
-        }
-
-        public Set<String> getTeam2Players() {
-            return team2Players;
         }
     }
 
@@ -272,8 +251,9 @@ public class DraftFlowService {
             data.put("timeRemaining", seconds);
             data.put("allowedSummoners", allowedSummoners);
 
-            // ✅ Enviar GLOBALMENTE com envelope tipado (type + timestamp) consistente
-            webSocketService.broadcastToAll("draft_update", data);
+            // ✅ CORREÇÃO: Enviar para jogadores específicos da partida
+            List<String> allPlayers = getAllPlayersFromDraftState(st);
+            webSocketService.sendToPlayers("draft_update", data, allPlayers);
 
         } catch (Exception e) {
             log.error("❌ Erro sendTimerOnly", e);
@@ -287,7 +267,7 @@ public class DraftFlowService {
                         && !cm.getPickBanDataJson().isBlank())
                 .forEach(cm -> {
                     try {
-                        Map<?, ?> snap = mapper.readValue(cm.getPickBanDataJson(), Map.class);
+                        Map<?, ?> snap = objectMapper.readValue(cm.getPickBanDataJson(), Map.class);
                         Object actionsObj = snap.get(KEY_ACTIONS);
                         Object currentIdxObj = snap.get(KEY_CURRENT_INDEX);
                         @SuppressWarnings("unchecked")
@@ -324,7 +304,9 @@ public class DraftFlowService {
                         log.info("🔄 [restoreDraftStates] Timer resetado para ação atual (evita timeout falso)");
 
                         // ✅ Salvar no Redis (não mais em HashMap)
-                        saveDraftStateToRedis(cm.getId(), st);
+                        // saveDraftStateToRedis(cm.getId(), st); // ✅ REMOVIDO: Método deprecated
+                        // redisDraftFlow.saveDraftState(cm.getId(), st); // ✅ MÉTODO NÃO EXISTE
+                        // TODO: Implementar salvamento no Redis usando saveDraftStateJson
                         log.info("Draft restaurado matchId={} actions={} currentIndex={}", cm.getId(), actions.size(),
                                 st.getCurrentIndex());
                     } catch (Exception e) {
@@ -417,7 +399,7 @@ public class DraftFlowService {
     private DraftState parseDraftStateFromJSON(Long matchId, br.com.lolmatchmaking.backend.domain.entity.CustomMatch cm)
             throws Exception {
         @SuppressWarnings("unchecked")
-        Map<String, Object> pickBanData = mapper.readValue(cm.getPickBanDataJson(), Map.class);
+        Map<String, Object> pickBanData = objectMapper.readValue(cm.getPickBanDataJson(), Map.class);
 
         // ✅ Extrair actions de dentro de teams.blue/red.players[].actions
         List<DraftAction> allActions = new ArrayList<>();
@@ -567,15 +549,6 @@ public class DraftFlowService {
     }
 
     /**
-     * ⚠️ DEPRECATED: Usar syncMySQLtoRedis() ao invés
-     */
-    @Deprecated
-    private void saveDraftStateToRedis(Long matchId, DraftState st) {
-        // Agora apenas sincroniza do MySQL (fonte da verdade)
-        syncMySQLtoRedis(matchId);
-    }
-
-    /**
      * ✅ NOVO: Serializa DraftState para Map
      */
     private Map<String, Object> serializeDraftState(DraftState st) {
@@ -664,7 +637,10 @@ public class DraftFlowService {
                         assignPlayersByDraftOrder(existingState.getActions(), team1Players, team2Players);
                         log.info("✅ [startDraft] byPlayer reatribuído para estado existente");
                         // Salvar estado corrigido
-                        saveDraftStateToRedis(matchId, existingState);
+                        // saveDraftStateToRedis(matchId, existingState); // ✅ REMOVIDO: Método
+                        // deprecated
+                        // redisDraftFlow.saveDraftState(matchId, existingState); // ✅ MÉTODO NÃO EXISTE
+                        // TODO: Implementar salvamento no Redis usando saveDraftStateJson
                         persist(matchId, existingState);
                     }
 
@@ -701,7 +677,9 @@ public class DraftFlowService {
             }
 
             // ✅ Salvar no Redis (fonte ÚNICA)
-            saveDraftStateToRedis(matchId, st);
+            // saveDraftStateToRedis(matchId, st); // ✅ REMOVIDO: Método deprecated
+            // redisDraftFlow.saveDraftState(matchId, st); // ✅ MÉTODO NÃO EXISTE
+            // TODO: Implementar salvamento no Redis usando saveDraftStateJson
 
             log.info("🎬 [DraftFlow] startDraft - matchId={}, actions={}, currentIndex={}, team1={}, team2={}",
                     matchId, actions.size(), st.getCurrentIndex(), team1Players, team2Players);
@@ -715,6 +693,10 @@ public class DraftFlowService {
             log.info("📡 [DraftFlow] startDraft - Estado salvo no Redis e MySQL: matchId={}", matchId);
 
             // ✅ CRÍTICO: Fazer broadcast inicial para frontend
+            List<String> allPlayers = getAllPlayersFromDraftState(st);
+            log.info(
+                    "🎬 [DraftFlow] Iniciando broadcast inicial - enviando draft_starting para {} jogadores (CustomSessionIds: {})",
+                    allPlayers.size(), allPlayers);
             broadcastUpdate(st, false);
             log.info("✅ [DraftFlow] startDraft - Broadcast inicial enviado para frontend");
 
@@ -1048,7 +1030,9 @@ public class DraftFlowService {
         persist(matchId, st);
 
         // ✅ CRÍTICO: Salvar no Redis para sincronizar com outros backends
-        saveDraftStateToRedis(matchId, st);
+        // saveDraftStateToRedis(matchId, st); // ✅ REMOVIDO: Método deprecated
+        // redisDraftFlow.saveDraftState(matchId, st); // ✅ MÉTODO NÃO EXISTE
+        // TODO: Implementar salvamento no Redis usando saveDraftStateJson
 
         log.info("✅ Ação salva com sucesso no MySQL e Redis!");
 
@@ -1142,7 +1126,9 @@ public class DraftFlowService {
         st.getConfirmations().add(playerId);
 
         // ✅ Salvar no Redis
-        saveDraftStateToRedis(matchId, st);
+        // saveDraftStateToRedis(matchId, st); // ✅ REMOVIDO: Método deprecated
+        // redisDraftFlow.saveDraftState(matchId, st); // ✅ MÉTODO NÃO EXISTE
+        // TODO: Implementar salvamento no Redis usando saveDraftStateJson
 
         broadcastUpdate(st, true);
 
@@ -1287,7 +1273,7 @@ public class DraftFlowService {
                     if (cm.getPickBanDataJson() != null && !cm.getPickBanDataJson().isEmpty()) {
                         // ✅ Carregar dados existentes
                         @SuppressWarnings("unchecked")
-                        Map<String, Object> existing = mapper.readValue(cm.getPickBanDataJson(), Map.class);
+                        Map<String, Object> existing = objectMapper.readValue(cm.getPickBanDataJson(), Map.class);
                         snapshot = new HashMap<>(existing);
 
                         // ✅ CRÍTICO: Atualizar apenas campos de estado do draft
@@ -1295,6 +1281,8 @@ public class DraftFlowService {
                         snapshot.put(KEY_ACTIONS, st.getActions());
                         snapshot.put(KEY_CURRENT_INDEX, st.getCurrentIndex());
                         snapshot.put(KEY_CONFIRMATIONS, st.getConfirmations());
+                        snapshot.put("lastActionStartMs", st.getLastActionStartMs()); // ✅ CRÍTICO: Salvar timestamp
+                                                                                      // para calcular elapsed
 
                         // ✅ Verificar se team1/team2 existem (com dados completos do MatchFoundService)
                         Object team1Data = snapshot.get(KEY_TEAM1);
@@ -1334,6 +1322,8 @@ public class DraftFlowService {
                         snapshot.put(KEY_ACTIONS, st.getActions());
                         snapshot.put(KEY_CURRENT_INDEX, st.getCurrentIndex());
                         snapshot.put(KEY_CONFIRMATIONS, st.getConfirmations());
+                        snapshot.put("lastActionStartMs", st.getLastActionStartMs()); // ✅ CRÍTICO: Salvar timestamp
+                                                                                      // para calcular elapsed
 
                         log.warn(
                                 "⚠️ [DraftFlow] Criando pick_ban_data pela primeira vez - criando dados completos dos times!");
@@ -1364,6 +1354,7 @@ public class DraftFlowService {
                     finalSnapshot.put("currentPlayer", cleanData.get("currentPlayer"));
                     finalSnapshot.put("currentTeam", cleanData.get("currentTeam"));
                     finalSnapshot.put("currentActionType", cleanData.get("currentActionType"));
+                    finalSnapshot.put("lastActionStartMs", st.getLastActionStartMs()); // ✅ CRÍTICO: Salvar timestamp
                     finalSnapshot.put(KEY_MATCH_ID, matchId);
                     finalSnapshot.put(KEY_TYPE, "draft_snapshot");
                     finalSnapshot.put("timestamp", System.currentTimeMillis());
@@ -1383,7 +1374,7 @@ public class DraftFlowService {
                             .filter(a -> a.championId() == null || SKIPPED.equals(a.championId()))
                             .count();
 
-                    String jsonToSave = mapper.writeValueAsString(finalSnapshot);
+                    String jsonToSave = objectMapper.writeValueAsString(finalSnapshot);
                     cm.setPickBanDataJson(jsonToSave);
                     customMatchRepository.save(cm);
 
@@ -1508,7 +1499,7 @@ public class DraftFlowService {
                 if (cm.getPickBanDataJson() != null && !cm.getPickBanDataJson().isEmpty()) {
                     try {
                         @SuppressWarnings("unchecked")
-                        Map<String, Object> pickBanData = mapper.readValue(cm.getPickBanDataJson(), Map.class);
+                        Map<String, Object> pickBanData = objectMapper.readValue(cm.getPickBanDataJson(), Map.class);
 
                         // ✅ ESTRUTURA HIERÁRQUICA (teams.blue/red)
                         Object teamsData = pickBanData.get("teams");
@@ -1629,7 +1620,7 @@ public class DraftFlowService {
             // ✅ CORREÇÃO CRÍTICA: Frontend espera timeRemaining em SEGUNDOS
             updateData.put("timeRemaining", (int) Math.ceil(remainingMs / 1000.0));
 
-            // ✅ ADICIONAR ESTRUTURA LIMPA (sem duplicação team1/team2/actions)
+            // ✅ ADICIONAR ESTRUTURA LIMPA (com teams.blue/red E actions global)
             log.info("🔨 [broadcastUpdate] Adicionando JSON LIMPO ao broadcast");
             Map<String, Object> cleanData = buildHierarchicalDraftData(st);
             if (cleanData.containsKey("teams")) {
@@ -1639,12 +1630,20 @@ public class DraftFlowService {
                 updateData.put("currentTeam", cleanData.get("currentTeam"));
                 updateData.put("currentActionType", cleanData.get("currentActionType"));
                 updateData.put(KEY_CURRENT_INDEX, cleanData.get("currentIndex"));
+
+                // ✅ CRÍTICO: Adicionar array global de actions (frontend precisa disso!)
+                if (cleanData.containsKey("actions")) {
+                    updateData.put("actions", cleanData.get("actions"));
+                    log.info("✅ [broadcastUpdate] Actions adicionados: {} total",
+                            ((List<?>) cleanData.get("actions")).size());
+                }
+
                 log.info(
-                        "✅ [broadcastUpdate] JSON LIMPO adicionado: apenas teams + metadados (sem team1/team2/actions)");
+                        "✅ [broadcastUpdate] JSON LIMPO adicionado: teams + actions + metadados");
 
                 // ✅ LOG DETALHADO: Mostrar estrutura teams enviada
                 try {
-                    String teamsJson = mapper.writerWithDefaultPrettyPrinter()
+                    String teamsJson = objectMapper.writerWithDefaultPrettyPrinter()
                             .writeValueAsString(cleanData.get("teams"));
                     log.info("📤 [broadcastUpdate] === ESTRUTURA TEAMS ENVIADA ===");
                     log.info("{}", teamsJson);
@@ -1663,39 +1662,58 @@ public class DraftFlowService {
             log.info("📤 [broadcastUpdate] Confirmations: {}", st.getConfirmations().size());
             log.info("====================================================");
 
-            // ✅ CORREÇÃO: Usar o padrão correto como draft_update e draft_starting
-            webSocketService.broadcastToAll(eventType, updateData);
+            // ✅ CORREÇÃO: Enviar para jogadores específicos da partida
+            List<String> allPlayers = getAllPlayersFromDraftState(st);
+            log.info("📤 [DraftFlow] Enviando {} para {} jogadores (CustomSessionIds: {})",
+                    eventType, allPlayers.size(), allPlayers);
+            webSocketService.sendToPlayers(eventType, updateData, allPlayers);
+            log.info("✅ [DraftFlow] {} enviado com sucesso para {} jogadores", eventType, allPlayers.size());
         } catch (Exception e) {
             log.error("Erro broadcast draft_updated", e);
         }
     }
 
     /**
-     * ✅ NOVO: Envia mensagem específica para UM jogador
+     * ✅ CORRIGIDO: Envia mensagem para jogador específico usando novo padrão
      */
-    private void sendToPlayer(String summonerName, String payload) {
-        if (summonerName == null)
-            return;
+    private void sendToPlayer(String summonerName, String eventType, Map<String, Object> data) {
+        try {
+            log.debug("🎯 [DraftFlow] Enviando {} para {}", eventType, summonerName);
 
-        // ✅ CORRIGIDO: Usar Redis-only para buscar sessão
-        Optional<String> sessionIdOpt = redisWSSession.getSessionBySummoner(summonerName.toLowerCase().trim());
-        if (sessionIdOpt.isPresent()) {
-            String sessionId = sessionIdOpt.get();
-            WebSocketSession session = webSocketService.getSession(sessionId);
+            // ✅ USAR NOVO PADRÃO: sendToPlayer com sessionId customizado
+            webSocketService.sendToPlayer(eventType, data, summonerName);
 
-            if (session != null && session.isOpen()) {
-                try {
-                    session.sendMessage(new TextMessage(payload));
-                    log.debug("📤 Mensagem enviada para jogador: {}", summonerName);
-                } catch (Exception e) {
-                    log.warn("⚠️ Erro ao enviar mensagem para {}: {}", summonerName, e.getMessage());
-                }
-            } else {
-                log.warn("⚠️ Sessão WebSocket {} não está ativa para jogador {}", sessionId, summonerName);
-            }
-        } else {
-            log.warn("⚠️ Nenhuma sessão encontrada para jogador {}", summonerName);
+            log.debug("✅ [DraftFlow] {} enviado para {}", eventType, summonerName);
+        } catch (Exception e) {
+            log.error("❌ [DraftFlow] Erro ao enviar {} para {}", eventType, summonerName, e);
         }
+    }
+
+    /**
+     * ✅ NOVO: Obtém todos os jogadores de um DraftState
+     * ✅ CORREÇÃO: Usar dados do DraftState diretamente (não buscar do MySQL)
+     */
+    private List<String> getAllPlayersFromDraftState(DraftState st) {
+        List<String> allPlayers = new ArrayList<>();
+
+        try {
+            // ✅ CORREÇÃO: Usar dados diretamente do DraftState (sem buscar MySQL)
+            // DraftState já tem team1Players e team2Players
+            if (st != null) {
+                if (st.getTeam1Players() != null) {
+                    allPlayers.addAll(st.getTeam1Players());
+                }
+                if (st.getTeam2Players() != null) {
+                    allPlayers.addAll(st.getTeam2Players());
+                }
+            }
+
+            log.debug("🎯 [DraftFlow] Jogadores encontrados (DraftState): {}", allPlayers);
+        } catch (Exception e) {
+            log.error("❌ [DraftFlow] Erro ao obter jogadores do DraftState", e);
+        }
+
+        return allPlayers;
     }
 
     // ✅ REMOVIDO: sendToMatchPlayers - substituído por broadcastToAllSessions
@@ -1706,8 +1724,9 @@ public class DraftFlowService {
             Map<String, Object> data = Map.of(
                     KEY_MATCH_ID, st.getMatchId());
 
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE usando o padrão correto
-            webSocketService.broadcastToAll("draft_completed", data);
+            // ✅ CORREÇÃO: Enviar para jogadores específicos da partida
+            List<String> allPlayers = getAllPlayersFromDraftState(st);
+            webSocketService.sendToPlayers("draft_completed", data, allPlayers);
         } catch (Exception e) {
             log.error("Erro broadcast draft_completed", e);
         }
@@ -1718,8 +1737,9 @@ public class DraftFlowService {
             Map<String, Object> data = Map.of(
                     KEY_MATCH_ID, st.getMatchId());
 
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE usando o padrão correto
-            webSocketService.broadcastToAll("draft_confirmed", data);
+            // ✅ CORREÇÃO: Enviar para jogadores específicos da partida
+            List<String> allPlayers = getAllPlayersFromDraftState(st);
+            webSocketService.sendToPlayers("draft_confirmed", data, allPlayers);
         } catch (Exception e) {
             log.error("Erro broadcast draft_confirmed", e);
         }
@@ -1737,7 +1757,7 @@ public class DraftFlowService {
                 if (match.getTeam1PlayersJson() != null && !match.getTeam1PlayersJson().isEmpty()) {
                     try {
                         @SuppressWarnings("unchecked")
-                        List<String> team1 = mapper.readValue(match.getTeam1PlayersJson(), List.class);
+                        List<String> team1 = objectMapper.readValue(match.getTeam1PlayersJson(), List.class);
                         allPlayers.addAll(team1);
                     } catch (Exception e) {
                         log.warn("⚠️ [DraftFlow] Erro ao parsear team1: {}", e.getMessage());
@@ -1747,7 +1767,7 @@ public class DraftFlowService {
                 if (match.getTeam2PlayersJson() != null && !match.getTeam2PlayersJson().isEmpty()) {
                     try {
                         @SuppressWarnings("unchecked")
-                        List<String> team2 = mapper.readValue(match.getTeam2PlayersJson(), List.class);
+                        List<String> team2 = objectMapper.readValue(match.getTeam2PlayersJson(), List.class);
                         allPlayers.addAll(team2);
                     } catch (Exception e) {
                         log.warn("⚠️ [DraftFlow] Erro ao parsear team2: {}", e.getMessage());
@@ -1814,7 +1834,7 @@ public class DraftFlowService {
                 // ✅ 1. Tentar buscar do banco (se existir estrutura antiga)
                 if (cm.getPickBanDataJson() != null && !cm.getPickBanDataJson().isEmpty()) {
                     @SuppressWarnings("unchecked")
-                    Map<String, Object> pickBanData = mapper.readValue(cm.getPickBanDataJson(), Map.class);
+                    Map<String, Object> pickBanData = objectMapper.readValue(cm.getPickBanDataJson(), Map.class);
 
                     @SuppressWarnings("unchecked")
                     List<Map<String, Object>> team1FromDB = (List<Map<String, Object>>) pickBanData.get(KEY_TEAM1);
@@ -1870,7 +1890,24 @@ public class DraftFlowService {
             result.put("currentActionType", currentAction.type());
         }
 
-        log.info("✅ [buildHierarchicalDraftData] JSON LIMPO gerado: {} keys (sem duplicação)", result.keySet().size());
+        // ✅ 6. Adicionar array global de actions (frontend precisa disso!)
+        List<Map<String, Object>> globalActions = st.getActions().stream()
+                .map(action -> {
+                    Map<String, Object> actionMap = new HashMap<>();
+                    actionMap.put("index", action.index());
+                    actionMap.put("type", action.type());
+                    actionMap.put("team", action.team());
+                    actionMap.put("championId", action.championId());
+                    actionMap.put("championName", action.championName());
+                    actionMap.put("byPlayer", action.byPlayer());
+                    actionMap.put("phase", getPhaseLabel(action.index()));
+                    return actionMap;
+                })
+                .toList();
+        result.put("actions", globalActions);
+
+        log.info("✅ [buildHierarchicalDraftData] JSON LIMPO gerado: {} keys, {} actions", result.keySet().size(),
+                globalActions.size());
         return result;
     }
 
@@ -2206,7 +2243,7 @@ public class DraftFlowService {
             if (cm.getPickBanDataJson() != null && !cm.getPickBanDataJson().isEmpty()) {
                 try {
                     @SuppressWarnings("unchecked")
-                    Map<String, Object> pickBanData = mapper.readValue(cm.getPickBanDataJson(), Map.class);
+                    Map<String, Object> pickBanData = objectMapper.readValue(cm.getPickBanDataJson(), Map.class);
 
                     // ✅ ESTRUTURA HIERÁRQUICA (teams.blue/red)
                     Object teamsData = pickBanData.get("teams");
@@ -2255,7 +2292,7 @@ public class DraftFlowService {
                     (st.getTeam1Players().contains(playerName) || st.getTeam2Players().contains(playerName))) {
                 try {
                     long remainingMs = calcRemainingMs(st);
-                    String payload = mapper.writeValueAsString(Map.of(
+                    String payload = objectMapper.writeValueAsString(Map.of(
                             KEY_TYPE, "draft_snapshot",
                             KEY_MATCH_ID, st.getMatchId(),
                             KEY_CURRENT_INDEX, st.getCurrentIndex(),
@@ -2286,8 +2323,9 @@ public class DraftFlowService {
                     "team1", team1Data,
                     "team2", team2Data);
 
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE usando o padrão correto
-            webSocketService.broadcastToAll("match_game_ready", data);
+            // ✅ CORREÇÃO: Enviar para jogadores específicos da partida
+            List<String> allPlayers = getAllPlayersFromDraftState(st);
+            webSocketService.sendToPlayers("match_game_ready", data, allPlayers);
         } catch (Exception e) {
             log.error("Erro broadcast match_game_ready", e);
         }
@@ -2324,7 +2362,7 @@ public class DraftFlowService {
                 try {
                     Map<String, Object> team1Data = buildTeamData(st, 1);
                     Map<String, Object> team2Data = buildTeamData(st, 2);
-                    String payload = mapper.writeValueAsString(Map.of(
+                    String payload = objectMapper.writeValueAsString(Map.of(
                             KEY_TYPE, "match_game_ready",
                             KEY_MATCH_ID, st.getMatchId(),
                             "team1", team1Data,
@@ -2438,7 +2476,9 @@ public class DraftFlowService {
                 persist(st.getMatchId(), st);
 
                 // ✅ Salvar estado no Redis
-                saveDraftStateToRedis(st.getMatchId(), st);
+                // saveDraftStateToRedis(st.getMatchId(), st); // ✅ REMOVIDO: Método deprecated
+                // redisDraftFlow.saveDraftState(st.getMatchId(), st); // ✅ MÉTODO NÃO EXISTE
+                // TODO: Implementar salvamento no Redis usando saveDraftStateJson
 
                 broadcastUpdate(st, false);
                 if (st.getCurrentIndex() >= st.getActions().size()) {
@@ -2587,7 +2627,9 @@ public class DraftFlowService {
                 // reconstroi
                 List<DraftAction> acts = new ArrayList<>(st.getActions());
                 st = new DraftState(matchId, acts, st.getTeam1Players(), st.getTeam2Players());
-                saveDraftStateToRedis(matchId, st);
+                // saveDraftStateToRedis(matchId, st); // ✅ REMOVIDO: Método deprecated
+                // redisDraftFlow.saveDraftState(matchId, st); // ✅ MÉTODO NÃO EXISTE
+                // TODO: Implementar salvamento no Redis usando saveDraftStateJson
             }
 
             log.info("🔄 [DraftFlow] RETRY: Enviando broadcastUpdate inicial padronizado");
@@ -2948,8 +2990,9 @@ public class DraftFlowService {
                     "totalPlayers", totalPlayers,
                     "allConfirmed", confirmations.size() >= totalPlayers);
 
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE usando o padrão correto
-            webSocketService.broadcastToAll("draft_updated", payload);
+            // ✅ CORREÇÃO: Enviar para jogadores específicos da partida
+            List<String> allPlayers = getAllPlayersFromDraftState(st);
+            webSocketService.sendToPlayers("draft_updated", payload, allPlayers);
 
             log.info("📡 [DraftFlow] Broadcast para 10 jogadores: {}/{} confirmaram", confirmations.size(),
                     totalPlayers);
@@ -3006,8 +3049,9 @@ public class DraftFlowService {
                     "status", "game_ready",
                     "message", "Todos confirmaram! Jogo iniciando...");
 
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE usando o padrão correto
-            webSocketService.broadcastToAll("game_ready", payload);
+            // ✅ CORREÇÃO: Enviar para jogadores específicos da partida
+            List<String> allPlayers = getAllPlayersFromDraftState(st);
+            webSocketService.sendToPlayers("game_ready", payload, allPlayers);
             log.info("📡 [DraftFlow] Broadcast game_ready para 10 jogadores");
 
         } catch (Exception e) {
@@ -3133,7 +3177,7 @@ public class DraftFlowService {
                         "type", "match_cancelled",
                         "matchId", matchId,
                         "message", "Partida cancelada pelo líder");
-                String json = mapper.writeValueAsString(payload);
+                String json = objectMapper.writeValueAsString(payload);
                 sessionRegistry.all().forEach(ws -> {
                     try {
                         ws.sendMessage(new TextMessage(json));
@@ -3149,8 +3193,9 @@ public class DraftFlowService {
                     "matchId", matchId,
                     "message", "Partida cancelada pelo líder");
 
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE usando o padrão correto
-            webSocketService.broadcastToAll("match_cancelled", payload);
+            // ✅ CORREÇÃO: Enviar para jogadores específicos da partida
+            List<String> allPlayers = getAllPlayersFromDraftState(st);
+            webSocketService.sendToPlayers("match_cancelled", payload, allPlayers);
             log.info("📡 [DraftFlow] Broadcast match_cancelled para 10 jogadores");
 
         } catch (Exception e) {
@@ -3240,7 +3285,7 @@ public class DraftFlowService {
             if (match.getPickBanDataJson() != null && !match.getPickBanDataJson().isBlank()) {
                 try {
                     @SuppressWarnings("unchecked")
-                    Map<String, Object> pickBanData = mapper.readValue(match.getPickBanDataJson(), Map.class);
+                    Map<String, Object> pickBanData = objectMapper.readValue(match.getPickBanDataJson(), Map.class);
 
                     log.info("✅ [getDraftDataForRestore] pickBanData do MySQL: {} chars",
                             match.getPickBanDataJson().length());

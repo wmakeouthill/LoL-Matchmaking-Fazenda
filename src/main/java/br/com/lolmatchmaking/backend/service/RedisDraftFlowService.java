@@ -340,28 +340,6 @@ public class RedisDraftFlowService {
     }
 
     /**
-     * ⚠️ DEPRECATED: Usar saveDraftStateJson() ao invés
-     */
-    @Deprecated
-    public void saveDraftState(Long matchId, Map<String, Object> state) {
-        try {
-            String key = KEY_PREFIX + matchId + ":state";
-
-            // Serializar para JSON
-            String json = objectMapper.writeValueAsString(state);
-
-            redisTemplate.opsForValue().set(key, json);
-            redisTemplate.expire(key, TTL_SECONDS, TimeUnit.SECONDS);
-
-            log.debug("💾 [RedisDraftFlow] Estado salvo: matchId={}, size={}bytes",
-                    matchId, json.length());
-
-        } catch (Exception e) {
-            log.error("❌ [RedisDraftFlow] Erro ao salvar estado: matchId={}", matchId, e);
-        }
-    }
-
-    /**
      * ✅ REFATORADO: Retorna JSON puro do Redis (ZERO conversões!)
      * Retorna EXATAMENTE o que está armazenado (mesmo formato do MySQL)
      */

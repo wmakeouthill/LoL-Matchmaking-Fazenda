@@ -269,16 +269,26 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     if (changes['matchData']?.currentValue) {
       const currentValue = changes['matchData'].currentValue;
 
-      // ✅ NOVO: Verificar se dados realmente mudaram usando hash
-      const dataHash = JSON.stringify(currentValue).substring(0, 100); // Primeiros 100 chars como hash
-      if (dataHash === this.lastMatchDataHash) {
-        saveLogToRoot(`⏭️ [processNgOnChanges] Dados idênticos - ignorando`);
+      // ✅ CORREÇÃO: Comparar propriedades críticas ao invés de hash completo
+      // Isso previne ignorar atualizações quando apenas currentAction/currentPlayer mudam
+      const criticalProperties = {
+        currentAction: currentValue.currentAction,
+        currentIndex: currentValue.currentIndex,
+        currentPlayer: currentValue.currentPlayer,
+        timeRemaining: currentValue.timeRemaining,
+        currentPhase: currentValue.currentPhase,
+        currentTeam: currentValue.currentTeam
+      };
+      const criticalHash = JSON.stringify(criticalProperties);
+
+      if (criticalHash === this.lastMatchDataHash) {
+        saveLogToRoot(`⏭️ [processNgOnChanges] Dados idênticos (propriedades críticas) - ignorando`);
         return;
       }
-      this.lastMatchDataHash = dataHash;
+      this.lastMatchDataHash = criticalHash;
 
       logDraft('🔄 [DraftPickBan] === ngOnChanges CHAMADO ===');
-      saveLogToRoot(`🔄 [processNgOnChanges] matchData alterado (hash: ${dataHash.substring(0, 20)}...)`);
+      saveLogToRoot(`🔄 [processNgOnChanges] matchData alterado (criticalHash: ${criticalHash.substring(0, 40)}...)`);
 
       this.updateInProgress = true;
 
@@ -2901,9 +2911,10 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   /**
-   * ✅ TIMER: Pega timer do app.ts (variável separada)
+   * ✅ TIMER: Pega timer de matchData (atualizado via WebSocket)
    */
   getDraftTimer(): number {
-    return (window as any).appComponent?.draftTimer || 30;
+    // ✅ Lê de matchData.timeRemaining (atualizado pelo app.ts via draft_update)
+    return this.matchData?.timeRemaining !== undefined ? this.matchData.timeRemaining : 30;
   }
 }

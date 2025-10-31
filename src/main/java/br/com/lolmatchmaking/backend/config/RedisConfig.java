@@ -43,7 +43,7 @@ public class RedisConfig {
      * Configuração customizada do Redisson para Upstash
      */
     @Bean(destroyMethod = "shutdown")
-    public RedissonClient redissonClient() {
+    public RedissonClient redissonClient(ObjectMapper objectMapper) {
         log.info("🔧 Configurando RedissonClient...");
         log.info("📡 Redis Host: {}", redisHost);
         log.info("📡 Redis Port: {}", redisPort);
@@ -51,8 +51,7 @@ public class RedisConfig {
 
         Config config = new Config();
 
-        // ✅ CORREÇÃO CRÍTICA: Usar JSON codec compatível com RedisTemplate
-        ObjectMapper redissonMapper = new ObjectMapper();
+        ObjectMapper redissonMapper = objectMapper.copy();
         redissonMapper.registerModule(new JavaTimeModule());
         redissonMapper.disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
@@ -85,16 +84,15 @@ public class RedisConfig {
 
     @Bean
     public RedisTemplate<String, Object> redisTemplate(
-            RedisConnectionFactory connectionFactory) {
+            RedisConnectionFactory connectionFactory,
+            ObjectMapper objectMapper) {
 
         log.info("🔧 Configurando RedisTemplate...");
 
         RedisTemplate<String, Object> template = new RedisTemplate<>();
         template.setConnectionFactory(connectionFactory);
 
-        // ObjectMapper com suporte a tipos Java 8+ (LocalDateTime, etc)
-        ObjectMapper mapper = new ObjectMapper();
-        mapper.registerModule(new JavaTimeModule());
+        ObjectMapper mapper = objectMapper.copy();
 
         // Configurar serializadores
         StringRedisSerializer stringSerializer = new StringRedisSerializer();

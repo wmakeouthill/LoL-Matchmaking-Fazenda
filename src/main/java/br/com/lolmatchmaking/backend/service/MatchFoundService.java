@@ -4,11 +4,9 @@ import br.com.lolmatchmaking.backend.domain.entity.CustomMatch;
 import br.com.lolmatchmaking.backend.domain.entity.QueuePlayer;
 import br.com.lolmatchmaking.backend.domain.repository.CustomMatchRepository;
 import br.com.lolmatchmaking.backend.domain.repository.QueuePlayerRepository;
-import br.com.lolmatchmaking.backend.dto.QueuePlayerInfoDTO;
+import br.com.lolmatchmaking.backend.mapper.UnifiedMatchDataMapper;
 import br.com.lolmatchmaking.backend.websocket.MatchmakingWebSocketService;
 import org.springframework.web.socket.WebSocketSession;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -19,7 +17,6 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -48,11 +45,9 @@ public class MatchFoundService {
 
     // ✅ NOVO: RedisTemplate para throttling de retries
     private final org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
-
-    // ✅ NOVO: SessionRegistry para verificar conectividade
     private final br.com.lolmatchmaking.backend.websocket.SessionRegistry sessionRegistry;
+    private final br.com.lolmatchmaking.backend.mapper.UnifiedMatchDataMapper matchDataMapper;
 
-    // Constructor manual para @Lazy
     public MatchFoundService(
             QueuePlayerRepository queuePlayerRepository,
             CustomMatchRepository customMatchRepository,
@@ -68,7 +63,8 @@ public class MatchFoundService {
             br.com.lolmatchmaking.backend.service.lock.PlayerLockService playerLockService,
             EventBroadcastService eventBroadcastService,
             org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate,
-            br.com.lolmatchmaking.backend.websocket.SessionRegistry sessionRegistry) {
+            br.com.lolmatchmaking.backend.websocket.SessionRegistry sessionRegistry,
+            br.com.lolmatchmaking.backend.mapper.UnifiedMatchDataMapper matchDataMapper) {
         this.queuePlayerRepository = queuePlayerRepository;
         this.customMatchRepository = customMatchRepository;
         this.webSocketService = webSocketService;
@@ -84,6 +80,7 @@ public class MatchFoundService {
         this.eventBroadcastService = eventBroadcastService;
         this.redisTemplate = redisTemplate;
         this.sessionRegistry = sessionRegistry;
+        this.matchDataMapper = matchDataMapper;
     }
 
     // ✅ REMOVIDO: HashMap local removido
@@ -261,6 +258,9 @@ public class MatchFoundService {
                         matchId, summonerName, acceptedPlayers.size(), allPlayers.size());
 
                 // Notificar progresso (backward compatibility)
+                log.info(
+                        "📊 [MatchFound] Enviando acceptance_progress - MatchId: {}, AcceptedCount: {}, Total: {}, Players: {}",
+                        matchId, acceptedPlayers.size(), allPlayers.size(), acceptedPlayers);
                 notifyAcceptanceProgress(matchId, acceptedPlayers, allPlayers);
             }
 
@@ -417,27 +417,13 @@ public class MatchFoundService {
                 log.info("  [{}] {} (expected: {})", i, team1Players.get(i).getSummonerName(), team1Names.get(i));
             }
 
-            // ✅ CRÍTICO: MANTER ordem exata do matchmaking!
-            // As lanes JÁ foram atribuídas corretamente pelo matchmaking
-            String[] lanes = { "top", "jungle", "mid", "bot", "support" };
-
-            // Converter para DTOs com lanes e posições (SEM REORDENAR!)
-            List<QueuePlayerInfoDTO> team1DTOs = new ArrayList<>();
-            for (int i = 0; i < team1Players.size(); i++) {
-                team1DTOs.add(convertToDTO(team1Players.get(i), lanes[i], i, false));
-            }
-
-            List<QueuePlayerInfoDTO> team2DTOs = new ArrayList<>();
-            for (int i = 0; i < team2Players.size(); i++) {
-                team2DTOs.add(convertToDTO(team2Players.get(i), lanes[i], i + 5, false));
-            }
-
-            // ✅ Salvar dados completos dos times no pick_ban_data AGORA (SÍNCRONO!)
-            saveTeamsDataToPickBan(matchId, team1DTOs, team2DTOs);
+            // ✅ NOVO: ATUALIZAR phase do pick_ban_data existente (foi criado em
+            // match_found)
+            updatePickBanDataPhase(matchId, "accepted");
 
             // ✅ CRÍTICO: Aguardar flush do JPA para garantir que dados foram persistidos
             customMatchRepository.flush();
-            log.info("✅ [MatchFound] pick_ban_data FLUSHED para o MySQL - seguro iniciar draft");
+            log.info("✅ [MatchFound] pick_ban_data ATUALIZADO (phase: accepted) e FLUSHED - seguro iniciar draft");
 
             // ✅ NOVO: ATUALIZAR ESTADO DE TODOS PARA IN_DRAFT
             List<String> allPlayers = redisAcceptance.getAllPlayers(matchId);
@@ -723,22 +709,52 @@ public class MatchFoundService {
             }
 
             try {
-                ObjectMapper mapper = new ObjectMapper();
                 @SuppressWarnings("unchecked")
-                Map<String, Object> pickBanData = mapper.readValue(match.getPickBanDataJson(), Map.class);
+                Map<String, Object> pickBanData = matchDataMapper.jsonToMap(match.getPickBanDataJson());
 
+                // ✅ USAR ESTRUTURA UNIFICADA: teams.blue/red.players
                 @SuppressWarnings("unchecked")
-                List<Map<String, Object>> team1Data = (List<Map<String, Object>>) pickBanData.get("team1");
+                List<Map<String, Object>> team1Data = null;
                 @SuppressWarnings("unchecked")
-                List<Map<String, Object>> team2Data = (List<Map<String, Object>>) pickBanData.get("team2");
+                List<Map<String, Object>> team2Data = null;
+
+                // Tentar estrutura unificada primeiro (teams.blue/red)
+                Object teamsObj = pickBanData.get("teams");
+                if (teamsObj instanceof Map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> teams = (Map<String, Object>) teamsObj;
+
+                    Object blueObj = teams.get("blue");
+                    Object redObj = teams.get("red");
+
+                    if (blueObj instanceof Map && redObj instanceof Map) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> blue = (Map<String, Object>) blueObj;
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> red = (Map<String, Object>) redObj;
+
+                        team1Data = (List<Map<String, Object>>) blue.get("players");
+                        team2Data = (List<Map<String, Object>>) red.get("players");
+                    }
+                }
+
+                // Fallback: estrutura legada (team1/team2)
+                if (team1Data == null || team2Data == null) {
+                    team1Data = (List<Map<String, Object>>) pickBanData.get("team1");
+                    team2Data = (List<Map<String, Object>>) pickBanData.get("team2");
+                }
 
                 if (team1Data == null || team2Data == null || team1Data.isEmpty() || team2Data.isEmpty()) {
                     log.error("❌ [MatchFound] Dados de times vazios no pick_ban_data para partida {}", matchId);
+                    log.error("❌ [MatchFound] pickBanData keys: {}", pickBanData.keySet());
                     return;
                 }
 
                 log.info("✅ [MatchFound] Dados dos times carregados do pick_ban_data: team1={}, team2={}",
                         team1Data.size(), team2Data.size());
+
+                // ✅ ATUALIZAR phase para "draft" antes de iniciar
+                updatePickBanDataPhase(matchId, "draft");
 
                 // ✅ CRÍTICO: ORDENAR players por teamIndex ANTES de extrair nomes!
                 // O pick_ban_data tem players com teamIndex, mas podem estar fora de ordem no
@@ -775,8 +791,6 @@ public class MatchFoundService {
 
                 // 🎮 INTEGRAÇÃO DISCORD: Criar canais e mover jogadores
                 try {
-                    // ✅ ObjectMapper local para leitura do snapshot
-                    ObjectMapper objectMapper = new ObjectMapper();
                     log.info("🎮 [MatchFound] Criando canais Discord para match {}", matchId);
                     log.info("📋 [MatchFound] Blue Team ({}): {}", team1Names.size(), team1Names);
                     log.info("📋 [MatchFound] Red Team ({}): {}", team2Names.size(), team2Names);
@@ -805,33 +819,6 @@ public class MatchFoundService {
                     log.error("❌ [MatchFound] Erro na integração Discord: {}", e.getMessage(), e);
                 }
 
-                // ✅ Agora buscar as ações do DraftState recém-criado
-                List<Map<String, Object>> actions = draftState.getActions().stream()
-                        .map(action -> {
-                            Map<String, Object> actionMap = new HashMap<>();
-                            actionMap.put("index", action.index());
-                            actionMap.put("type", action.type());
-                            actionMap.put("team", action.team());
-                            actionMap.put("championId", action.championId());
-                            actionMap.put("byPlayer", action.byPlayer());
-                            return actionMap;
-                        })
-                        .collect(Collectors.toList());
-
-                Integer currentIndex = draftState.getCurrentIndex();
-
-                // ✅ CRÍTICO: Calcular o jogador da vez inicial (ação 0)
-                String currentPlayer = null;
-                if (currentIndex < draftState.getActions().size()) {
-                    var currentAction = draftState.getActions().get(currentIndex);
-                    // O jogador da ação 0 é sempre do time 1, índice 0
-                    if (currentAction.team() == 1 && !team1Names.isEmpty()) {
-                        currentPlayer = team1Names.get(0);
-                    } else if (currentAction.team() == 2 && !team2Names.isEmpty()) {
-                        currentPlayer = team2Names.get(0);
-                    }
-                }
-
                 // ✅ CORREÇÃO: DraftFlowService.startDraft() já enviou o draft_starting com
                 // dados corretos
                 // Não precisamos enviar novamente aqui para evitar sobrescrever os dados
@@ -851,186 +838,37 @@ public class MatchFoundService {
     }
 
     /**
-     * Salva dados completos dos times no pick_ban_data para uso no draft
-     * ✅ Formato idêntico ao backend antigo
+     * ✅ ATUALIZA pick_ban_data existente com nova phase
+     * Não cria novamente, apenas atualiza a phase e adiciona dados necessários
      */
-    private void saveTeamsDataToPickBan(Long matchId, List<QueuePlayerInfoDTO> team1, List<QueuePlayerInfoDTO> team2) {
+    private void updatePickBanDataPhase(Long matchId, String newPhase) {
         try {
             CustomMatch match = customMatchRepository.findById(matchId).orElse(null);
             if (match == null) {
-                log.error("❌ [MatchFound] Partida {} não encontrada para salvar pick_ban_data", matchId);
+                log.error("❌ [MatchFound] Partida {} não encontrada para atualizar pick_ban_data", matchId);
                 return;
             }
 
-            // ✅ Carregar snapshot existente (para não sobrescrever actions/metadados)
-            Map<String, Object> pickBanData = new HashMap<>();
-            try {
-                String existing = match.getPickBanDataJson();
-                if (existing != null && !existing.isBlank()) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> loaded = new ObjectMapper().readValue(existing, Map.class);
-                    if (loaded != null)
-                        pickBanData.putAll(loaded);
-                }
-            } catch (Exception ignore) {
+            String existingJson = match.getPickBanDataJson();
+            if (existingJson == null || existingJson.isEmpty()) {
+                log.error("❌ [MatchFound] pick_ban_data vazio para partida {} - não pode atualizar", matchId);
+                return;
             }
 
-            // ✅ Construir objetos completos para team1
-            List<Map<String, Object>> team1Objects = new ArrayList<>();
-            for (QueuePlayerInfoDTO p : team1) {
-                Map<String, Object> playerObj = new HashMap<>();
-                playerObj.put("summonerName", p.getSummonerName());
-                playerObj.put("assignedLane", p.getAssignedLane() != null ? p.getAssignedLane() : "fill");
-                playerObj.put("teamIndex", p.getTeamIndex() != null ? p.getTeamIndex() : 0);
-                playerObj.put("mmr", p.getCustomLp() != null ? p.getCustomLp() : 0);
-                playerObj.put("primaryLane", p.getPrimaryLane() != null ? p.getPrimaryLane() : "fill");
-                playerObj.put("secondaryLane", p.getSecondaryLane() != null ? p.getSecondaryLane() : "fill");
-                playerObj.put("isAutofill", p.getIsAutofill() != null ? p.getIsAutofill() : false);
-                playerObj.put("laneBadge", calculateLaneBadge(
-                        p.getAssignedLane(),
-                        p.getPrimaryLane(),
-                        p.getSecondaryLane()));
+            // ✅ LER estrutura existente, atualizar phase
+            Map<String, Object> pickBanData = matchDataMapper.jsonToMap(existingJson);
+            pickBanData.put("phase", newPhase);
+            pickBanData.put("status", newPhase);
 
-                // ✅ Adicionar playerId se disponível (para jogadores reais, não bots)
-                if (p.getPlayerId() != null) {
-                    playerObj.put("playerId", p.getPlayerId());
-                }
-
-                team1Objects.add(playerObj);
-            }
-
-            // ✅ Construir objetos completos para team2
-            List<Map<String, Object>> team2Objects = new ArrayList<>();
-            for (QueuePlayerInfoDTO p : team2) {
-                Map<String, Object> playerObj = new HashMap<>();
-                playerObj.put("summonerName", p.getSummonerName());
-                playerObj.put("assignedLane", p.getAssignedLane() != null ? p.getAssignedLane() : "fill");
-                playerObj.put("teamIndex", p.getTeamIndex() != null ? p.getTeamIndex() : 0);
-                playerObj.put("mmr", p.getCustomLp() != null ? p.getCustomLp() : 0);
-                playerObj.put("primaryLane", p.getPrimaryLane() != null ? p.getPrimaryLane() : "fill");
-                playerObj.put("secondaryLane", p.getSecondaryLane() != null ? p.getSecondaryLane() : "fill");
-                playerObj.put("isAutofill", p.getIsAutofill() != null ? p.getIsAutofill() : false);
-                playerObj.put("laneBadge", calculateLaneBadge(
-                        p.getAssignedLane(),
-                        p.getPrimaryLane(),
-                        p.getSecondaryLane()));
-
-                // ✅ Adicionar playerId se disponível (para jogadores reais, não bots)
-                if (p.getPlayerId() != null) {
-                    playerObj.put("playerId", p.getPlayerId());
-                }
-
-                team2Objects.add(playerObj);
-            }
-
-            // ✅ CORREÇÃO: Criar estrutura hierárquica completa desde o início
-            // ✅ 1. Adicionar gameName e tagLine para cada jogador
-            for (Map<String, Object> playerObj : team1Objects) {
-                addGameNameAndTagLine(playerObj);
-                addActionsArray(playerObj);
-            }
-
-            for (Map<String, Object> playerObj : team2Objects) {
-                addGameNameAndTagLine(playerObj);
-                addActionsArray(playerObj);
-            }
-
-            // ✅ 2. Criar estrutura hierárquica teams.blue/red
-            Map<String, Object> teams = new HashMap<>();
-
-            // Blue team (team1)
-            Map<String, Object> blueTeam = new HashMap<>();
-            blueTeam.put("players", team1Objects);
-            blueTeam.put("allPicks", new ArrayList<String>());
-            blueTeam.put("allBans", new ArrayList<String>());
-            blueTeam.put("name", "Blue Team");
-            blueTeam.put("teamNumber", 1);
-            blueTeam.put("averageMmr", calculateAverageMmr(team1Objects));
-
-            // Red team (team2)
-            Map<String, Object> redTeam = new HashMap<>();
-            redTeam.put("players", team2Objects);
-            redTeam.put("allPicks", new ArrayList<String>());
-            redTeam.put("allBans", new ArrayList<String>());
-            redTeam.put("name", "Red Team");
-            redTeam.put("teamNumber", 2);
-            redTeam.put("averageMmr", calculateAverageMmr(team2Objects));
-
-            teams.put("blue", blueTeam);
-            teams.put("red", redTeam);
-
-            // ✅ 3. Criar sequência de ações do draft (20 ações: 6 bans + 14 picks)
-            List<Map<String, Object>> actions = new ArrayList<>();
-
-            // Fase 1: Bans (6 ações)
-            for (int i = 0; i < 6; i++) {
-                Map<String, Object> action = new HashMap<>();
-                action.put("index", i);
-                action.put("type", "ban");
-                action.put("team", (i % 2 == 0) ? 1 : 2);
-                action.put("championId", null);
-                action.put("championName", null);
-                action.put("byPlayer", null);
-                actions.add(action);
-            }
-
-            // Fase 2: Picks (14 ações)
-            for (int i = 6; i < 20; i++) {
-                Map<String, Object> action = new HashMap<>();
-                action.put("index", i);
-                action.put("type", "pick");
-                action.put("team", (i % 2 == 0) ? 1 : 2);
-                action.put("championId", null);
-                action.put("championName", null);
-                action.put("byPlayer", null);
-                actions.add(action);
-            }
-
-            // ✅ 4. Adicionar metadados do draft
-            pickBanData.put("teams", teams);
-            pickBanData.put("actions", actions); // ✅ CRÍTICO: Adicionar actions para o frontend
-            pickBanData.put("currentPhase", "ban1");
-            pickBanData.put("currentIndex", 0);
-            pickBanData.put("currentPlayer", null);
-            pickBanData.put("currentTeam", null);
-            pickBanData.put("currentActionType", null);
-
-            // ✅ 5. Manter compatibilidade com formato antigo
-            pickBanData.put("team1", team1Objects);
-            pickBanData.put("team2", team2Objects);
-
-            // Salvar no banco
-            ObjectMapper mapper = new ObjectMapper();
-            match.setPickBanDataJson(mapper.writeValueAsString(pickBanData));
+            String updatedJson = matchDataMapper.mapToJson(pickBanData);
+            match.setPickBanDataJson(updatedJson);
             customMatchRepository.save(match);
 
-            int actionsCount = 0;
-            try {
-                Object acts = pickBanData.get("actions");
-                if (acts instanceof java.util.List)
-                    actionsCount = ((java.util.List<?>) acts).size();
-            } catch (Exception ignore) {
-            }
-
-            log.info("✅ [MatchFound] pick_ban_data salvo (merge) match {}: team1={}, team2={}, actions={}",
-                    matchId, team1Objects.size(), team2Objects.size(), actionsCount);
+            log.info("✅ [MatchFound] pick_ban_data ATUALIZADO: phase → {}", newPhase);
 
         } catch (Exception e) {
-            log.error("❌ [MatchFound] Erro ao salvar pick_ban_data", e);
+            log.error("❌ [MatchFound] Erro ao atualizar pick_ban_data", e);
         }
-    }
-
-    /**
-     * Helper para parsear nomes de jogadores do campo CSV
-     */
-    private List<String> parsePlayerNames(String playersCsv) {
-        if (playersCsv == null || playersCsv.trim().isEmpty()) {
-            return new ArrayList<>();
-        }
-        return Arrays.stream(playersCsv.split(","))
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .collect(Collectors.toList());
     }
 
     // Métodos de notificação
@@ -1041,7 +879,6 @@ public class MatchFoundService {
             log.info("║  📡 [NOTIFICAÇÃO] ENVIANDO MATCH_FOUND                        ║");
             log.info("╚════════════════════════════════════════════════════════════════╝");
 
-            // ✅ VALIDAÇÃO CRÍTICA: Verificar times
             if (team1 == null || team2 == null || team1.size() != 5 || team2.size() != 5) {
                 log.error("❌ [CRÍTICO] Times inválidos! team1={}, team2={}",
                         team1 != null ? team1.size() : "null",
@@ -1051,53 +888,24 @@ public class MatchFoundService {
 
             log.info("✅ [Validação] Team1: {} jogadores | Team2: {} jogadores", team1.size(), team2.size());
 
-            // Mapeamento de lanes por posição (os jogadores já vêm ordenados por posição
-            // do balanceamento)
-            String[] lanes = { "top", "jungle", "mid", "bot", "support" };
+            // ✅ NOTA: Cria DTO do zero aqui pois é mais eficiente que ler do MySQL
+            // O pick_ban_data JÁ foi salvo no createMatch, mas os dados ainda estão em
+            // memória
+            br.com.lolmatchmaking.backend.dto.UnifiedMatchDataDTO matchData = matchDataMapper.toUnifiedDTO(
+                    match, team1, team2, "match_found");
 
-            // ✅ CORREÇÃO: NÃO incluir "type", o broadcastToAll já adiciona
-            Map<String, Object> data = new HashMap<>();
-            data.put("matchId", match.getId());
-
-            // ✅ Enriquecer jogadores com metadados de posição E determinar se é autofill
-            List<QueuePlayerInfoDTO> team1DTOs = new ArrayList<>();
-            for (int i = 0; i < team1.size(); i++) {
-                QueuePlayer player = team1.get(i);
-                String assignedLane = lanes[i];
-                boolean isAutofill = determineIfAutofill(player, assignedLane);
-                team1DTOs.add(convertToDTO(player, assignedLane, i, isAutofill));
-            }
-
-            List<QueuePlayerInfoDTO> team2DTOs = new ArrayList<>();
-            for (int i = 0; i < team2.size(); i++) {
-                QueuePlayer player = team2.get(i);
-                String assignedLane = lanes[i];
-                boolean isAutofill = determineIfAutofill(player, assignedLane);
-                team2DTOs.add(convertToDTO(player, assignedLane, i + 5, isAutofill));
-            }
-
-            data.put("team1", team1DTOs);
-            data.put("team2", team2DTOs);
-            data.put("averageMmrTeam1", match.getAverageMmrTeam1());
-            data.put("averageMmrTeam2", match.getAverageMmrTeam2());
-            data.put("timeoutSeconds", ACCEPTANCE_TIMEOUT_SECONDS);
-
-            // ✅ LOG DETALHADO: Mostrar EXATAMENTE quais jogadores vão receber a notificação
             log.info("📡 [Notificação] Enviando match_found para:");
-            log.info("  🔵 TEAM 1 ({} jogadores):", team1.size());
-            for (int i = 0; i < team1DTOs.size(); i++) {
-                QueuePlayerInfoDTO dto = team1DTOs.get(i);
+            log.info("  🔵 TEAM 1 ({} jogadores):", matchData.getTeams().getBlue().getPlayers().size());
+            for (var player : matchData.getTeams().getBlue().getPlayers()) {
                 log.info("    [{}] {} - {} - MMR: {}",
-                        i, dto.getSummonerName(), dto.getAssignedLane(), dto.getMmr());
+                        player.getTeamIndex(), player.getSummonerName(), player.getAssignedLane(), player.getMmr());
             }
-            log.info("  🔴 TEAM 2 ({} jogadores):", team2.size());
-            for (int i = 0; i < team2DTOs.size(); i++) {
-                QueuePlayerInfoDTO dto = team2DTOs.get(i);
+            log.info("  🔴 TEAM 2 ({} jogadores):", matchData.getTeams().getRed().getPlayers().size());
+            for (var player : matchData.getTeams().getRed().getPlayers()) {
                 log.info("    [{}] {} - {} - MMR: {}",
-                        i, dto.getSummonerName(), dto.getAssignedLane(), dto.getMmr());
+                        player.getTeamIndex(), player.getSummonerName(), player.getAssignedLane(), player.getMmr());
             }
 
-            // ✅ CRÍTICO: Enviar APENAS para os 10 jogadores da partida
             List<String> allPlayerNames = new ArrayList<>();
             allPlayerNames.addAll(team1.stream().map(QueuePlayer::getSummonerName).toList());
             allPlayerNames.addAll(team2.stream().map(QueuePlayer::getSummonerName).toList());
@@ -1135,8 +943,9 @@ public class MatchFoundService {
             }
 
             long startTime = System.currentTimeMillis();
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
-            webSocketService.broadcastToAll("match_found", data);
+            String jsonData = matchDataMapper.toJson(matchData);
+            Map<String, Object> dataMap = matchDataMapper.jsonToMap(jsonData);
+            webSocketService.sendToPlayers("match_found", dataMap, allPlayerNames);
             long elapsed = System.currentTimeMillis() - startTime;
 
             log.info("╔═══════════════════════════════════════════════════════════════════════╗");
@@ -1153,43 +962,6 @@ public class MatchFoundService {
     /**
      * Determina se um jogador está em autofill ou pegou sua lane preferida
      */
-    private boolean determineIfAutofill(QueuePlayer player, String assignedLane) {
-        String primary = normalizeLane(player.getPrimaryLane());
-        String secondary = normalizeLane(player.getSecondaryLane());
-        String assigned = normalizeLane(assignedLane);
-
-        // Se pegou lane primária ou secundária, não é autofill
-        return !assigned.equals(primary) && !assigned.equals(secondary);
-    }
-
-    /**
-     * Normaliza nomes de lanes para comparação
-     */
-    private String normalizeLane(String lane) {
-        if (lane == null)
-            return "fill";
-
-        String normalized = lane.toLowerCase().trim();
-
-        // Normalizar variações
-        if (normalized.equals("adc") || normalized.equals("bot") || normalized.equals("bottom")) {
-            return "bot";
-        }
-        if (normalized.equals("middle") || normalized.equals("mid")) {
-            return "mid";
-        }
-        if (normalized.equals("top")) {
-            return "top";
-        }
-        if (normalized.equals("jungle") || normalized.equals("jg")) {
-            return "jungle";
-        }
-        if (normalized.equals("support") || normalized.equals("sup") || normalized.equals("supp")) {
-            return "support";
-        }
-
-        return "fill";
-    }
 
     private void notifyAcceptanceProgress(Long matchId, Set<String> acceptedPlayers, List<String> allPlayers) {
         try {
@@ -1200,8 +972,8 @@ public class MatchFoundService {
             data.put("totalPlayers", allPlayers.size());
             data.put("acceptedPlayers", new ArrayList<>(acceptedPlayers));
 
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
-            webSocketService.broadcastToAll("acceptance_progress", data);
+            // ✅ CORREÇÃO: Enviar apenas para os jogadores da partida
+            webSocketService.sendToPlayers("acceptance_progress", data, allPlayers);
 
             log.debug("📊 [MatchFound] Progresso enviado para {} jogadores da partida {} (Redis): {}/{}",
                     allPlayers.size(), matchId,
@@ -1223,8 +995,8 @@ public class MatchFoundService {
             Map<String, Object> data = new HashMap<>();
             data.put("matchId", matchId);
 
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
-            webSocketService.broadcastToAll("all_players_accepted", data);
+            // ✅ CORREÇÃO: Enviar apenas para os jogadores da partida
+            webSocketService.sendToPlayers("all_players_accepted", data, allPlayers);
 
             log.info(
                     "🎉 [MatchFound] Notificação de aceitação completa enviada para {} jogadores da partida {} (Redis)",
@@ -1248,8 +1020,8 @@ public class MatchFoundService {
             data.put("reason", "declined");
             data.put("declinedPlayer", declinedPlayer);
 
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
-            webSocketService.broadcastToAll("match_cancelled", data);
+            // ✅ CORREÇÃO: Enviar apenas para os jogadores da partida
+            webSocketService.sendToPlayers("match_cancelled", data, allPlayers);
 
             log.warn("⚠️ [MatchFound] Cancelamento enviado para {} jogadores da partida {} (recusado por: {}) - Redis",
                     allPlayers.size(), matchId, declinedPlayer);
@@ -1378,8 +1150,8 @@ public class MatchFoundService {
                 log.info("  📤 {}", player);
             }
 
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
-            webSocketService.broadcastToAll("match_found", matchFoundData);
+            // ✅ CORREÇÃO: Enviar apenas para os jogadores da partida
+            webSocketService.sendToPlayers("match_found", matchFoundData, validPendingPlayers);
 
             log.info("✅ [MatchFound-Retry] ENVIADO para {} jogadores", validPendingPlayers.size());
             log.info("╚═══════════════════════════════════════════════════════════════════════╝");
@@ -1389,57 +1161,27 @@ public class MatchFoundService {
         }
     }
 
-    /**
-     * ✅ NOVO: Constrói o payload completo do match_found para retry
-     */
     private Map<String, Object> buildMatchFoundPayload(
             Long matchId,
             CustomMatch match,
             List<String> team1Names,
             List<String> team2Names) {
 
-        Map<String, Object> data = new HashMap<>();
-        data.put("matchId", matchId);
-        data.put("averageMmrTeam1", match.getAverageMmrTeam1());
-        data.put("averageMmrTeam2", match.getAverageMmrTeam2());
-        data.put("timeoutSeconds", ACCEPTANCE_TIMEOUT_SECONDS);
+        List<QueuePlayer> team1Players = new ArrayList<>();
+        List<QueuePlayer> team2Players = new ArrayList<>();
 
-        // ✅ Buscar dados dos jogadores do banco (para ter MMR, lanes, etc)
-        List<QueuePlayerInfoDTO> team1DTOs = new ArrayList<>();
-        List<QueuePlayerInfoDTO> team2DTOs = new ArrayList<>();
-
-        String[] lanes = { "top", "jungle", "mid", "bot", "support" };
-
-        // Team 1
-        for (int i = 0; i < team1Names.size() && i < 5; i++) {
-            String playerName = team1Names.get(i);
-            Optional<QueuePlayer> playerOpt = queuePlayerRepository.findBySummonerName(playerName);
-
-            if (playerOpt.isPresent()) {
-                QueuePlayer player = playerOpt.get();
-                String assignedLane = lanes[i];
-                boolean isAutofill = determineIfAutofill(player, assignedLane);
-                team1DTOs.add(convertToDTO(player, assignedLane, i, isAutofill));
-            }
+        for (String playerName : team1Names) {
+            queuePlayerRepository.findBySummonerName(playerName).ifPresent(team1Players::add);
         }
 
-        // Team 2
-        for (int i = 0; i < team2Names.size() && i < 5; i++) {
-            String playerName = team2Names.get(i);
-            Optional<QueuePlayer> playerOpt = queuePlayerRepository.findBySummonerName(playerName);
-
-            if (playerOpt.isPresent()) {
-                QueuePlayer player = playerOpt.get();
-                String assignedLane = lanes[i];
-                boolean isAutofill = determineIfAutofill(player, assignedLane);
-                team2DTOs.add(convertToDTO(player, assignedLane, i + 5, isAutofill));
-            }
+        for (String playerName : team2Names) {
+            queuePlayerRepository.findBySummonerName(playerName).ifPresent(team2Players::add);
         }
 
-        data.put("team1", team1DTOs);
-        data.put("team2", team2DTOs);
-
-        return data;
+        br.com.lolmatchmaking.backend.dto.UnifiedMatchDataDTO dto = matchDataMapper.toUnifiedDTO(match, team1Players,
+                team2Players, "match_found");
+        String json = matchDataMapper.toJson(dto);
+        return matchDataMapper.jsonToMap(json);
     }
 
     private void notifyTimerUpdate(Long matchId, int secondsRemaining) {
@@ -1458,10 +1200,14 @@ public class MatchFoundService {
             data.put("matchId", matchId);
             data.put("secondsRemaining", secondsRemaining);
 
-            // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
-            webSocketService.broadcastToAll("acceptance_timer", data);
+            // ✅ CORREÇÃO: Enviar apenas para os jogadores da partida
+            log.info(
+                    "⏰ [Timer] Enviando acceptance_timer para match {}: {}s restantes, {} jogadores (CustomSessionIds: {})",
+                    matchId, secondsRemaining, allPlayers.size(), allPlayers);
+            webSocketService.sendToPlayers("acceptance_timer", data, allPlayers);
 
-            log.info("✅ [Timer] acceptance_timer enviado com sucesso para match {}", matchId);
+            log.info("✅ [Timer] acceptance_timer enviado com sucesso para match {} para {} jogadores",
+                    matchId, allPlayers.size());
 
         } catch (Exception e) {
             log.error("❌ [Timer] Erro ao enviar acceptance_timer para match {}: {}", matchId, e.getMessage());
@@ -1471,122 +1217,8 @@ public class MatchFoundService {
     /**
      * ✅ NOVO: Retorna índice numérico da lane (para ordenação)
      */
-    private int getLaneIndex(String lane) {
-        if (lane == null)
-            return 999;
-        return switch (lane.toLowerCase()) {
-            case "top" -> 0;
-            case "jungle" -> 1;
-            case "mid", "middle" -> 2;
-            case "bot", "adc", "bottom" -> 3;
-            case "support", "sup" -> 4;
-            default -> 999;
-        };
-    }
-
-    private QueuePlayerInfoDTO convertToDTO(QueuePlayer player, String assignedLane, int teamIndex,
-            boolean isAutofill) {
-        return QueuePlayerInfoDTO.builder()
-                .id(player.getId())
-                .playerId(player.getPlayerId())
-                .summonerName(player.getSummonerName())
-                .region(player.getRegion())
-                .customLp(player.getCustomLp() != null ? player.getCustomLp() : 0)
-                .mmr(player.getCustomLp() != null ? player.getCustomLp() : 0)
-                .primaryLane(player.getPrimaryLane())
-                .secondaryLane(player.getSecondaryLane())
-                .assignedLane(assignedLane)
-                .isAutofill(isAutofill)
-                .teamIndex(teamIndex)
-                .queuePosition(player.getQueuePosition())
-                .joinTime(player.getJoinTime())
-                .acceptanceStatus(player.getAcceptanceStatus())
-                .isCurrentPlayer(false)
-                .profileIconId(29) // Default icon
-                .build();
-    }
-
-    /**
-     * ✅ NOVO: Adiciona gameName e tagLine extraídos do summonerName
-     */
-    private void addGameNameAndTagLine(Map<String, Object> playerObj) {
-        String summonerName = (String) playerObj.get("summonerName");
-        if (summonerName != null && summonerName.contains("#")) {
-            String[] parts = summonerName.split("#", 2);
-            playerObj.put("gameName", parts[0]);
-            playerObj.put("tagLine", parts.length > 1 ? parts[1] : "");
-        } else {
-            playerObj.put("gameName", summonerName);
-            playerObj.put("tagLine", "");
-        }
-    }
-
-    /**
-     * ✅ NOVO: Adiciona array actions vazio para cada jogador
-     */
-    private void addActionsArray(Map<String, Object> playerObj) {
-        playerObj.put("actions", new ArrayList<Map<String, Object>>());
-    }
-
-    /**
-     * ✅ NOVO: Calcula MMR médio de uma lista de jogadores
-     */
-    private int calculateAverageMmr(List<Map<String, Object>> players) {
-        if (players.isEmpty())
-            return 1500;
-
-        int totalMmr = 0;
-        int count = 0;
-        for (Map<String, Object> player : players) {
-            Object mmrObj = player.get("mmr");
-            if (mmrObj instanceof Number) {
-                totalMmr += ((Number) mmrObj).intValue();
-                count++;
-            }
-        }
-
-        return count > 0 ? totalMmr / count : 1500;
-    }
 
     // ✅ REMOVIDO: Classe MatchAcceptanceStatus - Redis é fonte única da verdade
     // Use redisAcceptance para todas as operações de aceitação
 
-    /**
-     * ✅ NOVO: Calcula o tipo de badge de lane para um jogador
-     * 
-     * @param assignedLane  Lane atribuída ao jogador
-     * @param primaryLane   Lane primária preferida
-     * @param secondaryLane Lane secundária preferida
-     * @return "primary", "secondary" ou "autofill"
-     */
-    private static String calculateLaneBadge(String assignedLane, String primaryLane, String secondaryLane) {
-        if (assignedLane == null || assignedLane.isEmpty()) {
-            return "autofill";
-        }
-
-        String normalizedAssigned = normalizeLaneForBadge(assignedLane);
-        String normalizedPrimary = normalizeLaneForBadge(primaryLane != null ? primaryLane : "");
-        String normalizedSecondary = normalizeLaneForBadge(secondaryLane != null ? secondaryLane : "");
-
-        if (normalizedAssigned.equals(normalizedPrimary)) {
-            return "primary";
-        } else if (normalizedAssigned.equals(normalizedSecondary)) {
-            return "secondary";
-        } else {
-            return "autofill";
-        }
-    }
-
-    /**
-     * ✅ NOVO: Normaliza nome de lane para comparação de badge
-     * 
-     * @param lane Nome da lane
-     * @return Lane normalizada (lowercase, adc -> bot)
-     */
-    private static String normalizeLaneForBadge(String lane) {
-        if (lane == null)
-            return "";
-        String normalized = lane.toLowerCase().trim();
-        return normalized.equals("adc") ? "bot" : normalized;
-    }
 }

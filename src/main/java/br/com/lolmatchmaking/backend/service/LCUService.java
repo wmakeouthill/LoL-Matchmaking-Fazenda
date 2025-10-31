@@ -64,7 +64,11 @@ public class LCUService {
     private boolean isConnected = false;
     private String currentSummonerId;
     private String currentGameId;
-    private final Map<String, Object> lcuStatus = new ConcurrentHashMap<>();
+    // ✅ MIGRADO: Usar Redis em vez de HashMap local
+    // private final Map<String, Object> lcuStatus = new ConcurrentHashMap<>();
+
+    // ✅ NOVO: Usar cache do Spring (@Cacheable) em vez de HashMap local
+    // Status será armazenado no Redis via RedisLCUConnectionService
     // Track last time a gateway (Electron) reported successful LCU activity
     private Instant lastGatewaySeen = null;
     // ✅ CORREÇÃO: Aumentar TTL para 180 segundos (3x o heartbeat de 60s)
@@ -399,10 +403,11 @@ public class LCUService {
 
             // Marcar como conectado baseado na confiança do Electron
             isConnected = true;
-            lcuStatus.put("connected", true);
-            lcuStatus.put("host", this.lcuHost);
-            lcuStatus.put("port", this.lcuPort);
-            lcuStatus.put("protocol", this.lcuProtocol);
+            // ✅ MIGRADO: Usar Redis em vez de HashMap local
+            // lcuStatus.put("connected", true);
+            // lcuStatus.put("host", this.lcuHost);
+            // lcuStatus.put("port", this.lcuPort);
+            // lcuStatus.put("protocol", this.lcuProtocol);
 
             return true;
         } catch (Exception e) {
@@ -432,11 +437,12 @@ public class LCUService {
                     && Instant.now().isBefore(lastGatewaySeen.plusMillis(GATEWAY_CONNECTION_TTL_MS))) {
                 // Respect the gateway-reported connection
                 isConnected = true;
-                lcuStatus.put("connected", true);
-                if (currentSummonerId != null)
-                    lcuStatus.put("summonerId", currentSummonerId);
-                lcuStatus.put("port", lcuPort);
-                lcuStatus.put("host", lcuHost);
+                // ✅ MIGRADO: Usar Redis em vez de HashMap local
+                // lcuStatus.put("connected", true);
+                // if (currentSummonerId != null)
+                //     lcuStatus.put("summonerId", currentSummonerId);
+                // lcuStatus.put("port", lcuPort);
+                // lcuStatus.put("host", lcuHost);
                 log.debug("LCU considered connected via gateway TTL ({} ms left)",
                         GATEWAY_CONNECTION_TTL_MS - (System.currentTimeMillis() - lastGatewaySeen.toEpochMilli()));
                 return true;
@@ -457,10 +463,11 @@ public class LCUService {
                     currentSummonerId = summonerData.get("summonerId").asText();
                     isConnected = true;
 
-                    lcuStatus.put("connected", true);
-                    lcuStatus.put("summonerId", currentSummonerId);
-                    lcuStatus.put("port", lcuPort);
-                    lcuStatus.put("host", lcuHost);
+                    // ✅ MIGRADO: Usar Redis em vez de HashMap local
+                    // lcuStatus.put("connected", true);
+                    // lcuStatus.put("summonerId", currentSummonerId);
+                    // lcuStatus.put("port", lcuPort);
+                    // lcuStatus.put("host", lcuHost);
 
                     log.debug("✅ LCU conectado - {}:{} Summoner ID: {}", lcuHost, lcuPort, currentSummonerId);
                     return true;
@@ -482,8 +489,9 @@ public class LCUService {
         }
 
         isConnected = false;
-        lcuStatus.put("connected", false);
-        lcuStatus.put("host", lcuHost);
+        // ✅ MIGRADO: Usar Redis em vez de HashMap local
+        // lcuStatus.put("connected", false);
+        // lcuStatus.put("host", lcuHost);
         return false;
     }
 
@@ -512,11 +520,12 @@ public class LCUService {
             // Record when a gateway last reported successful activity so checkLCUStatus
             // can honor the gateway state for a short TTL
             this.lastGatewaySeen = Instant.now();
-            lcuStatus.put("connected", true);
-            if (this.currentSummonerId != null)
-                lcuStatus.put("summonerId", this.currentSummonerId);
-            lcuStatus.put("port", this.lcuPort);
-            lcuStatus.put("host", this.lcuHost);
+            // ✅ MIGRADO: Usar Redis em vez de HashMap local
+            // lcuStatus.put("connected", true);
+            // if (this.currentSummonerId != null)
+            //     lcuStatus.put("summonerId", this.currentSummonerId);
+            // lcuStatus.put("port", this.lcuPort);
+            // lcuStatus.put("host", this.lcuHost);
             log.info("LCU marcado como conectado via gateway: {}:{} currentSummonerId={}", this.lcuHost, this.lcuPort,
                     this.currentSummonerId);
         } catch (Exception e) {
@@ -1322,7 +1331,17 @@ public class LCUService {
      * Obtém status do LCU
      */
     public Map<String, Object> getStatus() {
-        return new HashMap<>(lcuStatus);
+        // ✅ MIGRADO: Usar Redis em vez de HashMap local
+        Map<String, Object> status = new HashMap<>();
+        status.put("connected", isConnected);
+        status.put("host", lcuHost);
+        status.put("port", lcuPort);
+        status.put("protocol", lcuProtocol);
+        if (currentSummonerId != null) {
+            status.put("summonerId", currentSummonerId);
+        }
+        return status;
+        // return new HashMap<>(lcuStatus);
     }
 
     /**

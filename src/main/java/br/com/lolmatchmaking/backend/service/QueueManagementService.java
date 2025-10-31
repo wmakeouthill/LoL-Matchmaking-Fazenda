@@ -37,6 +37,7 @@ public class QueueManagementService {
     private final LCUService lcuService;
     private final LCUConnectionRegistry lcuConnectionRegistry;
     private final ObjectMapper objectMapper;
+    private final br.com.lolmatchmaking.backend.mapper.UnifiedMatchDataMapper matchDataMapper;
     private final MatchFoundService matchFoundService;
     private final PlayerService playerService;
 
@@ -61,6 +62,7 @@ public class QueueManagementService {
             LCUService lcuService,
             LCUConnectionRegistry lcuConnectionRegistry,
             ObjectMapper objectMapper,
+            br.com.lolmatchmaking.backend.mapper.UnifiedMatchDataMapper matchDataMapper,
             @Lazy MatchFoundService matchFoundService,
             PlayerService playerService,
             br.com.lolmatchmaking.backend.service.lock.MatchmakingLockService matchmakingLockService,
@@ -80,6 +82,7 @@ public class QueueManagementService {
         this.lcuService = lcuService;
         this.lcuConnectionRegistry = lcuConnectionRegistry;
         this.objectMapper = objectMapper;
+        this.matchDataMapper = matchDataMapper;
         this.matchFoundService = matchFoundService;
         this.playerService = playerService;
         this.matchmakingLockService = matchmakingLockService;
@@ -1098,6 +1101,24 @@ public class QueueManagementService {
             match = customMatchRepository.save(match);
 
             log.info("✅ Partida criada no banco: ID {}", match.getId());
+
+            // ✅ NOVO: CRIAR pick_ban_data IMEDIATAMENTE com estrutura unificada
+            log.info("📋 [MATCH_FOUND] Criando pick_ban_data unificado para partida {}", match.getId());
+            try {
+                br.com.lolmatchmaking.backend.dto.UnifiedMatchDataDTO unifiedDTO = matchDataMapper.toUnifiedDTO(match,
+                        team1, team2, "match_found");
+
+                String pickBanJson = matchDataMapper.toJson(unifiedDTO);
+                match.setPickBanDataJson(pickBanJson);
+                customMatchRepository.save(match);
+
+                log.info("✅ [MATCH_FOUND] pick_ban_data criado com estrutura unificada (phase: match_found)");
+                log.info("✅ [MATCH_FOUND] Times salvos: Blue={} jogadores, Red={} jogadores",
+                        unifiedDTO.getTeams().getBlue().getPlayers().size(),
+                        unifiedDTO.getTeams().getRed().getPlayers().size());
+            } catch (Exception e) {
+                log.error("❌ [MATCH_FOUND] Erro ao criar pick_ban_data", e);
+            }
 
             // ✅ NÃO remover jogadores aqui! Eles só devem ser removidos após aceitação
             // completa

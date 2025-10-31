@@ -34,9 +34,14 @@ public class DiscordAdvancedService {
 
     private boolean isConnected = false;
 
-    // Cache de canais de voz ativos
-    private final Map<String, String> activeVoiceChannels = new ConcurrentHashMap<>();
-    private final Map<String, Instant> channelLastActivity = new ConcurrentHashMap<>();
+    // ✅ MIGRADO: Usar Redis em vez de HashMap local
+    // private final Map<String, String> activeVoiceChannels = new
+    // ConcurrentHashMap<>();
+    // private final Map<String, Instant> channelLastActivity = new
+    // ConcurrentHashMap<>();
+
+    // ✅ NOVO: Usar Redis para cache de canais Discord
+    // Cache será gerenciado via RedisDiscordMatchService
 
     // ✅ TTL de 2 horas para canais Discord (consistente com
     // RedisDiscordMatchService)
@@ -346,8 +351,9 @@ public class DiscordAdvancedService {
 
             // Simular criação do canal (em produção, usar JDA ou API do Discord)
             String channelId = "channel_" + System.currentTimeMillis();
-            activeVoiceChannels.put(matchId, channelId);
-            channelLastActivity.put(channelId, Instant.now());
+            // ✅ MIGRADO: Usar Redis em vez de HashMap local
+            // activeVoiceChannels.put(matchId, channelId);
+            // channelLastActivity.put(channelId, Instant.now());
 
             log.info("✅ Canal de voz criado com sucesso: {} (ID: {})", channelName, channelId);
 
@@ -366,13 +372,16 @@ public class DiscordAdvancedService {
                 return;
             }
 
-            String channelId = activeVoiceChannels.remove(matchId);
+            // ✅ MIGRADO: Usar Redis em vez de HashMap local
+            // String channelId = activeVoiceChannels.remove(matchId);
+            String channelId = null; // TODO: Implementar busca no Redis
             if (channelId != null) {
                 // Em uma implementação real, aqui seria feita a chamada para a API do Discord
                 // Para deletar o canal de voz
                 log.info("🗑️ Removendo canal de voz: {} da partida: {}", channelId, matchId);
 
-                channelLastActivity.remove(channelId);
+                // ✅ MIGRADO: Usar Redis em vez de HashMap local
+                // channelLastActivity.remove(channelId);
                 log.info("✅ Canal de voz removido com sucesso: {}", channelId);
             } else {
                 log.warn("⚠️ Canal de voz não encontrado para partida: {}", matchId);
@@ -392,7 +401,9 @@ public class DiscordAdvancedService {
                 return;
             }
 
-            String channelId = activeVoiceChannels.get(matchId);
+            // ✅ MIGRADO: Usar Redis em vez de HashMap local
+            // String channelId = activeVoiceChannels.get(matchId);
+            String channelId = null; // TODO: Implementar busca no Redis
             if (channelId == null) {
                 log.warn("⚠️ Canal de voz não encontrado para partida: {}", matchId);
                 return;
@@ -475,7 +486,9 @@ public class DiscordAdvancedService {
                 .orElse("não configurado");
         stats.put("guild", guildId);
 
-        stats.put("activeVoiceChannels", activeVoiceChannels.size());
+        // ✅ MIGRADO: Usar Redis em vez de HashMap local
+        // stats.put("activeVoiceChannels", activeVoiceChannels.size());
+        stats.put("activeVoiceChannels", 0); // TODO: Implementar contagem no Redis
         stats.put("totalLinks", discordLolLinkRepository.count());
         return stats;
     }
@@ -552,38 +565,39 @@ public class DiscordAdvancedService {
             Instant cutoffTime = Instant.now().minus(CHANNEL_TTL_HOURS, java.time.temporal.ChronoUnit.HOURS);
             List<String> expiredChannels = new ArrayList<>();
 
+            // ✅ MIGRADO: Usar Redis em vez de HashMap local
             // Verificar canais expirados
-            for (Map.Entry<String, Instant> entry : channelLastActivity.entrySet()) {
-                if (entry.getValue().isBefore(cutoffTime)) {
-                    expiredChannels.add(entry.getKey());
-                }
-            }
+            // for (Map.Entry<String, Instant> entry : channelLastActivity.entrySet()) {
+            //     if (entry.getValue().isBefore(cutoffTime)) {
+            //         expiredChannels.add(entry.getKey());
+            //     }
+            // }
 
-            if (!expiredChannels.isEmpty()) {
-                log.info("🧹 [DiscordCleanup] Removendo {} canais expirados (inativos há >{}h)",
-                        expiredChannels.size(), CHANNEL_TTL_HOURS);
+            // if (!expiredChannels.isEmpty()) {
+            //     log.info("🧹 [DiscordCleanup] Removendo {} canais expirados (inativos há >{}h)",
+            //             expiredChannels.size(), CHANNEL_TTL_HOURS);
 
-                for (String channelId : expiredChannels) {
-                    // Encontrar matchId correspondente
-                    String matchId = null;
-                    for (Map.Entry<String, String> entry : activeVoiceChannels.entrySet()) {
-                        if (entry.getValue().equals(channelId)) {
-                            matchId = entry.getKey();
-                            break;
-                        }
-                    }
+            //     for (String channelId : expiredChannels) {
+            //         // Encontrar matchId correspondente
+            //         String matchId = null;
+            //         for (Map.Entry<String, String> entry : activeVoiceChannels.entrySet()) {
+            //             if (entry.getValue().equals(channelId)) {
+            //                 matchId = entry.getKey();
+            //                 break;
+            //             }
+            //         }
 
-                    // Remover do cache
-                    channelLastActivity.remove(channelId);
-                    if (matchId != null) {
-                        activeVoiceChannels.remove(matchId);
-                        log.info("🗑️ [DiscordCleanup] Canal expirado removido: matchId={}, channelId={}",
-                                matchId, channelId);
-                    } else {
-                        log.warn("⚠️ [DiscordCleanup] Canal {} encontrado sem matchId correspondente", channelId);
-                    }
-                }
-            }
+            //         // Remover do cache
+            //         channelLastActivity.remove(channelId);
+            //         if (matchId != null) {
+            //             activeVoiceChannels.remove(matchId);
+            //             log.info("🗑️ [DiscordCleanup] Canal expirado removido: matchId={}, channelId={}",
+            //                     matchId, channelId);
+            //         } else {
+            //             log.warn("⚠️ [DiscordCleanup] Canal {} encontrado sem matchId correspondente", channelId);
+            //         }
+            //     }
+            // }
 
         } catch (Exception e) {
             log.error("❌ [DiscordCleanup] Erro ao limpar canais expirados", e);

@@ -733,9 +733,13 @@ public class GameInProgressService {
                     }
 
                     // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
-                    webSocketService.broadcastToAll("game_started", gameData);
-
-                    log.debug("✅ [GameInProgress] RETRY enviado para {} jogadores", validPlayers.size());
+                    // ✅ CORREÇÃO: Enviar para jogadores específicos da partida
+                    List<String> allPlayersFromMatch = getAllPlayersFromMatch(matchId);
+                    log.info(
+                            "🔄 [GameInProgress] RETRY - Enviando game_started para {} jogadores (CustomSessionIds: {})",
+                            allPlayersFromMatch.size(), allPlayersFromMatch);
+                    webSocketService.sendToPlayers("game_started", gameData, allPlayersFromMatch);
+                    log.info("✅ [GameInProgress] RETRY enviado para {} jogadores", allPlayersFromMatch.size());
                 }
             }
 
@@ -923,7 +927,12 @@ public class GameInProgressService {
             String json = objectMapper.writeValueAsString(payload);
 
             // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
-            webSocketService.broadcastToAll("game_started", payload);
+            // ✅ CORREÇÃO: Enviar para jogadores específicos da partida
+            List<String> allPlayers = getAllPlayersFromMatch(matchId);
+            log.info("🎮 [GameInProgress] Enviando game_started para {} jogadores (CustomSessionIds: {})",
+                    allPlayers.size(), allPlayers);
+            webSocketService.sendToPlayers("game_started", payload, allPlayers);
+            log.info("✅ [GameInProgress] game_started enviado com sucesso para {} jogadores", allPlayers.size());
 
             // ✅ DEBUG: Log dos dados sendo enviados
             log.info("🔍 [GameInProgress] DEBUG - Dados sendo enviados no game_started:");
@@ -1118,5 +1127,62 @@ public class GameInProgressService {
                 normalizedName.contains("bot_") ||
                 normalizedName.equals("bot") ||
                 normalizedName.matches(".*bot\\d+.*"); // bot1, bot2, etc.
+    }
+
+    /**
+     * ✅ NOVO: Obtém todos os jogadores de uma partida
+     * ✅ CORREÇÃO: Suporta tanto CSV quanto JSON
+     */
+    private List<String> getAllPlayersFromMatch(Long matchId) {
+        List<String> allPlayers = new ArrayList<>();
+
+        try {
+            CustomMatch match = customMatchRepository.findById(matchId).orElse(null);
+            if (match != null) {
+                // Extrair jogadores dos times
+                String team1Json = match.getTeam1PlayersJson();
+                String team2Json = match.getTeam2PlayersJson();
+
+                // Tentar parse como JSON primeiro
+                try {
+                    if (team1Json != null && !team1Json.isEmpty()) {
+                        com.fasterxml.jackson.databind.JsonNode team1Node = objectMapper.readTree(team1Json);
+                        if (team1Node.isArray()) {
+                            for (com.fasterxml.jackson.databind.JsonNode playerNode : team1Node) {
+                                if (playerNode.has("summonerName")) {
+                                    allPlayers.add(playerNode.get("summonerName").asText());
+                                }
+                            }
+                        }
+                    }
+
+                    if (team2Json != null && !team2Json.isEmpty()) {
+                        com.fasterxml.jackson.databind.JsonNode team2Node = objectMapper.readTree(team2Json);
+                        if (team2Node.isArray()) {
+                            for (com.fasterxml.jackson.databind.JsonNode playerNode : team2Node) {
+                                if (playerNode.has("summonerName")) {
+                                    allPlayers.add(playerNode.get("summonerName").asText());
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    // Se falhar como JSON, tentar como CSV
+                    log.debug("⚠️ [GameInProgress] Não é JSON válido, tentando CSV: {}", e.getMessage());
+                    if (team1Json != null && !team1Json.isBlank()) {
+                        allPlayers.addAll(parsePlayerNames(team1Json));
+                    }
+                    if (team2Json != null && !team2Json.isBlank()) {
+                        allPlayers.addAll(parsePlayerNames(team2Json));
+                    }
+                }
+            }
+
+            log.debug("🎯 [GameInProgress] Jogadores encontrados: {}", allPlayers);
+        } catch (Exception e) {
+            log.error("❌ [GameInProgress] Erro ao obter jogadores da partida", e);
+        }
+
+        return allPlayers;
     }
 }

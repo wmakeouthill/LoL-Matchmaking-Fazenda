@@ -214,22 +214,57 @@
     </div>
 
     <!-- Accept/Decline Phase -->
-    <div class="accept-phase" *ngIf="matchData.phase === 'accept'">
-      <!-- Progresso de Aceitação -->
-      <div class="acceptance-progress">
-        <div class="progress-header">
-          <span class="progress-text">
-            {{ acceptedPlayersCount }} / {{ totalPlayersCount }} jogadores
-            aceitaram
-          </span>
-          <span class="progress-percentage">{{ acceptanceProgress }}%</span>
+    <div class="accept-phase" *ngIf="matchData.phase === 'match_found'">
+      <!-- ✅ NOVO LAYOUT: Balanceamento à esquerda, Aceitação à direita -->
+      <div class="info-row">
+        <!-- Match Balance Info (esquerda) -->
+        <div class="match-balance">
+          <div class="balance-header">
+            <h4>⚖️ Balanceamento</h4>
+          </div>
+
+          <div class="mmr-comparison">
+            <div class="team-mmr-display">
+              <span class="team-label blue">Azul</span>
+              <span class="mmr-value">{{ getBlueTeamMMR() }}</span>
+            </div>
+
+            <span class="vs-separator">VS</span>
+
+            <div class="team-mmr-display">
+              <span class="team-label red">Vermelho</span>
+              <span class="mmr-value">{{ getRedTeamMMR() }}</span>
+            </div>
+          </div>
+
+          <div class="balance-info">
+            <span class="balance-label">Dif:</span>
+            <span
+              class="balance-value"
+              [class.excellent]="isExcellentBalance()"
+              [class.good]="isGoodBalance()"
+              [class.fair]="isFairBalance()"
+            >
+              {{ getMMRDifference() }}
+            </span>
+          </div>
         </div>
-        <div class="progress-bar">
-          <div
-            class="progress-fill"
-            [style.width.%]="acceptanceProgress"
-            [class.complete]="haveAllPlayersAccepted"
-          ></div>
+
+        <!-- Progresso de Aceitação (direita) -->
+        <div class="acceptance-progress">
+          <div class="progress-header">
+            <span class="progress-text">
+              {{ acceptedPlayersCount }}/{{ totalPlayersCount }} aceitaram
+            </span>
+            <span class="progress-percentage">{{ acceptanceProgress }}%</span>
+          </div>
+          <div class="progress-bar">
+            <div
+              class="progress-fill"
+              [style.width.%]="acceptanceProgress"
+              [class.complete]="haveAllPlayersAccepted"
+            ></div>
+          </div>
         </div>
       </div>
 
@@ -238,7 +273,7 @@
           <span class="time-left">{{ acceptTimeLeft }}</span>
         </div>
         <div class="timer-message">
-          <p>Você tem {{ acceptTimeLeft }} segundos para aceitar</p>
+          <p>{{ acceptTimeLeft }}s para aceitar</p>
         </div>
       </div>
 
@@ -251,24 +286,6 @@
           <span class="btn-icon">✕</span>
           Recusar
         </button>
-      </div>
-    </div>
-
-    <!-- Match Balance Info -->
-    <div class="match-balance">
-      <div class="balance-info">
-        <span class="balance-label">Balanceamento da Partida:</span>
-        <div class="mmr-difference">
-          <span class="mmr-diff"> Diferença de MMR: {{ mmrDifference }} </span>
-          <span
-            class="balance-rating"
-            [class.excellent]="isExcellentBalance()"
-            [class.good]="isGoodBalance()"
-            [class.fair]="isFairBalance()"
-          >
-            {{ getBalanceRating(mmrDifference) }}
-          </span>
-        </div>
       </div>
     </div>
   </div>

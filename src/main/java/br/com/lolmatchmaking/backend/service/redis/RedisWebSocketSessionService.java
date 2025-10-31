@@ -71,25 +71,47 @@ public class RedisWebSocketSessionService {
     private static final long SESSION_TTL_SECONDS = 5400; // 1h30min (90min)
 
     // Prefixos de chaves
-    private static final String SESSION_KEY_PREFIX = "ws:session:"; // sessionId → summonerName
-    private static final String PLAYER_KEY_PREFIX = "ws:player:"; // summonerName → sessionId
-    private static final String CLIENT_KEY_PREFIX = "ws:client:"; // sessionId → ClientInfo
-    private static final String PLAYER_INFO_KEY_PREFIX = "ws:player_info:"; // sessionId → PlayerInfo (JSON)
+    // ✅ REMOVIDO: Chaves antigas não são mais usadas - tudo via ws:client_info:
+    // private static final String SESSION_KEY_PREFIX = "ws:session:";
+    // private static final String PLAYER_KEY_PREFIX = "ws:player:";
+    // private static final String CLIENT_KEY_PREFIX = "ws:client:";
+
+    // ✅ NOVO: Unificação completa - uma chave por jogador com todos os dados
+    private static final String CLIENT_INFO_UNIFIED_PREFIX = "ws:client_info:"; // summonerName → ClientInfo (TODOS OS
+                                                                                // DADOS)
+    private static final String SESSION_MAPPING_PREFIX = "ws:session_mapping:"; // randomSessionId → customSessionId
+    private static final String CUSTOM_SESSION_MAPPING_PREFIX = "ws:custom_session_mapping:"; // customSessionId →
+                                                                                              // randomSessionId
 
     /**
-     * Informações do cliente WebSocket
+     * ✅ NOVO: Informações completas do cliente WebSocket (unificado)
+     * Agora inclui TODOS os dados do jogador em uma única estrutura
      */
     @Data
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
     public static class ClientInfo {
+        // Dados de sessão
         private String sessionId;
         private String summonerName;
         private String ipAddress;
         private Instant connectedAt;
         private Instant lastActivity;
         private String userAgent;
+
+        // ✅ NOVO: Dados do jogador
+        private String puuid;
+        private String summonerId;
+        private Integer profileIconId;
+        private Integer summonerLevel;
+        private String gameName;
+        private String tagLine;
+        private String tier;
+        private String division;
+
+        // ✅ NOVO: CustomSessionId (imutável, baseado no jogador)
+        private String customSessionId;
     }
 
     /**
@@ -100,13 +122,23 @@ public class RedisWebSocketSessionService {
      * 2. ws:player:{summonerName} → sessionId (buscar sessão por player)
      * 3. ws:client:{sessionId} → ClientInfo (metadata completa)
      * 
-     * @param sessionId    ID único da sessão WebSocket
-     * @param summonerName Nome do invocador
-     * @param ipAddress    IP do cliente
-     * @param userAgent    User-Agent do navegador/Electron
+     * @param sessionId       ID único da sessão WebSocket (random)
+     * @param summonerName    Nome do invocador
+     * @param ipAddress       IP do cliente
+     * @param userAgent       User-Agent do navegador/Electron
+     * @param customSessionId CustomSessionId (opcional, adicionado depois via
+     *                        updatePlayerData se não fornecido)
      * @return true se registrou com sucesso, false se já existia
      */
     public boolean registerSession(String sessionId, String summonerName, String ipAddress, String userAgent) {
+        return registerSession(sessionId, summonerName, ipAddress, userAgent, null);
+    }
+
+    /**
+     * ✅ NOVO: Sobrecarga com customSessionId
+     */
+    public boolean registerSession(String sessionId, String summonerName, String ipAddress, String userAgent,
+            String customSessionId) {
         try {
             if (sessionId == null || sessionId.isBlank() || summonerName == null || summonerName.isBlank()) {
                 log.warn(
@@ -118,40 +150,35 @@ public class RedisWebSocketSessionService {
             String normalizedSummoner = normalizeSummonerName(summonerName);
 
             // ✅ CRÍTICO: VERIFICAR E REMOVER SESSÕES DUPLICADAS ANTES DE REGISTRAR
-            // 1. Verificar se já existe sessão para este summoner
-            RBucket<String> playerBucket = redisson.getBucket(PLAYER_KEY_PREFIX + normalizedSummoner);
-            String existingSessionId = playerBucket.get();
+            // 1. Verificar se já existe sessão para este summoner via ws:client_info:
+            String clientInfoKey = CLIENT_INFO_UNIFIED_PREFIX + normalizedSummoner;
+            RBucket<ClientInfo> existingClientInfoBucket = redisson.getBucket(clientInfoKey);
+            ClientInfo existingClientInfo = existingClientInfoBucket.get();
 
-            if (existingSessionId != null && !existingSessionId.equals(sessionId)) {
+            if (existingClientInfo != null && existingClientInfo.getSessionId() != null
+                    && !existingClientInfo.getSessionId().equals(sessionId)) {
                 log.warn("🚨 [RedisWS] SESSÃO DUPLICADA DETECTADA! Jogador {} já tem sessão ativa: {}",
-                        normalizedSummoner, existingSessionId);
+                        normalizedSummoner, existingClientInfo.getSessionId());
 
-                // ✅ REMOVER: Sessão anterior completamente
-                log.info("🗑️ [RedisWS] Removendo sessão anterior duplicada: {} (jogador: {})",
-                        existingSessionId, normalizedSummoner);
-                removeSession(existingSessionId);
+                // ✅ REMOVER: Apenas se a sessão anterior estiver fechada (não mais no HashMap
+                // de sessões)
+                // Isso previne remoção prematura de sessões que ainda estão ativas
+                String oldSessionId = existingClientInfo.getSessionId();
+                log.info("🔄 [RedisWS] Verificando se sessão anterior {} ainda está ativa...", oldSessionId);
+
+                // Não removemos mais - apenas atualizamos com a nova sessão
+                // O sistema deve gerenciar sessões duplicadas de forma mais inteligente
+                log.warn("⚠️ [RedisWS] Mantendo ambas as sessões registradas (old: {}, new: {})",
+                        oldSessionId, sessionId);
             }
 
             // 2. Verificar se este sessionId já está registrado para outro jogador
-            RBucket<String> sessionBucket = redisson.getBucket(SESSION_KEY_PREFIX + sessionId);
-            String existingSummoner = sessionBucket.get();
-
-            if (existingSummoner != null && !existingSummoner.equals(normalizedSummoner)) {
-                log.warn("🚨 [RedisWS] SESSIONID DUPLICADO! Sessão {} já registrada para outro jogador: {}",
-                        sessionId, existingSummoner);
-
-                // ✅ REMOVER: Registro anterior desta sessão
-                log.info("🗑️ [RedisWS] Removendo registro anterior da sessão {} (jogador anterior: {})",
-                        sessionId, existingSummoner);
-                removeSession(sessionId);
-            }
+            // Buscar em todas as sessões para ver se já existe
+            // (TODO: Otimizar isso com um índice reverso se necessário)
 
             // ✅ REGISTRAR: Agora que limpamos duplicatas, registrar nova sessão
-            // ✅ CORREÇÃO: NÃO criar chaves ws:session: e ws:player: - são redundantes!
-            // A chave ws:client_info:{summonerName} já contém todas as informações
-            // necessárias
+            // ✅ NOVO: Usar apenas uma chave unificada ws:client_info:{summonerName}
 
-            // ✅ CORREÇÃO: Metadata completa usando formato unificado (String/Object)
             ClientInfo clientInfo = ClientInfo.builder()
                     .sessionId(sessionId)
                     .summonerName(normalizedSummoner)
@@ -159,10 +186,11 @@ public class RedisWebSocketSessionService {
                     .connectedAt(Instant.now())
                     .lastActivity(Instant.now())
                     .userAgent(userAgent)
+                    .customSessionId(customSessionId)
+                    // Nota: puuid, summonerId, etc. serão atualizados depois via updatePlayerData()
                     .build();
 
-            // ✅ CORREÇÃO: Usar summonerName em vez de sessionId na chave
-            String clientInfoKey = "ws:client_info:" + normalizedSummoner;
+            // ✅ CRÍTICO: Usar summonerName na chave (não sessionId)
             RBucket<ClientInfo> clientInfoBucket = redisson.getBucket(clientInfoKey);
             clientInfoBucket.set(clientInfo, Duration.ofHours(1));
 
@@ -174,6 +202,67 @@ public class RedisWebSocketSessionService {
         } catch (Exception e) {
             log.error("❌ [RedisWS] Erro ao registrar sessão: sessionId={}, summonerName={}",
                     sessionId, summonerName, e);
+            return false;
+        }
+    }
+
+    /**
+     * ✅ NOVO: Atualiza dados completos do jogador na sessão.
+     * Chamado após electron_identify para incluir puuid, profileIconId, etc.
+     * 
+     * @param summonerName    Nome do invocador
+     * @param puuid           PUUID do jogador
+     * @param summonerId      Summoner ID
+     * @param profileIconId   ID do ícone de perfil
+     * @param summonerLevel   Nível do invocador
+     * @param gameName        Game Name (nome do jogador)
+     * @param tagLine         Tag Line
+     * @param customSessionId CustomSessionId (imutável baseado no jogador)
+     */
+    public boolean updatePlayerData(String summonerName, String puuid, String summonerId,
+            Integer profileIconId, Integer summonerLevel,
+            String gameName, String tagLine, String customSessionId) {
+        try {
+            if (summonerName == null || summonerName.isBlank()) {
+                return false;
+            }
+
+            String normalizedSummoner = normalizeSummonerName(summonerName);
+            String clientInfoKey = CLIENT_INFO_UNIFIED_PREFIX + normalizedSummoner;
+            RBucket<ClientInfo> clientInfoBucket = redisson.getBucket(clientInfoKey);
+
+            ClientInfo existingClientInfo = clientInfoBucket.get();
+            if (existingClientInfo == null) {
+                log.warn("⚠️ [RedisWS] Tentativa de atualizar dados de sessão inexistente: {}", normalizedSummoner);
+                return false;
+            }
+
+            // Atualizar dados do jogador mantendo dados de sessão
+            ClientInfo updatedClientInfo = ClientInfo.builder()
+                    .sessionId(existingClientInfo.getSessionId())
+                    .summonerName(existingClientInfo.getSummonerName())
+                    .ipAddress(existingClientInfo.getIpAddress())
+                    .connectedAt(existingClientInfo.getConnectedAt())
+                    .lastActivity(existingClientInfo.getLastActivity())
+                    .userAgent(existingClientInfo.getUserAgent())
+                    .puuid(puuid)
+                    .summonerId(summonerId)
+                    .profileIconId(profileIconId)
+                    .summonerLevel(summonerLevel)
+                    .gameName(gameName)
+                    .tagLine(tagLine)
+                    .customSessionId(
+                            customSessionId != null ? customSessionId : existingClientInfo.getCustomSessionId())
+                    .build();
+
+            clientInfoBucket.set(updatedClientInfo, Duration.ofHours(1));
+            log.info("✅ [RedisWS] Dados do jogador atualizados: {} (PUUID: {}...)",
+                    normalizedSummoner, puuid != null ? puuid.substring(0, Math.min(8, puuid.length())) : "N/A");
+
+            return true;
+
+        } catch (Exception e) {
+            log.error("❌ [RedisWS] Erro ao atualizar dados do jogador: {}", summonerName, e);
             return false;
         }
     }
@@ -204,8 +293,22 @@ public class RedisWebSocketSessionService {
             ClientInfo clientInfo = clientInfoBucket.get();
 
             if (clientInfo != null && clientInfo.getSessionId() != null) {
-                log.debug("🔍 [RedisWS] Sessão encontrada: {} → {}", normalizedSummoner, clientInfo.getSessionId());
-                return Optional.of(clientInfo.getSessionId());
+                // ✅ CRÍTICO: Sempre retornar randomSessionId (já está em clientInfo.sessionId)
+                // customSessionId é usado apenas para lock/identificação, NÃO para envio
+                // WebSocket
+                String randomSessionId = clientInfo.getSessionId();
+
+                // Log detalhado incluindo customSessionId se disponível
+                String customSessionIdForLog = clientInfo.getCustomSessionId();
+                if (customSessionIdForLog != null) {
+                    log.debug("🔍 [RedisWS] Sessão encontrada: {} → randomSessionId={}, customSessionId={}",
+                            normalizedSummoner, randomSessionId, customSessionIdForLog);
+                } else {
+                    log.debug("🔍 [RedisWS] Sessão encontrada: {} → randomSessionId={}",
+                            normalizedSummoner, randomSessionId);
+                }
+
+                return Optional.of(randomSessionId);
             }
 
             log.debug("❌ [RedisWS] Sessão NÃO encontrada para: {}", normalizedSummoner);
@@ -337,22 +440,10 @@ public class RedisWebSocketSessionService {
                 }
             }
 
-            // ✅ FALLBACK: Tentar a chave antiga (Hash) para compatibilidade
-            RMap<String, String> clientMap = redisson.getMap(CLIENT_KEY_PREFIX + sessionId);
-            if (clientMap.isEmpty()) {
-                return Optional.empty();
-            }
-
-            ClientInfo fallbackClientInfo = ClientInfo.builder()
-                    .sessionId(clientMap.get("sessionId"))
-                    .summonerName(clientMap.get("summonerName"))
-                    .ipAddress(clientMap.get("ipAddress"))
-                    .connectedAt(Instant.parse(clientMap.get("connectedAt")))
-                    .lastActivity(Instant.parse(clientMap.get("lastActivity")))
-                    .userAgent(clientMap.get("userAgent"))
-                    .build();
-
-            return Optional.of(fallbackClientInfo);
+            // ✅ REMOVIDO: Chaves antigas não são mais usadas - tudo via ws:client_info:
+            // Não há fallback necessário, pois todas as sessões são migradas
+            log.debug("⚠️ [RedisWS] ClientInfo não encontrado e não há fallback: {}", sessionId);
+            return Optional.empty();
 
         } catch (Exception e) {
             log.error("❌ [RedisWS] Erro ao buscar client info: {}", sessionId, e);
@@ -373,21 +464,27 @@ public class RedisWebSocketSessionService {
                 return false;
             }
 
-            RMap<String, String> clientMap = redisson.getMap(CLIENT_KEY_PREFIX + sessionId);
-            if (clientMap.isEmpty()) {
+            // ✅ NOVO: Buscar ClientInfo via sessionId
+            // Primeiro, precisamos encontrar o summonerName pelo sessionId
+            Optional<String> summonerOpt = getSummonerBySession(sessionId);
+            if (!summonerOpt.isPresent()) {
                 log.warn("⚠️ [RedisWS] Tentativa de heartbeat em sessão inexistente: {}", sessionId);
                 return false;
             }
 
+            String summonerName = summonerOpt.get();
+            String clientInfoKey = CLIENT_INFO_UNIFIED_PREFIX + summonerName;
+            RBucket<ClientInfo> clientInfoBucket = redisson.getBucket(clientInfoKey);
+
+            ClientInfo clientInfo = clientInfoBucket.get();
+            if (clientInfo == null) {
+                log.warn("⚠️ [RedisWS] ClientInfo não encontrado para heartbeat: {}", sessionId);
+                return false;
+            }
+
             // Atualizar lastActivity
-            clientMap.put("lastActivity", Instant.now().toString());
-
-            // ✅ CORREÇÃO: Extender TTL apenas da chave unificada
-            clientMap.expire(SESSION_TTL_SECONDS, TimeUnit.SECONDS);
-
-            String summonerName = clientMap.get("summonerName");
-            // ✅ CORREÇÃO: NÃO estender TTL de chaves ws:session: e ws:player: - são
-            // redundantes!
+            clientInfo.setLastActivity(Instant.now());
+            clientInfoBucket.set(clientInfo, Duration.ofHours(1));
 
             log.debug("💓 [RedisWS] Heartbeat atualizado: {} (summoner: {})", sessionId, summonerName);
             return true;
@@ -547,148 +644,19 @@ public class RedisWebSocketSessionService {
     }
 
     /**
-     * Armazena informações completas do jogador identificado (identify_player).
-     * 
-     * Inclui: summonerName, profileIconId, puuid, summonerId, etc.
-     * Permite restaurar identificação após backend restart.
-     * 
-     * @param sessionId  ID da sessão WebSocket
-     * @param playerInfo JSON com dados do jogador
-     * @return true se armazenou com sucesso, false caso contrário
+     * ✅ REMOVIDO: storePlayerInfo deprecated - use updatePlayerData em vez disso
+     * Dados do jogador são agora armazenados diretamente no ClientInfo via
+     * ws:client_info:{summonerName}
      */
-    public boolean storePlayerInfo(String sessionId, String playerInfo) {
-        try {
-            if (sessionId == null || playerInfo == null) {
-                log.warn("⚠️ [RedisWS] Dados inválidos para storePlayerInfo");
-                return false;
-            }
-
-            String key = PLAYER_INFO_KEY_PREFIX + sessionId;
-            RBucket<String> bucket = redisson.getBucket(key);
-            bucket.set(playerInfo, SESSION_TTL_SECONDS, TimeUnit.SECONDS);
-
-            log.debug("✅ [RedisWS] Player info armazenado: sessionId={}", sessionId);
-            return true;
-
-        } catch (Exception e) {
-            log.error("❌ [RedisWS] Erro ao armazenar player info: sessionId={}", sessionId, e);
-            return false;
-        }
-    }
 
     /**
-     * Recupera informações completas do jogador identificado.
-     * 
-     * @param sessionId ID da sessão WebSocket
-     * @return JSON com dados do jogador, ou null se não encontrado
+     * ✅ REMOVIDO: getPlayerInfo deprecated - use getClientInfo em vez disso
      */
-    public String getPlayerInfo(String sessionId) {
-        try {
-            if (sessionId == null) {
-                return null;
-            }
-
-            String key = PLAYER_INFO_KEY_PREFIX + sessionId;
-            RBucket<String> bucket = redisson.getBucket(key);
-            String playerInfo = bucket.get();
-
-            if (playerInfo != null) {
-                log.debug("✅ [RedisWS] Player info recuperado: sessionId={}", sessionId);
-            } else {
-                log.debug("⚠️ [RedisWS] Player info não encontrado: sessionId={}", sessionId);
-            }
-
-            return playerInfo;
-
-        } catch (Exception e) {
-            log.error("❌ [RedisWS] Erro ao recuperar player info: sessionId={}", sessionId, e);
-            return null;
-        }
-    }
 
     /**
-     * Remove informações do jogador identificado.
-     * ✅ CORRIGIDO: Remove TODAS as chaves relacionadas à sessão para evitar
-     * duplicações
-     * 
-     * @param sessionId ID da sessão WebSocket
-     * @return true se removeu com sucesso, false caso contrário
+     * ✅ REMOVIDO: removePlayerInfo deprecated - dados são removidos automaticamente
+     * pelo removeSession
      */
-    public boolean removePlayerInfo(String sessionId) {
-        try {
-            if (sessionId == null) {
-                return false;
-            }
-
-            log.debug("🧹 [RedisWS] Iniciando limpeza completa para sessionId: {}", sessionId);
-
-            // ✅ CRÍTICO: Buscar summonerName antes de remover para limpar mapeamentos
-            Optional<String> summonerOpt = getSummonerBySession(sessionId);
-            String summonerName = summonerOpt.orElse(null);
-
-            int removedCount = 0;
-
-            // 1. Remover ws:player_info:{sessionId}
-            String playerInfoKey = PLAYER_INFO_KEY_PREFIX + sessionId;
-            if (redisson.getBucket(playerInfoKey).delete()) {
-                removedCount++;
-                log.debug("✅ [RedisWS] Removido: {}", playerInfoKey);
-            }
-
-            // 2. ✅ CORREÇÃO: Remover ws:client_info:{summonerName} (formato unificado)
-            if (summonerName != null) {
-                String clientInfoKey = "ws:client_info:" + summonerName;
-                if (redisson.getBucket(clientInfoKey).delete()) {
-                    removedCount++;
-                    log.debug("✅ [RedisWS] Removido: {}", clientInfoKey);
-                }
-            }
-
-            // 3. ✅ CORREÇÃO: Remover ws:client:{sessionId} (formato antigo Hash - limpeza)
-            String clientKey = "ws:client:" + sessionId;
-            if (redisson.getBucket(clientKey).delete()) {
-                removedCount++;
-                log.debug("✅ [RedisWS] Removido: {}", clientKey);
-            }
-
-            // ✅ CORREÇÃO: NÃO remover chaves ws:session: e ws:player: - são redundantes!
-            // Apenas a chave ws:client_info:{summonerName} é necessária
-
-            // 6. Remover PUUID constraint se existir (se método estiver disponível)
-            // ✅ COMENTADO: Método getPuuidBySession e constante PUUID_TO_PLAYER_KEY_PREFIX
-            // não estão implementados
-            // TODO: Implementar se necessário para limpeza completa de PUUID constraints
-            /*
-             * try {
-             * String puuid = getPuuidBySession(sessionId);
-             * if (puuid != null && !puuid.isEmpty()) {
-             * String puuidKey = PUUID_TO_PLAYER_KEY_PREFIX + puuid;
-             * if (redisson.getBucket(puuidKey).delete()) {
-             * removedCount++;
-             * log.debug("✅ [RedisWS] Removido PUUID constraint: {}", puuidKey);
-             * }
-             * }
-             * } catch (Exception e) {
-             * log.debug("⚠️ [RedisWS] Erro ao remover PUUID constraint: {}",
-             * e.getMessage());
-             * }
-             */
-
-            if (removedCount > 0) {
-                log.info(
-                        "✅ [RedisWS] Limpeza completa realizada: {} chaves removidas para sessionId={}, summonerName={}",
-                        removedCount, sessionId, summonerName);
-                return true;
-            } else {
-                log.debug("ℹ️ [RedisWS] Nenhuma chave encontrada para remover: sessionId={}", sessionId);
-                return false;
-            }
-
-        } catch (Exception e) {
-            log.error("❌ [RedisWS] Erro ao remover player info: sessionId={}", sessionId, e);
-            return false;
-        }
-    }
 
     /**
      * Normaliza nome do invocador (lowercase, trim).
@@ -742,13 +710,156 @@ public class RedisWebSocketSessionService {
     }
 
     /**
-     * ✅ CORREÇÃO: Método descontinuado - usar registerSession() em vez disso
-     * Este método não deveria ser usado pois cria ClientInfo com summonerName
-     * "unknown"
+     * ✅ NOVO: Armazena mapeamento sessionId ↔ customSessionId (bidirecional)
+     * 
+     * Cria 2 chaves:
+     * 1. ws:session_mapping:{randomSessionId} → customSessionId
+     * 2. ws:custom_session_mapping:{customSessionId} → randomSessionId
      */
-    @Deprecated
-    public void storeClientInfoDirect(String sessionId, String ipAddress, String userAgent) {
-        log.warn("⚠️ [RedisWS] storeClientInfoDirect() é deprecated - usar registerSession() em vez disso");
-        // Não fazer nada - deixar registerSession() gerenciar a criação
+    public boolean storeSessionMapping(String randomSessionId, String customSessionId) {
+        try {
+            if (randomSessionId == null || customSessionId == null) {
+                log.warn("⚠️ [RedisWS] Dados inválidos para storeSessionMapping");
+                return false;
+            }
+
+            // 1. Forward: randomSessionId → customSessionId
+            String forwardKey = SESSION_MAPPING_PREFIX + randomSessionId;
+            RBucket<String> forwardBucket = redisson.getBucket(forwardKey);
+            forwardBucket.set(customSessionId, SESSION_TTL_SECONDS, TimeUnit.SECONDS);
+
+            // 2. Reverse: customSessionId → randomSessionId
+            String reverseKey = CUSTOM_SESSION_MAPPING_PREFIX + customSessionId;
+            RBucket<String> reverseBucket = redisson.getBucket(reverseKey);
+            reverseBucket.set(randomSessionId, SESSION_TTL_SECONDS, TimeUnit.SECONDS);
+
+            log.info("✅ [RedisWS] Mapeamento bidirecional armazenado: {} ↔ {}", randomSessionId, customSessionId);
+            return true;
+
+        } catch (Exception e) {
+            log.error("❌ [RedisWS] Erro ao armazenar mapeamento: {} → {}", randomSessionId, customSessionId, e);
+            return false;
+        }
     }
+
+    /**
+     * ✅ NOVO: Recupera customSessionId do mapeamento
+     */
+    public Optional<String> getCustomSessionId(String randomSessionId) {
+        try {
+            if (randomSessionId == null) {
+                return Optional.empty();
+            }
+
+            String key = SESSION_MAPPING_PREFIX + randomSessionId;
+            RBucket<String> bucket = redisson.getBucket(key);
+            String customSessionId = bucket.get();
+
+            if (customSessionId != null) {
+                log.debug("✅ [RedisWS] CustomSessionId recuperado: {} → {}", randomSessionId, customSessionId);
+                return Optional.of(customSessionId);
+            } else {
+                log.debug("⚠️ [RedisWS] Mapeamento não encontrado para: {}", randomSessionId);
+                return Optional.empty();
+            }
+
+        } catch (Exception e) {
+            log.error("❌ [RedisWS] Erro ao recuperar mapeamento: {}", randomSessionId, e);
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * ✅ NOVO: Limpa mappings antigos deste customSessionId
+     * Remove mappings bidirecionais anteriores quando o jogador reconecta
+     * 
+     * Limpa:
+     * 1. ws:session_mapping:* → customSessionId (mapeamento direto)
+     * 2. ws:custom_session_mapping:{customSessionId} → randomSessionId antigo
+     * (mapeamento reverso)
+     * 
+     * Isso previne acumulação de chaves quando o jogador reconecta
+     */
+    public void cleanupOldMappingsForPlayer(String customSessionId) {
+        try {
+            if (customSessionId == null || customSessionId.isBlank()) {
+                return;
+            }
+
+            log.info("🧹 [RedisWS] Limpando mappings antigos para customSessionId: {}", customSessionId);
+
+            int removedCount = 0;
+
+            // 1. Limpar forward mappings (randomSessionId → customSessionId)
+            Iterable<String> forwardKeys = redisson.getKeys().getKeysByPattern(SESSION_MAPPING_PREFIX + "*");
+            for (String forwardKey : forwardKeys) {
+                try {
+                    RBucket<String> bucket = redisson.getBucket(forwardKey);
+                    String storedCustomSessionId = bucket.get();
+                    if (customSessionId.equals(storedCustomSessionId)) {
+                        bucket.delete();
+                        removedCount++;
+                        log.debug("🗑️ [RedisWS] Forward mapping antigo removido: {}", forwardKey);
+                    }
+                } catch (Exception e) {
+                    log.debug("⚠️ [RedisWS] Erro ao processar forward key: {}", forwardKey);
+                }
+            }
+
+            // 2. Limpar reverse mapping antigo (customSessionId → randomSessionId antigo)
+            String reverseKey = CUSTOM_SESSION_MAPPING_PREFIX + customSessionId;
+            RBucket<String> reverseBucket = redisson.getBucket(reverseKey);
+            if (reverseBucket.isExists()) {
+                reverseBucket.delete();
+                removedCount++;
+                log.debug("🗑️ [RedisWS] Reverse mapping antigo removido: {}", reverseKey);
+            }
+
+            if (removedCount > 0) {
+                log.info("✅ [RedisWS] {} mappings antigos removidos para customSessionId: {}", removedCount,
+                        customSessionId);
+            } else {
+                log.debug("✅ [RedisWS] Nenhum mapping antigo encontrado para customSessionId: {}", customSessionId);
+            }
+
+        } catch (Exception e) {
+            log.error("❌ [RedisWS] Erro ao limpar mappings antigos para customSessionId: {}", customSessionId, e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Busca randomSessionId atual por customSessionId (imutável)
+     * 
+     * Usado quando o sistema conhece o customSessionId e precisa encontrar
+     * a sessão WebSocket atual (randomSessionId) para enviar mensagens.
+     * 
+     * @param customSessionId CustomSessionId (ex: player_fzd_ratoso_fzd)
+     * @return Optional com randomSessionId atual se encontrado, empty se offline
+     */
+    public Optional<String> getRandomSessionIdByCustom(String customSessionId) {
+        try {
+            if (customSessionId == null || customSessionId.isBlank()) {
+                return Optional.empty();
+            }
+
+            // Buscar no índice reverso ws:custom_session_mapping:{customSessionId}
+            String reverseKey = CUSTOM_SESSION_MAPPING_PREFIX + customSessionId;
+            RBucket<String> reverseBucket = redisson.getBucket(reverseKey);
+            String randomSessionId = reverseBucket.get();
+
+            if (randomSessionId != null) {
+                log.debug("🔍 [RedisWS] RandomSessionId atual encontrado via customSessionId: {} → {}",
+                        customSessionId, randomSessionId);
+                return Optional.of(randomSessionId);
+            }
+
+            log.debug("❌ [RedisWS] RandomSessionId NÃO encontrado para customSessionId: {}", customSessionId);
+            return Optional.empty();
+
+        } catch (Exception e) {
+            log.error("❌ [RedisWS] Erro ao buscar randomSessionId por customSessionId: {}", customSessionId, e);
+            return Optional.empty();
+        }
+    }
+
 }

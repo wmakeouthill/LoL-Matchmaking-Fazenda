@@ -71,6 +71,8 @@ public class RedisWebSocketEventService {
      */
     @Data
     @Builder
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
     public static class PendingEvent {
         private String eventType; // Ex: "match_found", "draft_started"
         private Map<String, Object> payload; // Dados do evento
@@ -83,6 +85,8 @@ public class RedisWebSocketEventService {
      */
     @Data
     @Builder
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
     public static class LCURequest {
         private String requestId; // UUID único
         private String sessionId; // Sessão WebSocket do Electron

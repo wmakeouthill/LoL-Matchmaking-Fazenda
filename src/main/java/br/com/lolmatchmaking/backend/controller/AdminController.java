@@ -35,6 +35,7 @@ public class AdminController {
     // ✅ MIGRADO: QueueManagementService (Redis-only) ao invés de MatchmakingService
     private final QueueManagementService queueManagementService;
     private final PlayerService playerService;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     /**
      * Recalcula LP customizado de partidas
@@ -368,8 +369,6 @@ public class AdminController {
                     .orElseThrow(
                             () -> new RuntimeException("Jogador solicitante não encontrado: " + summonerNameHeader));
 
-            // Processar título de campeonato
-            ObjectMapper objectMapper = new ObjectMapper();
             List<Map<String, Object>> titles;
 
             try {

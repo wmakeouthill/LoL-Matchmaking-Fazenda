@@ -16,13 +16,14 @@ import java.time.Duration;
  * - Múltiplas conexões do mesmo jogador em instâncias diferentes
  * 
  * SOLUÇÃO:
- * - Lock por summonerName vinculando jogador a uma sessão
+ * - Lock por customSessionId (player_{gameName}_{tagLine}) vinculando jogador a
+ * uma sessão
  * - Detecta se jogador já está conectado ao abrir Electron
  * - Previne duplicação de conexões
  * - Libera automaticamente ao fechar Electron
  * 
  * CHAVES REDIS:
- * - lock:player:{summonerName} → sessionId vinculado
+ * - lock:player:{customSessionId} → sessionId vinculado
  * 
  * REFERÊNCIA:
  * - ARQUITETURA-CORRETA-SINCRONIZACAO.md#2-lock-de-jogador-player-lock
@@ -35,7 +36,8 @@ public class PlayerLockService {
 
     private final RedisTemplate<String, Object> redisTemplate;
 
-    // Prefixo de chave
+    // ✅ CORRIGIDO: Prefixo de chave usando customSessionId (não summonerName com
+    // espaços)
     private static final String PLAYER_LOCK_PREFIX = "lock:player:";
 
     // ✅ CORRIGIDO: TTL de 4 horas (sessão de jogo completa)
@@ -46,54 +48,76 @@ public class PlayerLockService {
     private static final Duration LOCK_TTL = Duration.ofHours(4);
 
     /**
-     * ✅ Adquire lock para o jogador, vinculando-o a uma sessão
+     * ✅ NOVO: Gera customSessionId consistente baseado em gameName e tagLine
+     * Formato: player_{gameName}_{tagline} (lowercase, caracteres especiais
+     * removidos)
      * 
-     * @param summonerName Nome do jogador
-     * @param sessionId    ID da sessão WebSocket
-     * @return sessionId vinculado se sucesso, null se jogador já está conectado em
-     *         outra sessão
-     * 
-     *         Exemplo de uso (no WebSocket onOpen):
-     * 
-     *         <pre>
-     *         String lockedSession = playerLockService.acquirePlayerLock(summonerName, sessionId);
-     *         if (lockedSession == null) {
-     *             // Jogador já conectado em outra instância
-     *             sendError(sessionId, "ALREADY_CONNECTED", "Você já está conectado em outro dispositivo");
-     *             session.close();
-     *             return;
-     *         }
-     *         // Prosseguir normalmente
-     *         </pre>
+     * Exemplo: FZD Ratoso#fzd -> player_fzd_ratoso_fzd
      */
-    public String acquirePlayerLock(String summonerName, String sessionId) {
-        String key = PLAYER_LOCK_PREFIX + summonerName;
+    public static String generateCustomSessionId(String gameName, String tagLine) {
+        if (gameName == null || gameName.isBlank() || tagLine == null || tagLine.isBlank()) {
+            return null;
+        }
+
+        String fullName = gameName + "#" + tagLine;
+        return "player_" + fullName
+                .replace("#", "_")
+                .replaceAll("[^a-zA-Z0-9_]", "_")
+                .toLowerCase();
+    }
+
+    /**
+     * ✅ Adquire lock para o jogador usando customSessionId como CHAVE
+     * e armazena sessionId aleatória como VALOR
+     * 
+     * Arquitetura correta:
+     * - CHAVE: lock:player:{customSessionId} (ex:
+     * lock:player:player_fzd_ratoso_fzd)
+     * - VALOR: sessionId aleatória (ex: c32db208-d5ec-17e1-bc36-dcd63ac8092d)
+     * 
+     * Vantagens:
+     * - Chave imutável baseada no jogador (não muda entre conexões)
+     * - Valor contém sessionId atual para identificação rápida
+     * - Permite verificar se jogador já está conectado (chave existe)
+     * 
+     * @param customSessionId ID da sessão customizada (player_{gameName}_{tagLine})
+     * @param sessionId       ID da sessão WebSocket aleatória
+     * @return sessionId vinculado se sucesso, null se jogador já está conectado
+     */
+    public String acquirePlayerLock(String customSessionId, String sessionId) {
+        if (customSessionId == null || customSessionId.isBlank()) {
+            log.warn("⚠️ [PlayerLock] CustomSessionId inválido, usando sessionId como fallback");
+            customSessionId = sessionId;
+        }
+
+        // ✅ CHAVE do lock: customSessionId (imutável baseado no jogador)
+        String key = PLAYER_LOCK_PREFIX + customSessionId;
 
         try {
-            // Tentar adquirir lock
+            // Tentar adquirir lock armazenando sessionId aleatória
             Boolean acquired = redisTemplate.opsForValue()
                     .setIfAbsent(key, sessionId, LOCK_TTL);
 
             if (Boolean.TRUE.equals(acquired)) {
-                log.info("🔒 [PlayerLock] Lock adquirido: {} → session {}", summonerName, sessionId);
+                log.info("🔒 [PlayerLock] Lock adquirido: {} → session {}", customSessionId, sessionId);
                 return sessionId;
             }
 
             // Verificar se já tem lock desta mesma sessão
             String existingSession = (String) redisTemplate.opsForValue().get(key);
             if (sessionId.equals(existingSession)) {
-                log.info("✅ [PlayerLock] Lock já era desta sessão: {}", summonerName);
+                log.info("✅ [PlayerLock] Lock já era desta sessão: {}", customSessionId);
                 // Renovar TTL
                 redisTemplate.expire(key, LOCK_TTL);
                 return sessionId;
             }
 
             log.warn("⚠️ [PlayerLock] Jogador {} JÁ conectado em outra sessão: {}",
-                    summonerName, existingSession);
+                    customSessionId, existingSession);
             return null;
 
         } catch (Exception e) {
-            log.error("❌ [PlayerLock] Erro ao adquirir lock para {}", summonerName, e);
+            log.error("❌ [PlayerLock] Erro ao adquirir lock para {}", customSessionId, e);
             return null;
         }
     }
@@ -103,40 +127,49 @@ public class PlayerLockService {
      * 
      * Chamar ao fechar WebSocket (onClose) ou ao jogador fazer logout.
      * 
-     * @param summonerName Nome do jogador
+     * @param customSessionId ID da sessão customizada
      */
-    public void releasePlayerLock(String summonerName) {
-        String key = PLAYER_LOCK_PREFIX + summonerName;
+    public void releasePlayerLock(String customSessionId) {
+        if (customSessionId == null || customSessionId.isBlank()) {
+            log.warn("⚠️ [PlayerLock] CustomSessionId inválido para liberar lock");
+            return;
+        }
+
+        String key = PLAYER_LOCK_PREFIX + customSessionId;
 
         try {
             Boolean deleted = redisTemplate.delete(key);
 
             if (Boolean.TRUE.equals(deleted)) {
-                log.info("🔓 [PlayerLock] Lock liberado: {}", summonerName);
+                log.info("🔓 [PlayerLock] Lock liberado: {}", customSessionId);
             } else {
-                log.debug("⚠️ [PlayerLock] Lock já estava liberado ou expirou: {}", summonerName);
+                log.debug("⚠️ [PlayerLock] Lock já estava liberado ou expirou: {}", customSessionId);
             }
 
         } catch (Exception e) {
-            log.error("❌ [PlayerLock] Erro ao liberar lock de {}", summonerName, e);
+            log.error("❌ [PlayerLock] Erro ao liberar lock de {}", customSessionId, e);
         }
     }
 
     /**
      * ✅ Obtém sessionId vinculado ao jogador
      * 
-     * @param summonerName Nome do jogador
+     * @param customSessionId ID da sessão customizada
      * @return sessionId vinculado, ou null se jogador não está conectado
      */
-    public String getPlayerSession(String summonerName) {
-        String key = PLAYER_LOCK_PREFIX + summonerName;
+    public String getPlayerSession(String customSessionId) {
+        if (customSessionId == null || customSessionId.isBlank()) {
+            return null;
+        }
+
+        String key = PLAYER_LOCK_PREFIX + customSessionId;
 
         try {
             Object session = redisTemplate.opsForValue().get(key);
             return session != null ? (String) session : null;
 
         } catch (Exception e) {
-            log.error("❌ [PlayerLock] Erro ao obter sessão de {}", summonerName, e);
+            log.error("❌ [PlayerLock] Erro ao obter sessão de {}", customSessionId, e);
             return null;
         }
     }
@@ -144,13 +177,13 @@ public class PlayerLockService {
     /**
      * ✅ Verifica se jogador tem sessão ativa
      * 
-     * @param summonerName Nome do jogador
+     * @param customSessionId ID da sessão customizada
      * @return true se jogador está conectado, false caso contrário
      * 
      *         Útil para detectar ao abrir Electron se jogador já está conectado.
      */
-    public boolean hasActiveSession(String summonerName) {
-        String existingSession = getPlayerSession(summonerName);
+    public boolean hasActiveSession(String customSessionId) {
+        String existingSession = getPlayerSession(customSessionId);
         return existingSession != null;
     }
 
@@ -160,26 +193,30 @@ public class PlayerLockService {
      * Chamar periodicamente (ex: a cada mensagem WebSocket) para manter
      * a sessão ativa e prevenir expiração por inatividade.
      * 
-     * @param summonerName Nome do jogador
+     * @param customSessionId ID da sessão customizada
      * @return true se conseguiu renovar, false caso contrário
      */
-    public boolean renewPlayerLock(String summonerName) {
-        String key = PLAYER_LOCK_PREFIX + summonerName;
+    public boolean renewPlayerLock(String customSessionId) {
+        if (customSessionId == null || customSessionId.isBlank()) {
+            return false;
+        }
+
+        String key = PLAYER_LOCK_PREFIX + customSessionId;
 
         try {
             Boolean renewed = redisTemplate.expire(key, LOCK_TTL);
 
             if (Boolean.TRUE.equals(renewed)) {
-                log.debug("♻️ [PlayerLock] TTL renovado para {}", summonerName);
+                log.debug("♻️ [PlayerLock] TTL renovado para {}", customSessionId);
                 return true;
             }
 
             log.debug("⚠️ [PlayerLock] Não foi possível renovar TTL de {} (lock não existe)",
-                    summonerName);
+                    customSessionId);
             return false;
 
         } catch (Exception e) {
-            log.error("❌ [PlayerLock] Erro ao renovar lock de {}", summonerName, e);
+            log.error("❌ [PlayerLock] Erro ao renovar lock de {}", customSessionId, e);
             return false;
         }
     }
@@ -187,18 +224,22 @@ public class PlayerLockService {
     /**
      * ✅ Obtém tempo restante do lock do jogador (em segundos)
      * 
-     * @param summonerName Nome do jogador
+     * @param customSessionId ID da sessão customizada
      * @return tempo restante em segundos, ou -1 se não há lock
      */
-    public long getPlayerLockTtl(String summonerName) {
-        String key = PLAYER_LOCK_PREFIX + summonerName;
+    public long getPlayerLockTtl(String customSessionId) {
+        if (customSessionId == null || customSessionId.isBlank()) {
+            return -1;
+        }
+
+        String key = PLAYER_LOCK_PREFIX + customSessionId;
 
         try {
             Long ttl = redisTemplate.getExpire(key);
             return ttl != null ? ttl : -1;
 
         } catch (Exception e) {
-            log.error("❌ [PlayerLock] Erro ao obter TTL de {}", summonerName, e);
+            log.error("❌ [PlayerLock] Erro ao obter TTL de {}", customSessionId, e);
             return -1;
         }
     }
@@ -209,24 +250,28 @@ public class PlayerLockService {
      * ⚠️ ATENÇÃO: Use apenas se tiver certeza que a sessão está morta
      * e o lock não foi liberado corretamente.
      * 
-     * @param summonerName Nome do jogador
+     * @param customSessionId ID da sessão customizada
      * @return true se conseguiu forçar liberação, false caso contrário
      */
-    public boolean forceReleasePlayerLock(String summonerName) {
-        String key = PLAYER_LOCK_PREFIX + summonerName;
+    public boolean forceReleasePlayerLock(String customSessionId) {
+        if (customSessionId == null || customSessionId.isBlank()) {
+            return false;
+        }
+
+        String key = PLAYER_LOCK_PREFIX + customSessionId;
 
         try {
             Boolean deleted = redisTemplate.delete(key);
 
             if (Boolean.TRUE.equals(deleted)) {
-                log.warn("⚠️ [PlayerLock] Lock FORÇADAMENTE liberado para: {}", summonerName);
+                log.warn("⚠️ [PlayerLock] Lock FORÇADAMENTE liberado para: {}", customSessionId);
                 return true;
             }
 
             return false;
 
         } catch (Exception e) {
-            log.error("❌ [PlayerLock] Erro ao forçar liberação de {}", summonerName, e);
+            log.error("❌ [PlayerLock] Erro ao forçar liberação de {}", customSessionId, e);
             return false;
         }
     }
@@ -236,36 +281,40 @@ public class PlayerLockService {
      * 
      * Útil para reconexão: se mesma sessão precisa novo ID.
      * 
-     * @param summonerName Nome do jogador
-     * @param oldSessionId Sessão antiga
-     * @param newSessionId Nova sessão
+     * @param customSessionId ID da sessão customizada
+     * @param oldSessionId    Sessão antiga
+     * @param newSessionId    Nova sessão
      * @return true se conseguiu transferir, false caso contrário
      */
-    public boolean transferPlayerLock(String summonerName, String oldSessionId, String newSessionId) {
-        String key = PLAYER_LOCK_PREFIX + summonerName;
+    public boolean transferPlayerLock(String customSessionId, String oldSessionId, String newSessionId) {
+        if (customSessionId == null || customSessionId.isBlank()) {
+            return false;
+        }
+
+        String key = PLAYER_LOCK_PREFIX + customSessionId;
 
         try {
             // Verificar se lock existe e pertence à sessão antiga
-            String currentSession = getPlayerSession(summonerName);
+            String currentSession = getPlayerSession(customSessionId);
             if (currentSession == null) {
-                log.warn("⚠️ [PlayerLock] Não há lock para transferir: {}", summonerName);
+                log.warn("⚠️ [PlayerLock] Não há lock para transferir: {}", customSessionId);
                 return false;
             }
 
             if (!oldSessionId.equals(currentSession)) {
                 log.warn("⚠️ [PlayerLock] Lock de {} pertence a outra sessão: {} (esperado: {})",
-                        summonerName, currentSession, oldSessionId);
+                        customSessionId, currentSession, oldSessionId);
                 return false;
             }
 
             // Atualizar para nova sessão
             redisTemplate.opsForValue().set(key, newSessionId, LOCK_TTL);
             log.info("🔄 [PlayerLock] Lock transferido: {} de session {} para {}",
-                    summonerName, oldSessionId, newSessionId);
+                    customSessionId, oldSessionId, newSessionId);
             return true;
 
         } catch (Exception e) {
-            log.error("❌ [PlayerLock] Erro ao transferir lock de {}", summonerName, e);
+            log.error("❌ [PlayerLock] Erro ao transferir lock de {}", customSessionId, e);
             return false;
         }
     }

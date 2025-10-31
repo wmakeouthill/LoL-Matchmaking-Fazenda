@@ -28,96 +28,10 @@ public class DraftController {
         record ConfirmSyncRequest(Long matchId, String playerId, Integer actionIndex, String summonerName) {
         }
 
-        /**
-         * ⚠️ LEGADO - Endpoint antigo, use /match/draft-action ao invés
-         * 
-         * @deprecated Use /match/draft-action
-         */
-        @Deprecated(forRemoval = true)
-        @PostMapping("/draft/sync-confirm")
-        public ResponseEntity<Map<String, Object>> confirmSync(
-                        @RequestBody ConfirmSyncRequest req,
-                        HttpServletRequest httpRequest) {
-                try {
-                        // 🔒 Autenticação via header
-                        String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
-
-                        // 🔍 Validação de ownership (se summonerName for fornecido no body)
-                        if (req.summonerName() != null && !authenticatedSummoner.equalsIgnoreCase(req.summonerName())) {
-                                log.warn("⚠️ [{}] Tentativa de confirmar sync de outro jogador: {}",
-                                                authenticatedSummoner, req.summonerName());
-                                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                                                .body(Map.of(KEY_ERROR,
-                                                                "Nome do invocador não corresponde ao jogador autenticado"));
-                        }
-
-                        log.info("✅ [{}] Confirmando sync: matchId={}, playerId={}, actionIndex={}",
-                                        authenticatedSummoner, req.matchId(), req.playerId(), req.actionIndex());
-
-                        if (req.matchId() == null || req.playerId() == null || req.actionIndex() == null) {
-                                log.warn("⚠️ [{}] Parâmetros obrigatórios ausentes", authenticatedSummoner);
-                                return ResponseEntity.badRequest()
-                                                .body(Map.of(KEY_ERROR, "Parâmetros obrigatórios ausentes"));
-                        }
-
-                        // ✅ MIGRADO: DraftFlowService (Redis-only) ao invés de DraftService
-                        // Note: confirmSync não existe no DraftFlowService, mas confirmFinalDraft serve
-                        // o mesmo propósito
-                        draftFlowService.confirmFinalDraft(req.matchId(), authenticatedSummoner);
-                        return ResponseEntity.ok(Map.of("ok", true));
-
-                } catch (Exception e) {
-                        log.error("❌ Erro ao confirmar sync", e);
-                        return ResponseEntity.internalServerError()
-                                        .body(Map.of(KEY_ERROR, e.getMessage()));
-                }
-        }
+        // ✅ REMOVIDO: Endpoint deprecated /draft/sync-confirm
+        // Use /match/draft-action ao invés
 
         record ConfirmDraftRequest(Long matchId, String playerId, String summonerName) {
-        }
-
-        /**
-         * ⚠️ LEGADO - Endpoint antigo, use /match/{matchId}/confirm-final-draft ao
-         * invés
-         * 
-         * @deprecated Use /match/{matchId}/confirm-final-draft
-         */
-        @Deprecated(forRemoval = true)
-        @PostMapping("/match/confirm-draft")
-        public ResponseEntity<Map<String, Object>> confirmDraft(
-                        @RequestBody ConfirmDraftRequest req,
-                        HttpServletRequest httpRequest) {
-                try {
-                        // 🔒 Autenticação via header
-                        String authenticatedSummoner = SummonerAuthUtil.getSummonerNameFromRequest(httpRequest);
-
-                        // 🔍 Validação de ownership (se summonerName for fornecido no body)
-                        if (req.summonerName() != null && !authenticatedSummoner.equalsIgnoreCase(req.summonerName())) {
-                                log.warn("⚠️ [{}] Tentativa de confirmar draft de outro jogador: {}",
-                                                authenticatedSummoner, req.summonerName());
-                                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                                                .body(Map.of(KEY_ERROR,
-                                                                "Nome do invocador não corresponde ao jogador autenticado"));
-                        }
-
-                        log.info("✅ [{}] Confirmando draft: matchId={}, playerId={}",
-                                        authenticatedSummoner, req.matchId(), req.playerId());
-
-                        if (req.matchId() == null || req.playerId() == null) {
-                                log.warn("⚠️ [{}] matchId e playerId são obrigatórios", authenticatedSummoner);
-                                return ResponseEntity.badRequest()
-                                                .body(Map.of(KEY_ERROR, "matchId e playerId são obrigatórios"));
-                        }
-
-                        // ✅ MIGRADO: DraftFlowService (Redis-only) ao invés de DraftService
-                        draftFlowService.confirmFinalDraft(req.matchId(), authenticatedSummoner);
-                        return ResponseEntity.ok(Map.of(KEY_SUCCESS, true));
-
-                } catch (Exception e) {
-                        log.error("❌ Erro ao confirmar draft", e);
-                        return ResponseEntity.internalServerError()
-                                        .body(Map.of(KEY_ERROR, e.getMessage()));
-                }
         }
 
         @GetMapping("/match/{matchId}/draft-session")
@@ -152,12 +66,6 @@ public class DraftController {
                 }
         }
 
-        /**
-         * ⚠️ LEGADO - Endpoint antigo
-         * 
-         * @deprecated Status de confirmação agora via WebSocket
-         */
-        @Deprecated(forRemoval = true)
         @GetMapping("/match/{matchId}/confirmation-status")
         public ResponseEntity<Map<String, Object>> confirmationStatus(@PathVariable Long matchId) {
                 // ✅ MIGRADO: DraftFlowService snapshot ao invés de DraftService

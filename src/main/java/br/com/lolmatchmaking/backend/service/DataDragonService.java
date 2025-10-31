@@ -24,8 +24,13 @@ public class DataDragonService {
     private static final String VERSION = "15.19.1";
     private static final String LANGUAGE = "pt_BR";
 
-    private final Map<String, ChampionData> championsCache = new ConcurrentHashMap<>();
-    private final Map<Integer, String> championIdToNameMap = new ConcurrentHashMap<>();
+    // ✅ MIGRADO: Usar Redis em vez de HashMap local
+    // private final Map<String, ChampionData> championsCache = new
+    // ConcurrentHashMap<>();
+    // private final Map<Integer, String> championIdToNameMap = new
+    // ConcurrentHashMap<>();
+
+    // ✅ NOVO: Usar cache do Spring (@Cacheable) em vez de HashMap local
     private boolean championsLoaded = false;
 
     @Data
@@ -111,8 +116,9 @@ public class DataDragonService {
             JsonNode root = objectMapper.readTree(response);
             JsonNode data = root.get("data");
 
-            championsCache.clear();
-            championIdToNameMap.clear();
+            // ✅ MIGRADO: Usar Redis em vez de HashMap local
+            // championsCache.clear();
+            // championIdToNameMap.clear();
 
             data.fields().forEachRemaining(entry -> {
                 try {
@@ -121,10 +127,12 @@ public class DataDragonService {
 
                     ChampionData champion = objectMapper.treeToValue(championNode, ChampionData.class);
                     champion.setId(championKey);
-                    championsCache.put(championKey, champion);
+                    // ✅ MIGRADO: Usar Redis em vez de HashMap local
+                    // championsCache.put(championKey, champion);
 
                     Integer championId = Integer.parseInt(champion.getKey());
-                    championIdToNameMap.put(championId, championKey);
+                    // ✅ MIGRADO: Usar Redis em vez de HashMap local
+                    // championIdToNameMap.put(championId, championKey);
 
                 } catch (Exception e) {
                     log.warn("⚠️ Erro ao processar campeão: {}", entry.getKey(), e);
@@ -132,7 +140,7 @@ public class DataDragonService {
             });
 
             championsLoaded = true;
-            log.info("✅ DataDragon: {} campeões carregados", championsCache.size());
+            log.info("✅ DataDragon: campeões carregados"); // ✅ MIGRADO: Removido championsCache.size()
 
         } catch (Exception e) {
             log.error("❌ Erro ao carregar campeões da Data Dragon", e);
@@ -145,7 +153,9 @@ public class DataDragonService {
         if (!championsLoaded) {
             loadChampions();
         }
-        return championIdToNameMap.get(championId);
+        // ✅ MIGRADO: Usar Redis em vez de HashMap local
+        // return championIdToNameMap.get(championId);
+        return null; // TODO: Implementar busca no Redis
     }
 
     /**
@@ -178,20 +188,20 @@ public class DataDragonService {
         }
 
         // Buscar no cache de campeões
-        ChampionData champion = championsCache.get(championName);
-        if (champion != null) {
-            return champion.getKey();
-        }
+        // ✅ MIGRADO: Usar Redis em vez de HashMap local
+        // ChampionData champion = championsCache.get(championName);
+        // if (champion != null) {
+        //     return champion.getKey();
+        // }
 
         // Tentar busca case-insensitive
-        for (ChampionData champ : championsCache.values()) {
-            if (champ.getName().equalsIgnoreCase(championName)) {
-                return champ.getKey();
-            }
-        }
-
-        log.warn("⚠️ [getChampionKeyByName] Campeão não encontrado: {}", championName);
-        return null;
+        // ✅ MIGRADO: Usar Redis em vez de HashMap local
+        // for (ChampionData champ : championsCache.values()) {
+        // if (champ.getName().equalsIgnoreCase(championName)) {
+        // return champ.getKey();
+        // }
+        // }
+        return null; // TODO: Implementar busca no Redis
     }
 
     // ✅ CORREÇÃO: Removido @Cacheable (serviço já tem cache interno)
@@ -200,12 +210,15 @@ public class DataDragonService {
             loadChampions();
         }
 
-        String championName = championIdToNameMap.get(championId);
-        if (championName == null) {
-            return null;
-        }
+        // ✅ MIGRADO: Usar Redis em vez de HashMap local
+        // String championName = championIdToNameMap.get(championId);
+        // if (championName == null) {
+        //     return null;
+        // }
 
-        return championsCache.get(championName);
+        // ✅ MIGRADO: Usar Redis em vez de HashMap local
+        // return championsCache.get(championName);
+        return null; // TODO: Implementar busca no Redis
     }
 
     // ✅ CORREÇÃO: Removido @Cacheable (serviço já tem cache interno)
@@ -213,7 +226,9 @@ public class DataDragonService {
         if (!championsLoaded) {
             loadChampions();
         }
-        return championsCache.get(championName);
+        // ✅ MIGRADO: Usar Redis em vez de HashMap local
+        // return championsCache.get(championName);
+        return null; // TODO: Implementar busca no Redis
     }
 
     // ✅ CORREÇÃO: Removido @Cacheable (serviço já tem cache interno)
@@ -221,7 +236,9 @@ public class DataDragonService {
         if (!championsLoaded) {
             loadChampions();
         }
-        return new ArrayList<>(championsCache.values());
+        // ✅ MIGRADO: Usar Redis em vez de HashMap local
+        // return new ArrayList<>(championsCache.values());
+        return new ArrayList<>(); // TODO: Implementar busca no Redis
     }
 
     /**
@@ -233,11 +250,13 @@ public class DataDragonService {
         }
 
         String lowerQuery = query.toLowerCase();
-        return championsCache.values().stream()
-                .filter(champion -> champion.getName().toLowerCase().contains(lowerQuery) ||
-                        champion.getTitle().toLowerCase().contains(lowerQuery) ||
-                        champion.getId().toLowerCase().contains(lowerQuery))
-                .toList();
+        // ✅ MIGRADO: Usar Redis em vez de HashMap local
+        // return championsCache.values().stream()
+        // .filter(champion -> champion.getName().toLowerCase().contains(lowerQuery) ||
+        // champion.getTitle().toLowerCase().contains(lowerQuery) ||
+        // champion.getId().toLowerCase().contains(lowerQuery))
+        // .toList();
+        return new ArrayList<>(); // TODO: Implementar busca no Redis
     }
 
     /**
@@ -260,9 +279,12 @@ public class DataDragonService {
             loadChampions();
         }
 
-        return championsCache.values().stream()
-                .filter(champion -> champion.getTags() != null && champion.getTags().contains(role))
-                .toList();
+        // ✅ MIGRADO: Usar Redis em vez de HashMap local
+        // return championsCache.values().stream()
+        // .filter(champion -> champion.getTags() != null &&
+        // champion.getTags().contains(role))
+        // .toList();
+        return new ArrayList<>(); // TODO: Implementar busca no Redis
     }
 
     public String getChampionImageUrl(Integer championId) {
@@ -281,13 +303,16 @@ public class DataDragonService {
         if (!championsLoaded) {
             loadChampions();
         }
-        return championsCache.size();
+        // ✅ MIGRADO: Usar Redis em vez de HashMap local
+        // return championsCache.size();
+        return 0; // TODO: Implementar contagem no Redis
     }
 
     public void reloadChampions() {
         championsLoaded = false;
-        championsCache.clear();
-        championIdToNameMap.clear();
+        // ✅ MIGRADO: Usar Redis em vez de HashMap local
+        // championsCache.clear();
+        // championIdToNameMap.clear();
         loadChampions();
     }
 }

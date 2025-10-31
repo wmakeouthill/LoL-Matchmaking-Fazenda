@@ -38,6 +38,7 @@ public class MatchVoteController {
     private final EventBroadcastService eventBroadcastService;
     private final RedisMatchVoteService redisMatchVoteService;
     private final MatchmakingWebSocketService webSocketService;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     private static final String KEY_ERROR = "error";
     private static final String KEY_SUCCESS = "success";
@@ -487,7 +488,7 @@ public class MatchVoteController {
             if (lcuDataString != null && !lcuDataString.isBlank()) {
                 // Parse string para JsonNode
                 try {
-                    lcuMatchDataNode = new com.fasterxml.jackson.databind.ObjectMapper().readTree(lcuDataString);
+                    lcuMatchDataNode = objectMapper.readTree(lcuDataString);
                 } catch (Exception e) {
                     log.error("❌ Erro ao parsear lcuMatchData: {}", e.getMessage());
                     return ResponseEntity.badRequest()

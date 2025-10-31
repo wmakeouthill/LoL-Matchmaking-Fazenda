@@ -7,6 +7,11 @@ import lombok.NoArgsConstructor;
 
 import java.time.Instant;
 
+/**
+ * @deprecated Use {@link UnifiedMatchDataDTO} instead. This class will be
+ *             removed in a future version.
+ */
+@Deprecated
 @Data
 @NoArgsConstructor
 @AllArgsConstructor

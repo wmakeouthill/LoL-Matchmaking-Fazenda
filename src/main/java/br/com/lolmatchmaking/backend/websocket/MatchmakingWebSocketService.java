@@ -27,25 +27,23 @@ import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
 /**
- * ⚠️ MIGRAÇÃO PARCIAL PARA REDIS - EM PROGRESSO
+ * ✅ MIGRAÇÃO COMPLETA: Redis + MySQL + Cache Local Legítimo
  * 
  * ANTES: 7 ConcurrentHashMaps perdiam dados em reinícios
- * STATUS: Tem Redis mas ainda usa 4 HashMaps @Deprecated ativamente
+ * DEPOIS: Redis + MySQL + 4 HashMaps legítimos (objetos não-serializáveis)
  * 
- * MIGRAÇÃO REDIS (PARCIAL):
- * - ✅ Sessions → RedisWebSocketSessionService (OK)
- * - ⚠️ clientInfo → RedisWebSocketSessionService (AINDA USA HashMap - 20 usos)
- * - ⚠️ lastHeartbeat → RedisWebSocketSessionService (AINDA USA HashMap - 2
- * usos)
- * - ⚠️ pendingEvents → RedisWebSocketEventService (AINDA USA HashMap - 2 usos)
- * - ⚠️ pendingLcuRequests → RedisWebSocketEventService (AINDA USA HashMap - 5
- * usos)
- * - ⚠️ lcuRequestSession → RedisWebSocketEventService (AINDA USA HashMap - 2
- * usos)
- * - ✅ heartbeatTasks → Local (ScheduledFuture não serializável - OK manter)
+ * ✅ CACHE LOCAL LEGÍTIMO (4 HashMaps):
+ * - sessions → WebSocketSession (não serializável)
+ * - heartbeatTasks → ScheduledFuture (não serializável)
+ * - pendingLcuRequests → CompletableFuture (não serializável)
+ * - lcuRequestSession → String mapping (temporário)
  * 
- * TODO: Completar migração removendo os 4 HashMaps @Deprecated que ainda são
- * usados
+ * ✅ MIGRADOS PARA REDIS:
+ * - clientInfo → RedisWebSocketSessionService
+ * - lastHeartbeat → RedisWebSocketSessionService
+ * - pendingEvents → RedisWebSocketEventService
+ * - playerStates → PlayerStateService
+ * - matchOwnership → RedisPlayerMatchService
  */
 @Slf4j
 @Component
@@ -64,22 +62,19 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     private final PlayerStateService playerStateService;
     private final br.com.lolmatchmaking.backend.service.UnifiedLogService unifiedLogService;
 
-    // Cache local (WebSocketSession não é serializável)
+    // ✅ CACHE LOCAL LEGÍTIMO: Apenas para objetos não-serializáveis
+    // WebSocketSession, ScheduledFuture e CompletableFuture não podem ser salvos no
+    // Redis
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
-
-    // ✅ Cache local APENAS para objetos não-serializáveis
-    // WebSocketSession e ScheduledFuture não podem ser salvos no Redis
     private final Map<String, ScheduledFuture<?>> heartbeatTasks = new ConcurrentHashMap<>();
-
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
-
-    // ⚠️ EXCEÇÃO: CompletableFuture não é serializável
-    // Mantido para LCU requests (perdidos em restart, mas aceitável)
-    // Cliente faz retry automático se request não retornar
     private final Map<String, CompletableFuture<JsonNode>> pendingLcuRequests = new ConcurrentHashMap<>();
     private final Map<String, String> lcuRequestSession = new ConcurrentHashMap<>();
 
-    // ✅ REMOVIDOS: HashMaps deprecated migrados para Redis
+    // ✅ NOVO: Mapeamento customSessionId → randomSessionId (para encontrar a sessão
+    // real do WebSocket)
+    private final Map<String, String> customToRandomSessionMapping = new ConcurrentHashMap<>();
+
+    // ✅ MIGRADOS PARA REDIS: Todos os outros dados agora estão no Redis
     // - clientInfo → RedisWebSocketSessionService.getSummonerBySession()
     // - lastHeartbeat → RedisWebSocketSessionService.updateHeartbeat()
     // - pendingEvents → RedisWebSocketEventService.getPendingEvents()
@@ -110,6 +105,18 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         }
     }
 
+    /**
+     * Obtém o RedisMatchAcceptanceService quando necessário
+     */
+    private br.com.lolmatchmaking.backend.service.RedisMatchAcceptanceService getRedisAcceptanceService() {
+        try {
+            return applicationContext.getBean(br.com.lolmatchmaking.backend.service.RedisMatchAcceptanceService.class);
+        } catch (Exception e) {
+            log.warn("RedisMatchAcceptanceService não disponível: {}", e.getMessage());
+            return null;
+        }
+    }
+
     // Configurações
     private static final long HEARTBEAT_INTERVAL = 60000; // 60 segundos - menos agressivo
     private static final long HEARTBEAT_TIMEOUT = 120000; // 120 segundos - mais tolerante
@@ -124,37 +131,62 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
      */
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
-        String sessionId = session.getId();
-        sessions.put(sessionId, session);
+        String randomSessionId = session.getId();
+        sessions.put(randomSessionId, session);
 
         // ✅ REDIS ONLY: Inicializar heartbeat no Redis (sem HashMap local!)
-        redisWSSession.updateHeartbeat(sessionId);
+        redisWSSession.updateHeartbeat(randomSessionId);
 
-        log.info("🔌 Cliente conectado: {} (Total: {})", sessionId, sessions.size());
+        log.info("🔌 Cliente conectado: randomSessionId={} (Total: {})", randomSessionId, sessions.size());
 
-        // ✅ REDIS ONLY: Enviar eventos pendentes (reconexão)
-        // Single source of truth - sem fallback HashMap!
-        List<RedisWebSocketEventService.PendingEvent> pendingFromRedis = redisWSEvent.getPendingEvents(sessionId);
-
-        if (!pendingFromRedis.isEmpty()) {
-            log.info("📬 [REDIS] {} eventos pendentes encontrados para sessão: {}",
-                    pendingFromRedis.size(), sessionId);
-
-            for (RedisWebSocketEventService.PendingEvent event : pendingFromRedis) {
-                try {
-                    sendMessage(sessionId, event.getEventType(), event.getPayload());
-                    log.info("✅ [REDIS] Evento pendente enviado: {} → {}", sessionId, event.getEventType());
-                } catch (Exception e) {
-                    log.error("❌ [REDIS] Erro ao enviar evento pendente: {}", event.getEventType(), e);
-                }
+        // ✅ CRÍTICO: Buscar customSessionId para enviar eventos pendentes
+        // Events pendentes são armazenados por customSessionId (imutável)
+        String customSessionIdForKey = null;
+        try {
+            Optional<String> customOpt = redisWSSession.getCustomSessionId(randomSessionId);
+            if (customOpt.isPresent()) {
+                customSessionIdForKey = customOpt.get();
+                log.debug("🔍 [Reconnect] CustomSessionId encontrado: {} → {}", randomSessionId, customSessionIdForKey);
+            } else {
+                log.debug("⚠️ [Reconnect] CustomSessionId ainda não registrado para: {}", randomSessionId);
             }
+        } catch (Exception e) {
+            log.warn("⚠️ [Reconnect] Erro ao buscar customSessionId: {}", e);
+        }
 
-            // Limpar eventos após envio bem-sucedido
-            redisWSEvent.clearPendingEvents(sessionId);
+        // ✅ REDIS: Enviar eventos pendentes usando customSessionId
+        if (customSessionIdForKey != null) {
+            List<RedisWebSocketEventService.PendingEvent> pendingFromRedis = redisWSEvent
+                    .getPendingEvents(customSessionIdForKey);
+
+            if (!pendingFromRedis.isEmpty()) {
+                log.info(
+                        "📬 [Reconnect] {} eventos pendentes encontrados para customSessionId: {} (randomSessionId: {})",
+                        pendingFromRedis.size(), customSessionIdForKey, randomSessionId);
+
+                for (RedisWebSocketEventService.PendingEvent event : pendingFromRedis) {
+                    try {
+                        sendMessage(randomSessionId, event.getEventType(), event.getPayload());
+                        log.info("✅ [Reconnect] Evento pendente enviado: {} → {}", customSessionIdForKey,
+                                event.getEventType());
+                    } catch (Exception e) {
+                        log.error("❌ [Reconnect] Erro ao enviar evento pendente: {}", event.getEventType(), e);
+                    }
+                }
+
+                // Limpar eventos após envio bem-sucedido usando customSessionId
+                redisWSEvent.clearPendingEvents(customSessionIdForKey);
+                log.info("🗑️ [Reconnect] {} eventos pendentes limpos para customSessionId: {}",
+                        pendingFromRedis.size(), customSessionIdForKey);
+            } else {
+                log.debug("📭 [Reconnect] Nenhum evento pendente para customSessionId: {}", customSessionIdForKey);
+            }
+        } else {
+            log.debug("⏳ [Reconnect] Aguardando identificação para buscar eventos pendentes");
         }
 
         // Iniciar monitoramento de heartbeat
-        startHeartbeatMonitoring(sessionId);
+        startHeartbeatMonitoring(randomSessionId);
 
         // ✅ NOVO: Enviar evento global de reconexão para verificar partidas ativas
         sendGlobalReconnectCheck();
@@ -245,6 +277,9 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                     break;
                 case "get_discord_users":
                     handleGetDiscordUsers(sessionId);
+                    break;
+                case "confirm_session_migration":
+                    handleConfirmSessionMigration(sessionId, jsonMessage);
                     break;
                 default:
                     log.warn("⚠️ Tipo de mensagem desconhecido: {}", messageType);
@@ -439,7 +474,8 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     }
 
     /**
-     * Identifica um cliente
+     * ✅ NOVO: Identifica um cliente com sessionId customizado baseado no
+     * summonerName#tag
      */
     private void handleIdentify(String sessionId, JsonNode data) {
         try {
@@ -448,6 +484,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             // nest them under data (data: { playerId, summonerName, lockfile }).
             String playerId = null;
             String summonerName = null;
+            String customSessionId = null;
 
             if (data.has("playerId") && !data.get("playerId").isNull()) {
                 playerId = data.get("playerId").asText(null);
@@ -461,18 +498,36 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                 summonerName = data.get("data").get("summonerName").asText(null);
             }
 
+            // ✅ NOVO: Verificar se Electron enviou sessionId customizado
+            if (data.has("customSessionId") && !data.get("customSessionId").isNull()) {
+                customSessionId = data.get("customSessionId").asText(null);
+            } else if (data.has("data") && data.get("data") != null && data.get("data").has("customSessionId")) {
+                customSessionId = data.get("data").get("customSessionId").asText(null);
+            }
+
             // ✅ Identificar jogador no Redis
             if (summonerName != null && !summonerName.isBlank()) {
+                // ✅ NOVO: Usar sessionId customizado se fornecido pelo Electron
+                String effectiveSessionId = (customSessionId != null && !customSessionId.isBlank())
+                        ? customSessionId
+                        : sessionId;
+
+                // ✅ NOVO: Se usando sessionId customizado, migrar sessão WebSocket
+                if (customSessionId != null && !customSessionId.equals(sessionId)) {
+                    migrateWebSocketSession(sessionId, customSessionId);
+                }
+
                 // Registrar no SessionRegistry (que usa Redis)
-                sessionRegistry.registerPlayer(summonerName, sessionId);
+                sessionRegistry.registerPlayer(summonerName, effectiveSessionId);
 
                 // ✅ NOVO: Invalidar cache via Redis (evita dependência circular)
                 sessionRegistry.invalidateSessionCache();
 
                 log.info(
-                        "✅ [Player-Sessions] [ELECTRON→BACKEND] Jogador {} registrado no Redis para sessão {} - cache invalidado",
+                        "✅ [Player-Sessions] [ELECTRON→BACKEND] Jogador {} registrado no Redis para sessão {} (custom: {}) - cache invalidado",
                         summonerName,
-                        sessionId);
+                        effectiveSessionId,
+                        customSessionId != null ? "SIM" : "NÃO");
 
                 // ✅ Lockfile data processamento (se necessário no futuro)
                 // TODO: Implementar storage de LCU lockfile info no Redis se necessário
@@ -683,7 +738,7 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
      * Inicia monitoramento de heartbeat
      */
     private void startHeartbeatMonitoring(String sessionId) {
-        ScheduledFuture<?> future = scheduler.scheduleAtFixedRate(() -> {
+        ScheduledFuture<?> future = Executors.newScheduledThreadPool(1).scheduleAtFixedRate(() -> {
             try {
                 // ✅ Buscar último heartbeat no Redis
                 Optional<RedisWebSocketSessionService.ClientInfo> clientInfoOpt = redisWSSession
@@ -735,6 +790,41 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             redisWSEvent.clearPendingEvents(sessionId);
         }
     }
+    
+    /**
+     * ✅ PÚBLICO: Envia eventos pendentes após identificação do Electron
+     * Chamado pelo CoreWebSocketHandler após registrar customSessionId
+     */
+    public void sendPendingEventsForSession(String customSessionId, String randomSessionId) {
+        try {
+            List<RedisWebSocketEventService.PendingEvent> pendingFromRedis = redisWSEvent
+                    .getPendingEvents(customSessionId);
+
+            if (!pendingFromRedis.isEmpty()) {
+                log.info("📬 [PendingEvents] {} eventos pendentes encontrados para customSessionId: {} (randomSessionId: {})",
+                        pendingFromRedis.size(), customSessionId, randomSessionId);
+
+                for (RedisWebSocketEventService.PendingEvent event : pendingFromRedis) {
+                    try {
+                        sendMessage(randomSessionId, event.getEventType(), event.getPayload());
+                        log.info("✅ [PendingEvents] Evento pendente enviado: {} → {}", customSessionId,
+                                event.getEventType());
+                    } catch (Exception e) {
+                        log.error("❌ [PendingEvents] Erro ao enviar evento pendente: {}", event.getEventType(), e);
+                    }
+                }
+
+                // Limpar eventos após envio bem-sucedido usando customSessionId
+                redisWSEvent.clearPendingEvents(customSessionId);
+                log.info("🗑️ [PendingEvents] {} eventos pendentes limpos para customSessionId: {}",
+                        pendingFromRedis.size(), customSessionId);
+            } else {
+                log.debug("📭 [PendingEvents] Nenhum evento pendente para customSessionId: {}", customSessionId);
+            }
+        } catch (Exception e) {
+            log.error("❌ [PendingEvents] Erro ao processar eventos pendentes para {}: {}", customSessionId, e.getMessage(), e);
+        }
+    }
 
     /**
      * Adiciona evento pendente
@@ -777,7 +867,10 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
      * Garante que eventos não sejam perdidos durante desconexões.
      */
     public void sendMessage(String sessionId, String type, Object data) {
-        WebSocketSession session = sessions.get(sessionId);
+        // ✅ CORRIGIR: Buscar randomSessionId se for customSessionId
+        String actualSessionId = getRandomSessionId(sessionId);
+
+        WebSocketSession session = sessions.get(actualSessionId);
 
         if (session != null && session.isOpen()) {
             try {
@@ -803,30 +896,33 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             } catch (Exception e) {
                 log.error("❌ Erro ao enviar mensagem para {}. Enfileirando no Redis...", sessionId, e);
 
-                // ✅ REDIS: Enfileirar evento para envio posterior
+                // ✅ CRÍTICO: Buscar customSessionId para enfileirar com chave imutável
+                String customSessionIdForKey = getCustomSessionIdForPendingEvent(actualSessionId, sessionId);
+
+                // ✅ REDIS: Enfileirar evento para envio posterior usando customSessionId
                 Map<String, Object> payload = new HashMap<>();
                 if (data != null) {
                     payload.put("data", data);
                 }
-                redisWSEvent.queueEvent(sessionId, type, payload);
-
-                // Backward compatibility: cache local
-                addPendingEvent(sessionId, type);
+                redisWSEvent.queueEvent(customSessionIdForKey, type, payload);
+                log.info("📨 [PendingEvent] Evento enfileirado usando customSessionId: {}", customSessionIdForKey);
             }
         } else {
             // Sessão fechada ou inexistente
             log.warn("⚠️ Sessão WebSocket fechada ou inexistente: {}. Enfileirando evento no Redis: {}",
                     sessionId, type);
 
-            // ✅ REDIS: Enfileirar evento para envio quando reconectar
+            // ✅ CRÍTICO: Buscar customSessionId para enfileirar com chave imutável
+            String customSessionIdForKey = getCustomSessionIdForPendingEvent(actualSessionId, sessionId);
+
+            // ✅ REDIS: Enfileirar evento para envio quando reconectar usando
+            // customSessionId
             Map<String, Object> payload = new HashMap<>();
             if (data != null) {
                 payload.put("data", data);
             }
-            redisWSEvent.queueEvent(sessionId, type, payload);
-
-            // Backward compatibility: cache local
-            addPendingEvent(sessionId, type);
+            redisWSEvent.queueEvent(customSessionIdForKey, type, payload);
+            log.info("📨 [PendingEvent] Evento enfileirado usando customSessionId: {}", customSessionIdForKey);
         }
     }
 
@@ -924,7 +1020,8 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             data.put("total", total);
             data.put("progress", String.format("%d/%d", accepted, total));
 
-            broadcastToAll("match_acceptance_progress", data);
+            // ✅ CORREÇÃO: Enviar apenas para jogadores da partida
+            sendToPlayers("match_acceptance_progress", data, getAllPlayersFromMatch(matchId));
 
             log.debug("✅ [WebSocket] match_acceptance_progress broadcast: {}/{}", accepted, total);
 
@@ -972,11 +1069,13 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
 
         if (sessionIdOpt.isPresent()) {
             String sessionId = sessionIdOpt.get();
+            // ✅ CRÍTICO: Converter customSessionId → randomSessionId se necessário
+            String actualSessionId = getRandomSessionId(sessionId);
 
             // Verificar se sessão ainda existe localmente
-            if (sessions.containsKey(sessionId)) {
-                log.debug("✅ [WebSocket] Sessão encontrada via Redis: {} → {}", summonerName, sessionId);
-                return sessionId;
+            if (sessions.containsKey(actualSessionId)) {
+                log.debug("✅ [WebSocket] Sessão encontrada via Redis: {} → {}", summonerName, actualSessionId);
+                return actualSessionId;
             } else {
                 log.warn("⚠️ [WebSocket] SessionId {} encontrado no Redis mas sessão local não existe para {}",
                         sessionId, summonerName);
@@ -1035,88 +1134,6 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
 
         } catch (Exception e) {
             log.error("❌ Erro ao fazer broadcast de partida encontrada", e);
-        }
-    }
-
-    /**
-     * Envia mensagem para jogadores específicos EM PARALELO (usado para eventos de
-     * partida)
-     * 
-     * ✅ BROADCAST SIMULTÂNEO: Todos os jogadores recebem exatamente ao mesmo tempo
-     */
-    public void sendToPlayers(String messageType, Map<String, Object> data, List<String> summonerNames) {
-        try {
-            Map<String, Object> message = new HashMap<>(data);
-            message.put("type", messageType);
-            message.put("timestamp", System.currentTimeMillis());
-
-            String jsonMessage = objectMapper.writeValueAsString(message);
-
-            Collection<WebSocketSession> playerSessions = sessionRegistry.getByPlayers(summonerNames);
-            int expectedCount = summonerNames.size();
-            int foundCount = playerSessions.size();
-
-            log.info(
-                    "📤 [Broadcast Paralelo] Enviando '{}' para {} jogadores SIMULTANEAMENTE (sessões encontradas: {})",
-                    messageType, expectedCount, foundCount);
-
-            // ✅ NOVO: Verificar se todos os jogadores estão online
-            if (foundCount < expectedCount) {
-                log.warn("⚠️ [Broadcast] APENAS {}/{} jogadores estão online para '{}'!", foundCount, expectedCount,
-                        messageType);
-                log.warn("⚠️ [Broadcast] Jogadores offline:");
-                for (String summonerName : summonerNames) {
-                    Optional<WebSocketSession> sessionOpt = sessionRegistry.getByPlayer(summonerName);
-                    if (sessionOpt.isEmpty()) {
-                        log.warn("  ❌ {} (offline)", summonerName);
-                    }
-                }
-            } else {
-                log.info("✅ [Broadcast] Todos os {}/{} jogadores estão online para '{}'!", foundCount, expectedCount,
-                        messageType);
-            }
-
-            // ✅ NOVO: Log detalhado para cada jogador que vai receber match_found
-            if ("match_found".equals(messageType)) {
-                log.info("🔍 [session-match-found] ===== DETALHES DO BROADCAST MATCH_FOUND =====");
-                log.info("🔍 [session-match-found] Total de summonerNames solicitados: {}", summonerNames.size());
-                log.info("🔍 [session-match-found] Total de sessões encontradas: {}", playerSessions.size());
-                log.info("🔍 [session-match-found] SummonerNames solicitados: {}", summonerNames);
-
-                // Log detalhado de cada sessão encontrada
-                for (WebSocketSession session : playerSessions) {
-                    String sessionId = session.getId();
-                    Optional<String> summonerOpt = redisWSSession.getSummonerBySession(sessionId);
-                    String summonerInfo = summonerOpt.isPresent() ? summonerOpt.get() : "UNKNOWN_SUMMONER";
-                    log.info("🔍 [session-match-found] ✅ ENVIANDO para sessionId: {} → summonerName: {}", sessionId,
-                            summonerInfo);
-                }
-
-                // Log dos summonerNames que NÃO foram encontrados
-                List<String> foundSummoners = playerSessions.stream()
-                        .map(session -> redisWSSession.getSummonerBySession(session.getId()).orElse("UNKNOWN"))
-                        .collect(java.util.stream.Collectors.toList());
-
-                List<String> notFoundSummoners = summonerNames.stream()
-                        .filter(name -> !foundSummoners.contains(name.toLowerCase().trim()))
-                        .collect(java.util.stream.Collectors.toList());
-
-                if (!notFoundSummoners.isEmpty()) {
-                    log.warn("🔍 [session-match-found] ❌ NÃO ENCONTRADOS: {}", notFoundSummoners);
-                }
-
-                log.info("🔍 [session-match-found] =================================================");
-            }
-
-            long startTime = System.currentTimeMillis();
-            sendToMultipleSessions(playerSessions, jsonMessage);
-            long elapsed = System.currentTimeMillis() - startTime;
-
-            log.info("⚡ [Broadcast Paralelo] '{}' enviado para {} jogadores em {}ms",
-                    messageType, playerSessions.size(), elapsed);
-
-        } catch (Exception e) {
-            log.error("❌ Erro ao enviar mensagem para jogadores específicos", e);
         }
     }
 
@@ -1182,6 +1199,243 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             log.error("⏱️ Timeout ao fazer broadcast (5s)", e);
         } catch (Exception e) {
             log.error("❌ Erro ao aguardar broadcast paralelo", e);
+        }
+    }
+
+    /**
+     * ✅ NOVO: Envia mensagem apenas para jogadores específicos COM FALLBACK
+     * Sistema direcionado - apenas jogadores da partida recebem eventos
+     * Se falhar, faz broadcast global como fallback
+     */
+    public void sendToPlayers(String eventType, Map<String, Object> data, List<String> playerNames) {
+        try {
+            Map<String, Object> message = new HashMap<>();
+            message.put("type", eventType);
+            message.put("data", data);
+            message.put("timestamp", System.currentTimeMillis());
+
+            String jsonMessage = objectMapper.writeValueAsString(message);
+            TextMessage textMessage = new TextMessage(jsonMessage);
+
+            int sentCount = 0;
+            int totalPlayers = playerNames.size();
+            int failedPlayers = 0;
+
+            log.info("🎯 [Directed Broadcast] Enviando {} para {} jogadores específicos", eventType, totalPlayers);
+
+            // ✅ ENVIO PARALELO para jogadores específicos
+            List<CompletableFuture<Boolean>> sendFutures = new ArrayList<>();
+
+            for (String playerName : playerNames) {
+                CompletableFuture<Boolean> future = CompletableFuture.supplyAsync(() -> {
+                    try {
+                        // ✅ Buscar sessionId do jogador via Redis
+                        Optional<String> sessionIdOpt = redisWSSession.getSessionBySummoner(playerName);
+
+                        if (sessionIdOpt.isPresent()) {
+                            String sessionId = sessionIdOpt.get();
+                            // ✅ CRÍTICO: Converter customSessionId → randomSessionId se necessário
+                            String actualSessionId = getRandomSessionId(sessionId);
+                            WebSocketSession session = sessions.get(actualSessionId);
+
+                            if (session != null && session.isOpen()) {
+                                // ✅ CRÍTICO: VALIDAR que a sessão pertence ao jogador correto
+                                if (!validateSessionOwnership(session, playerName)) {
+                                    log.warn("⚠️ [Security] Sessão {} não pertence ao jogador {} - evento NÃO enviado",
+                                            actualSessionId, playerName);
+                                    // Enfileirar evento pendente para quando o jogador reconectar
+                                    String customSessionIdForKey = getCustomSessionIdForPendingEvent(actualSessionId,
+                                            sessionId);
+                                    redisWSEvent.queueEvent(customSessionIdForKey, eventType, data);
+                                    return false;
+                                }
+
+                                // ✅ CRÍTICO: Criar mensagem customizada COM targetSummoner para Electron
+                                // validar
+                                Map<String, Object> personalizedData = new HashMap<>(data);
+                                personalizedData.put("targetSummoner", playerName); // ✅ Electron valida isto
+
+                                Map<String, Object> personalizedMessage = new HashMap<>();
+                                personalizedMessage.put("type", eventType);
+                                personalizedMessage.put("data", personalizedData);
+                                personalizedMessage.put("timestamp", System.currentTimeMillis());
+                                personalizedMessage.put("targetSummoner", playerName); // ✅ Na raiz também
+
+                                String personalizedJson = objectMapper.writeValueAsString(personalizedMessage);
+                                TextMessage personalizedTextMessage = new TextMessage(personalizedJson);
+
+                                // ✅ SINCRONIZAR envio de mensagem WebSocket
+                                synchronized (session) {
+                                    if (session.isOpen()) {
+                                        session.sendMessage(personalizedTextMessage);
+
+                                        // ✅ MELHORIA: LOG ESTRUTURADO COM VALIDAÇÃO
+                                        if (log.isDebugEnabled()) {
+                                            try {
+                                                Optional<String> customOpt = redisWSSession.getCustomSessionId(actualSessionId);
+                                                String customSessionId = customOpt.orElse("N/A");
+                                                
+                                                log.debug("📤 [BACKEND→ELECTRON] Evento: {} → {} | RandomSID: {} | CustomSID: {}", 
+                                                    eventType, playerName, 
+                                                    actualSessionId.substring(0, Math.min(8, actualSessionId.length())),
+                                                    customSessionId.substring(0, Math.min(20, customSessionId.length())));
+                                                
+                                                // ✅ VALIDAÇÃO: Verificar se customSessionId corresponde ao summonerName
+                                                if (!customSessionId.equals("N/A")) {
+                                                    String expectedCustomId = generateCustomSessionIdForSummoner(playerName);
+                                                    if (expectedCustomId != null && !customSessionId.equals(expectedCustomId)) {
+                                                        log.warn("⚠️ [BACKEND→ELECTRON] INCONSISTÊNCIA DE SESSION ID!");
+                                                        log.warn("   Player: {}, Expected: {}, Got: {}", playerName, expectedCustomId, customSessionId);
+                                                    }
+                                                }
+                                            } catch (Exception e) {
+                                                log.trace("Debug log error: {}", e.getMessage());
+                                            }
+                                        }
+
+                                        return false; // Não remover
+                                    }
+                                }
+                                return true; // Remover sessão fechada
+                            } else {
+                                log.warn("⚠️ [Directed] Sessão não encontrada ou fechada para {}", playerName);
+                                // ✅ CRÍTICO: Enfileirar evento pendente usando customSessionId
+                                try {
+                                    String customSessionIdForKey = getCustomSessionIdForPendingEvent(actualSessionId,
+                                            sessionId);
+                                    redisWSEvent.queueEvent(customSessionIdForKey, eventType, data);
+                                    log.info("📨 [PendingEvent] Evento enfileirado (sessão fechada): {} → {}",
+                                            customSessionIdForKey, eventType);
+                                } catch (Exception ex) {
+                                    log.warn("⚠️ [Directed] Falha ao enfileirar evento pendente: {}", ex.getMessage());
+                                }
+                                return false; // Não remover
+                            }
+                        } else {
+                            log.warn("⚠️ [Directed] Jogador {} não tem sessão ativa", playerName);
+                            // ✅ CRÍTICO: Enfileirar evento pendente usando summonerName
+                            try {
+                                // Usar método helper para gerar customSessionId de forma consistente
+                                String customSessionIdForKey = generateCustomSessionIdForSummoner(playerName);
+                                if (customSessionIdForKey != null) {
+                                    redisWSEvent.queueEvent(customSessionIdForKey, eventType, data);
+                                    log.info("📨 [PendingEvent] Evento enfileirado (sessão inexistente): {} → {}",
+                                            customSessionIdForKey, eventType);
+                                }
+                            } catch (Exception ex) {
+                                log.warn("⚠️ [Directed] Falha ao enfileirar evento pendente: {}", ex.getMessage());
+                            }
+                            return false; // Não remover
+                        }
+                    } catch (Exception e) {
+                        log.warn("⚠️ [Directed] Falha ao enviar {} para {}", eventType, playerName, e);
+                        // ✅ CRÍTICO: Tentar enfileirar evento pendente mesmo com erro
+                        try {
+                            // Usar método helper para gerar customSessionId de forma consistente
+                            String customSessionIdForKey = generateCustomSessionIdForSummoner(playerName);
+                            if (customSessionIdForKey != null) {
+                                redisWSEvent.queueEvent(customSessionIdForKey, eventType, data);
+                                log.info("📨 [PendingEvent] Evento enfileirado (exceção): {} → {}",
+                                        customSessionIdForKey,
+                                        eventType);
+                            }
+                        } catch (Exception ex) {
+                            log.warn("⚠️ [Directed] Falha ao enfileirar evento pendente: {}", ex.getMessage());
+                        }
+                        return true; // Marcar para remoção
+                    }
+                });
+                sendFutures.add(future);
+            }
+
+            // ✅ AGUARDAR TODOS OS ENVIOS
+            try {
+                CompletableFuture.allOf(sendFutures.toArray(new CompletableFuture[0]))
+                        .get(5, TimeUnit.SECONDS);
+
+                sentCount = (int) sendFutures.stream().mapToInt(f -> {
+                    try {
+                        return f.get() ? 0 : 1; // false = enviado com sucesso
+                    } catch (Exception e) {
+                        return 0;
+                    }
+                }).sum();
+
+                failedPlayers = totalPlayers - sentCount;
+
+            } catch (TimeoutException e) {
+                log.warn("⚠️ [Directed] Timeout ao aguardar envio para jogadores");
+                failedPlayers = totalPlayers; // Todos falharam por timeout
+            } catch (Exception e) {
+                log.error("❌ [Directed] Erro ao aguardar envio", e);
+                failedPlayers = totalPlayers; // Todos falharam por erro
+            }
+
+            // ✅ FALLBACK: Se muitos jogadores falharam, fazer broadcast global
+            if (failedPlayers > 0) {
+                double failureRate = (double) failedPlayers / totalPlayers;
+
+                if (failureRate >= 0.3) { // 30% ou mais falharam
+                    log.warn("🚨 [Fallback] {}% dos jogadores falharam ({}/{}), fazendo broadcast global como fallback",
+                            Math.round(failureRate * 100), failedPlayers, totalPlayers);
+
+                    // ✅ FALLBACK: Broadcast global
+                    broadcastToAll(eventType, data);
+
+                    log.info("✅ [Fallback] Broadcast global executado como fallback para {}", eventType);
+                } else {
+                    log.warn("⚠️ [Directed] {} jogadores falharam ({}/{}), mas taxa de falha baixa - sem fallback",
+                            failedPlayers, failedPlayers, totalPlayers);
+                }
+            }
+
+            log.info("📊 [Directed Broadcast] {} enviado para {}/{} jogadores", eventType, sentCount, totalPlayers);
+
+        } catch (Exception e) {
+            log.error("❌ [Directed Broadcast] Erro ao enviar {} para jogadores, executando fallback global", eventType,
+                    e);
+
+            // ✅ FALLBACK DE EMERGÊNCIA: Se tudo falhar, broadcast global
+            try {
+                broadcastToAll(eventType, data);
+                log.info("✅ [Emergency Fallback] Broadcast global executado após erro crítico");
+            } catch (Exception fallbackError) {
+                log.error("❌ [Emergency Fallback] Falha crítica no fallback global", fallbackError);
+            }
+        }
+    }
+
+    /**
+     * ✅ NOVO: Envia mensagem para um jogador específico
+     */
+    public void sendToPlayer(String eventType, Map<String, Object> data, String playerName) {
+        sendToPlayers(eventType, data, List.of(playerName));
+    }
+
+    /**
+     * ✅ NOVO: Migra uma sessão WebSocket para um novo ID customizado
+     * Usado quando Electron define sessionId baseado no summonerName#tag
+     */
+    private void migrateWebSocketSession(String oldSessionId, String newSessionId) {
+        try {
+            WebSocketSession session = sessions.get(oldSessionId);
+            if (session != null && session.isOpen()) {
+                // Migrar sessão para novo ID
+                sessions.put(newSessionId, session);
+                sessions.remove(oldSessionId);
+
+                // Migrar heartbeat task se existir
+                ScheduledFuture<?> heartbeatTask = heartbeatTasks.remove(oldSessionId);
+                if (heartbeatTask != null) {
+                    heartbeatTasks.put(newSessionId, heartbeatTask);
+                }
+
+                log.info("✅ [Session Migration] Sessão migrada: {} → {}", oldSessionId, newSessionId);
+            } else {
+                log.warn("⚠️ [Session Migration] Sessão {} não encontrada ou fechada", oldSessionId);
+            }
+        } catch (Exception e) {
+            log.error("❌ [Session Migration] Erro ao migrar sessão {} → {}", oldSessionId, newSessionId, e);
         }
     }
 
@@ -1351,7 +1605,9 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             Optional<String> sessionIdOpt = redisWSSession.getSessionBySummoner(normalizedName);
             if (sessionIdOpt.isPresent()) {
                 String sessionId = sessionIdOpt.get();
-                WebSocketSession s = sessions.get(sessionId);
+                // ✅ CRÍTICO: Converter customSessionId → randomSessionId se necessário
+                String actualSessionId = getRandomSessionId(sessionId);
+                WebSocketSession s = sessions.get(actualSessionId);
                 if (s != null && s.isOpen()) {
                     log.info("pickGatewaySessionId: selecting session {} for specific summoner '{}'",
                             sessionId, summonerName);
@@ -1411,19 +1667,19 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     }
 
     /**
-     * Broadcast de partida aceita
+     * ✅ CORRIGIDO: Broadcast de partida aceita para jogadores específicos
      */
-    public void broadcastMatchAccepted(String matchId) {
+    public void broadcastMatchAccepted(String matchId, List<String> playerNames) {
         Map<String, Object> data = Map.of("matchId", matchId);
-        broadcastToAll("match_accepted", data);
+        sendToPlayers("match_accepted", data, playerNames);
     }
 
     /**
-     * Broadcast de partida cancelada
+     * ✅ CORRIGIDO: Broadcast de partida cancelada para jogadores específicos
      */
-    public void broadcastMatchCancelled(String matchId, String reason) {
+    public void broadcastMatchCancelled(String matchId, String reason, List<String> playerNames) {
         Map<String, Object> data = Map.of("matchId", matchId, "reason", reason);
-        broadcastToAll("match_cancelled", data);
+        sendToPlayers("match_cancelled", data, playerNames);
     }
 
     /**
@@ -1577,6 +1833,44 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
     }
 
     /**
+     * ✅ NOVO: Handle confirmação de migração de sessão do Electron
+     */
+    private void handleConfirmSessionMigration(String sessionId, JsonNode data) {
+        try {
+            String customSessionId = data.has("customSessionId") ? data.get("customSessionId").asText() : null;
+
+            if (customSessionId == null || customSessionId.isBlank()) {
+                log.warn("⚠️ [Session Migration] customSessionId não fornecido na confirmação");
+                sendError(sessionId, "MISSING_CUSTOM_SESSION_ID", "customSessionId é obrigatório");
+                return;
+            }
+
+            // Verificar se a sessão foi migrada com sucesso
+            WebSocketSession session = sessions.get(customSessionId);
+            if (session != null && session.isOpen()) {
+                log.info("✅ [Session Migration] Confirmação recebida - sessão {} ativa", customSessionId);
+
+                // Enviar confirmação de sucesso
+                sendMessage(sessionId, "session_migrated", Map.of(
+                        "oldSessionId", sessionId,
+                        "newSessionId", customSessionId,
+                        "success", true));
+            } else {
+                log.warn("⚠️ [Session Migration] Sessão {} não encontrada ou fechada", customSessionId);
+
+                // Enviar erro
+                sendMessage(sessionId, "session_migration_failed", Map.of(
+                        "error", "Session not found or closed",
+                        "customSessionId", customSessionId));
+            }
+
+        } catch (Exception e) {
+            log.error("❌ [Session Migration] Erro ao processar confirmação", e);
+            sendError(sessionId, "MIGRATION_CONFIRMATION_FAILED", "Erro ao processar confirmação");
+        }
+    }
+
+    /**
      * ✅ NOVO: Solicitar identificação LCU para um jogador específico (ex: entrada
      * na fila)
      */
@@ -1594,7 +1888,9 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             }
 
             String sessionId = sessionIdOpt.get();
-            WebSocketSession session = getSession(sessionId);
+            // ✅ CRÍTICO: Converter customSessionId → randomSessionId se necessário
+            String actualSessionId = getRandomSessionId(sessionId);
+            WebSocketSession session = getSession(actualSessionId);
 
             if (session == null || !session.isOpen()) {
                 log.warn("⚠️ [Player-Sessions] [BACKEND] Sessão WebSocket {} não está ativa para {}", sessionId,
@@ -1715,9 +2011,11 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                 // já estão nas chaves centralizadas (ws:client_info:{sessionId})
 
                 // Enviar via WebSocket
-                WebSocketSession session = sessions.get(sessionId);
+                // ✅ CRÍTICO: Converter customSessionId → randomSessionId se necessário
+                String actualSessionId = getRandomSessionId(sessionId);
+                WebSocketSession session = sessions.get(actualSessionId);
                 if (session != null && session.isOpen()) {
-                    sendMessage(sessionId, "confirm_identity", request);
+                    sendMessage(actualSessionId, "confirm_identity", request);
                     log.debug("🔍 [WebSocket] Confirmação solicitada: {} (session: {}) - intervalo: {}ms",
                             summonerName, sessionId, requiredInterval);
                 } else {
@@ -1797,14 +2095,16 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
                 return future;
             }
 
-            WebSocketSession session = getSession(sessionIdOpt.get());
+            // ✅ CRÍTICO: Converter customSessionId → randomSessionId se necessário
+            String actualSessionId = getRandomSessionId(sessionIdOpt.get());
+            WebSocketSession session = getSession(actualSessionId);
             if (session == null || !session.isOpen()) {
                 log.error("❌ [WebSocket] Sessão WebSocket {} não está ativa para jogador {} (ação crítica: {})",
-                        sessionIdOpt.get(), summonerName, actionType);
+                        actualSessionId, summonerName, actionType);
                 future.complete(false);
                 return future;
             }
-            String sessionId = session.getId();
+            String randomSessionId = session.getId();
 
             // ✅ SOLICITAR confirmação OBRIGATÓRIA
             String requestId = UUID.randomUUID().toString();
@@ -1822,8 +2122,8 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             // já estão nas chaves centralizadas (ws:client_info:{sessionId})
             // O CompletableFuture pode ser armazenado localmente na memória
 
-            // Enviar via WebSocket
-            sendMessage(sessionId, "confirm_identity_critical", request);
+            // Enviar via WebSocket (usar randomSessionId - ID real da sessão WebSocket)
+            sendMessage(randomSessionId, "confirm_identity_critical", request);
 
             log.info("🔍 [WebSocket] Confirmação OBRIGATÓRIA solicitada: {} para ação: {}",
                     summonerName, actionType);
@@ -2062,5 +2362,183 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
         return sessions.values().stream()
                 .filter(WebSocketSession::isOpen)
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * ✅ NOVO: Armazena mapeamento customSessionId → randomSessionId no cache local
+     */
+    public void storeCustomToRandomMapping(String customSessionId, String randomSessionId) {
+        customToRandomSessionMapping.put(customSessionId, randomSessionId);
+        log.debug("🔗 [SessionMapping] Registrado no cache local: {} → {}", customSessionId, randomSessionId);
+    }
+
+    /**
+     * ✅ NOVO: Converte customSessionId em randomSessionId
+     * Se o sessionId já for random, retorna ele mesmo
+     * Usa cache local primeiro, depois Redis como fallback
+     */
+    private String getRandomSessionId(String sessionId) {
+        // Verificar se é um customSessionId (começa com "player_")
+        if (sessionId.startsWith("player_")) {
+            // 1. Tentar cache local primeiro (mais rápido)
+            String randomId = customToRandomSessionMapping.get(sessionId);
+            if (randomId != null) {
+                log.debug("🔗 [SessionMapping] customSessionId → randomSessionId (cache): {} → {}", sessionId,
+                        randomId);
+                return randomId;
+            }
+
+            // 2. Buscar no Redis usando ws:custom_session_mapping:{customSessionId}
+            try {
+                Optional<String> randomSessionIdOpt = redisWSSession.getRandomSessionIdByCustom(sessionId);
+                if (randomSessionIdOpt.isPresent()) {
+                    String randomSessionId = randomSessionIdOpt.get();
+                    // Registrar no cache local para próximas buscas
+                    customToRandomSessionMapping.put(sessionId, randomSessionId);
+                    log.debug("🔗 [SessionMapping] customSessionId → randomSessionId (Redis): {} → {}", sessionId,
+                            randomSessionId);
+                    return randomSessionId;
+                }
+            } catch (Exception e) {
+                log.warn("⚠️ [SessionMapping] Erro ao buscar no Redis: {}", sessionId, e);
+            }
+
+            log.warn("⚠️ [SessionMapping] RandomSessionId não encontrado para customSessionId: {}", sessionId);
+        }
+        return sessionId; // Se não for custom ou não houver mapeamento, retornar o ID original
+    }
+
+    /**
+     * ✅ NOVO: Obtém customSessionId correto para enfileirar eventos pendentes
+     * 
+     * Usa customSessionId (imutável) como chave para eventos pendentes
+     * ao invés de randomSessionId (que muda a cada reconexão)
+     * 
+     * Suporta bots e jogadores reais de forma consistente.
+     */
+    private String getCustomSessionIdForPendingEvent(String randomSessionId, String inputSessionId) {
+        // Se o input já é customSessionId, usar diretamente
+        if (inputSessionId.startsWith("player_")) {
+            return inputSessionId;
+        }
+
+        // Buscar customSessionId pelo randomSessionId no Redis
+        try {
+            Optional<String> customOpt = redisWSSession.getCustomSessionId(randomSessionId);
+            if (customOpt.isPresent()) {
+                log.debug("🔍 [PendingEvent] CustomSessionId encontrado: {} → {}", randomSessionId, customOpt.get());
+                return customOpt.get();
+            }
+        } catch (Exception e) {
+            log.warn("⚠️ [PendingEvent] Erro ao buscar customSessionId: {}", randomSessionId, e);
+        }
+
+        // Fallback: usar o sessionId recebido (provavelmente será randomSessionId)
+        log.warn("⚠️ [PendingEvent] CustomSessionId não encontrado, usando fallback: {}", inputSessionId);
+        return inputSessionId;
+    }
+
+    /**
+     * ✅ NOVO: Gera customSessionId a partir de summonerName (para bots e jogadores)
+     * 
+     * Usado quando não temos gameName#tagLine, especialmente para bots.
+     */
+    private String generateCustomSessionIdForSummoner(String summonerName) {
+        if (summonerName == null || summonerName.isBlank()) {
+            return null;
+        }
+
+        // Normalizar summonerName para customSessionId
+        String normalized = summonerName.toLowerCase().trim()
+                .replaceAll("[^a-zA-Z0-9_]", "_");
+
+        return "player_" + normalized;
+    }
+
+    /**
+     * ✅ CRÍTICO: Valida se uma WebSocketSession pertence realmente ao jogador
+     * correto
+     * 
+     * Previne envio de eventos para sessões de outros jogadores.
+     * 
+     * @param session            WebSocketSession a validar
+     * @param expectedPlayerName Nome do jogador esperado
+     * @return true se a sessão pertence ao jogador correto
+     */
+    private boolean validateSessionOwnership(WebSocketSession session, String expectedPlayerName) {
+        try {
+            // Buscar summonerName registrado para esta sessão no Redis
+            Optional<String> actualPlayerNameOpt = redisWSSession.getSummonerBySession(session.getId());
+
+            if (actualPlayerNameOpt.isEmpty()) {
+                log.warn("⚠️ [Security] Sessão {} não tem summonerName registrado no Redis", session.getId());
+                return false;
+            }
+
+            String actualPlayerName = actualPlayerNameOpt.get();
+
+            // Comparar (case-insensitive e com normalização)
+            boolean matches = actualPlayerName.equalsIgnoreCase(expectedPlayerName.trim());
+
+            if (!matches) {
+                log.error("🚨 [Security] Sessão {} NÃO pertence ao jogador esperado!", session.getId());
+                log.error("   Esperado: {}", expectedPlayerName);
+                log.error("   Real: {}", actualPlayerName);
+                log.error("   Evento NÃO será enviado por segurança!");
+            } else {
+                log.debug("✅ [Security] Validação OK: sessão {} pertence a {}", session.getId(), actualPlayerName);
+            }
+
+            return matches;
+
+        } catch (Exception e) {
+            log.error("❌ [Security] Erro ao validar ownership da sessão", e);
+            return false; // Por segurança, negar se houver erro
+        }
+    }
+
+    /**
+     * ✅ NOVO: Busca eventos pendentes usando customSessionId (público para uso
+     * externo)
+     *
+     * @param customSessionId CustomSessionId do jogador (ex: player_fzd_ratoso_fzd)
+     * @return Lista de eventos pendentes
+     */
+    public List<RedisWebSocketEventService.PendingEvent> getPendingEventsByCustomSessionId(String customSessionId) {
+        return redisWSEvent.getPendingEvents(customSessionId);
+    }
+
+    /**
+     * ✅ NOVO: Limpa eventos pendentes usando customSessionId (público para uso
+     * externo)
+     * 
+     * @param customSessionId CustomSessionId do jogador (ex: player_fzd_ratoso_fzd)
+     */
+    public void clearPendingEventsByCustomSessionId(String customSessionId) {
+        redisWSEvent.clearPendingEvents(customSessionId);
+    }
+
+    /**
+     * ✅ NOVO: Obtém todos os jogadores de uma partida
+     */
+    private List<String> getAllPlayersFromMatch(Long matchId) {
+        List<String> allPlayers = new ArrayList<>();
+
+        try {
+            // Buscar dados da partida via Redis primeiro
+            List<String> team1Names = getRedisAcceptanceService().getTeam1Players(matchId);
+            List<String> team2Names = getRedisAcceptanceService().getTeam2Players(matchId);
+
+            if (team1Names != null)
+                allPlayers.addAll(team1Names);
+            if (team2Names != null)
+                allPlayers.addAll(team2Names);
+
+            log.debug("🎯 [WebSocket] Jogadores encontrados para match {}: {}", matchId, allPlayers);
+        } catch (Exception e) {
+            log.error("❌ [WebSocket] Erro ao obter jogadores da partida {}", matchId, e);
+        }
+
+        return allPlayers;
     }
 }

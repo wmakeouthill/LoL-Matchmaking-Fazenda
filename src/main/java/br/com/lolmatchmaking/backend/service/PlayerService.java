@@ -27,10 +27,9 @@ public class PlayerService {
     private final PlayerMapper playerMapper;
     private final RiotAPIService riotAPIService;
     private final RiotChampionStatsService riotChampionStatsService;
-    private final RedisLeaderboardService redisLeaderboard; // ✅ NOVO: Cache Redis para leaderboard
-
-    // ✅ NOVO: Lock service para prevenir lost updates em stats
+    private final RedisLeaderboardService redisLeaderboard;
     private final br.com.lolmatchmaking.backend.service.lock.PlayerStatsLockService playerStatsLockService;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     @Cacheable("players")
     public List<PlayerDTO> getAllPlayers() {
@@ -1397,13 +1396,9 @@ public class PlayerService {
         }
     }
 
-    /**
-     * Converte objeto para JSON string
-     */
     private String convertToJson(Object data) {
         try {
-            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            return mapper.writeValueAsString(data);
+            return objectMapper.writeValueAsString(data);
         } catch (Exception e) {
             log.error("Erro ao converter para JSON: {}", e.getMessage());
             return "[]";

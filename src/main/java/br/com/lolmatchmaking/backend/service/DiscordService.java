@@ -1825,8 +1825,8 @@ public class DiscordService extends ListenerAdapter {
                 data.put("spectators", spectators);
                 data.put("count", spectators.size());
 
-                // ✅ CORREÇÃO: Enviar GLOBALMENTE para todos os Electrons (ping/pong)
-                webSocketService.broadcastToAll("spectators_update", data);
+                // ✅ CORREÇÃO: Enviar apenas para jogadores da partida
+                webSocketService.sendToPlayers("spectators_update", data, summonerNames);
                 log.info("📡 [DiscordService] Broadcast de espectadores enviado para {} jogadores (match {})",
                         summonerNames.size(), matchId);
             }
