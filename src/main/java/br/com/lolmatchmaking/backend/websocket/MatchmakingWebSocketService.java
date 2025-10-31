@@ -1218,15 +1218,22 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
             TextMessage textMessage = new TextMessage(jsonMessage);
 
             int sentCount = 0;
-            int totalPlayers = playerNames.size();
+            // ✅ CORREÇÃO: Excluir bots da contagem (eles não têm WebSocket)
+            int totalPlayers = (int) playerNames.stream().filter(name -> !isBotPlayer(name)).count();
             int failedPlayers = 0;
 
-            log.info("🎯 [Directed Broadcast] Enviando {} para {} jogadores específicos", eventType, totalPlayers);
+            log.info("🎯 [Directed Broadcast] Enviando {} para {} jogadores específicos (bots excluídos)", eventType, totalPlayers);
 
             // ✅ ENVIO PARALELO para jogadores específicos
             List<CompletableFuture<Boolean>> sendFutures = new ArrayList<>();
 
             for (String playerName : playerNames) {
+                // ✅ CRÍTICO: SKIP bots - eles não têm sessão WebSocket/Electron
+                if (isBotPlayer(playerName)) {
+                    log.trace("🤖 [Directed] Bot {} pulado (sem WebSocket)", playerName);
+                    continue; // Pular bots completamente - SEM logar warnings
+                }
+                
                 CompletableFuture<Boolean> future = CompletableFuture.supplyAsync(() -> {
                     try {
                         // ✅ Buscar sessionId do jogador via Redis
@@ -2467,6 +2474,12 @@ public class MatchmakingWebSocketService extends TextWebSocketHandler {
      */
     private boolean validateSessionOwnership(WebSocketSession session, String expectedPlayerName) {
         try {
+            // ✅ CRÍTICO: Bots não têm sessão - pular validação
+            if (isBotPlayer(expectedPlayerName)) {
+                log.trace("🤖 [Security] Bot {} - validação de ownership pulada", expectedPlayerName);
+                return true; // Bots sempre passam (não têm sessão real)
+            }
+            
             // Buscar summonerName registrado para esta sessão no Redis
             Optional<String> actualPlayerNameOpt = redisWSSession.getSummonerBySession(session.getId());
 

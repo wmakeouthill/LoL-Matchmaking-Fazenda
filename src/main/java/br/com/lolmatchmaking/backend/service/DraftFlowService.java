@@ -202,8 +202,15 @@ public class DraftFlowService {
                             String currentPlayer = getPlayerForTeamAndIndex(st, currentAction.team(),
                                     st.getCurrentIndex());
 
-                            // ✅ CORREÇÃO: Usar SKIPPED para timeout automático
-                            boolean success = processAction(matchId, st.getCurrentIndex(), currentPlayer, SKIPPED);
+                            // ✅ CORREÇÃO: Selecionar campeão aleatório no timeout
+                            String randomChampionId = selectRandomAvailableChampion(st);
+                            if (randomChampionId == null) {
+                                log.error("❌ [Timer] Nenhum campeão disponível para timeout de matchId={}", matchId);
+                                randomChampionId = "266"; // Fallback para Aatrox se nenhum disponível
+                            }
+                            log.info("🎲 [Timer] Campeão aleatório selecionado para timeout: {} (player: {})", 
+                                    randomChampionId, currentPlayer);
+                            boolean success = processAction(matchId, st.getCurrentIndex(), currentPlayer, randomChampionId);
                             if (success) {
                                 log.info("✅ [Timer] Draft progredido automaticamente para matchId={}", matchId);
 
@@ -1439,6 +1446,9 @@ public class DraftFlowService {
     private static final String KEY_TEAM1 = "team1";
     private static final String KEY_TEAM2 = "team2";
     // configurable via property above
+    // ⚠️ DEPRECATED: SKIPPED não é mais usado - timeouts agora selecionam campeão aleatório
+    // Mantido apenas para compatibilidade com dados antigos no banco
+    @Deprecated
     private static final String SKIPPED = "SKIPPED";
     private static final String TIMEOUT_PLAYER = "system_timeout";
     private static final String KEY_REMAINING_MS = "remainingMs";
@@ -2426,15 +2436,21 @@ public class DraftFlowService {
             if (currentPlayer == null) {
                 log.error("❌ [DraftFlow] Match {} - Jogador NULL para ação {} (team {})",
                         st.getMatchId(), currentIdx, currentAction.team());
-                // Pular esta ação
-                DraftAction skipped = new DraftAction(
+                // Selecionar campeão aleatório para pular esta ação
+                String randomChampionId = selectRandomAvailableChampion(st);
+                if (randomChampionId == null) {
+                    log.error("❌ [DraftFlow] Nenhum campeão disponível para ação sem jogador, usando fallback");
+                    randomChampionId = "266"; // Fallback para Aatrox
+                }
+                String championName = dataDragonService.getChampionName(randomChampionId);
+                DraftAction autoSelected = new DraftAction(
                         currentAction.index(),
                         currentAction.type(),
                         currentAction.team(),
-                        SKIPPED,
-                        "SKIPPED", // ⭐ championName = "SKIPPED" também
+                        randomChampionId,
+                        championName,
                         "NO_PLAYER");
-                st.getActions().set(currentIdx, skipped);
+                st.getActions().set(currentIdx, autoSelected);
                 st.advance();
                 st.markActionStart();
                 persist(st.getMatchId(), st);
@@ -2462,15 +2478,23 @@ public class DraftFlowService {
             if (elapsed >= getActionTimeoutMs()) {
                 int idx = st.getCurrentIndex();
                 DraftAction prev = st.getActions().get(idx);
-                log.warn("⏰ [DraftFlow] Timeout na ação {} - marcando como SKIPPED", idx);
-                DraftAction skipped = new DraftAction(
+                log.warn("⏰ [DraftFlow] Timeout na ação {} - selecionando campeão aleatório", idx);
+                String randomChampionId = selectRandomAvailableChampion(st);
+                if (randomChampionId == null) {
+                    log.error("❌ [DraftFlow] Nenhum campeão disponível para timeout, usando fallback");
+                    randomChampionId = "266"; // Fallback para Aatrox
+                }
+                String championName = dataDragonService.getChampionName(randomChampionId);
+                log.info("🎲 [DraftFlow] Campeão aleatório selecionado por timeout: {} ({})", 
+                        randomChampionId, championName);
+                DraftAction autoSelected = new DraftAction(
                         prev.index(),
                         prev.type(),
                         prev.team(),
-                        SKIPPED,
-                        "SKIPPED", // ⭐ championName = "SKIPPED" também
+                        randomChampionId,
+                        championName,
                         TIMEOUT_PLAYER);
-                st.getActions().set(idx, skipped);
+                st.getActions().set(idx, autoSelected);
                 st.advance();
                 st.markActionStart();
                 persist(st.getMatchId(), st);
@@ -2794,21 +2818,8 @@ public class DraftFlowService {
             String championId = selectRandomAvailableChampion(st);
 
             if (championId == null) {
-                log.warn("⚠️ [DraftFlow] Nenhum campeão disponível para bot {}, pulando", botName);
-                // Marcar como SKIPPED se não houver campeões disponíveis
-                DraftAction skipped = new DraftAction(
-                        currentAction.index(),
-                        currentAction.type(),
-                        currentAction.team(),
-                        SKIPPED,
-                        "SKIPPED", // ⭐ championName = "SKIPPED" também
-                        botName);
-                st.getActions().set(actionIndex, skipped);
-                st.advance();
-                st.markActionStart();
-                persist(st.getMatchId(), st);
-                broadcastUpdate(st, false);
-                return;
+                log.warn("⚠️ [DraftFlow] Nenhum campeão disponível para bot {}, usando fallback", botName);
+                championId = "266"; // Fallback para Aatrox se nenhum disponível
             }
 
             log.info("🤖 [DraftFlow] Bot {} fazendo {} do campeão {}", botName, currentAction.type(), championId);

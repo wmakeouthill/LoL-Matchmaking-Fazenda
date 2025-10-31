@@ -1560,11 +1560,16 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         const pickAction = player.actions.find((action: any) =>
           action.type === 'pick' &&
           action.championId &&
+          action.championId !== 'SKIPPED' && // ✅ Ignorar picks pulados
           action.status === 'completed'
         );
 
         if (pickAction) {
           const championId = parseInt(pickAction.championId, 10);
+          if (isNaN(championId)) {
+            console.warn('⚠️ [findPickInActions] ChampionId inválido:', pickAction.championId);
+            return null;
+          }
           const champion = this.getChampionFromCache(championId);
 
           if (champion) {
@@ -2556,9 +2561,15 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   getTeamBans(teamColor: 'blue' | 'red'): any[] {
     // ✅ Retornar objetos de campeão com image como URL string (igual aos picks)
     if (this.session?.teams?.[teamColor]?.allBans) {
-      const bans = this.session.teams[teamColor].allBans;
+      const bans = this.session.teams[teamColor].allBans
+        .filter((championId: string) => championId !== 'SKIPPED'); // ✅ Filtrar bans pulados
       return bans.map((championId: string) => {
-        const champion = this.getChampionFromCache(parseInt(championId, 10));
+        const parsedId = parseInt(championId, 10);
+        if (isNaN(parsedId)) {
+          console.warn('⚠️ [getTeamBans] ChampionId inválido:', championId);
+          return null;
+        }
+        const champion = this.getChampionFromCache(parsedId);
         if (champion) {
           // ✅ CORREÇÃO: Retornar com image como string URL (igual findPickInActions)
           return {
@@ -2606,9 +2617,15 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   getTeamPicks(teamColor: 'blue' | 'red'): any[] {
     // ✅ Retornar objetos de campeão com image como URL string (igual aos bans)
     if (this.session?.teams?.[teamColor]?.allPicks) {
-      const picks = this.session.teams[teamColor].allPicks;
+      const picks = this.session.teams[teamColor].allPicks
+        .filter((championId: string) => championId !== 'SKIPPED'); // ✅ Filtrar picks pulados
       return picks.map((championId: string) => {
-        const champion = this.getChampionFromCache(parseInt(championId, 10));
+        const parsedId = parseInt(championId, 10);
+        if (isNaN(parsedId)) {
+          console.warn('⚠️ [getTeamPicks] ChampionId inválido:', championId);
+          return null;
+        }
+        const champion = this.getChampionFromCache(parsedId);
         if (champion) {
           // ✅ CORREÇÃO: Retornar com image como string URL (igual findPickInActions)
           return {
