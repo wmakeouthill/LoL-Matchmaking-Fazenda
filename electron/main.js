@@ -3127,16 +3127,20 @@ async function handleGameStartedEvent(json) {
       currentSummoner || "UNKNOWN"
     );
 
-    // ✅ CORREÇÃO: Preservar estrutura de dados (igual ao draft)
-    const gameData = json.data || json;
+    // ✅ CORREÇÃO: Extrair gameData da estrutura enviada pelo backend
+    // Backend envia: { type: "game_started", matchId: ..., gameData: {...} }
+    let gameData = json.data?.gameData || json.gameData || json.data || json;
 
-    // ✅ CORREÇÃO: Se matchId não está em gameData, buscar em json
-    if (!gameData.matchId && json.matchId) {
-      gameData.matchId = json.matchId;
+    // ✅ CORREÇÃO: Se matchId não está em gameData, buscar em json ou json.data
+    if (!gameData.matchId) {
+      gameData.matchId = json.data?.matchId || json.matchId;
     }
 
+    // ✅ Preservar gameData na estrutura correta para validação
+    const validationData = gameData;
+
     const isForThisPlayer = await isGameInProgressForThisPlayer(
-      gameData,
+      validationData,
       currentSummoner
     );
 
@@ -3153,10 +3157,17 @@ async function handleGameStartedEvent(json) {
     );
 
     if (mainWindow && !mainWindow.isDestroyed()) {
-      // ✅ CORREÇÃO: Enviar gameData completo
-      mainWindow.webContents.send("game-started", gameData);
+      // ✅ CORREÇÃO: Enviar gameData completo com estrutura preservada
+      const frontendData = {
+        matchId: gameData.matchId,
+        gameData: gameData, // ✅ Preservar gameData na estrutura esperada pelo frontend
+        status: gameData.status || "in_progress"
+      };
+      
+      mainWindow.webContents.send("game-started", frontendData);
       safeLog(
-        "🎮 [game-started] ✅ Game_started enviado para o frontend via IPC"
+        "🎮 [game-started] ✅ Game_started enviado para o frontend via IPC",
+        { matchId: frontendData.matchId, hasGameData: !!frontendData.gameData }
       );
     }
   } catch (error) {

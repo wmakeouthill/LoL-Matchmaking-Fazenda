@@ -648,55 +648,67 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       }
     });
 
-    // ✅ NOVO: Listener para confirmações do draft
-    document.addEventListener('draft_confirmation_update', (event: any) => {
-      if (event.detail?.matchId === this.matchId) {
-        logDraft('🎯 [DraftPickBan] draft_confirmation_update recebido via WebSocket:', event.detail);
-        saveLogToRoot(`✅ [WebSocket] Confirmação do draft atualizada - sincronizando`);
+    // ✅ CRÍTICO: Listener para confirmações do draft via Observable (igual draft_updated)
+    this.subscriptions.push(
+      this.electronEvents.draftConfirmationUpdate$.subscribe((data: any) => {
+        if (data && data.matchId === this.matchId) {
+          console.log('📊📊📊 [draftConfirmationUpdate$] PROGRESSO RECEBIDO via ElectronEventsService!', {
+            matchId: data.matchId,
+            confirmedCount: data.confirmedCount,
+            totalPlayers: data.totalPlayers,
+            allConfirmed: data.allConfirmed
+          });
 
-        // ✅ NOVO: Atualizar dados de confirmação diretamente
-        this.confirmationData = {
-          confirmations: event.detail.confirmations,
-          allConfirmed: event.detail.allConfirmed
-        };
+          // ✅ Atualizar dados de confirmação
+          this.confirmationData = {
+            confirmations: data.confirmations || [],
+            confirmedCount: data.confirmedCount || 0,
+            totalPlayers: data.totalPlayers || 10,
+            allConfirmed: data.allConfirmed || false
+          };
 
-        logDraft('🔄 [DraftPickBan] Dados de confirmação atualizados:', this.confirmationData);
-        this.cdr.detectChanges();
+          console.log('📊 [draftConfirmationUpdate$] Progresso atualizado:', this.confirmationData);
+          
+          // ✅ Se todos confirmaram, apenas aguardar game_started (não fechar modal ainda)
+          if (data.allConfirmed) {
+            console.log('✅ [draftConfirmationUpdate$] TODOS OS JOGADORES CONFIRMARAM - Aguardando game_started...');
+          }
 
-        // ✅ CRÍTICO: NÃO sincronizar - dados já estão atualizados via WebSocket
-        // this.syncSessionWithBackend();
-      }
-    });
+          this.cdr.markForCheck();
+          this.cdr.detectChanges();
+        }
+      })
+    );
 
-    // ✅ NOVO: Listener para quando todos confirmaram (jogo pronto)
-    document.addEventListener('match_game_ready', (event: any) => {
-      if (event.detail?.matchId === this.matchId) {
-        logDraft('🎯 [DraftPickBan] match_game_ready recebido via WebSocket:', event.detail);
-        saveLogToRoot(`✅ [WebSocket] Jogo pronto - todos confirmaram`);
+    // ✅ CRÍTICO: Listener para quando o jogo inicia (transição para game in progress)
+    this.subscriptions.push(
+      this.electronEvents.gameStarted$.subscribe((data: any) => {
+        if (data && data.matchId === this.matchId) {
+          console.log('🎮🎮🎮 [gameStarted$] EVENTO RECEBIDO via ElectronEventsService!', {
+            matchId: data.matchId,
+            hasGameData: !!data.gameData,
+            status: data.status
+          });
 
-        // ✅ NOVO: Fechar modal de confirmação
-        this.showConfirmationModal = false;
-        this.cdr.detectChanges();
-      }
-    });
+          logDraft('🎮 [gameStarted$] Jogo iniciado - transicionando para in_progress');
+          saveLogToRoot(`🎮 [WebSocket] Jogo iniciado - transicionando para in_progress`);
 
-    // ✅ NOVO: Listener para quando o jogo inicia (com gameData completo)
-    document.addEventListener('game_started', (event: any) => {
-      if (event.detail?.matchId === this.matchId) {
-        logDraft('🎯 [DraftPickBan] game_started recebido via WebSocket:', event.detail);
-        saveLogToRoot(`🎮 [WebSocket] Jogo iniciado - transicionando para in_progress`);
+          // ✅ Fechar modal de confirmação
+          this.showConfirmationModal = false;
 
-        // ✅ NOVO: Emitir evento de conclusão com gameData completo
-        this.onPickBanComplete.emit({
-          matchData: this.matchData,
-          session: this.session,
-          gameData: event.detail.gameData, // ✅ gameData com teams + champions
-          status: 'in_progress'
-        });
+          // ✅ CRÍTICO: Emitir evento de conclusão com gameData completo
+          this.onPickBanComplete.emit({
+            matchData: this.matchData,
+            session: this.session,
+            gameData: data.gameData || data, // ✅ gameData com teams + champions
+            status: 'in_progress'
+          });
 
-        this.cdr.detectChanges();
-      }
-    });
+          this.cdr.markForCheck();
+          this.cdr.detectChanges();
+        }
+      })
+    );
 
     // ✅ NOVO: Listener para alterações de pick
     document.addEventListener('draft_pick_changed', (event: any) => {
