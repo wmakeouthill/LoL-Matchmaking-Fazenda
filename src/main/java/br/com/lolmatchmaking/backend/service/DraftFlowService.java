@@ -3312,6 +3312,13 @@ public class DraftFlowService {
                     // ✅ 3. Retornar pickBanData DIRETO (SEM conversões!)
                     result.putAll(pickBanData);
 
+                    // ✅ 3.1 GARANTIR draftStartTimestamp para sincronização de áudio
+                    if (!result.containsKey("draftStartTimestamp") && pickBanData.containsKey("lastActionStartMs")) {
+                        result.put("draftStartTimestamp", pickBanData.get("lastActionStartMs"));
+                        log.info("✅ [getDraftDataForRestore] draftStartTimestamp adicionado: {}",
+                                pickBanData.get("lastActionStartMs"));
+                    }
+
                     // ✅ 3.5. COMPATIBILIDADE: Criar 'phases' flat para frontend antigo
                     // Frontend espera array flat com todas as actions
                     List<Map<String, Object>> flatPhases = new ArrayList<>();

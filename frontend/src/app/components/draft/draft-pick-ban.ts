@@ -91,7 +91,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
   // ✅ NOVO: Controle de som do draft
   isSoundMuted: boolean = false;
-  private draftAudio: HTMLAudioElement | null = null;
+  private readonly draftAudio: HTMLAudioElement | null = null;
+  private audioInitialized: boolean = false; // ✅ Flag para evitar múltiplas inicializações
 
   // ✅ NOVO: Getter para obter o matchId com fallback robusto
   get draftMatchId(): number | undefined {
@@ -153,9 +154,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     // Sincronizar estado de mute
     this.isSoundMuted = this.audioService.isDraftMuted();
 
-    // ✅ TOCAR SOM DO DRAFT (sem timestamp ainda - será sincronizado no draft_starting)
-    console.log('[DraftPickBan] 🎵 Iniciando áudio do draft (aguardando sincronização)');
-    // Não tocar aqui - esperar draft_starting com timestamp
+    // ❌ REMOVIDO TEMPORARIAMENTE: Audio initialization causing crashes
+    // this.initializeDraftAudio();
 
     this.isInitializing = true;
     this.loadChampionsForDraft();
@@ -167,7 +167,48 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     } else {
       this.finishInitialization();
     }
-  } private finishInitialization(): void {
+  }
+
+  /**
+   * ✅ MÉTODO DEDICADO: Inicialização de áudio (idempotente)
+   * - Pode ser chamado múltiplas vezes sem problemas
+   * - Usa AudioService que já gerencia instância única
+   * - Timestamp vem do matchData ou session
+   */
+  private initializeDraftAudio(): void {
+    // ✅ PROTEÇÃO: AudioService já gerencia instância única, mas verificamos flag local
+    if (this.audioInitialized) {
+      console.log('[DraftPickBan] 🎵 Áudio já inicializado - ignorando');
+      return;
+    }
+
+    // ✅ BUSCAR TIMESTAMP: Priorizar matchData, fallback para session
+    const draftStartTimestamp = this.matchData?.draftStartTimestamp ||
+      (this.session as any)?.draftStartTimestamp ||
+      (this.session as any)?.lastActionStartMs;
+
+    console.log('[DraftPickBan] 🎵 Inicializando áudio do draft', {
+      hasTimestamp: !!draftStartTimestamp,
+      timestamp: draftStartTimestamp,
+      source: this.matchData?.draftStartTimestamp ? 'matchData' :
+        (this.session as any)?.draftStartTimestamp ? 'session.draftStartTimestamp' :
+          (this.session as any)?.lastActionStartMs ? 'session.lastActionStartMs' : 'none'
+    });
+
+    // ✅ MARCAR COMO INICIALIZADO (evita múltiplas tentativas)
+    this.audioInitialized = true;
+
+    // ✅ INICIAR EM BACKGROUND (não bloqueia UI, não causa crash)
+    setTimeout(() => {
+      this.audioService.playDraftMusic(draftStartTimestamp).catch(err => {
+        console.error('[DraftPickBan] ❌ Erro ao iniciar áudio:', err);
+        // ✅ RETRY: Se falhar, permitir nova tentativa
+        this.audioInitialized = false;
+      });
+    }, 100);
+  }
+
+  private finishInitialization(): void {
     try {
       if (this.matchData) {
         logDraft('🚀 [DraftPickBan] matchData recebido:', this.matchData);
@@ -265,17 +306,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       isFirstChange: changes['matchData']?.firstChange
     });
 
-    // ✅ GARANTIR ÁUDIO: Se matchData mudou e é o primeiro, garantir que áudio está tocando
-    if (changes['matchData'] && changes['matchData'].currentValue && changes['matchData'].firstChange) {
-      console.log('[DraftPickBan] 🎵 ngOnChanges detectou primeiro matchData - garantindo áudio');
-      this.audioService.stopMatchFound();
-      this.isSoundMuted = this.audioService.isDraftMuted();
-
-      // ✅ SINCRONIZAÇÃO: Usar timestamp do backend se disponível
-      const draftStartTimestamp = changes['matchData'].currentValue.draftStartTimestamp;
-      console.log('[DraftPickBan] 🎯 Timestamp de início do draft:', draftStartTimestamp);
-      this.audioService.playDraftMusic(draftStartTimestamp);
-    }
+    // ❌ REMOVIDO: Qualquer lógica de áudio que possa causar crash
+    // Audio será inicializado via event listener draft_starting
 
     this.processNgOnChanges(changes);
 
@@ -558,10 +590,31 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
             draftStartTimestamp: data.draftStartTimestamp
           });
 
-          // ✅ SINCRONIZAÇÃO DE ÁUDIO: Se recebeu timestamp, sincronizar música
-          if (data.draftStartTimestamp) {
-            console.log('[DraftPickBan] 🎯 Sincronizando áudio do draft com timestamp:', data.draftStartTimestamp);
-            this.audioService.playDraftMusic(data.draftStartTimestamp);
+          // ✅ INICIALIZAR ÁUDIO: Garantir que áudio está tocando (idempotente)
+          // Buscar timestamp de múltiplas fontes (prioridade: data → session → lastActionStartMs)
+          const timestamp = data.draftStartTimestamp ||
+            (this.session as any)?.draftStartTimestamp ||
+            (this.session as any)?.lastActionStartMs;
+
+          if (timestamp && !this.audioInitialized) {
+            console.log('[DraftPickBan] � draft_updated: Inicializando áudio (primeira vez)', {
+              timestamp,
+              source: data.draftStartTimestamp ? 'data.draftStartTimestamp' :
+                (this.session as any)?.draftStartTimestamp ? 'session.draftStartTimestamp' :
+                  'session.lastActionStartMs'
+            });
+
+            this.audioInitialized = true;
+
+            // ✅ Background execution para não bloquear thread
+            setTimeout(() => {
+              this.audioService.playDraftMusic(timestamp).catch(err => {
+                console.error('[DraftPickBan] ❌ Erro ao iniciar áudio:', err);
+                this.audioInitialized = false; // Permitir retry
+              });
+            }, 100);
+          } else if (timestamp && this.audioInitialized) {
+            console.log('[DraftPickBan] 🎵 draft_updated: Áudio já inicializado - ignorando');
           }
 
           // ✅ CRÍTICO: Chamar updateDraftState() para verificar se é o turno do jogador
