@@ -7,27 +7,27 @@
         class="status-indicator"
         [style.background-color]="getQueueHealthColor()"
       ></span>
-      {{ queueStatus.isActive ? 'Sistema Online' : 'Sistema Offline' }}
+      {{ queueStatus().isActive ? 'Sistema Online' : 'Sistema Offline' }}
     </div>
 
     <!-- Discord Status - Dados do Backend -->
     <div class="discord-toggle">
-      <div class="discord-status" [class.connected]="isDiscordConnected">
+      <div class="discord-status" [class.connected]="isDiscordConnected()">
         <i class="fab fa-discord"></i>
-        <span *ngIf="isDiscordConnected">Discord Conectado</span>
-        <span *ngIf="!isDiscordConnected">Discord Desconectado</span>
+        <span *ngIf="isDiscordConnected()">Discord Conectado</span>
+        <span *ngIf="!isDiscordConnected()">Discord Desconectado</span>
       </div>
       <div
         class="discord-user"
-        *ngIf="currentPlayer && currentPlayer.displayName"
+        *ngIf="currentPlayer() && currentPlayer()?.displayName"
       >
-        👤 {{ currentPlayer.displayName }}
+        👤 {{ currentPlayer()?.displayName }}
       </div>
     </div>
   </div>
 
   <!-- Player Info -->
-  <div class="player-info-card" *ngIf="currentPlayer">
+  <div class="player-info-card" *ngIf="currentPlayer()">
     <div class="player-avatar">
       <img
         [src]="getProfileIconUrl() | async"
@@ -35,49 +35,49 @@
         class="profile-icon"
         (error)="onProfileIconError($event)"
       />
-      <div class="player-level" *ngIf="currentPlayer?.summonerLevel">
-        {{ currentPlayer.summonerLevel }}
+      <div class="player-level" *ngIf="currentPlayer()?.summonerLevel">
+        {{ currentPlayer()?.summonerLevel }}
       </div>
     </div>
     <div class="player-details">
       <h3>
-        {{ currentPlayer.displayName || currentPlayer.summonerName }}<span
+        {{ currentPlayer()?.displayName || currentPlayer()?.summonerName }}<span
           class="player-tag"
-          *ngIf="!currentPlayer.displayName"
+          *ngIf="!currentPlayer()?.displayName"
           >{{ getPlayerTag() }}</span
         >
       </h3>
       <div class="player-stats">
         <span class="mmr"
-          >{{ currentPlayer.currentMMR || currentPlayer.mmr || 'N/A' }}
+          >{{ currentPlayer()?.currentMMR || currentPlayer()?.mmr || 'N/A' }}
           MMR</span
         >
-        <span class="rank" *ngIf="currentPlayer?.rank"
+        <span class="rank" *ngIf="currentPlayer()?.rank"
           >{{ getPlayerRankDisplay() }}</span
         >
         <span
           class="wins-losses"
-          *ngIf="currentPlayer?.wins !== undefined && currentPlayer?.losses !== undefined"
+          *ngIf="currentPlayer()?.wins !== undefined && currentPlayer()?.losses !== undefined"
         >
-          {{ currentPlayer.wins }}V / {{ currentPlayer.losses }}D
+          {{ currentPlayer()?.wins }}V / {{ currentPlayer()?.losses }}D
         </span>
-        <span class="queue-time" *ngIf="isInQueue">
+        <span class="queue-time" *ngIf="isInQueue()">
           <i class="fas fa-clock"></i>
           {{ getTimerDisplay() }} na fila
         </span>
       </div>
       <div
         class="player-preferences"
-        *ngIf="queuePreferences.primaryLane && queuePreferences.secondaryLane"
+        *ngIf="queuePreferences().primaryLane && queuePreferences().secondaryLane"
       >
         <span class="preference-item">
-          {{ getLaneIcon(queuePreferences.primaryLane) }} {{
-          getLaneName(queuePreferences.primaryLane) }}
+          {{ getLaneIcon(queuePreferences().primaryLane) }} {{
+          getLaneName(queuePreferences().primaryLane) }}
         </span>
         <span class="preference-separator">•</span>
         <span class="preference-item">
-          {{ getLaneIcon(queuePreferences.secondaryLane) }} {{
-          getLaneName(queuePreferences.secondaryLane) }}
+          {{ getLaneIcon(queuePreferences().secondaryLane) }} {{
+          getLaneName(queuePreferences().secondaryLane) }}
         </span>
       </div>
     </div>
@@ -90,7 +90,7 @@
         <i class="icon-users"></i>
       </div>
       <div class="stat-content">
-        <span class="stat-number">{{ queueStatus.playersInQueue }}</span>
+        <span class="stat-number">{{ queueStatus().playersInQueue }}</span>
         <span class="stat-label">Na Fila</span>
       </div>
     </div>
@@ -110,7 +110,7 @@
         <i class="icon-activity"></i>
       </div>
       <div class="stat-content">
-        <span class="stat-number">{{ queueStatus.averageWaitTime }}s</span>
+        <span class="stat-number">{{ queueStatus().averageWaitTime }}s</span>
         <span class="stat-label">Média de Espera</span>
       </div>
     </div>
@@ -124,9 +124,9 @@
         <button
           class="refresh-btn"
           (click)="refreshPlayersData()"
-          [disabled]="isRefreshing"
+          [disabled]="isRefreshing()"
         >
-          <i class="fas fa-sync-alt" [class.spinning]="isRefreshing"></i>
+          <i class="fas fa-sync-alt" [class.spinning]="isRefreshing()"></i>
           <span>Atualizar</span>
         </button>
         <!-- Auto-refresh removido: atualização é sempre automática via WebSocket/Redis PubSub -->
@@ -137,21 +137,21 @@
     <div class="table-tabs">
       <button
         class="tab-btn"
-        [class.active]="activeTab === 'queue'"
+        [class.active]="activeTab() === 'queue'"
         (click)="setActiveTab('queue')"
       >
         <i class="fas fa-list"></i>
-        <span>Na Fila ({{ queueStatus.playersInQueue }})</span>
+        <span>Na Fila ({{ queueStatus().playersInQueue }})</span>
       </button>
       <button
         class="tab-btn"
-        [class.active]="activeTab === 'lobby'"
+        [class.active]="activeTab() === 'lobby'"
         (click)="setActiveTab('lobby')"
       >
         <i class="fab fa-discord"></i>
-        <span>Lobby Discord ({{ discordUsersOnline.length }})</span>
+        <span>Lobby Discord ({{ discordUsersOnline().length }})</span>
         <span
-          *ngIf="isDataStale"
+          *ngIf="isDataStale()"
           class="stale-indicator"
           title="Dados em cache durante reconexão"
           >⚠️</span
@@ -159,7 +159,7 @@
       </button>
       <button
         class="tab-btn"
-        [class.active]="activeTab === 'all'"
+        [class.active]="activeTab() === 'all'"
         (click)="setActiveTab('all')"
       >
         <i class="fas fa-users"></i>
@@ -170,7 +170,7 @@
     <!-- Queue Players Table -->
     <div
       class="players-table"
-      *ngIf="activeTab === 'queue' || activeTab === 'all'"
+      *ngIf="activeTab() === 'queue' || activeTab() === 'all'"
     >
       <div class="table-header">
         <div class="col-position">#</div>
@@ -183,7 +183,7 @@
 
       <div class="table-body">
         <div
-          *ngFor="let player of queueStatus.playersInQueueList; trackBy: trackByPlayerId"
+          *ngFor="let player of queueStatus().playersInQueueList; trackBy: trackByPlayerId"
           class="table-row"
           [class.current-player]="isCurrentPlayer(player)"
         >
@@ -218,7 +218,7 @@
 
         <!-- Empty state -->
         <div
-          *ngIf="(queueStatus.playersInQueueList?.length || 0) === 0"
+          *ngIf="(queueStatus().playersInQueueList?.length || 0) === 0"
           class="empty-state"
         >
           <i class="fas fa-users"></i>
@@ -230,7 +230,7 @@
     <!-- Discord Lobby Table -->
     <div
       class="players-table"
-      *ngIf="activeTab === 'lobby' || activeTab === 'all'"
+      *ngIf="activeTab() === 'lobby' || activeTab() === 'all'"
     >
       <div class="table-header">
         <div class="col-player">Jogador Discord</div>
@@ -242,7 +242,7 @@
 
       <div class="table-body">
         <div
-          *ngFor="let user of discordUsersOnline; trackBy: trackByDiscordUserId"
+          *ngFor="let user of discordUsersOnline(); trackBy: trackByDiscordUserId"
           class="table-row"
           [class.has-lol]="hasLinkedNickname(user)"
         >
@@ -307,7 +307,7 @@
         </div>
 
         <!-- Empty state -->
-        <div *ngIf="discordUsersOnline.length === 0" class="empty-state">
+        <div *ngIf="discordUsersOnline().length === 0" class="empty-state">
           <i class="fab fa-discord"></i>
           <p>Nenhum usuário no canal Discord</p>
         </div>
@@ -318,21 +318,21 @@
   <!-- Queue Action Area -->
   <div class="queue-action">
     <!-- Not in Queue State -->
-    <div *ngIf="!isInQueue" class="join-queue-section">
+    <div *ngIf="!isInQueue()" class="join-queue-section">
       <div class="queue-info">
         <h3>Pronto para jogar?</h3>
         <p>Entre na fila para encontrar uma partida ranqueada 5v5</p>
 
-        <div class="requirements" *ngIf="currentPlayer">
+        <div class="requirements" *ngIf="currentPlayer()">
           <div class="requirement-item">
             <i
               class="icon-check"
-              [class.met]="(currentPlayer.currentMMR || 0) >= 0"
+              [class.met]="(currentPlayer()?.currentMMR || 0) >= 0"
             ></i>
             <span>MMR válido</span>
           </div>
           <div class="requirement-item">
-            <i class="icon-check" [class.met]="queueStatus.isActive"></i>
+            <i class="icon-check" [class.met]="queueStatus().isActive"></i>
             <span>Sistema ativo</span>
           </div>
         </div>
@@ -353,19 +353,19 @@
       <!-- Status do Discord - Dados do Backend -->
       <div class="discord-status-info">
         <div class="status-row">
-          <div class="status-item" [class.connected]="isDiscordConnected">
+          <div class="status-item" [class.connected]="isDiscordConnected()">
             <div class="status-indicator"></div>
             <span
-              >Discord: {{ isDiscordConnected ? 'Conectado' : 'Desconectado'
+              >Discord: {{ isDiscordConnected() ? 'Conectado' : 'Desconectado'
               }}</span
             >
           </div>
           <div
             class="status-item"
-            [class.connected]="discordUsersOnline.length > 0"
+            [class.connected]="discordUsersOnline().length > 0"
           >
             <div class="status-indicator"></div>
-            <span>Usuários Online: {{ discordUsersOnline.length }}</span>
+            <span>Usuários Online: {{ discordUsersOnline().length }}</span>
           </div>
         </div>
 
@@ -380,9 +380,9 @@
           "
         >
           <div style="font-size: 12px; color: #ff6b6b">
-            🐛 DEBUG: isInQueue = {{ isInQueue }}<br />
-            🐛 currentPlayer = {{ currentPlayer?.displayName || 'null' }}<br />
-            🐛 playersInQueue = {{ queueStatus.playersInQueue || 0 }}
+            🐛 DEBUG: isInQueue = {{ isInQueue() }}<br />
+            🐛 currentPlayer = {{ currentPlayer()?.displayName || 'null' }}<br />
+            🐛 playersInQueue = {{ queueStatus().playersInQueue || 0 }}
           </div>
           <button
             style="
@@ -404,19 +404,19 @@
       <!-- Informações automáticas do LCU -->
       <div
         class="lcu-info-section"
-        *ngIf="currentPlayer && currentPlayer.displayName"
+        *ngIf="currentPlayer() && currentPlayer()?.displayName"
       >
         <div class="lcu-info">
           <h4>🎮 Dados do LoL Detectados</h4>
           <div class="lcu-details">
             <div class="lol-info">
               <span class="label">LoL:</span>
-              <span class="value">{{ currentPlayer.displayName }}</span>
+              <span class="value">{{ currentPlayer()?.displayName }}</span>
             </div>
             <div class="discord-info">
               <span class="label">Discord:</span>
               <span class="value"
-                >{{ isDiscordConnected ? 'Conectado' : 'Desconectado' }}</span
+                >{{ isDiscordConnected() ? 'Conectado' : 'Desconectado' }}</span
               >
             </div>
             <div class="status-info">
@@ -430,7 +430,7 @@
       </div>
 
       <!-- Aviso se não há dados do LCU -->
-      <div class="lcu-warning" *ngIf="!currentPlayer?.displayName">
+      <div class="lcu-warning" *ngIf="!currentPlayer()?.displayName">
         <div class="warning-info">
           <h4>⚠️ Dados do LoL Não Detectados</h4>
           <p>
@@ -442,7 +442,7 @@
     </div>
 
     <!-- In Queue State -->
-    <div *ngIf="isInQueue" class="in-queue-section">
+    <div *ngIf="isInQueue()" class="in-queue-section">
       <div class="queue-status-info">
         <h3>Na Fila Discord</h3>
         <p>Aguardando outros jogadores...</p>
@@ -463,9 +463,9 @@
 
   <!-- Lane Selector Modal -->
   <app-lane-selector
-    [isVisible]="showLaneSelector"
-    [currentPreferences]="queuePreferences"
-    [currentSummonerName]="currentPlayer?.displayName || ''"
+    [isVisible]="showLaneSelector()"
+    [currentPreferences]="queuePreferences()"
+    [currentSummonerName]="currentPlayer()?.displayName || ''"
     (close)="onCloseLaneSelector()"
     (confirm)="onConfirmDiscordQueue($event)"
   >

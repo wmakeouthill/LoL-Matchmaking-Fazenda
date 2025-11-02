@@ -1,4 +1,4 @@
-<div class="match-found-overlay" *ngIf="isVisible && matchData">
+<div class="match-found-overlay" *ngIf="isVisible() && matchData()">
   <div class="match-found-modal">
     <!-- Header -->
     <div class="match-header">
@@ -14,14 +14,14 @@
             {{ getTeamSideName('blue') }}
           </h3>
           <span class="team-mmr"
-            >{{ getRoundedMMR(blueTeamMMR) }} MMR médio</span
+            >{{ getRoundedMMR(blueTeamMMR()) }} MMR médio</span
           >
         </div>
 
         <div class="players-list">
           <div
             class="player-card"
-            *ngFor="let player of sortedBlueTeam"
+            *ngFor="let player of sortedBlueTeam()"
             [class.current-player]="isCurrentPlayer(player)"
             [class.accepted-player]="hasPlayerAccepted(player)"
             [class.declined-player]="hasPlayerDeclined(player)"
@@ -119,14 +119,14 @@
             {{ getTeamSideName('red') }}
           </h3>
           <span class="team-mmr"
-            >{{ getRoundedMMR(redTeamMMR) }} MMR médio</span
+            >{{ getRoundedMMR(redTeamMMR()) }} MMR médio</span
           >
         </div>
 
         <div class="players-list">
           <div
             class="player-card"
-            *ngFor="let player of sortedRedTeam"
+            *ngFor="let player of sortedRedTeam()"
             [class.current-player]="isCurrentPlayer(player)"
             [class.accepted-player]="hasPlayerAccepted(player)"
             [class.declined-player]="hasPlayerDeclined(player)"
@@ -214,7 +214,7 @@
     </div>
 
     <!-- Accept/Decline Phase -->
-    <div class="accept-phase" *ngIf="matchData.phase === 'match_found'">
+    <div class="accept-phase" *ngIf="matchData()?.phase === 'match_found'">
       <!-- ✅ NOVO LAYOUT: Balanceamento à esquerda, Aceitação à direita -->
       <div class="info-row">
         <!-- Match Balance Info (esquerda) -->
@@ -245,7 +245,7 @@
               [class.good]="isGoodBalance()"
               [class.fair]="isFairBalance()"
             >
-              {{ getMMRDifference() }}
+              {{ mmrDifference() }}
             </span>
           </div>
         </div>
@@ -254,26 +254,26 @@
         <div class="acceptance-progress">
           <div class="progress-header">
             <span class="progress-text">
-              {{ acceptedPlayersCount }}/{{ totalPlayersCount }} aceitaram
+              {{ acceptedPlayersCount() }}/{{ totalPlayersCount() }} aceitaram
             </span>
-            <span class="progress-percentage">{{ acceptanceProgress }}%</span>
+            <span class="progress-percentage">{{ acceptanceProgress() }}%</span>
           </div>
           <div class="progress-bar">
             <div
               class="progress-fill"
-              [style.width.%]="acceptanceProgress"
-              [class.complete]="haveAllPlayersAccepted"
+              [style.width.%]="acceptanceProgress()"
+              [class.complete]="haveAllPlayersAccepted()"
             ></div>
           </div>
         </div>
       </div>
 
       <div class="countdown-timer">
-        <div class="timer-circle" [class.urgent]="isTimerUrgent">
-          <span class="time-left">{{ acceptTimeLeft }}</span>
+        <div class="timer-circle" [class.urgent]="isTimerUrgent()">
+          <span class="time-left">{{ acceptTimeLeft() }}</span>
         </div>
         <div class="timer-message">
-          <p>{{ acceptTimeLeft }}s para aceitar</p>
+          <p>{{ acceptTimeLeft() }}s para aceitar</p>
         </div>
       </div>
 

@@ -425,7 +425,12 @@ export class App implements OnInit, OnDestroy {
     }
 
     console.log('⏰ [App] ✅ MatchIds coincidem - atualizando timer');
-    this.matchFoundData.acceptanceTimer = secondsRemaining;
+
+    // ✅ CRÍTICO: Criar nova referência do objeto para OnPush + Signals detectarem
+    this.matchFoundData = {
+      ...this.matchFoundData,
+      acceptanceTimer: secondsRemaining
+    };
 
     // ✅ CRÍTICO: Forçar detecção de mudanças para atualizar o timer na view
     this.cdr.detectChanges();
@@ -443,17 +448,17 @@ export class App implements OnInit, OnDestroy {
     const matchId = data.matchId || progressData.matchId;
 
     if (this.matchFoundData && this.matchFoundData.matchId === matchId) {
-      this.matchFoundData.acceptedCount = data.acceptedCount;
-      this.matchFoundData.totalPlayers = data.totalPlayers;
+      // ✅ CRÍTICO: Clonar arrays de jogadores para criar novas referências
+      const blueTeamPlayers = this.matchFoundData?.teams?.blue?.players ?
+        [...this.matchFoundData.teams.blue.players] : [];
+      const redTeamPlayers = this.matchFoundData?.teams?.red?.players ?
+        [...this.matchFoundData.teams.red.players] : [];
 
-      // ✅ OTIMIZADO: Atualizar status individual dos jogadores usando teams.blue/red
+      // ✅ OTIMIZADO: Atualizar status individual dos jogadores
       if (data.acceptedPlayers && Array.isArray(data.acceptedPlayers)) {
         console.log('📊 [App] Atualizando status dos jogadores aceitos:', data.acceptedPlayers);
 
-        const allPlayers = [
-          ...(this.matchFoundData?.teams?.blue?.players || []),
-          ...(this.matchFoundData?.teams?.red?.players || [])
-        ];
+        const allPlayers = [...blueTeamPlayers, ...redTeamPlayers];
 
         // Marcar jogadores que aceitaram como 'accepted'
         data.acceptedPlayers.forEach((acceptedPlayerName: string) => {
@@ -469,6 +474,23 @@ export class App implements OnInit, OnDestroy {
           }
         });
       }
+
+      // ✅ CRÍTICO: Criar nova referência do objeto completo para OnPush + Signals detectarem
+      this.matchFoundData = {
+        ...this.matchFoundData,
+        acceptedCount: data.acceptedCount,
+        totalPlayers: data.totalPlayers,
+        teams: {
+          blue: {
+            ...this.matchFoundData.teams?.blue,
+            players: blueTeamPlayers
+          },
+          red: {
+            ...this.matchFoundData.teams?.red,
+            players: redTeamPlayers
+          }
+        }
+      };
 
       // ✅ CRÍTICO: Forçar detecção de mudanças para atualizar o progresso na view
       this.cdr.detectChanges();
@@ -2913,19 +2935,25 @@ export class App implements OnInit, OnDestroy {
         if (result?.player && this.currentPlayer) {
           const p = result.player;
 
+          // ✅ CORREÇÃO: Criar nova referência para detectar mudanças com OnPush + Signals
+          const updatedPlayer = { ...this.currentPlayer };
+
           // ✅ CRÍTICO: Só atualizar MMR se backend retornou valor MAIOR que o atual
           // (evita sobrescrever 2101 com 1200 padrão do banco)
           if (p.customMmr !== undefined && p.customMmr > (this.currentPlayer.customLp || 0)) {
-            this.currentPlayer.customLp = p.customMmr;
-            this.currentPlayer.currentMMR = p.customMmr;
+            updatedPlayer.customLp = p.customMmr;
+            updatedPlayer.currentMMR = p.customMmr;
             console.log('✅ [App] custom_mmr atualizado:', p.customMmr);
           } else {
             console.log('⚠️ [App] custom_mmr do backend ignorado (menor ou igual ao atual):', p.customMmr, 'vs', this.currentPlayer.customLp);
           }
 
           // Atualizar wins/losses sempre
-          if (p.wins !== undefined) this.currentPlayer.wins = p.wins;
-          if (p.losses !== undefined) this.currentPlayer.losses = p.losses;
+          if (p.wins !== undefined) updatedPlayer.wins = p.wins;
+          if (p.losses !== undefined) updatedPlayer.losses = p.losses;
+
+          // ✅ CORREÇÃO: Atribuir nova referência
+          this.currentPlayer = updatedPlayer;
 
           // ❌ REMOVIDO: localStorage causa race condition com Redis locks
           // localStorage.setItem('currentPlayer', JSON.stringify(this.currentPlayer));
@@ -2947,18 +2975,22 @@ export class App implements OnInit, OnDestroy {
       try {
         const result = await (window as any).electronAPI.storage.loadPlayerData(summonerName);
         if (result.success && result.data) {
-          this.currentPlayer = result.data;
+          // ✅ CORREÇÃO: Criar cópia do player para garantir nova referência
+          const loadedPlayer = { ...result.data };
 
           // ✅ Garantir que displayName seja definido se ausente
-          if (this.currentPlayer && !this.currentPlayer.displayName) {
-            if (this.currentPlayer.gameName && this.currentPlayer.tagLine) {
-              this.currentPlayer.displayName = `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`;
-              console.log('🔧 [App] DisplayName construído:', this.currentPlayer.displayName);
-            } else if (this.currentPlayer.summonerName?.includes('#')) {
-              this.currentPlayer.displayName = this.currentPlayer.summonerName;
-              console.log('🔧 [App] DisplayName definido como summonerName:', this.currentPlayer.displayName);
+          if (!loadedPlayer.displayName) {
+            if (loadedPlayer.gameName && loadedPlayer.tagLine) {
+              loadedPlayer.displayName = `${loadedPlayer.gameName}#${loadedPlayer.tagLine}`;
+              console.log('🔧 [App] DisplayName construído:', loadedPlayer.displayName);
+            } else if (loadedPlayer.summonerName?.includes('#')) {
+              loadedPlayer.displayName = loadedPlayer.summonerName;
+              console.log('🔧 [App] DisplayName definido como summonerName:', loadedPlayer.displayName);
             }
           }
+
+          // ✅ CORREÇÃO: Atribuir nova referência
+          this.currentPlayer = loadedPlayer;
 
           // ✅ GARANTIR: Atualizar CurrentSummonerService explicitamente
           this.updateCurrentSummonerService();
@@ -3891,21 +3923,23 @@ export class App implements OnInit, OnDestroy {
       isCurrentPlayer: true // Marcar como jogador atual
     };
 
-    // Adicionar à lista existente ou criar nova
-    if (!this.queueStatus.playersInQueueList) {
-      this.queueStatus.playersInQueueList = [];
-    }
+    // ✅ CORREÇÃO: Criar nova referência para detectar mudanças com OnPush + Signals
+    const currentList = this.queueStatus.playersInQueueList || [];
 
     // Remover jogador da lista se já estiver lá (atualização)
-    this.queueStatus.playersInQueueList = this.queueStatus.playersInQueueList.filter(
+    const filteredList = currentList.filter(
       p => !p.isCurrentPlayer && p.summonerName !== queuePlayer.summonerName
     );
 
     // Adicionar no início da lista
-    this.queueStatus.playersInQueueList.unshift(queuePlayer);
+    const updatedList = [queuePlayer, ...filteredList];
 
-    // Atualizar contador
-    this.queueStatus.playersInQueue = this.queueStatus.playersInQueueList.length;
+    // ✅ CORREÇÃO: Criar NOVA REFERÊNCIA do queueStatus (detecta mudança no OnPush)
+    this.queueStatus = {
+      ...this.queueStatus,
+      playersInQueueList: updatedList,
+      playersInQueue: updatedList.length
+    };
 
     console.log('✅ [App] Tabela atualizada otimisticamente:', {
       playersCount: this.queueStatus.playersInQueue,
