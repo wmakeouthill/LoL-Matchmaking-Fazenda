@@ -1,23 +1,50 @@
+// ✅ IMPORT: Módulo Sass Color (moderno)
+@use 'sass:color';
+
+// ✅ IMPORT: Fonte Press Start 2P (Retro Gaming)
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+// ✅ TEMA RETRO GAMER / CYBERPUNK PIXELIZADO COM CORES DO LEAGUE OF LEGENDS
+$pixel-font: 'Press Start 2P', 'Courier New', monospace;
+$base-font-size: 0.36rem; // ✅ Tamanho base para UI geral
+$player-card-font-size: 0.50rem; // ✅ MENOR para dados dos jogadores nos cards
+$cyber-blue: #00f3ff;
+$cyber-pink: #ff00ff;
+$cyber-green: #00ff41;
+$cyber-yellow: #ffff00;
+$cyber-red: #ff0055;
+$neon-blue: #3498db;
+$neon-purple: #9b59b6;
+// ✅ Cores do League of Legends
+$lol-blue: #3c9aff; // Azul dos times azuis
+$lol-red: #ff3d3d; // Vermelho dos times vermelhos
+$lol-gold: #c8aa6e; // Dourado do LoL
+$lol-dark-gold: #a09b8c; // Dourado escuro
+$dark-bg: #0a0a0f;
+$dark-panel: #1a1a2e;
+
 // ========== ESTILOS PRINCIPAIS ==========
 .draft-pick-ban {
-  padding: 10px 10px 10px 10px; // ✅ AJUSTADO: Padding uniforme sem excesso embaixo
-  background: linear-gradient(135deg, #0a1428 0%, #1e2e4b 100%);
-  min-height: auto; // ✅ AJUSTADO: Remove altura mínima fixa, adapta ao conteúdo
-  height: fit-content; // ✅ AJUSTADO: Altura se ajusta ao conteúdo
+  padding: 10px 10px 10px 10px;
+  background: linear-gradient(135deg, $dark-panel 0%, #16213e 50%, #0f3460 100%);
+  min-height: auto;
+  height: fit-content;
   color: #f0f2f5;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  display: flex; // ✅ AJUSTADO: Flexbox para melhor controle
-  flex-direction: column; // ✅ AJUSTADO: Coluna vertical
+  font-family: $pixel-font;
+  display: flex;
+  flex-direction: column;
+  image-rendering: pixelated;
 }
 
 // ========== HEADER ==========
 .pick-ban-header {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(10px);
-  border-radius: 6px;
+  border-radius: 4px;
   padding: 10px 16px;
   margin-bottom: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 2px solid $cyber-blue;
+  box-shadow: 0 0 10px $cyber-blue;
 }
 
 .header-content {
@@ -30,10 +57,51 @@
 .title-section {
   h2 {
     margin: 0;
-    color: #f0c040;
-    font-size: 18px;
+    color: $lol-gold;
+    font-size: 0.6rem;
     font-weight: bold;
     white-space: nowrap;
+    text-shadow: 0 0 10px $lol-gold, 2px 2px 0 $cyber-pink;
+    letter-spacing: 2px;
+  }
+}
+
+// ✅ NOVO: Botão de toggle de som
+.sound-toggle-btn {
+  background: rgba(0, 0, 0, 0.5);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  height: 40px;
+
+  .sound-icon {
+    font-size: 1rem;
+    transition: all 0.2s ease;
+
+    &.muted {
+      opacity: 0.5;
+    }
+  }
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: $cyber-blue;
+    box-shadow: 0 0 10px $cyber-blue;
+    transform: scale(1.1);
+
+    .sound-icon {
+      transform: scale(1.1);
+    }
+  }
+
+  &:active {
+    transform: scale(0.95);
   }
 }
 
@@ -46,23 +114,26 @@
 
   .progress-bar {
     width: 200px;
-    height: 5px;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 3px;
+    height: 8px;
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid $cyber-green;
+    border-radius: 2px;
     overflow: hidden;
 
     .progress-fill {
       height: 100%;
-      background: linear-gradient(90deg, #c9aa71, #f0c040);
+      background: linear-gradient(90deg, $cyber-green, $cyber-blue);
       transition: width 0.3s ease;
+      box-shadow: 0 0 10px $cyber-green;
     }
   }
 
   .progress-text {
-    font-size: 11px;
-    color: #c9aa71;
+    font-size: $base-font-size;
+    color: $lol-dark-gold;
     font-weight: 500;
     min-width: 30px;
+    text-shadow: 0 0 5px $lol-dark-gold;
   }
 }
 
@@ -72,20 +143,24 @@
   gap: 12px;
 
   .timer {
-    background: #2d5a87;
-    color: #fff;
+    background: rgba(52, 152, 219, 0.3);
+    color: $cyber-blue;
     padding: 6px 12px;
-    border-radius: 5px;
-    font-size: 16px;
+    border-radius: 4px;
+    font-size: $base-font-size;
     font-weight: bold;
     min-width: 50px;
     text-align: center;
-    border: 2px solid #3c6e95;
+    border: 2px solid $cyber-blue;
+    box-shadow: 0 0 10px $cyber-blue;
+    text-shadow: 0 0 5px $cyber-blue;
 
     &.warning {
-      background: #c8aa5f;
-      border-color: #d4af37;
-      animation: pulse 1s infinite;
+      background: rgba(255, 0, 85, 0.3);
+      border-color: $cyber-red;
+      box-shadow: 0 0 15px $cyber-red;
+      color: $cyber-red;
+      animation: urgentPulse 0.5s ease-in-out infinite;
     }
   }
 }
@@ -102,13 +177,15 @@
     gap: 8px;
 
     .current-player-label {
-      font-size: 11px;
+      font-family: $pixel-font;
+      font-size: $base-font-size;
       color: #a09b8c;
       white-space: nowrap;
     }
 
     .current-player-name {
-      font-size: 12px;
+      font-family: $pixel-font;
+      font-size: $base-font-size;
       color: #f0f2f5;
       font-weight: 600;
       background: rgba(255, 255, 255, 0.1);
@@ -119,8 +196,9 @@
     }
 
     .current-action-text {
-      color: #c9aa71;
-      font-size: 11px;
+      font-family: $pixel-font;
+      color: $lol-gold;
+      font-size: $base-font-size;
       font-style: italic;
       white-space: nowrap;
     }
@@ -154,6 +232,17 @@
   }
 }
 
+@keyframes urgentPulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 0.8;
+  }
+}
+
 // ========== CONTAINER DOS TIMES ==========
 .teams-container {
   display: grid;
@@ -164,18 +253,22 @@
 
 // ========== ESTILOS DOS TIMES ==========
 .team {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 4px;
   padding: 12px;
-  border: 2px solid;
+  border: 3px solid;
 }
 
 .blue-team {
-  border-color: #5bc0de;
+  border-color: $neon-blue;
+  box-shadow: 0 0 20px rgba(52, 152, 219, 0.3), inset 0 0 30px rgba(52, 152, 219, 0.1);
+  background: linear-gradient(180deg, rgba(52, 152, 219, 0.1), rgba(41, 128, 185, 0.05));
 }
 
 .red-team {
-  border-color: #d9534f;
+  border-color: $cyber-red;
+  box-shadow: 0 0 20px rgba(255, 0, 85, 0.3), inset 0 0 30px rgba(255, 0, 85, 0.1);
+  background: linear-gradient(180deg, rgba(255, 0, 85, 0.1), rgba(200, 0, 60, 0.05));
 }
 
 .team-header {
@@ -184,18 +277,23 @@
 }
 
 .team-name {
-  font-size: 15px;
+  font-family: $pixel-font;
+  font-size: $base-font-size;
   font-weight: bold;
   color: #f0f2f5;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.8);
 }
 
 // ========== ESTILOS DOS BANS ==========
 .team-bans {
   margin-bottom: 12px;
   padding: 10px 16px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 0, 85, 0.1);
+  border-radius: 4px;
+  border: 2px solid rgba(255, 0, 85, 0.3);
+  transition: all 0.3s ease;
 
   // Layout horizontal com "Bans" à esquerda
   display: flex;
@@ -203,12 +301,15 @@
   gap: 16px;
 
   h4 {
+    font-family: $pixel-font;
     margin: 0;
-    font-size: 12px;
-    color: #c9aa71;
+    font-size: $base-font-size;
+    color: $lol-gold;
     font-weight: 600;
     white-space: nowrap;
     min-width: 36px;
+    text-transform: uppercase;
+    text-shadow: 0 0 5px $lol-gold;
   }
 }
 
@@ -235,21 +336,24 @@
   .banned-img {
     width: 42px;
     height: 42px;
-    border-radius: 50%;
-    border: 2px solid #d9534f;
+    border-radius: 4px;
+    border: 2px solid $cyber-red;
     opacity: 0.7;
     object-fit: cover;
+    box-shadow: 0 0 8px $cyber-red;
   }
 
   .banned-name {
-    font-size: 9px;
-    color: #d9534f;
+    font-family: $pixel-font;
+    font-size: $player-card-font-size;
+    color: $cyber-red;
     text-align: center;
     width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     line-height: 1.2;
+    text-shadow: 0 0 5px $cyber-red, 1px 1px 0 rgba(0, 0, 0, 0.8);
   }
 }
 
@@ -288,23 +392,25 @@
   align-items: center;
   gap: 10px;
   padding: 8px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 2px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
   transition: all 0.3s ease;
 
   &:hover {
     background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.3);
+    border-color: $cyber-blue;
+    box-shadow: 0 0 10px $cyber-blue;
   }
 }
 
 .champion-img {
   width: 40px;
   height: 40px;
-  border-radius: 6px;
-  border: 2px solid #c9aa71;
+  border-radius: 4px;
+  border: 2px solid $lol-gold;
   object-fit: cover;
+  box-shadow: 0 0 8px $lol-gold;
 }
 
 .champion-placeholder {
@@ -371,27 +477,36 @@
 }
 
 .champion-name {
-  font-size: 13px;
+  font-family: $pixel-font;
+  font-size: $player-card-font-size;
   font-weight: bold;
   color: #f0f2f5;
   line-height: 1.2;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.8);
 }
 
 .player-name {
-  font-size: 11px;
-  color: #c9aa71;
+  font-family: $pixel-font;
+  font-size: $player-card-font-size;
+  color: $lol-dark-gold;
   line-height: 1.2;
+  text-shadow: 0 0 3px $lol-dark-gold, 1px 1px 0 rgba(0, 0, 0, 0.8);
 }
 
 .you-indicator {
-  color: #f0c040;
+  font-family: $pixel-font;
+  font-size: $player-card-font-size;
+  color: $cyber-yellow;
   font-weight: bold;
+  text-shadow: 0 0 8px $cyber-yellow;
 }
 
 .player-lane {
-  font-size: 10px;
+  font-family: $pixel-font;
+  font-size: $player-card-font-size;
   color: #888;
   line-height: 1.2;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.8);
 }
 
 // ✅ NOVO: Container para lane e badge ficarem inline
@@ -407,7 +522,8 @@
   display: inline-block;
   padding: 2px 6px;
   border-radius: 3px;
-  font-size: 9px;
+  font-family: $pixel-font;
+  font-size: $base-font-size;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -443,9 +559,9 @@
 
 // ✅ NOVO: Estilo para slot do jogador atual na vez
 .pick-slot.current-turn {
-  background: rgba(240, 192, 64, 0.2);
-  border-color: #f0c040;
-  box-shadow: 0 0 10px rgba(240, 192, 64, 0.3);
+  background: rgba(255, 255, 0, 0.15);
+  border-color: $cyber-yellow;
+  box-shadow: 0 0 15px $cyber-yellow;
   animation: currentTurnPulse 2s infinite;
 }
 
@@ -453,11 +569,11 @@
 
   0%,
   100% {
-    box-shadow: 0 0 10px rgba(240, 192, 64, 0.3);
+    box-shadow: 0 0 15px $cyber-yellow;
   }
 
   50% {
-    box-shadow: 0 0 20px rgba(240, 192, 64, 0.6);
+    box-shadow: 0 0 25px $cyber-yellow;
   }
 }
 
@@ -470,9 +586,12 @@
   text-align: center;
 
   h3 {
+    font-family: $pixel-font;
     margin: 0 0 15px 0;
     color: #d9534f;
-    font-size: 16px;
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    text-shadow: 0 0 5px $cyber-red;
   }
 }
 
@@ -499,15 +618,21 @@
   margin-bottom: 20px;
 
   h3 {
+    font-family: $pixel-font;
     margin: 0 0 8px 0;
-    color: #f0c040;
-    font-size: 20px;
+    color: $lol-gold;
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    text-shadow: 0 0 10px $lol-gold;
+    letter-spacing: 2px;
   }
 
   .selection-subtitle {
+    font-family: $pixel-font;
     margin: 0;
-    color: #c9aa71;
-    font-size: 14px;
+    color: $lol-dark-gold;
+    font-size: $base-font-size;
+    text-shadow: 0 0 5px $lol-dark-gold;
   }
 }
 
@@ -517,37 +642,44 @@
 }
 
 .open-modal-btn {
+  font-family: $pixel-font;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  padding: 20px 30px;
-  background: linear-gradient(135deg, #c9aa71, #f0c040);
-  border: none;
-  border-radius: 12px;
-  color: #1a1a1a;
-  font-weight: bold;
-  font-size: 16px;
+  padding: 0.5rem 1.2rem;
+  background: $lol-gold;
+  border: 3px solid $lol-gold;
+  border-radius: 4px;
+  color: $dark-bg;
+  font-weight: 700;
+  font-size: $base-font-size;
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: all 0.2s ease;
   min-width: 200px;
+  text-transform: uppercase;
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.8);
 
   &:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(240, 192, 64, 0.3);
+    transform: translateY(-2px) scale(1.05);
+    box-shadow: 0 0 20px $lol-gold, 0 4px 0 color.adjust($lol-gold, $lightness: -20%);
+  }
+
+  &:active {
+    transform: translateY(0) scale(0.98);
   }
 
   .btn-icon {
-    font-size: 24px;
+    font-size: 0.8rem;
   }
 
   .btn-text {
-    font-size: 16px;
+    font-size: $base-font-size;
     font-weight: bold;
   }
 
   .btn-hint {
-    font-size: 12px;
+    font-size: $base-font-size;
     opacity: 0.8;
   }
 }
@@ -569,15 +701,21 @@
   }
 
   h3 {
+    font-family: $pixel-font;
     margin: 0 0 10px 0;
-    color: #f0c040;
-    font-size: 20px;
+    color: $lol-gold;
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    text-shadow: 0 0 10px $lol-gold;
   }
 
   p {
+    font-family: $pixel-font;
     margin: 0;
-    color: #c9aa71;
-    font-size: 16px;
+    color: $lol-dark-gold;
+    font-size: $base-font-size;
+    text-shadow: 0 0 5px $lol-dark-gold;
   }
 }
 
@@ -607,15 +745,21 @@
   }
 
   h3 {
+    font-family: $pixel-font;
     margin: 0 0 10px 0;
-    color: #28a745;
-    font-size: 20px;
+    color: $cyber-green;
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    text-shadow: 0 0 10px $cyber-green;
   }
 
   p {
+    font-family: $pixel-font;
     margin: 0 0 30px 0;
-    color: #c9aa71;
-    font-size: 16px;
+    color: $lol-dark-gold;
+    font-size: $base-font-size;
+    text-shadow: 0 0 5px $lol-dark-gold;
   }
 }
 
@@ -632,10 +776,13 @@
   padding: 15px;
 
   h4 {
+    font-family: $pixel-font;
     margin: 0 0 15px 0;
     color: #f0f2f5;
-    font-size: 16px;
+    font-size: 0.6rem;
     text-align: center;
+    text-transform: uppercase;
+    text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.8);
   }
 }
 
@@ -661,8 +808,10 @@
   }
 
   .final-champion-name {
-    font-size: 12px;
+    font-family: $pixel-font;
+    font-size: $base-font-size;
     color: #f0f2f5;
+    text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.8);
   }
 }
 
@@ -709,9 +858,9 @@
 .team-bans.compact {
   margin-bottom: 10px;
   padding: 8px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 0, 85, 0.1);
+  border-radius: 4px;
+  border: 2px solid rgba(255, 0, 85, 0.3);
 }
 
 .banned-champions-row.compact {
@@ -784,11 +933,12 @@
 
 // ========== BOTÕES ==========
 .btn {
-  padding: 6px 12px;
-  border: none;
-  border-radius: 5px;
-  font-size: 13px;
-  font-weight: 600;
+  font-family: $pixel-font;
+  padding: 0.5rem 1.2rem;
+  border: 3px solid;
+  border-radius: 4px;
+  font-size: $base-font-size;
+  font-weight: 700;
   cursor: pointer;
   transition: all 0.2s ease;
   display: flex;
@@ -796,10 +946,15 @@
   gap: 5px;
   text-decoration: none;
   min-height: 32px;
+  text-transform: uppercase;
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.8);
 
   &:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    transform: translateY(-2px) scale(1.05);
+  }
+
+  &:active {
+    transform: translateY(0) scale(0.98);
   }
 
   &:disabled {
@@ -809,62 +964,65 @@
   }
 
   .btn-icon {
-    font-size: 13px;
+    font-size: 0.8rem;
   }
 
   .btn-text {
-    font-size: 13px;
+    font-size: $base-font-size;
   }
 
   // Variante compacta
   &.btn-compact {
     padding: 5px 10px;
-    font-size: 12px;
+    font-size: $base-font-size;
     min-height: 28px;
 
     .btn-icon {
-      font-size: 12px;
+      font-size: 0.8rem;
     }
 
     .btn-text {
-      font-size: 12px;
+      font-size: $base-font-size;
     }
   }
 
   // Variante grande
   &.btn-lg {
     padding: 16px 32px;
-    font-size: 16px;
+    font-size: $base-font-size;
 
     .btn-icon {
-      font-size: 16px;
+      font-size: 0.8rem;
     }
 
     .btn-text {
-      font-size: 16px;
+      font-size: $base-font-size;
     }
   }
 
   // Cores dos botões
   &.btn-primary {
-    background: linear-gradient(135deg, #007bff, #0056b3);
-    color: white;
-    border: 1px solid #007bff;
+    background: $lol-gold;
+    color: $dark-bg;
+    border: 2px solid $lol-gold;
+    box-shadow: 0 0 20px $lol-gold, 0 4px 0 color.adjust($lol-gold, $lightness: -20%);
+    text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.8);
 
     &:hover:not(:disabled) {
-      background: linear-gradient(135deg, #0056b3, #007bff);
-      border-color: #0056b3;
+      background: color.adjust($lol-gold, $lightness: 10%);
+      box-shadow: 0 0 30px $lol-gold, 0 6px 0 color.adjust($lol-gold, $lightness: -20%);
     }
   }
 
   &.btn-secondary {
     background: linear-gradient(135deg, #6c757d, #5a6268);
     color: white;
-    border: 1px solid #6c757d;
+    border: 2px solid #6c757d;
+    box-shadow: 0 4px 0 color.adjust(#6c757d, $lightness: -20%);
 
     &:hover:not(:disabled) {
       background: linear-gradient(135deg, #5a6268, #6c757d);
-      border-color: #5a6268;
+      box-shadow: 0 6px 0 color.adjust(#6c757d, $lightness: -20%);
     }
   }
 
@@ -881,24 +1039,26 @@
   }
 
   &.btn-success {
-    background: linear-gradient(135deg, #28a745, #20c997);
-    color: white;
-    border: 1px solid #28a745;
+    background: $cyber-green;
+    color: $dark-bg;
+    border: 2px solid $cyber-green;
+    box-shadow: 0 0 20px $cyber-green, 0 4px 0 color.adjust($cyber-green, $lightness: -20%);
+    text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.8);
 
     &:hover:not(:disabled) {
-      background: linear-gradient(135deg, #20c997, #28a745);
-      border-color: #20c997;
+      box-shadow: 0 0 30px $cyber-green, 0 6px 0 color.adjust($cyber-green, $lightness: -20%);
     }
   }
 
   &.btn-danger {
-    background: linear-gradient(135deg, #dc3545, #c82333);
+    background: $cyber-red;
     color: white;
-    border: 1px solid #dc3545;
+    border: 2px solid $cyber-red;
+    box-shadow: 0 0 20px $cyber-red, 0 4px 0 color.adjust($cyber-red, $lightness: -20%);
+    text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.8);
 
     &:hover:not(:disabled) {
-      background: linear-gradient(135deg, #c82333, #dc3545);
-      border-color: #c82333;
+      box-shadow: 0 0 30px $cyber-red, 0 6px 0 color.adjust($cyber-red, $lightness: -20%);
     }
   }
 }

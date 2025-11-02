@@ -1,8 +1,35 @@
+// ✅ IMPORT: Módulo Sass Color (moderno)
+@use 'sass:color';
+
+// ✅ IMPORT: Fonte Press Start 2P (Retro Gaming)
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+// ✅ TEMA RETRO GAMER / CYBERPUNK PIXELIZADO COM CORES DO LEAGUE OF LEGENDS
+$pixel-font: 'Press Start 2P', 'Courier New', monospace;
+$base-font-size: 0.36rem; // ✅ Tamanho base para UI geral
+$player-card-font-size: 0.50rem; // ✅ MENOR para dados dos jogadores nos cards
+$cyber-blue: #00f3ff;
+$cyber-pink: #ff00ff;
+$cyber-green: #00ff41;
+$cyber-yellow: #ffff00;
+$cyber-red: #ff0055;
+$neon-blue: #3498db;
+$neon-purple: #9b59b6;
+// ✅ Cores do League of Legends
+$lol-blue: #3c9aff;
+$lol-red: #ff3d3d;
+$lol-gold: #c8aa6e;
+$lol-dark-gold: #a09b8c;
+$dark-bg: #0a0a0f;
+$dark-panel: #1a1a2e;
+
 .game-in-progress-container {
   padding: 20px;
   max-width: 1200px;
   margin: 0 auto;
   color: #e0e6ed;
+  font-family: $pixel-font;
+  image-rendering: pixelated;
 }
 
 // Header Section
@@ -12,23 +39,28 @@
   align-items: flex-start;
   margin-bottom: 30px;
   padding: 20px;
-  background: linear-gradient(135deg, #1e2328 0%, #2b2f35 100%);
-  border-radius: 12px;
-  border: 1px solid #3c3c41;
+  background: linear-gradient(135deg, $dark-panel 0%, #16213e 50%, #0f3460 100%);
+  border-radius: 4px;
+  border: 4px solid $cyber-blue;
+  box-shadow: 0 0 20px $cyber-blue, inset 0 0 60px rgba(0, 243, 255, 0.1);
 
   .header-left {
     .game-title {
       h2 {
         margin: 0 0 8px 0;
-        font-size: 28px;
+        font-size: 0.6rem;
         font-weight: 700;
-        color: #f0e6d2;
+        color: $lol-gold;
+        text-shadow: 0 0 10px $lol-gold, 2px 2px 0 $cyber-pink;
+        letter-spacing: 2px;
+        text-transform: uppercase;
       }
 
       .game-status {
         margin: 0;
-        font-size: 16px;
-        color: #a09b8c;
+        font-size: $base-font-size;
+        color: $lol-dark-gold;
+        text-shadow: 0 0 5px $lol-dark-gold;
       }
     }
   }
@@ -49,16 +81,18 @@
         display: flex;
         align-items: center;
         gap: 8px;
-        font-size: 16px;
-        color: #c9aa71;
+        font-size: $base-font-size;
+        color: $lol-gold;
 
         .timer-label {
           font-weight: 500;
+          text-shadow: 0 0 5px $lol-gold;
         }
 
         .timer-value {
           font-weight: 700;
-          color: #f0e6d2;
+          color: $cyber-blue;
+          text-shadow: 0 0 10px $cyber-blue;
         }
       }
 
@@ -66,8 +100,9 @@
         display: flex;
         align-items: center;
         gap: 8px;
-        font-size: 14px;
-        color: #a09b8c;
+        font-size: $base-font-size;
+        color: $lol-dark-gold;
+        font-family: $pixel-font;
 
         .status-indicator {
           width: 8px;
@@ -77,8 +112,8 @@
           transition: background-color 0.3s ease;
 
           &.active {
-            background: #00ff00;
-            box-shadow: 0 0 8px rgba(0, 255, 0, 0.5);
+            background: $cyber-green;
+            box-shadow: 0 0 8px $cyber-green;
           }
         }
       }
@@ -86,13 +121,15 @@
 
     .vote-progress-header {
       .progress-status-header {
-        color: #c9aa71;
-        font-size: 14px;
+        font-family: $pixel-font;
+        color: $lol-gold;
+        font-size: $base-font-size;
         font-weight: 500;
         background: rgba(255, 255, 255, 0.1);
         padding: 4px 8px;
         border-radius: 4px;
         border: 1px solid rgba(255, 255, 255, 0.2);
+        text-shadow: 0 0 5px $lol-gold;
       }
     }
   }
@@ -107,18 +144,22 @@
   align-items: start;
 
   .team {
-    background: #1e2328;
-    border-radius: 12px;
+    background: rgba(0, 0, 0, 0.4);
+    border-radius: 4px;
     padding: 20px;
-    border: 2px solid transparent;
+    border: 3px solid transparent;
     transition: all 0.3s ease;
 
     &.team-blue {
-      border-color: #4a90e2;
+      border-color: $neon-blue;
+      box-shadow: 0 0 20px rgba(52, 152, 219, 0.3), inset 0 0 30px rgba(52, 152, 219, 0.1);
+      background: linear-gradient(180deg, rgba(52, 152, 219, 0.1), rgba(41, 128, 185, 0.05));
     }
 
     &.team-red {
-      border-color: #e74c3c;
+      border-color: $cyber-red;
+      box-shadow: 0 0 20px rgba(255, 0, 85, 0.3), inset 0 0 30px rgba(255, 0, 85, 0.1);
+      background: linear-gradient(180deg, rgba(255, 0, 85, 0.1), rgba(200, 0, 60, 0.05));
     }
 
     .team-header {
@@ -131,25 +172,34 @@
 
       h3 {
         margin: 0;
-        font-size: 20px;
+        font-family: $pixel-font;
+        font-size: $base-font-size;
         font-weight: 600;
+        text-transform: uppercase;
+        text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.8);
       }
 
       .team-status {
         .winner-badge {
-          color: #c8aa6e;
+          font-family: $pixel-font;
+          color: $cyber-green;
           font-weight: 600;
           padding: 4px 8px;
-          background: rgba(200, 170, 110, 0.1);
-          border-radius: 6px;
+          background: rgba(0, 255, 65, 0.1);
+          border-radius: 4px;
+          border: 1px solid $cyber-green;
+          text-shadow: 0 0 10px $cyber-green;
         }
 
         .loser-badge {
-          color: #e74c3c;
+          font-family: $pixel-font;
+          color: $cyber-red;
           font-weight: 600;
           padding: 4px 8px;
-          background: rgba(231, 76, 60, 0.1);
-          border-radius: 6px;
+          background: rgba(255, 0, 85, 0.1);
+          border-radius: 4px;
+          border: 1px solid $cyber-red;
+          text-shadow: 0 0 10px $cyber-red;
         }
       }
     }
@@ -166,9 +216,12 @@
         margin-bottom: 8px;
 
         .bans-title {
-          font-size: 14px;
+          font-family: $pixel-font;
+          font-size: $base-font-size;
           font-weight: 600;
           color: #f0e6d2;
+          text-transform: uppercase;
+          text-shadow: 0 0 5px $lol-gold;
         }
       }
 
@@ -179,14 +232,16 @@
 
         .ban-item {
           padding: 4px 8px;
-          background: rgba(231, 76, 60, 0.2);
-          border: 1px solid #e74c3c;
-          border-radius: 6px;
-          font-size: 12px;
+          background: rgba(255, 0, 85, 0.2);
+          border: 2px solid $cyber-red;
+          border-radius: 4px;
+          font-family: $pixel-font;
+          font-size: $base-font-size;
 
           .ban-champion {
             color: #f0e6d2;
             font-weight: 500;
+            text-shadow: 0 0 5px $cyber-red, 1px 1px 0 rgba(0, 0, 0, 0.8);
           }
         }
       }
@@ -204,9 +259,12 @@
         margin-bottom: 8px;
 
         .picks-title {
-          font-size: 14px;
+          font-family: $pixel-font;
+          font-size: $base-font-size;
           font-weight: 600;
           color: #f0e6d2;
+          text-transform: uppercase;
+          text-shadow: 0 0 5px $lol-gold;
         }
       }
 
@@ -217,10 +275,11 @@
 
         .pick-item {
           padding: 4px 8px;
-          background: rgba(0, 208, 132, 0.2);
-          border: 1px solid #00d084;
-          border-radius: 6px;
-          font-size: 12px;
+          background: rgba(0, 255, 65, 0.2);
+          border: 2px solid $cyber-green;
+          border-radius: 4px;
+          font-family: $pixel-font;
+          font-size: $base-font-size;
           display: flex;
           align-items: center;
           gap: 4px;
@@ -228,11 +287,12 @@
           .pick-champion {
             color: #f0e6d2;
             font-weight: 500;
+            text-shadow: 0 0 5px $cyber-green, 1px 1px 0 rgba(0, 0, 0, 0.8);
           }
 
           .pick-player {
             color: #a09b8c;
-            font-size: 11px;
+            font-size: $base-font-size;
             font-style: italic;
           }
         }
@@ -276,11 +336,13 @@
           }
 
           .lane-name {
-            font-size: 10px;
+            font-family: $pixel-font;
+            font-size: $base-font-size;
             color: #a09b8c;
             text-transform: uppercase;
             font-weight: 600;
             text-align: center;
+            text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.8);
           }
         }
 
@@ -290,9 +352,11 @@
           gap: 4px;
 
           .player-name {
+            font-family: $pixel-font;
             font-weight: 600;
             color: #f0e6d2;
-            font-size: 14px;
+            font-size: $player-card-font-size;
+            text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.8);
           }
 
           // ✅ NOVO: Container para lane badge ficar inline
@@ -339,13 +403,16 @@
           text-align: right;
 
           .champion-name {
-            font-size: 13px;
-            color: #c8aa6e;
+            font-family: $pixel-font;
+            font-size: $player-card-font-size;
+            color: $lol-gold;
             font-weight: 500;
+            text-shadow: 0 0 5px $lol-gold, 1px 1px 0 rgba(0, 0, 0, 0.8);
           }
 
           .champion-placeholder {
-            font-size: 12px;
+            font-family: $pixel-font;
+            font-size: $player-card-font-size;
             color: #666;
             font-style: italic;
           }
@@ -362,18 +429,21 @@
     padding: 20px 0;
 
     .vs-text {
-      font-size: 32px;
+      font-family: $pixel-font;
+      font-size: 0.8rem;
       font-weight: 900;
-      color: #c8aa6e;
-      text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+      color: $lol-gold;
+      text-shadow: 0 0 10px $lol-gold, 2px 2px 0 rgba(0, 0, 0, 0.8);
       margin-bottom: 10px;
+      letter-spacing: 2px;
     }
 
     .game-duration-display {
-      font-size: 18px;
+      font-family: $pixel-font;
+      font-size: $base-font-size;
       font-weight: 600;
-      color: #a09b8c;
-      font-family: 'Courier New', monospace;
+      color: $lol-dark-gold;
+      text-shadow: 0 0 5px $lol-dark-gold;
     }
   }
 }
@@ -444,14 +514,21 @@
     text-align: center;
 
     h3 {
+      font-family: $pixel-font;
       margin: 0 0 10px 0;
-      color: #f0e6d2;
-      font-size: 24px;
+      color: $lol-gold;
+      font-size: 0.6rem;
+      text-transform: uppercase;
+      text-shadow: 0 0 10px $lol-gold;
+      letter-spacing: 2px;
     }
 
     p {
+      font-family: $pixel-font;
       margin: 0 0 25px 0;
-      color: #a09b8c;
+      color: $lol-dark-gold;
+      font-size: $base-font-size;
+      text-shadow: 0 0 5px $lol-dark-gold;
     }
 
     .winner-buttons {
@@ -498,14 +575,19 @@
         }
 
         .team-name {
+          font-family: $pixel-font;
           font-weight: 600;
           color: #f0e6d2;
+          font-size: $base-font-size;
+          text-transform: uppercase;
+          text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.8);
         }
 
         .winner-icon {
-          font-size: 20px;
-          color: #c8aa6e;
+          font-size: $base-font-size;
+          color: $cyber-yellow;
           margin-top: 8px;
+          text-shadow: 0 0 10px $cyber-yellow;
         }
       }
     }
@@ -520,15 +602,18 @@
       }
 
       .result-preview {
-        font-size: 18px;
+        font-family: $pixel-font;
+        font-size: $base-font-size;
         font-weight: 600;
 
         .victory {
-          color: #c8aa6e;
+          color: $cyber-green;
+          text-shadow: 0 0 10px $cyber-green;
         }
 
         .defeat {
-          color: #e74c3c;
+          color: $cyber-red;
+          text-shadow: 0 0 10px $cyber-red;
         }
       }
     }
@@ -952,15 +1037,19 @@
 }
 
 .match-confirmation-modal {
-  background: linear-gradient(135deg, #1e2328 0%, #2b2f35 100%);
-  border-radius: 12px;
-  border: 2px solid #3c3c41;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+  background: linear-gradient(135deg, $dark-panel 0%, #16213e 50%, #0f3460 100%);
+  border-radius: 4px;
+  border: 4px solid $cyber-blue;
+  box-shadow: 0 0 20px $cyber-blue, 0 0 40px rgba(0, 243, 255, 0.5);
   max-width: 800px;
   width: 100%;
   max-height: 90vh;
   overflow-y: auto;
   color: #e0e6ed;
+  font-family: $pixel-font;
+  image-rendering: pixelated;
+  position: relative;
+  z-index: 3;
 
   .modal-header {
     display: flex;
@@ -968,13 +1057,16 @@
     align-items: center;
     padding: 20px 24px;
     border-bottom: 1px solid #3c3c41;
-    background: linear-gradient(90deg, #463714 0%, #58471d 100%);
+    background: linear-gradient(90deg, rgba(200, 170, 110, 0.2) 0%, rgba(240, 192, 64, 0.2) 100%);
 
     h3 {
       margin: 0;
-      font-size: 20px;
+      font-size: 0.6rem;
       font-weight: 600;
-      color: #f0e6d2;
+      color: $lol-gold;
+      text-shadow: 0 0 10px $lol-gold;
+      letter-spacing: 2px;
+      text-transform: uppercase;
     }
 
     .close-btn {

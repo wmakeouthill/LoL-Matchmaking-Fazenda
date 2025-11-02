@@ -1,27 +1,100 @@
+// ✅ IMPORT: Módulo Sass Color (moderno)
+@use 'sass:color';
+
+// ✅ IMPORT: Fonte Press Start 2P (Retro Gaming)
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+// ✅ TEMA RETRO GAMER / CYBERPUNK PIXELIZADO COM CORES DO LEAGUE OF LEGENDS
+$pixel-font: 'Press Start 2P', 'Courier New', monospace;
+$base-font-size: 0.36rem;
+$cyber-blue: #00f3ff;
+$cyber-pink: #ff00ff;
+$cyber-green: #00ff41;
+$cyber-yellow: #ffff00;
+$cyber-red: #ff0055;
+$neon-blue: #3498db;
+$neon-purple: #9b59b6;
+// ✅ Cores do League of Legends
+$lol-blue: #3c9aff;
+$lol-red: #ff3d3d;
+$lol-gold: #c8aa6e;
+$lol-dark-gold: #a09b8c;
+$dark-bg: #0a0a0f;
+$dark-panel: #1a1a2e;
+
 .modal-overlay {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.85);
+  background: $dark-bg;
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 9999;
   backdrop-filter: blur(4px);
+
+  // Scanlines CRT effect
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0, 0, 0, 0.15),
+      rgba(0, 0, 0, 0.15) 1px,
+      transparent 1px,
+      transparent 2px
+    );
+    pointer-events: none;
+    z-index: 2;
+    animation: scanlines 8s linear infinite;
+  }
+}
+
+@keyframes scanlines {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 0 100%;
+  }
 }
 
 .modal-container {
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-  border-radius: 16px;
-  max-width: 1600px; // ✅ Aumentado de 900px para 1600px
-  width: 95%; // ✅ Aumentado de 90% para 95%
-  max-height: 90vh; // ✅ Aumentado de 85vh para 90vh
+  background: linear-gradient(135deg, $dark-panel 0%, #16213e 50%, #0f3460 100%);
+  border-radius: 4px;
+  border: 4px solid $cyber-blue;
+  max-width: 1600px;
+  width: 95%;
+  max-height: 90vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 0 20px $cyber-blue, 0 0 40px rgba(0, 243, 255, 0.5), inset 0 0 60px rgba(0, 243, 255, 0.1);
+  font-family: $pixel-font;
+  image-rendering: pixelated;
+  position: relative;
+  z-index: 3;
+
+  // Grid cyberpunk background
+  &::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image:
+      linear-gradient(rgba($cyber-blue, 0.03) 2px, transparent 2px),
+      linear-gradient(90deg, rgba($cyber-blue, 0.03) 2px, transparent 2px);
+    background-size: 50px 50px;
+    pointer-events: none;
+    z-index: 0;
+  }
 }
 
 .modal-header {
@@ -30,13 +103,78 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-}
 
-.modal-header h2 {
-  margin: 0;
-  color: #fff;
-  font-size: 24px;
-  font-weight: 700;
+  h2 {
+    margin: 0;
+    color: $lol-gold;
+    font-size: 0.6rem;
+    font-weight: 700;
+    text-shadow: 0 0 10px $lol-gold, 2px 2px 0 $cyber-pink;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  .header-content {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex: 1;
+
+    .special-user-vote-weight {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 16px;
+      background: $lol-gold;
+      border-radius: 4px;
+      border: 2px solid $lol-dark-gold;
+      box-shadow: 0 0 20px $lol-gold, 0 4px 0 color.adjust($lol-gold, $lightness: -20%);
+
+      label {
+        font-weight: 600;
+        color: $dark-bg;
+        font-size: $base-font-size;
+        margin: 0;
+      }
+
+      .vote-weight-selector {
+        padding: 6px 12px;
+        border: 2px solid $lol-dark-gold;
+        border-radius: 4px;
+        background: $dark-bg;
+        color: $lol-gold;
+        font-weight: 600;
+        font-size: $base-font-size;
+        cursor: pointer;
+        transition: all 0.3s ease;
+
+        &:hover {
+          background: rgba(200, 170, 110, 0.1);
+          transform: translateY(-1px);
+          box-shadow: 0 4px 12px rgba(200, 170, 110, 0.4);
+        }
+
+        &:focus {
+          outline: none;
+          border-color: $lol-gold;
+          box-shadow: 0 0 0 3px rgba(200, 170, 110, 0.3);
+        }
+
+        option {
+          background: $dark-panel;
+          color: $lol-gold;
+          font-weight: 600;
+        }
+      }
+
+      .weight-info {
+        font-size: $base-font-size;
+        color: $dark-bg;
+        font-weight: 500;
+        font-style: italic;
+      }
+    }
+  }
 }
 
 .close-btn {
@@ -1402,74 +1540,3 @@
   }
 }
 
-// ✅ NOVO: Estilos para seletor de peso do voto (special users)
-.modal-header {
-  .header-content {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    flex: 1;
-
-    h2 {
-      margin: 0;
-      color: #f0e6d2;
-      font-size: 24px;
-      font-weight: 700;
-    }
-
-    .special-user-vote-weight {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 8px 16px;
-      background: linear-gradient(135deg, #c9aa71 0%, #f0e6d2 100%);
-      border-radius: 8px;
-      border: 2px solid #463714;
-      box-shadow: 0 2px 8px rgba(201, 170, 113, 0.3);
-
-      label {
-        font-weight: 600;
-        color: #463714;
-        font-size: 14px;
-        margin: 0;
-      }
-
-      .vote-weight-selector {
-        padding: 6px 12px;
-        border: 2px solid #463714;
-        border-radius: 6px;
-        background: #f0e6d2;
-        color: #463714;
-        font-weight: 600;
-        font-size: 14px;
-        cursor: pointer;
-        transition: all 0.3s ease;
-
-        &:hover {
-          background: #e6d7b8;
-          transform: translateY(-1px);
-          box-shadow: 0 4px 12px rgba(201, 170, 113, 0.4);
-        }
-
-        &:focus {
-          outline: none;
-          border-color: #8b7355;
-          box-shadow: 0 0 0 3px rgba(201, 170, 113, 0.3);
-        }
-
-        option {
-          background: #f0e6d2;
-          color: #463714;
-          font-weight: 600;
-        }
-      }
-
-      .weight-info {
-        font-size: 12px;
-        color: #463714;
-        font-weight: 500;
-        font-style: italic;
-      }
-    }
-  }
-}

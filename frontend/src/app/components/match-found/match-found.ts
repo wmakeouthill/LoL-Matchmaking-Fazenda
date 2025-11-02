@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { ProfileIconService } from '../../services/profile-icon.service';
 import { Observable, of } from 'rxjs';
 import { BotService } from '../../services/bot.service';
+import { AudioService } from '../../services/audio.service';
 import { MatchFound, UnifiedTeamPlayer } from '../../interfaces';
 
 // ✅ OTIMIZADO: Usar MatchFound (pick_ban_data) diretamente - reduz duplicação de memória
@@ -58,12 +59,15 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
   constructor(
     private readonly profileIconService: ProfileIconService,
     public botService: BotService,
-    private readonly cdr: ChangeDetectorRef
+    private readonly cdr: ChangeDetectorRef,
+    private readonly audioService: AudioService
   ) { }
 
   ngOnInit() {
     if (this.matchData && this.matchData.phase === 'match_found') {
       this.startAcceptCountdown();
+      // ✅ NOVO: Tocar som quando match found é exibido
+      this.playMatchFoundSound();
     }
     this.updateSortedTeams();
     // ✅ NOVO: Escutar atualizações de timer do backend
@@ -112,6 +116,9 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
 
       if (isNewMatch || isFirstTime) {
         logMatchFound('🎮 [MatchFound] ✅ NOVA PARTIDA CONFIRMADA - configurando timer');
+
+        // ✅ NOVO: Tocar som quando match found é exibido (nova partida)
+        this.playMatchFoundSound();
 
         // ✅ CORREÇÃO: Limpar timer anterior se existir
         if (this.countdownTimer) {
@@ -164,6 +171,12 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
 
     // ✅ REMOVIDO: Listeners não são mais necessários com Default strategy
     // document.removeEventListener('matchTimerUpdate', this.onTimerUpdate);
+    // Garantir que som de match found seja parado
+    try {
+      this.audioService.stopMatchFound();
+    } catch (err) {
+      // silent
+    }
 
     logMatchFound('✅ [MatchFound] Recursos limpos com sucesso');
   }
@@ -266,6 +279,8 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
   onAcceptMatch(): void {
     if (this.matchData) {
       logMatchFound('✅ [MatchFound] Emitindo aceitação para:', this.matchData.matchId);
+      // Parar som de match found antes de seguir
+      try { this.audioService.stopMatchFound(); } catch (_) { }
       this.acceptMatch.emit(this.matchData.matchId);
 
       // ✅ CORREÇÃO: Garantir que timer local não existe (não deve existir)
@@ -280,6 +295,8 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
   onDeclineMatch(): void {
     if (this.matchData) {
       logMatchFound('❌ [MatchFound] Emitindo recusa para:', this.matchData.matchId);
+      // Parar som de match found antes de seguir
+      try { this.audioService.stopMatchFound(); } catch (_) { }
       this.declineMatch.emit(this.matchData.matchId);
 
       // ✅ CORREÇÃO: Garantir que timer local não existe (não deve existir)
@@ -801,5 +818,16 @@ export class MatchFoundComponent implements OnInit, OnDestroy, OnChanges {
     const isCurrent = player.isCurrentUser || false;
     console.log(`[MatchFound] isCurrentUser(${player.summonerName}): isCurrentUser=${isCurrent}, player.isCurrentUser=${player.isCurrentUser}`);
     return isCurrent;
+  }
+
+  /**
+   * ✅ NOVO: Tocar som de match found
+   */
+  private playMatchFoundSound(): void {
+    try {
+      this.audioService.playMatchFound();
+    } catch (error) {
+      console.error('❌ [MatchFound] Erro ao tocar match_found via AudioService:', error);
+    }
   }
 }

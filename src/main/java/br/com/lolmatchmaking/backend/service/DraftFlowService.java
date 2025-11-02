@@ -208,9 +208,10 @@ public class DraftFlowService {
                                 log.error("❌ [Timer] Nenhum campeão disponível para timeout de matchId={}", matchId);
                                 randomChampionId = "266"; // Fallback para Aatrox se nenhum disponível
                             }
-                            log.info("🎲 [Timer] Campeão aleatório selecionado para timeout: {} (player: {})", 
+                            log.info("🎲 [Timer] Campeão aleatório selecionado para timeout: {} (player: {})",
                                     randomChampionId, currentPlayer);
-                            boolean success = processAction(matchId, st.getCurrentIndex(), currentPlayer, randomChampionId);
+                            boolean success = processAction(matchId, st.getCurrentIndex(), currentPlayer,
+                                    randomChampionId);
                             if (success) {
                                 log.info("✅ [Timer] Draft progredido automaticamente para matchId={}", matchId);
 
@@ -1446,7 +1447,8 @@ public class DraftFlowService {
     private static final String KEY_TEAM1 = "team1";
     private static final String KEY_TEAM2 = "team2";
     // configurable via property above
-    // ⚠️ DEPRECATED: SKIPPED não é mais usado - timeouts agora selecionam campeão aleatório
+    // ⚠️ DEPRECATED: SKIPPED não é mais usado - timeouts agora selecionam campeão
+    // aleatório
     // Mantido apenas para compatibilidade com dados antigos no banco
     @Deprecated
     private static final String SKIPPED = "SKIPPED";
@@ -1482,6 +1484,12 @@ public class DraftFlowService {
             updateData.put(KEY_MATCH_ID, st.getMatchId());
             updateData.put(KEY_CURRENT_INDEX, st.getCurrentIndex());
             updateData.put("currentAction", st.getCurrentIndex()); // ✅ CRÍTICO: Frontend espera currentAction
+
+            // ✅ SINCRONIZAÇÃO DE ÁUDIO: Enviar timestamp de início do draft (para música de
+            // 5 minutos)
+            // Usar lastActionStartMs do primeiro action como referência de início do draft
+            updateData.put("draftStartTimestamp", st.getLastActionStartMs());
+
             if (currentTeamNum != null) {
                 updateData.put("currentTeam", currentTeamNum == 1 ? "blue" : "red");
             }
@@ -2485,7 +2493,7 @@ public class DraftFlowService {
                     randomChampionId = "266"; // Fallback para Aatrox
                 }
                 String championName = dataDragonService.getChampionName(randomChampionId);
-                log.info("🎲 [DraftFlow] Campeão aleatório selecionado por timeout: {} ({})", 
+                log.info("🎲 [DraftFlow] Campeão aleatório selecionado por timeout: {} ({})",
                         randomChampionId, championName);
                 DraftAction autoSelected = new DraftAction(
                         prev.index(),

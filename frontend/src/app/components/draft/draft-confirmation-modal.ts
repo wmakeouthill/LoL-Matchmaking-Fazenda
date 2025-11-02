@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter, OnChanges, OnDestroy, SimpleChanges, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnInit, OnChanges, OnDestroy, SimpleChanges, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom, Subscription } from 'rxjs';
@@ -71,7 +71,6 @@ interface TeamSlot {
   phaseIndex: number;
 }
 
-
 @Component({
   selector: 'app-draft-confirmation-modal',
   standalone: true,
@@ -80,7 +79,7 @@ interface TeamSlot {
   styleUrl: './draft-confirmation-modal.scss',
   changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class DraftConfirmationModalComponent implements OnChanges, OnDestroy {
+export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDestroy {
   @Input() session: CustomPickBanSession | null = null;
   @Input() currentPlayer: any = null;
   @Input() isVisible: boolean = false;
@@ -90,6 +89,10 @@ export class DraftConfirmationModalComponent implements OnChanges, OnDestroy {
   @Output() onCancel = new EventEmitter<void>();
   @Output() onEditPick = new EventEmitter<{ playerId: string, phaseIndex: number }>();
   @Output() onRefreshDraft = new EventEmitter<void>(); // ✅ NOVO: Para atualizar estado do draft
+
+  // ✅ CRÍTICO: MatchId FIXO usado para filtrar eventos draft_updated
+  // Definido UMA VEZ quando o modal recebe a session inicial
+  private activeMatchId: string | null = null;
 
   // ✅ NOVO: Estado da confirmação
   isConfirming: boolean = false;
@@ -122,9 +125,19 @@ export class DraftConfirmationModalComponent implements OnChanges, OnDestroy {
     private readonly http: HttpClient,
     private readonly apiService: ApiService,
     private readonly cdr: ChangeDetectorRef,
-    private electronEvents: ElectronEventsService
+    private readonly electronEvents: ElectronEventsService
   ) {
+    console.log('🏗️🏗️🏗️ [CONFIRMATION-MODAL] ============ CONSTRUCTOR EXECUTADO ============');
+    console.log('🏗️ [CONFIRMATION-MODAL] Modal está sendo CRIADO pelo Angular!');
     this.baseUrl = this.apiService.getBaseUrl();
+  }
+
+  // ✅ NOVO: Configurar observables UMA VEZ no init (mesma técnica do draft-pick-ban)
+  ngOnInit(): void {
+    console.log('🎯🎯🎯 [CONFIRMATION-MODAL] ============ ngOnInit EXECUTADO ============');
+    console.log('🎯 [CONFIRMATION-MODAL] Registrando listeners do WebSocket...');
+    this.setupObservableListeners();
+    console.log('🎯 [CONFIRMATION-MODAL] Listeners registrados com sucesso!');
   }
 
   // ✅ NOVO: Cleanup de subscrições (OnDestroy necessário para limpar subscrições)
@@ -181,17 +194,79 @@ export class DraftConfirmationModalComponent implements OnChanges, OnDestroy {
 
   ngOnChanges(changes: SimpleChanges): void {
     // ✅ NOVO: Logs extremamente detalhados para DEBUG
-    console.log('🔵 [CONFIRMATION-MODAL] ngOnChanges CHAMADO');
+    console.log('🔵🔵🔵 [CONFIRMATION-MODAL] ============ ngOnChanges CHAMADO ============');
+    console.log('🔵 [CONFIRMATION-MODAL] Changes:', Object.keys(changes));
     console.log('🔵 [CONFIRMATION-MODAL] isVisible:', this.isVisible);
     console.log('🔵 [CONFIRMATION-MODAL] session exists:', !!this.session);
-    console.log('🔵 [CONFIRMATION-MODAL] confirmationData:', this.confirmationData);
+    console.log('🔵 [CONFIRMATION-MODAL] session.matchId:', this.session?.matchId);
+    console.log('🔵 [CONFIRMATION-MODAL] session.id:', this.session?.id);
+    console.log('🔵 [CONFIRMATION-MODAL] activeMatchId ATUAL:', this.activeMatchId);
+
+    // ✅ CRÍTICO: Definir activeMatchId UMA VEZ quando receber session pela primeira vez
+    if (this.session && !this.activeMatchId) {
+      this.activeMatchId = String(this.session.matchId || this.session.id);
+      console.log('🎯🎯🎯 [CONFIRMATION-MODAL] activeMatchId DEFINIDO:', this.activeMatchId);
+      console.log('🎯 [CONFIRMATION-MODAL] Agora o listener vai filtrar APENAS eventos deste matchId!');
+    }
+
+    // ✅ CRÍTICO: Se a session mudou, SEMPRE invalidar cache IMEDIATAMENTE (antes de qualquer outra coisa)
+    if (changes['session']?.currentValue && changes['session']?.currentValue !== changes['session']?.previousValue) {
+      console.log('🔴🔴🔴 [CONFIRMATION-MODAL] SESSION MUDOU VIA @INPUT DO PAI!!!');
+      console.log('🔴 [CONFIRMATION-MODAL] Session anterior:', changes['session']?.previousValue?.matchId);
+      console.log('🔴 [CONFIRMATION-MODAL] Session nova:', changes['session']?.currentValue?.matchId);
+      console.log('🔴 [CONFIRMATION-MODAL] Teams na nova session:', !!changes['session']?.currentValue?.teams);
+      console.log('🔴 [CONFIRMATION-MODAL] Blue picks na nova session:', changes['session']?.currentValue?.teams?.blue?.allPicks);
+      console.log('🔴 [CONFIRMATION-MODAL] Red picks na nova session:', changes['session']?.currentValue?.teams?.red?.allPicks);
+      console.log('🔴 [CONFIRMATION-MODAL] INVALIDANDO CACHE IMEDIATAMENTE!');
+      this.invalidateCache();
+
+      // ✅ CRÍTICO: Se o modal está visível, forçar recálculo IMEDIATO
+      if (this.isVisible) {
+        console.log('🔴 [CONFIRMATION-MODAL] Modal está visível - forçando recálculo COMPLETO');
+        setTimeout(() => {
+          this.getTeamPicks('blue');
+          this.getTeamPicks('red');
+          this.getTeamBans('blue');
+          this.getTeamBans('red');
+          this.getTeamByLane('blue');
+          this.getTeamByLane('red');
+          this.cdr.markForCheck();
+          this.cdr.detectChanges();
+          console.log('✅ [CONFIRMATION-MODAL] Recálculo completo finalizado após mudança de session');
+        }, 0);
+      }
+    }
 
     // ✅ NOVO: Identificar usuário atual quando modal abre
     if (this.isVisible) {
+      console.log('🟢🟢🟢 [CONFIRMATION-MODAL] Modal ABERTO - forçando identificação e refresh');
       this.identifyCurrentUser();
       this.initializeConfirmationStatuses(); // ✅ NOVO: Inicializar status de confirmação
       this.setupWebSocketListeners(); // ✅ NOVO: Configurar listeners WebSocket
-      this.setupObservableListeners(); // ✅ NOVO: Configurar observables (mesma técnica do draft)
+
+      // ✅ CRÍTICO: SEMPRE invalidar cache e forçar recálculo quando modal abre
+      // Isso garante que dados estejam atualizados mesmo se session não mudou via @Input
+      console.log('🔴 [CONFIRMATION-MODAL] CRITICAL: Modal aberto - invalidando cache e forçando recálculo TOTAL');
+      this.invalidateCache();
+
+      // ✅ Aguardar um tick para garantir que todas as mudanças foram propagadas
+      setTimeout(() => {
+        if (this.session) {
+          console.log('🔴 [CONFIRMATION-MODAL] Recalculando TODOS os dados do modal...');
+          // Forçar recálculo de tudo
+          this.getTeamPicks('blue');
+          this.getTeamPicks('red');
+          this.getTeamBans('blue');
+          this.getTeamBans('red');
+          this.getTeamByLane('blue');
+          this.getTeamByLane('red');
+          this.cdr.markForCheck();
+          this.cdr.detectChanges();
+          console.log('✅ [CONFIRMATION-MODAL] Dados recalculados após abertura do modal');
+        }
+      }, 0);
+
+      // ✅ CORREÇÃO: setupObservableListeners movido para ngOnInit (configurar UMA VEZ)
     } else {
       this.cleanupWebSocketListeners(); // ✅ NOVO: Limpar listeners quando modal fecha
       // Subscrições são limpas no ngOnDestroy
@@ -236,8 +311,98 @@ export class DraftConfirmationModalComponent implements OnChanges, OnDestroy {
 
       // ✅ CRÍTICO: Invalidar cache quando session muda (para refletir picks editados)
       if (changes['session']) {
-        console.log('🔄 [CONFIRMATION-MODAL] Session mudou - invalidando cache de picks/bans');
+        const sessionChanged = changes['session'].currentValue !== changes['session'].previousValue;
+        const previousSession = changes['session'].previousValue;
+        const currentSession = changes['session'].currentValue;
+
+        console.log('🔄 [CONFIRMATION-MODAL] Session mudou - invalidando cache de picks/bans', {
+          referenceChanged: sessionChanged,
+          hasPreviousValue: !!previousSession,
+          hasCurrentValue: !!currentSession,
+          sessionVisible: this.isVisible,
+          previousSessionId: previousSession?.id || previousSession?.matchId,
+          currentSessionId: currentSession?.id || currentSession?.matchId
+        });
+
+        // ✅ CRÍTICO: Se o modal já está visível, forçar refresh IMEDIATO
+        if (this.isVisible) {
+          console.log('🟢 [CONFIRMATION-MODAL] Modal já visível - forçando refresh IMEDIATO');
+          console.log('🔄 [CONFIRMATION-MODAL] Session atual:', {
+            sessionId: this.session?.id || this.session?.matchId,
+            hasTeams: !!this.session?.teams,
+            blueTeamPicks: this.session?.teams?.blue?.allPicks,
+            redTeamPicks: this.session?.teams?.red?.allPicks,
+            phasesCount: this.session?.phases?.length
+          });
+          this.forceRefresh(); // ✅ Usar forceRefresh() que já faz tudo necessário
+        } else {
+          // ✅ CRÍTICO: Se modal está fechado, apenas invalidar cache (será recalculado quando abrir)
+          this.invalidateCache();
+        }
+
+        // ✅ CRÍTICO: Aguardar um tick e forçar refresh novamente para garantir sincronização
+        setTimeout(() => {
+          if (this.isVisible) {
+            // ✅ CRÍTICO: Modal ainda está visível - garantir que tudo está atualizado
+            this.invalidateCache();
+            this.getTeamPicks('blue');
+            this.getTeamPicks('red');
+            this.getTeamBans('blue');
+            this.getTeamBans('red');
+            this.getTeamByLane('blue');
+            this.getTeamByLane('red');
+            this.cdr.markForCheck();
+            this.cdr.detectChanges();
+            console.log('✅ [CONFIRMATION-MODAL] Refresh após tick - tudo recalculado');
+          }
+        }, 0);
+      }
+
+      // ✅ CRÍTICO: Quando o modal reabre (isVisible muda para true), SEMPRE forçar refresh completo
+      // Isso garante que mesmo se a session não tiver mudado via @Input, o modal sempre pega os dados mais recentes
+      if (changes['isVisible']?.currentValue === true && this.session) {
+        console.log('🔄 [CONFIRMATION-MODAL] Modal reabriu - forçando refresh completo');
+        console.log('🔴 [CONFIRMATION-MODAL] CRITICAL: Detectou reabertura do modal - invalidando cache e forçando recálculo TOTAL');
+
+        // ✅ CRÍTICO: Invalidar TODOS os caches antes de recalcular
         this.invalidateCache();
+
+        // ✅ CRÍTICO: Aguardar um tick para garantir que o Angular processou a mudança de @Input session
+        // Isso é necessário porque o modal pode estar reabrindo enquanto a session está sendo atualizada
+        setTimeout(() => {
+          console.log('🔴 [CONFIRMATION-MODAL] Tick executado - session atual:', {
+            sessionId: this.session?.id || this.session?.matchId,
+            hasTeams: !!this.session?.teams,
+            bluePlayersCount: this.session?.teams?.blue?.players?.length || 0,
+            redPlayersCount: this.session?.teams?.red?.players?.length || 0
+          });
+
+          // ✅ CRÍTICO: Invalidar cache novamente (pode ter sido atualizado no tick)
+          this.invalidateCache();
+
+          // ✅ CRÍTICO: Forçar recálculo de TUDO para garantir dados atualizados
+          const bluePicks = this.getTeamPicks('blue');
+          const redPicks = this.getTeamPicks('red');
+          const blueBans = this.getTeamBans('blue');
+          const redBans = this.getTeamBans('red');
+          const blueByLane = this.getTeamByLane('blue');
+          const redByLane = this.getTeamByLane('red');
+
+          console.log('🔴 [CONFIRMATION-MODAL] Dados recalculados após reabertura:', {
+            bluePicks: bluePicks.length,
+            redPicks: redPicks.length,
+            blueBans: blueBans.length,
+            redBans: redBans.length,
+            blueByLane: blueByLane.length,
+            redByLane: redByLane.length
+          });
+
+          // ✅ CRÍTICO: Forçar detecção de mudanças (OnPush requer)
+          this.cdr.markForCheck();
+          this.cdr.detectChanges();
+
+          console.log('✅ [CONFIRMATION-MODAL] Refresh completo concluído após modal reabrir');
+        }, 0);
       }
 
       // ✅ LOG DETALHADO: Mostrar estrutura teams recebida do backend
@@ -498,7 +663,8 @@ export class DraftConfirmationModalComponent implements OnChanges, OnDestroy {
   // MÉTODOS PARA VERIFICAR ESTADO DOS CAMPEÕES
   getBannedChampions(): any[] {
     if (this.isCacheValid() && this._cachedBannedanys) {
-      return this._cachedBannedanys;
+      // ✅ CRÍTICO: Mesmo retornando do cache, criar nova referência para garantir detecção (OnPush)
+      return [...this._cachedBannedanys];
     }
 
     if (!this.session) return [];
@@ -510,22 +676,38 @@ export class DraftConfirmationModalComponent implements OnChanges, OnDestroy {
         index === self.findIndex(c => c.id === champion.id)
       );
 
-    this._cachedBannedanys = bannedanys;
+    // ✅ CRÍTICO: Sempre retornar NOVO array para garantir detecção de mudança (OnPush)
+    const newBannedanys = [...bannedanys];
+
+    this._cachedBannedanys = newBannedanys;
     this._lastCacheUpdate = Date.now();
 
-    return bannedanys;
+    return newBannedanys;
   }
 
   getTeamPicks(team: 'blue' | 'red'): any[] {
-    console.log('🟢 [CONFIRMATION-MODAL] getTeamPicks chamado para:', team);
+    console.log('🟢🟢🟢 [CONFIRMATION-MODAL] getTeamPicks chamado para:', team, {
+      isVisible: this.isVisible,
+      hasSession: !!this.session,
+      cacheValid: this.isCacheValid(),
+      sessionTimestamp: (this.session as any)?._lastUpdate || 'não definido',
+      sessionReference: this.session ? 'presente' : 'ausente'
+    });
 
-    if (team === 'blue' && this.isCacheValid() && this._cachedBlueTeamPicks) {
+    // ✅ CRÍTICO: Se o modal está visível, sempre recalcular para garantir dados atualizados
+    // Isso é especialmente importante quando o modal reabre após changePick
+    if (this.isVisible) {
+      // Se o modal está visível, sempre recalcular (não usar cache)
+      // O cache é útil apenas quando o modal está fechado
+      console.log('🟢 [CONFIRMATION-MODAL] Modal visível - ignorando cache e recalculando');
+    } else if (team === 'blue' && this.isCacheValid() && this._cachedBlueTeamPicks) {
       console.log('🟢 [CONFIRMATION-MODAL] Retornando cache Blue:', this._cachedBlueTeamPicks);
-      return this._cachedBlueTeamPicks;
-    }
-    if (team === 'red' && this.isCacheValid() && this._cachedRedTeamPicks) {
+      // ✅ CRÍTICO: Mesmo retornando do cache, criar nova referência para garantir detecção (OnPush)
+      return [...this._cachedBlueTeamPicks];
+    } else if (team === 'red' && this.isCacheValid() && this._cachedRedTeamPicks) {
       console.log('🟢 [CONFIRMATION-MODAL] Retornando cache Red:', this._cachedRedTeamPicks);
-      return this._cachedRedTeamPicks;
+      // ✅ CRÍTICO: Mesmo retornando do cache, criar nova referência para garantir detecção (OnPush)
+      return [...this._cachedRedTeamPicks];
     }
 
     if (!this.session) {
@@ -536,7 +718,17 @@ export class DraftConfirmationModalComponent implements OnChanges, OnDestroy {
     console.log('🟢 [CONFIRMATION-MODAL] Session existe:', {
       hasTeams: !!this.session.teams,
       hasActions: !!this.session.actions,
-      hasPhases: !!this.session.phases
+      hasPhases: !!this.session.phases,
+      blueTeamData: this.session.teams?.blue ? {
+        playersCount: this.session.teams.blue.players?.length || 0,
+        allPicksCount: this.session.teams.blue.allPicks?.length || 0,
+        allPicks: this.session.teams.blue.allPicks
+      } : 'não existe',
+      redTeamData: this.session.teams?.red ? {
+        playersCount: this.session.teams.red.players?.length || 0,
+        allPicksCount: this.session.teams.red.allPicks?.length || 0,
+        allPicks: this.session.teams.red.allPicks
+      } : 'não existe'
     });
 
     logConfirmationModal(`🎯 [getTeamPicks] === OBTENDO PICKS DO TIME ${team.toUpperCase()} ===`);
@@ -550,39 +742,69 @@ export class DraftConfirmationModalComponent implements OnChanges, OnDestroy {
 
       if (teamData?.players) {
         console.log('🟢 [CONFIRMATION-MODAL] Iterando players:', teamData.players.length);
+        console.log('🟢 [CONFIRMATION-MODAL] Detalhes dos players:', teamData.players.map((p: any) => ({
+          name: p.summonerName || p.name,
+          actionsCount: p.actions?.length || 0,
+          picks: p.actions?.filter((a: any) => a.type === 'pick' && a.status === 'completed').map((a: any) => ({
+            championId: a.championId,
+            championName: a.championName
+          }))
+        })));
         logConfirmationModal(`🎯 [getTeamPicks] Usando estrutura hierárquica - ${teamData.players.length} jogadores`);
 
-        teamData.players.forEach((player: any) => {
-          console.log('🟢 [CONFIRMATION-MODAL] Player:', player.summonerName, 'Actions:', player.actions);
+        teamData.players.forEach((player: any, playerIndex: number) => {
+          const playerName = player.summonerName || player.name || `Player ${playerIndex}`;
+          console.log(`🟢 [CONFIRMATION-MODAL] Player [${playerIndex}]:`, playerName, 'Actions count:', player.actions?.length || 0);
 
-          player.actions?.forEach((action: any) => {
-            console.log('🟢 [CONFIRMATION-MODAL] Action:', action);
+          if (player.actions && Array.isArray(player.actions)) {
+            player.actions.forEach((action: any, actionIndex: number) => {
+              console.log(`🟢 [CONFIRMATION-MODAL] Action [${actionIndex}]:`, {
+                type: action.type,
+                championId: action.championId,
+                status: action.status,
+                championName: action.championName
+              });
 
-            if (action.type === 'pick' && action.championId && action.status === 'completed') {
-              console.log('🟢 [CONFIRMATION-MODAL] Pick encontrado! ChampionId:', action.championId);
+              if (action.type === 'pick' && action.championId && action.status === 'completed') {
+                console.log(`✅ [CONFIRMATION-MODAL] Pick encontrado! Player: ${playerName}, ChampionId: ${action.championId}`);
 
-              // Buscar campeão no cache
-              const champion = this.getChampionFromCache(parseInt(action.championId, 10));
-              console.log('🟢 [CONFIRMATION-MODAL] Champion do cache:', champion);
+                // Buscar campeão no cache
+                const champion = this.getChampionFromCache(parseInt(action.championId, 10));
+                console.log(`🟢 [CONFIRMATION-MODAL] Champion do cache para ID ${action.championId}:`, champion ? champion.name : 'NÃO ENCONTRADO');
 
-              if (champion) {
-                // ✅ CORREÇÃO: Retornar com image como string URL (igual aos bans)
-                const pickData = {
-                  id: champion.key,
-                  name: champion.name,
-                  image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/${champion.id}.png`,
-                  championId: action.championId
-                };
-                console.log('🟢 [CONFIRMATION-MODAL] Adicionando pick:', pickData);
-                teamPicks.push(pickData);
-                logConfirmationModal(`✅ [getTeamPicks] Pick encontrado:`, {
-                  player: player.summonerName,
-                  champion: champion.name,
-                  championId: action.championId
+                if (champion) {
+                  // ✅ CORREÇÃO: Retornar com image como string URL (igual aos bans)
+                  const pickData = {
+                    id: champion.key,
+                    name: champion.name,
+                    image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/${champion.id}.png`,
+                    championId: action.championId
+                  };
+                  console.log(`✅ [CONFIRMATION-MODAL] Adicionando pick: ${pickData.name} (ID: ${pickData.championId})`);
+                  teamPicks.push(pickData);
+                  logConfirmationModal(`✅ [getTeamPicks] Pick encontrado:`, {
+                    player: playerName,
+                    champion: champion.name,
+                    championId: action.championId
+                  });
+                } else {
+                  console.warn(`⚠️ [CONFIRMATION-MODAL] Champion ID ${action.championId} NÃO encontrado no cache!`);
+                }
+              } else {
+                console.log(`⏭️ [CONFIRMATION-MODAL] Action ignorada:`, {
+                  reason: action.type !== 'pick' ? 'tipo não é pick' :
+                    !action.championId ? 'sem championId' :
+                      action.status !== 'completed' ? 'status não é completed' : 'desconhecido',
+                  action: action
                 });
               }
-            }
-          });
+            });
+          } else {
+            console.warn(`⚠️ [CONFIRMATION-MODAL] Player ${playerName} não tem actions ou actions não é array!`, {
+              hasActions: !!player.actions,
+              actionsType: typeof player.actions
+            });
+          }
         });
       }
     }
@@ -610,14 +832,18 @@ export class DraftConfirmationModalComponent implements OnChanges, OnDestroy {
 
     logConfirmationModal(`🎯 [getTeamPicks] Picks finais do time ${team}: ${teamPicks.length} picks`, teamPicks.map(pick => pick.name));
 
+    // ✅ CRÍTICO: Sempre retornar NOVO array para garantir detecção de mudança (OnPush)
+    // Isso é essencial quando o modal está visível ou quando há mudança na session
+    const newTeamPicks = [...teamPicks];
+
     if (team === 'blue') {
-      this._cachedBlueTeamPicks = teamPicks;
+      this._cachedBlueTeamPicks = newTeamPicks;
     } else {
-      this._cachedRedTeamPicks = teamPicks;
+      this._cachedRedTeamPicks = newTeamPicks;
     }
     this._lastCacheUpdate = Date.now();
 
-    return teamPicks;
+    return newTeamPicks;
   }
 
   getTeamBans(team: 'blue' | 'red'): any[] {
@@ -630,7 +856,7 @@ export class DraftConfirmationModalComponent implements OnChanges, OnDestroy {
       const bans = this.session.teams[team].allBans;
       logConfirmationModal(`✅ [getTeamBans] Encontrados ${bans.length} IDs de bans`, bans);
 
-      return bans.map((championId: string) => {
+      const bansArray = bans.map((championId: string) => {
         const champion = this.getChampionFromCache(parseInt(championId, 10));
         if (champion) {
           logConfirmationModal(`✅ [getTeamBans] Campeão ${champion.name} (ID: ${championId}) encontrado no cache`);
@@ -649,12 +875,15 @@ export class DraftConfirmationModalComponent implements OnChanges, OnDestroy {
           image: `https://ddragon.leagueoflegends.com/cdn/15.19.1/img/champion/Unknown.png`
         };
       });
+
+      // ✅ CRÍTICO: Sempre retornar NOVO array para garantir detecção de mudança (OnPush)
+      return [...bansArray];
     }
 
     // Fallback para actions (estrutura antiga)
     if (this.session.actions && this.session.actions.length > 0) {
       const teamIndex = team === 'blue' ? 1 : 2;
-      return this.session.actions
+      const bansArray = this.session.actions
         .filter((action: any) => {
           return action.teamIndex === teamIndex &&
             action.action === 'ban' &&
@@ -662,13 +891,17 @@ export class DraftConfirmationModalComponent implements OnChanges, OnDestroy {
             action.locked;
         })
         .map((action: any) => action.champion);
+      // ✅ CRÍTICO: Sempre retornar NOVO array para garantir detecção de mudança (OnPush)
+      return [...bansArray];
     }
 
     // Fallback para phases (estrutura muito antiga)
     if (this.session.phases) {
-      return this.session.phases
+      const bansArray = this.session.phases
         .filter(phase => phase.team === team && phase.action === 'ban' && phase.champion)
         .map(phase => phase.champion!);
+      // ✅ CRÍTICO: Sempre retornar NOVO array para garantir detecção de mudança (OnPush)
+      return [...bansArray];
     }
 
     return [];
@@ -765,11 +998,16 @@ export class DraftConfirmationModalComponent implements OnChanges, OnDestroy {
 
   // MÉTODOS PARA ORGANIZAR TIMES COM PICKS
   getTeamByLane(team: 'blue' | 'red'): TeamSlot[] {
-    if (team === 'blue' && this.isCacheValid() && this._cachedBlueTeamByLane) {
-      return this._cachedBlueTeamByLane;
-    }
-    if (team === 'red' && this.isCacheValid() && this._cachedRedTeamByLane) {
-      return this._cachedRedTeamByLane;
+    // ✅ CRÍTICO: Se o modal está visível, sempre recalcular para garantir dados atualizados
+    if (this.isVisible) {
+      // Modal visível - sempre recalcular (não usar cache)
+      console.log('🟢 [CONFIRMATION-MODAL] getTeamByLane - Modal visível, recalculando para:', team);
+    } else if (team === 'blue' && this.isCacheValid() && this._cachedBlueTeamByLane) {
+      // ✅ CRÍTICO: Mesmo retornando do cache, criar nova referência para garantir detecção (OnPush)
+      return this._cachedBlueTeamByLane.map(slot => ({ ...slot }));
+    } else if (team === 'red' && this.isCacheValid() && this._cachedRedTeamByLane) {
+      // ✅ CRÍTICO: Mesmo retornando do cache, criar nova referência para garantir detecção (OnPush)
+      return this._cachedRedTeamByLane.map(slot => ({ ...slot }));
     }
 
     if (!this.session) return [];
@@ -800,14 +1038,18 @@ export class DraftConfirmationModalComponent implements OnChanges, OnDestroy {
       phaseIndex: slot.phaseIndex
     })));
 
+    // ✅ CRÍTICO: Sempre retornar NOVO array para garantir detecção de mudança (OnPush)
+    // Isso é essencial quando o modal está visível ou quando há mudança na session
+    const newOrganizedTeam = organizedTeam.map(slot => ({ ...slot })); // Shallow copy dos slots também
+
     if (team === 'blue') {
-      this._cachedBlueTeamByLane = organizedTeam;
+      this._cachedBlueTeamByLane = newOrganizedTeam;
     } else {
-      this._cachedRedTeamByLane = organizedTeam;
+      this._cachedRedTeamByLane = newOrganizedTeam;
     }
     this._lastCacheUpdate = Date.now();
 
-    return organizedTeam;
+    return newOrganizedTeam;
   }
 
   private organizeTeamByLanes(teamPlayers: any[], teamPicks: any[]): TeamSlot[] {
@@ -1399,7 +1641,7 @@ export class DraftConfirmationModalComponent implements OnChanges, OnDestroy {
     this._cachedRedTeamPicks = null;
     this._cachedBlueTeamByLane = null;
     this._cachedRedTeamByLane = null;
-    this._lastCacheUpdate = Date.now();
+    this._lastCacheUpdate = 0; // ✅ CORREÇÃO: Forçar cache inválido imediatamente
   }
 
   private isCacheValid(): boolean {
@@ -1418,18 +1660,83 @@ export class DraftConfirmationModalComponent implements OnChanges, OnDestroy {
     }
   }
 
-  // ✅ NOVO: Método para forçar atualização completa
+  // ✅ NOVO: Método para forçar atualização completa (público para ser chamado do componente pai)
   forceRefresh(): void {
+    console.log('🔄 [CONFIRMATION-MODAL] forceRefresh() CHAMADO - forçando atualização completa');
+    console.log('🔄 [CONFIRMATION-MODAL] Estado atual:', {
+      isVisible: this.isVisible,
+      hasSession: !!this.session,
+      sessionId: this.session?.id || this.session?.matchId,
+      hasTeams: !!this.session?.teams,
+      blueTeamPicks: this.session?.teams?.blue?.allPicks?.length || 0,
+      redTeamPicks: this.session?.teams?.red?.allPicks?.length || 0,
+      blueTeamPicksArray: this.session?.teams?.blue?.allPicks,
+      redTeamPicksArray: this.session?.teams?.red?.allPicks,
+      bluePlayersCount: this.session?.teams?.blue?.players?.length || 0,
+      redPlayersCount: this.session?.teams?.red?.players?.length || 0
+    });
+
+    // ✅ CRÍTICO: Log detalhado dos players e actions
+    if (this.session?.teams?.blue?.players) {
+      console.log('🔵 [CONFIRMATION-MODAL] Blue team players:', this.session.teams.blue.players.map((p: any) => ({
+        name: p.summonerName || p.name,
+        actions: p.actions?.map((a: any) => ({
+          type: a.type,
+          championId: a.championId,
+          status: a.status
+        }))
+      })));
+    }
+    if (this.session?.teams?.red?.players) {
+      console.log('🔴 [CONFIRMATION-MODAL] Red team players:', this.session.teams.red.players.map((p: any) => ({
+        name: p.summonerName || p.name,
+        actions: p.actions?.map((a: any) => ({
+          type: a.type,
+          championId: a.championId,
+          status: a.status
+        }))
+      })));
+    }
+
     logConfirmationModal('🔄 [forceRefresh] Forçando atualização do modal de confirmação');
+
+    // ✅ CRÍTICO: Invalidar TODOS os caches
     this.invalidateCache();
-    // Forçar recálculo de todos os dados
     this._cachedBannedanys = null;
     this._cachedBlueTeamPicks = null;
     this._cachedRedTeamPicks = null;
     this._cachedBlueTeamByLane = null;
     this._cachedRedTeamByLane = null;
     this._lastCacheUpdate = 0; // Forçar recache
-    logConfirmationModal('🔄 [forceRefresh] Cache invalidado com sucesso');
+
+    // ✅ CRÍTICO: Forçar recálculo COMPLETO de todos os dados
+    if (this.session) {
+      console.log('🔄 [CONFIRMATION-MODAL] Recalculando dados...');
+      const bluePicks = this.getTeamPicks('blue');
+      const redPicks = this.getTeamPicks('red');
+      const blueBans = this.getTeamBans('blue');
+      const redBans = this.getTeamBans('red');
+      const blueByLane = this.getTeamByLane('blue');
+      const redByLane = this.getTeamByLane('red');
+
+      console.log('✅ [CONFIRMATION-MODAL] Dados recalculados:', {
+        bluePicks: bluePicks.length,
+        redPicks: redPicks.length,
+        blueBans: blueBans.length,
+        redBans: redBans.length,
+        blueByLane: blueByLane.length,
+        redByLane: redByLane.length
+      });
+    } else {
+      console.warn('⚠️ [CONFIRMATION-MODAL] Session não existe - não é possível recalcular');
+    }
+
+    // ✅ CRÍTICO: Forçar detecção de mudanças (OnPush requer)
+    this.cdr.markForCheck();
+    this.cdr.detectChanges();
+
+    console.log('✅ [CONFIRMATION-MODAL] forceRefresh() concluído - tudo recalculado e detecção de mudanças forçada');
+    logConfirmationModal('🔄 [forceRefresh] Cache invalidado e dados recalculados com sucesso');
   }
 
   // ✅ NOVO: Métodos para status e blur dos jogadores
@@ -1646,38 +1953,40 @@ export class DraftConfirmationModalComponent implements OnChanges, OnDestroy {
    * ✅ NOVO: Configura observables do ElectronEventsService (mesma técnica do draft)
    */
   private setupObservableListeners(): void {
-    // ✅ Listener para draft_updated (quando picks são editados)
+    console.log('🎯 [CONFIRMATION-MODAL] setupObservableListeners CHAMADO - registrando listener draft_updated$');
+
+    // ✅ SIMPLIFICADO: Listener para draft_updated APENAS para invalidar cache
+    // O modal agora usa APENAS a session do pai (@Input) como fonte única de verdade
+    // Não mais atualiza a session diretamente - deixa o pai fazer isso
     this.subscriptions.push(
       this.electronEvents.draftUpdated$.subscribe((data: any) => {
-        // ✅ CORREÇÃO: Verificar matchId de múltiplas formas (session.id pode não existir)
-        const sessionMatchId = this.session?.id || this.session?.matchId;
-        const dataMatchId = data?.matchId || data?.id;
+        console.log('🎯 [CONFIRMATION-MODAL] draft_updated$ recebido');
 
-        if (data && dataMatchId && sessionMatchId && String(dataMatchId) === String(sessionMatchId)) {
-          console.log('🔄 [CONFIRMATION-MODAL] draft_updated recebido - picks podem ter mudado!', {
-            matchId: dataMatchId,
-            sessionMatchId: sessionMatchId,
-            hasPhases: !!(data.phases || data.actions),
-            hasTeams: !!data.teams,
-            sessionId: this.session?.id
-          });
+        const dataMatchId = String(data?.matchId || data?.id);
 
-          // ✅ CRÍTICO: Invalidar cache imediatamente quando recebe draft_updated
-          // Isso força o modal a recalcular picks/bans com os dados atualizados
+        // Se o evento é para este match E o modal está visível, apenas invalidar cache
+        // O pai já atualizou a session, então apenas forçar recálculo
+        if (data && dataMatchId && this.activeMatchId && dataMatchId === this.activeMatchId && this.isVisible) {
+          console.log('✅ [CONFIRMATION-MODAL] draft_updated para este match - invalidando cache E recalculando dados');
+
+          // ✅ Invalidar cache e forçar recálculo com a session do pai (que já foi atualizada)
           this.invalidateCache();
 
-          // ✅ CRÍTICO: Forçar detecção de mudanças (OnPush requer)
+          // ✅ CRÍTICO: Recalcular TODOS os dados para atualizar a UI após changePick
+          // Apenas invalidar cache não é suficiente - precisamos forçar recálculo IMEDIATO
+          this.getTeamPicks('blue');
+          this.getTeamPicks('red');
+          this.getTeamBans('blue');
+          this.getTeamBans('red');
+          this.getTeamByLane('blue');
+          this.getTeamByLane('red');
+
+          // ✅ Forçar detecção de mudanças (OnPush requer)
           this.cdr.markForCheck();
           this.cdr.detectChanges();
 
-          console.log('✅ [CONFIRMATION-MODAL] Cache invalidado após draft_updated');
-        } else {
-          console.log('⚠️ [CONFIRMATION-MODAL] draft_updated ignorado - matchId não confere:', {
-            dataMatchId: dataMatchId,
-            sessionMatchId: sessionMatchId,
-            sessionId: this.session?.id,
-            hasSession: !!this.session
-          });
+          console.log('✅ [CONFIRMATION-MODAL] Cache invalidado E dados recalculados - UI atualizada');
+          logConfirmationModal('✅ [draft_updated$] Cache invalidado e dados recalculados, usando session do pai');
         }
       })
     );

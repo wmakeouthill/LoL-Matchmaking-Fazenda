@@ -1,6 +1,7 @@
 import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ChampionService, ChampionData } from '../../services/champion.service';
+import { AudioService } from '../../services/audio.service';
 import { Subject } from 'rxjs';
 import { debounceTime, distinctUntilChanged } from 'rxjs/operators';
 
@@ -71,7 +72,7 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
   private _lastSessionHash: string = '';
   private _lastCacheKey: string = ''; // ✅ NOVO: Chave para cache mais eficiente
 
-  constructor(private readonly championService: ChampionService) { }
+  constructor(private readonly championService: ChampionService, private readonly audioService: AudioService) { }
 
   ngOnInit() {
     this.loadanys();
@@ -812,6 +813,10 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
     if (this.isVisible) {
       console.log('🔄 [DraftanyModal] Modal aberto - recarregando campeões...');
       console.log('⏰ [DraftanyModal] Timer atual no modal:', this.getDraftTimer());
+
+      // ✅ NOVO: Tocar som "your turn" quando modal de seleção de campeão abre (ANTES de tudo)
+      this.playYourTurnSound();
+
       this.invalidateCache();
       this.loadanys(); // ✅ CORREÇÃO: Recarregar campeões quando modal abrir
       // ✅ CORREÇÃO: Usar setTimeout para forçar detecção de mudanças
@@ -855,5 +860,16 @@ export class DraftanyModalComponent implements OnInit, OnDestroy, OnChanges {
    */
   getDraftTimer(): number {
     return (window as any).appComponent?.draftTimer || 30;
+  }
+
+  /**
+   * ✅ NOVO: Tocar som "your turn"
+   */
+  private playYourTurnSound(): void {
+    try {
+      this.audioService.playYourTurn();
+    } catch (error) {
+      console.error('❌ [DraftanyModal] Erro ao tocar your_turn via AudioService:', error);
+    }
   }
 }

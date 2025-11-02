@@ -15,6 +15,7 @@ import { AdjustLpModalComponent } from './components/settings/adjust-lp-modal';
 import { ChampionshipModalComponent } from './components/settings/championship-modal';
 import { GlobalNotificationsComponent } from './components/global-notifications/global-notifications.component';
 import { ApiService } from './services/api';
+import { AudioService } from './services/audio.service';
 import { QueueStateService } from './services/queue-state';
 import { DiscordIntegrationService } from './services/discord-integration.service';
 import { BotService } from './services/bot.service';
@@ -164,7 +165,8 @@ export class App implements OnInit, OnDestroy {
     private readonly currentSummonerService: CurrentSummonerService,
     private readonly electronEvents: ElectronEventsService,
     private readonly notificationService: GlobalNotificationService,
-    private readonly cdr: ChangeDetectorRef
+    private readonly cdr: ChangeDetectorRef,
+    private readonly audioService: AudioService
   ) {
     console.log(`[App] Constructor`);
 
@@ -229,6 +231,9 @@ export class App implements OnInit, OnDestroy {
     this.electronEvents.gameInProgress$.subscribe(gameData => {
       if (gameData) {
         console.log('🎯 [App] game-in-progress recebido do Electron:', gameData);
+        // ✅ CRÍTICO: Parar sons do draft e match_found
+        this.audioService.stopDraftMusic();
+        this.audioService.stopMatchFound();
         this.inGamePhase = true;
         this.cdr.detectChanges();
       }
@@ -254,6 +259,9 @@ export class App implements OnInit, OnDestroy {
     this.electronEvents.matchCancelled$.subscribe(cancelData => {
       if (cancelData) {
         console.log('🎯 [App] match-cancelled recebido do Electron:', cancelData);
+        // ✅ CRÍTICO: Parar todos os sons
+        this.audioService.stopDraftMusic();
+        this.audioService.stopMatchFound();
         this.showMatchFound = false;
         this.inDraftPhase = false;
         this.inGamePhase = false;
@@ -265,6 +273,9 @@ export class App implements OnInit, OnDestroy {
     this.electronEvents.draftCancelled$.subscribe(cancelData => {
       if (cancelData) {
         console.log('🎯 [App] draft-cancelled recebido do Electron:', cancelData);
+        // ✅ CRÍTICO: Parar todos os sons
+        this.audioService.stopDraftMusic();
+        this.audioService.stopMatchFound();
         this.showMatchFound = false;
         this.inDraftPhase = false;
         this.inGamePhase = false;
@@ -276,6 +287,9 @@ export class App implements OnInit, OnDestroy {
     this.electronEvents.gameCancelled$.subscribe(cancelData => {
       if (cancelData) {
         console.log('🎯 [App] game-cancelled recebido do Electron:', cancelData);
+        // ✅ CRÍTICO: Parar todos os sons
+        this.audioService.stopDraftMusic();
+        this.audioService.stopMatchFound();
         this.showMatchFound = false;
         this.inDraftPhase = false;
         this.inGamePhase = false;
@@ -412,7 +426,10 @@ export class App implements OnInit, OnDestroy {
 
     console.log('⏰ [App] ✅ MatchIds coincidem - atualizando timer');
     this.matchFoundData.acceptanceTimer = secondsRemaining;
-    // ✅ Com Default strategy, detectChanges() é chamado automaticamente
+
+    // ✅ CRÍTICO: Forçar detecção de mudanças para atualizar o timer na view
+    this.cdr.detectChanges();
+
     console.log('⏰ [App] Timer de aceitação atualizado:', secondsRemaining);
     console.log('⏰ [App] ==========================================');
   }
@@ -453,7 +470,9 @@ export class App implements OnInit, OnDestroy {
         });
       }
 
-      // ✅ Com Default strategy, detectChanges() é chamado automaticamente
+      // ✅ CRÍTICO: Forçar detecção de mudanças para atualizar o progresso na view
+      this.cdr.detectChanges();
+
       console.log('📊 [App] Progresso de aceitação atualizado:', data.acceptedCount + '/' + data.totalPlayers);
     }
   }
@@ -462,8 +481,27 @@ export class App implements OnInit, OnDestroy {
    * ✅ NOVO: Atualizar timer do draft
    */
   private updateDraftTimer(timerData: any) {
-    // TODO: Implementar lógica do timer do draft
-    console.log('⏰ [App] Timer do draft atualizado:', timerData.secondsRemaining);
+    // ✅ CORREÇÃO: draft_timer é APENAS para timer (evento separado e leve)
+    console.log('⏰ [App] Timer do draft atualizado via Electron Events:', timerData);
+
+    // ✅ CORREÇÃO: Atualizar timer do draft
+    if (this.inDraftPhase && this.draftData) {
+      const newTimeRemaining = timerData.timeRemaining !== undefined ?
+        timerData.timeRemaining :
+        (timerData.secondsRemaining !== undefined ? timerData.secondsRemaining : 30);
+
+      this.draftTimer = newTimeRemaining;
+
+      // ✅ CRÍTICO: Atualizar draftData.timeRemaining para o componente detectar
+      if (this.draftData) {
+        this.draftData.timeRemaining = newTimeRemaining;
+      }
+
+      console.log(`⏰ [App] Timer atualizado via Electron: ${this.draftTimer}s`);
+
+      // ✅ CRÍTICO: Com OnPush, SEMPRE forçar detecção de mudanças após atualizar timer
+      this.cdr.detectChanges();
+    }
   }
 
   /**
@@ -486,6 +524,18 @@ export class App implements OnInit, OnDestroy {
       }
 
       console.log(`⏰ [App] Timer atualizado: ${this.draftTimer}s`);
+
+      // ✅ CRÍTICO: Disparar evento customizado para o componente draft-pick-ban (OnPush)
+      const event = new CustomEvent('draftTimerUpdate', {
+        detail: {
+          matchId: this.draftData.matchId || timerData.matchId,
+          timeRemaining: newTimeRemaining,
+          timestamp: Date.now()
+        }
+      });
+      document.dispatchEvent(event);
+      console.log('📢 [App] Evento draftTimerUpdate disparado:', event.detail);
+
       this.cdr.detectChanges();
     }
   }
@@ -4072,6 +4122,10 @@ export class App implements OnInit, OnDestroy {
       return;
     }
 
+    // ✅ CRÍTICO: Parar som do draft ao completar
+    this.audioService.stopDraftMusic();
+    this.audioService.stopMatchFound();
+
     // ✅ NOVO: Se recebemos gameData do backend, usar diretamente
     if (event.gameData) {
       logApp('✅ [App] gameData recebido do backend:', event.gameData);
@@ -4129,6 +4183,10 @@ export class App implements OnInit, OnDestroy {
       gameDataExists: !!this.gameData,
       lastMatchId: this.lastMatchId
     });
+
+    // ✅ CRÍTICO: Parar sons do draft e match_found
+    this.audioService.stopDraftMusic();
+    this.audioService.stopMatchFound();
 
     // ✅ VERIFICAR: Se já estamos em game
     if (this.inGamePhase && this.gameData?.matchId === response.matchId) {

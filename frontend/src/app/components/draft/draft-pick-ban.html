@@ -6,6 +6,18 @@
         <h2>Draft - Pick & Ban</h2>
       </div>
 
+      <!-- ✅ NOVO: Botão de mute/ unmute som -->
+      <button
+        class="sound-toggle-btn"
+        (click)="toggleDraftSound()"
+        [title]="isSoundMuted ? 'Ativar som' : 'Mutear som'"
+        [attr.aria-label]="isSoundMuted ? 'Ativar som' : 'Mutear som'"
+      >
+        <span [class]="isSoundMuted ? 'sound-icon muted' : 'sound-icon'">
+          {{ isSoundMuted ? '🔇' : '🔊' }}
+        </span>
+      </button>
+
       <div class="progress-section">
         <div class="progress-bar">
           <div

@@ -1,3 +1,28 @@
+// ✅ IMPORT: Módulo Sass Color (moderno)
+@use 'sass:color';
+
+// ✅ IMPORT: Fonte Press Start 2P (Retro Gaming)
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+// ✅ TEMA RETRO GAMER / CYBERPUNK PIXELIZADO COM CORES DO LEAGUE OF LEGENDS
+$pixel-font: 'Press Start 2P', 'Courier New', monospace;
+$base-font-size: 0.36rem; // ✅ Tamanho base para UI geral
+$player-card-font-size: 0.50rem; // ✅ MENOR para dados dos jogadores nos cards
+$cyber-blue: #00f3ff;
+$cyber-pink: #ff00ff;
+$cyber-green: #00ff41;
+$cyber-yellow: #ffff00;
+$cyber-red: #ff0055;
+$neon-blue: #3498db;
+$neon-purple: #9b59b6;
+// ✅ Cores do League of Legends
+$lol-blue: #3c9aff;
+$lol-red: #ff3d3d;
+$lol-gold: #c8aa6e;
+$lol-dark-gold: #a09b8c;
+$dark-bg: #0a0a0f;
+$dark-panel: #1a1a2e;
+
 // ========== OVERLAY DO MODAL ==========
 .champion-modal-overlay {
   position: fixed;
@@ -5,7 +30,7 @@
   left: 0;
   width: 100%;
   height: 100%;
-  background: rgba(0, 0, 0, 0.8);
+  background: $dark-bg;
   backdrop-filter: blur(5px);
   display: flex;
   align-items: center;
@@ -26,16 +51,46 @@
 
 // ========== MODAL PRINCIPAL ==========
 .champion-modal {
-  background: linear-gradient(135deg, #0a1428 0%, #1e2e4b 100%);
-  border-radius: 16px;
-  border: 2px solid rgba(255, 255, 255, 0.2);
+  background: linear-gradient(135deg, $dark-panel 0%, #16213e 50%, #0f3460 100%);
+  border-radius: 4px;
+  border: 4px solid $cyber-blue;
   max-width: 90vw;
   max-height: 90vh;
   width: 1200px;
   display: flex;
   flex-direction: column;
-  animation: slideIn 0.3s ease;
+  animation: slideIn 0.3s ease, glitchBorder 0.1s infinite;
   overflow: hidden;
+  font-family: $pixel-font;
+  box-shadow: 0 0 20px $cyber-blue, 0 0 40px rgba(0, 243, 255, 0.5);
+  image-rendering: pixelated;
+  position: relative;
+  z-index: 3;
+
+  // Grid cyberpunk background
+  &::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image:
+      linear-gradient(rgba($cyber-blue, 0.03) 2px, transparent 2px),
+      linear-gradient(90deg, rgba($cyber-blue, 0.03) 2px, transparent 2px);
+    background-size: 50px 50px;
+    pointer-events: none;
+    z-index: 0;
+  }
+}
+
+@keyframes glitchBorder {
+  0%, 90%, 100% {
+    border-color: $cyber-blue;
+  }
+  95% {
+    border-color: $cyber-pink;
+  }
 }
 
 @keyframes slideIn {
@@ -81,21 +136,25 @@
 .modal-title-text {
   h2 {
     margin: 0 0 5px 0;
-    color: #f0c040;
-    font-size: 24px;
+    color: $lol-gold;
+    font-size: 0.6rem;
     font-weight: bold;
+    text-shadow: 0 0 10px $lol-gold, 2px 2px 0 $cyber-pink;
+    letter-spacing: 2px;
   }
 
   .modal-subtitle {
     margin: 0;
-    color: #c9aa71;
-    font-size: 14px;
+    color: $lol-dark-gold;
+    font-size: $base-font-size;
+    text-shadow: 0 0 5px $lol-dark-gold;
   }
 }
 
 .you-indicator {
-  color: #f0c040;
+  color: $cyber-yellow;
   font-weight: bold;
+  text-shadow: 0 0 8px $cyber-yellow;
 }
 
 .modal-timer-section {
@@ -103,20 +162,36 @@
 }
 
 .modal-timer {
-  background: #2d5a87;
-  color: #fff;
+  background: rgba(52, 152, 219, 0.3);
+  color: $cyber-blue;
   padding: 10px 16px;
-  border-radius: 8px;
-  font-size: 18px;
+  border-radius: 4px;
+  font-family: $pixel-font;
+  font-size: $base-font-size;
   font-weight: bold;
   min-width: 70px;
   text-align: center;
-  border: 2px solid #3c6e95;
+  border: 2px solid $cyber-blue;
+  box-shadow: 0 0 10px $cyber-blue;
+  text-shadow: 0 0 5px $cyber-blue;
 
   &.warning {
-    background: #c8aa5f;
-    border-color: #d4af37;
-    animation: pulse 1s infinite;
+    background: rgba(255, 0, 85, 0.3);
+    border-color: $cyber-red;
+    box-shadow: 0 0 15px $cyber-red;
+    color: $cyber-red;
+    animation: urgentPulse 0.5s ease-in-out infinite;
+  }
+}
+
+@keyframes urgentPulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 0.8;
   }
 }
 
@@ -139,7 +214,7 @@
   width: 40px;
   height: 40px;
   color: #f0f2f5;
-  font-size: 18px;
+  font-size: 0.8rem;
   cursor: pointer;
   transition: all 0.3s ease;
 
@@ -166,10 +241,13 @@
   margin-bottom: 15px;
 
   .filter-label {
-    color: #c9aa71;
-    font-size: 14px;
+    font-family: $pixel-font;
+    color: $lol-gold;
+    font-size: $base-font-size;
     font-weight: bold;
     margin-bottom: 10px;
+    text-transform: uppercase;
+    text-shadow: 0 0 5px $lol-gold;
   }
 }
 
@@ -180,25 +258,29 @@
 }
 
 .role-btn {
+  font-family: $pixel-font;
   background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 6px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
   padding: 8px 12px;
   color: #f0f2f5;
-  font-size: 12px;
+  font-size: $base-font-size;
   cursor: pointer;
   transition: all 0.3s ease;
+  text-transform: uppercase;
 
   &:hover {
     background: rgba(255, 255, 255, 0.2);
-    border-color: rgba(255, 255, 255, 0.4);
+    border-color: $cyber-blue;
+    box-shadow: 0 0 10px $cyber-blue;
   }
 
   &.active {
-    background: linear-gradient(135deg, #c9aa71, #f0c040);
-    border-color: #f0c040;
-    color: #1a1a1a;
+    background: $lol-gold;
+    border-color: $lol-gold;
+    color: $dark-bg;
     font-weight: bold;
+    box-shadow: 0 0 15px $lol-gold;
   }
 }
 
@@ -215,13 +297,14 @@
 }
 
 .modal-champion-search {
+  font-family: $pixel-font;
   width: 100%;
   padding: 12px 40px 12px 16px;
   background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 8px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
   color: #f0f2f5;
-  font-size: 14px;
+  font-size: $base-font-size;
   outline: none;
   transition: all 0.3s ease;
 
@@ -230,8 +313,9 @@
   }
 
   &:focus {
-    border-color: #f0c040;
+    border-color: $cyber-blue;
     background: rgba(255, 255, 255, 0.15);
+    box-shadow: 0 0 10px $cyber-blue;
   }
 }
 
@@ -264,9 +348,9 @@
   align-items: center;
   gap: 6px;
   padding: 8px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(0, 0, 0, 0.4);
   border: 2px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
+  border-radius: 4px;
   cursor: pointer;
   transition: all 0.3s ease;
   position: relative;
@@ -274,14 +358,15 @@
 
   &:hover {
     background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.3);
+    border-color: $cyber-blue;
+    box-shadow: 0 0 10px $cyber-blue;
     transform: translateY(-2px);
   }
 
   &.selected {
-    border-color: #f0c040;
-    background: rgba(240, 192, 64, 0.1);
-    box-shadow: 0 4px 15px rgba(240, 192, 64, 0.3);
+    border-color: $cyber-yellow;
+    background: rgba(255, 255, 0, 0.15);
+    box-shadow: 0 0 20px $cyber-yellow;
   }
 
   &.banned {
@@ -306,13 +391,15 @@
 .modal-champion-portrait {
   width: 60px;
   height: 60px;
-  border-radius: 8px;
-  border: 2px solid #c9aa71;
+  border-radius: 4px;
+  border: 2px solid $lol-gold;
   object-fit: cover;
+  box-shadow: 0 0 8px $lol-gold;
 }
 
 .modal-champion-label {
-  font-size: 10px;
+  font-family: $pixel-font;
+  font-size: $player-card-font-size;
   color: #f0f2f5;
   text-align: center;
   max-width: 70px;
@@ -320,6 +407,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 500;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.8);
 }
 
 .banned-overlay,
@@ -339,19 +427,21 @@
 }
 
 .banned-text {
-  color: #d9534f;
-  font-size: 10px;
+  font-family: $pixel-font;
+  color: $cyber-red;
+  font-size: $base-font-size;
   font-weight: bold;
   text-align: center;
-  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+  text-shadow: 0 0 5px $cyber-red, 1px 1px 0 rgba(0, 0, 0, 0.8);
 }
 
 .picked-text {
-  color: #28a745;
-  font-size: 10px;
+  font-family: $pixel-font;
+  color: $cyber-green;
+  font-size: $base-font-size;
   font-weight: bold;
   text-align: center;
-  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+  text-shadow: 0 0 5px $cyber-green, 1px 1px 0 rgba(0, 0, 0, 0.8);
 }
 
 .modal-no-champions {
@@ -366,14 +456,22 @@
   }
 
   .no-champions-text {
-    font-size: 16px;
+    font-family: $pixel-font;
+    font-size: 0.6rem;
     font-weight: bold;
     margin-bottom: 8px;
+    color: $lol-gold;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    text-shadow: 0 0 10px $lol-gold;
   }
 
   .no-champions-hint {
-    font-size: 14px;
+    font-family: $pixel-font;
+    font-size: $base-font-size;
     opacity: 0.8;
+    color: $lol-dark-gold;
+    text-shadow: 0 0 5px $lol-dark-gold;
   }
 }
 
@@ -417,14 +515,18 @@
 }
 
 .preview-name {
-  font-size: 14px;
+  font-family: $pixel-font;
+  font-size: $base-font-size;
   font-weight: bold;
   color: #f0f2f5;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.8);
 }
 
 .preview-action {
-  font-size: 12px;
-  color: #c9aa71;
+  font-family: $pixel-font;
+  font-size: $base-font-size;
+  color: $lol-gold;
+  text-shadow: 0 0 5px $lol-gold;
 }
 
 .modal-actions {
