@@ -3,13 +3,14 @@
     <div class="modal-header">
       <div class="header-content">
         <h2>🏆 Confirmar Vencedor da Partida</h2>
-        
-        <!-- ✅ NOVO: Seletor de peso do voto para special users -->
-        <div class="special-user-vote-weight" *ngIf="isSpecialUser">
+
+        <!-- ✅ SIGNALS: Adicionar () para acessar signal -->
+        <div class="special-user-vote-weight" *ngIf="isSpecialUser()">
           <label for="voteWeight">🌟 Peso do Voto:</label>
-          <select 
-            id="voteWeight" 
-            [(ngModel)]="selectedVoteWeight" 
+          <!-- ✅ SIGNALS: ngModel usa getter/setter voteWeight -->
+          <select
+            id="voteWeight"
+            [(ngModel)]="voteWeight"
             class="vote-weight-selector"
             (change)="onVoteWeightChange()">
             <option value="1">1 voto</option>
@@ -20,11 +21,9 @@
             <option value="6">6 votos</option>
             <option value="10">10 votos</option>
           </select>
-          <span class="weight-info">(Seu voto valerá {{ selectedVoteWeight }} voto{{ selectedVoteWeight > 1 ? 's' : '' }})</span>
+          <span class="weight-info">(Seu voto valerá {{ selectedVoteWeight() }} voto{{ selectedVoteWeight() > 1 ? 's' : '' }})</span>
         </div>
-      </div>
-      
-      <button class="close-btn" (click)="cancel()">&times;</button>
+      </div>      <button class="close-btn" (click)="cancel()">&times;</button>
     </div>
 
     <div class="modal-body">
@@ -34,10 +33,11 @@
       </p>
 
       <div class="matches-list">
+        <!-- ✅ SIGNALS: Adicionar () para acessar signal -->
         <div
-          *ngFor="let option of matchOptions; let i = index"
+          *ngFor="let option of matchOptions(); let i = index"
           class="match-card"
-          [class.selected]="selectedMatchIndex === i"
+          [class.selected]="selectedMatchIndex() === i"
           [class.has-winner]="option.winningTeam"
           (click)="selectMatch(i)"
         >
@@ -57,10 +57,10 @@
                 🗳️ {{ option.voteCount }}/10 votos
               </span>
 
-              <!-- You Voted Badge -->
+              <!-- You Voted Badge - ✅ SIGNALS: Adicionar () -->
               <span
                 class="voted-badge"
-                *ngIf="myVotedGameId === option.match.gameId"
+                *ngIf="myVotedGameId() === option.match.gameId"
               >
                 ✓ Você votou aqui
               </span>

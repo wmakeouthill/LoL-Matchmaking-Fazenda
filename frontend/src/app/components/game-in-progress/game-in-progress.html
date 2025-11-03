@@ -15,19 +15,19 @@
           <span class="timer-value">{{ getGameDurationFormatted() }}</span>
         </div>
 
-        <div class="lcu-status" *ngIf="lcuDetectionEnabled">
+        <div class="lcu-status" *ngIf="lcuDetectionEnabled()">
           <span
             class="status-indicator"
-            [class.active]="lcuGameDetected"
+            [class.active]="lcuGameDetected()"
           ></span>
           <span
-            >{{ lcuGameDetected ? 'LCU Conectado' : 'Aguardando LCU' }}</span
+            >{{ lcuGameDetected() ? 'LCU Conectado' : 'Aguardando LCU' }}</span
           >
         </div>
       </div>
 
       <!-- ✅ NOVO: Progresso de votação -->
-      <div class="vote-progress-header" *ngIf="showWinnerConfirmationModal">
+      <div class="vote-progress-header" *ngIf="showWinnerConfirmationModal()">
         <div class="progress-status-header">
           {{ getVoteCount().voted }}/{{ getVoteCount().total }} ({{
           getVoteProgress() }}%)
@@ -41,11 +41,11 @@
     <div class="team team-blue" [style.border-color]="getTeamColor('blue')">
       <div class="team-header">
         <h3 [style.color]="getTeamColor('blue')">{{ getTeamName('blue') }}</h3>
-        <div class="team-status" *ngIf="selectedWinner">
-          <span class="winner-badge" *ngIf="selectedWinner === 'blue'"
+        <div class="team-status" *ngIf="selectedWinner()">
+          <span class="winner-badge" *ngIf="selectedWinner() === 'blue'"
             >🏆 VITÓRIA</span
           >
-          <span class="loser-badge" *ngIf="selectedWinner === 'red'"
+          <span class="loser-badge" *ngIf="selectedWinner() === 'red'"
             >💀 DERROTA</span
           >
         </div>
@@ -161,11 +161,11 @@
     <div class="team team-red" [style.border-color]="getTeamColor('red')">
       <div class="team-header">
         <h3 [style.color]="getTeamColor('red')">{{ getTeamName('red') }}</h3>
-        <div class="team-status" *ngIf="selectedWinner">
-          <span class="winner-badge" *ngIf="selectedWinner === 'red'"
+        <div class="team-status" *ngIf="selectedWinner()">
+          <span class="winner-badge" *ngIf="selectedWinner() === 'red'"
             >🏆 VITÓRIA</span
           >
-          <span class="loser-badge" *ngIf="selectedWinner === 'blue'"
+          <span class="loser-badge" *ngIf="selectedWinner() === 'blue'"
             >💀 DERROTA</span
           >
         </div>
@@ -314,7 +314,7 @@
         <span class="status-value">{{ gameStartTime | date:'HH:mm:ss' }}</span>
       </div>
 
-      <div class="status-item" *ngIf="lcuGameDetected">
+      <div class="status-item" *ngIf="lcuGameDetected()">
         <span class="status-label">Detecção LCU:</span>
         <span class="status-value connected">✅ Ativa</span>
       </div>
@@ -344,14 +344,14 @@
           <button
             class="btn btn-outline retry-detection-btn"
             (click)="retryAutoDetection()"
-            [disabled]="isAutoDetecting"
+            [disabled]="isAutoDetecting()"
           >
-            <span class="btn-icon" *ngIf="!isAutoDetecting">🔍</span>
-            <span class="btn-icon spinning" *ngIf="isAutoDetecting">⏳</span>
-            <span *ngIf="!isAutoDetecting"
+            <span class="btn-icon" *ngIf="!isAutoDetecting()">🔍</span>
+            <span class="btn-icon spinning" *ngIf="isAutoDetecting()">⏳</span>
+            <span *ngIf="!isAutoDetecting()"
               >Vincular Partida do Discord à Partida do League of Legends</span
             >
-            <span *ngIf="isAutoDetecting">Carregando partidas...</span>
+            <span *ngIf="isAutoDetecting()">Carregando partidas...</span>
           </button>
         </div>
         <p class="setting-description">
@@ -560,11 +560,11 @@
 
   <!-- ✅ NOVO: Modal de Confirmação de Vencedor Manual -->
   <app-winner-confirmation-modal
-    *ngIf="showWinnerConfirmationModal"
+    *ngIf="showWinnerConfirmationModal()"
     [matchId]="matchId || null"
-    [customMatches]="customMatchesForConfirmation"
+    [customMatches]="customMatchesForConfirmation()"
     [currentPlayers]="getAllPlayers()"
-    [currentPlayer]="currentPlayer"
+    [currentPlayer]="currentPlayer()"
     (onConfirm)="onWinnerConfirmed($event)"
     (onCancel)="onWinnerConfirmationCancelled()"
   >
@@ -572,7 +572,7 @@
 
   <!-- ✅ NOVO: Modal de Espectadores -->
   <app-spectators-modal
-    *ngIf="showSpectatorsModal"
+    *ngIf="showSpectatorsModal()"
     [matchId]="matchId"
     [summonerName]="summonerName"
     (closed)="closeSpectatorsModal()"

@@ -1,5 +1,6 @@
-import { Component, EventEmitter, Input, OnInit, OnDestroy, Output } from '@angular/core';
+import { Component, OnInit, OnDestroy, input, output, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { Subscription, firstValueFrom } from 'rxjs';
 import { ApiService } from '../../services/api';
@@ -41,33 +42,44 @@ interface PlayerVoteStatus {
 @Component({
   selector: 'app-winner-confirmation-modal',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, FormsModule],
   templateUrl: './winner-confirmation-modal.component.html',
   styleUrls: ['./winner-confirmation-modal.component.scss']
 })
 export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
-  @Input() customMatches: CustomMatch[] = [];
-  @Input() currentPlayers: any[] = []; // Jogadores da partida atual
-  @Input() currentPlayer: any = null; // ✅ NOVO: Jogador logado via LCU
-  @Input() matchId: number | null = null; // ID da partida customizada para votação
-  @Output() onConfirm = new EventEmitter<{ match: CustomMatch, winner: 'blue' | 'red' }>();
-  @Output() onCancel = new EventEmitter<void>();
+  // ✅ SIGNALS: Converter @Input → input<T>()
+  customMatches = input<CustomMatch[]>([]);
+  currentPlayers = input<any[]>([]); // Jogadores da partida atual
+  currentPlayer = input<any>(null); // ✅ NOVO: Jogador logado via LCU
+  matchId = input<number | null>(null); // ID da partida customizada para votação
 
-  // ✅ NOVO: Propriedades para special user
-  isSpecialUser: boolean = false;
-  selectedVoteWeight: number = 1;
-  currentSummonerName: string = '';
+  // ✅ SIGNALS: Converter @Output → output<T>()
+  onConfirm = output<{ match: CustomMatch, winner: 'blue' | 'red' }>();
+  onCancel = output<void>();
 
-  matchOptions: MatchOption[] = [];
-  selectedMatchIndex: number | null = null;
-  voteCounts: Map<number, number> = new Map(); // lcuGameId -> voteCount
-  myVotedGameId: number | null = null; // LCU game que o usuário votou
+  // ✅ SIGNALS: Propriedades de estado convertidas para signal()
+  isSpecialUser = signal<boolean>(false);
+  selectedVoteWeight = signal<number>(1);
+  currentSummonerName = signal<string>('');
+
+  // ✅ SIGNALS: Getter/setter para ngModel funcionar com signal
+  get voteWeight(): number {
+    return this.selectedVoteWeight();
+  }
+  set voteWeight(value: number) {
+    this.selectedVoteWeight.set(value);
+  }
+
+  matchOptions = signal<MatchOption[]>([]);
+  selectedMatchIndex = signal<number | null>(null);
+  voteCounts = signal<Map<number, number>>(new Map()); // lcuGameId -> voteCount
+  myVotedGameId = signal<number | null>(null); // LCU game que o usuário votou
   private wsSubscription?: Subscription;
 
-  // ✅ NOVO: Status de votação dos jogadores
-  playerVoteStatuses: Map<string, PlayerVoteStatus> = new Map();
-  votedCount: number = 0;
-  totalPlayers: number = 10;
+  // ✅ SIGNALS: Status de votação dos jogadores
+  playerVoteStatuses = signal<Map<string, PlayerVoteStatus>>(new Map());
+  votedCount = signal<number>(0);
+  totalPlayers = signal<number>(10);
 
   // ✅ NOVO: baseUrl para HTTP POST direto (mesma técnica do draft)
   private readonly baseUrl: string;
@@ -102,17 +114,19 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
       if (window.electronAPI?.lcu?.getCurrentSummoner) {
         const currentSummoner = await window.electronAPI.lcu.getCurrentSummoner();
         if (currentSummoner) {
-          this.currentSummonerName = currentSummoner.displayName || currentSummoner.summonerName || '';
+          // ✅ SIGNALS: Usar set() para atualizar signal
+          this.currentSummonerName.set(currentSummoner.displayName || currentSummoner.summonerName || '');
 
           // Verificar se é special user via API
           const isSpecial = await firstValueFrom(
-            this.apiService.checkSpecialUserStatus(this.currentSummonerName)
+            this.apiService.checkSpecialUserStatus(this.currentSummonerName())
           );
 
-          this.isSpecialUser = isSpecial || false;
+          // ✅ SIGNALS: Usar set() para atualizar signal
+          this.isSpecialUser.set(isSpecial || false);
 
-          if (this.isSpecialUser) {
-            console.log('🌟 [WinnerModal] Special user detectado:', this.currentSummonerName);
+          if (this.isSpecialUser()) {
+            console.log('🌟 [WinnerModal] Special user detectado:', this.currentSummonerName());
             // Carregar configuração atual do special user
             await this.loadSpecialUserConfig();
           }
@@ -120,7 +134,7 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
       }
     } catch (error) {
       console.error('❌ [WinnerModal] Erro ao verificar special user status:', error);
-      this.isSpecialUser = false;
+      this.isSpecialUser.set(false);
     }
   }
 
@@ -130,12 +144,13 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
   private async loadSpecialUserConfig(): Promise<void> {
     try {
       const config = await firstValueFrom(
-        this.apiService.getSpecialUserConfig(this.currentSummonerName)
+        this.apiService.getSpecialUserConfig(this.currentSummonerName())
       );
 
       if (config && config.voteWeight) {
-        this.selectedVoteWeight = config.voteWeight;
-        console.log('🌟 [WinnerModal] Configuração carregada - peso:', this.selectedVoteWeight);
+        // ✅ SIGNALS: Usar set() para atualizar signal
+        this.selectedVoteWeight.set(config.voteWeight);
+        console.log('🌟 [WinnerModal] Configuração carregada - peso:', this.selectedVoteWeight());
       }
     } catch (error) {
       console.error('❌ [WinnerModal] Erro ao carregar configuração:', error);
@@ -146,18 +161,18 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
    * ✅ NOVO: Salvar configuração do special user
    */
   private async saveSpecialUserConfig(): Promise<void> {
-    if (!this.isSpecialUser || !this.currentSummonerName) return;
+    if (!this.isSpecialUser() || !this.currentSummonerName()) return;
 
     try {
       await firstValueFrom(
-        this.apiService.updateSpecialUserConfig(this.currentSummonerName, {
-          voteWeight: this.selectedVoteWeight,
+        this.apiService.updateSpecialUserConfig(this.currentSummonerName(), {
+          voteWeight: this.selectedVoteWeight(),
           allowMultipleVotes: false, // Por enquanto, não permitir múltiplos votos
           maxVotes: 1
         })
       );
 
-      console.log('✅ [WinnerModal] Configuração salva - peso:', this.selectedVoteWeight);
+      console.log('✅ [WinnerModal] Configuração salva - peso:', this.selectedVoteWeight());
     } catch (error) {
       console.error('❌ [WinnerModal] Erro ao salvar configuração:', error);
     }
@@ -167,7 +182,7 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
    * ✅ NOVO: Handler para mudança de peso do voto
    */
   onVoteWeightChange(): void {
-    console.log('🌟 [WinnerModal] Peso do voto alterado para:', this.selectedVoteWeight);
+    console.log('🌟 [WinnerModal] Peso do voto alterado para:', this.selectedVoteWeight());
     this.saveSpecialUserConfig();
   }
 
@@ -189,13 +204,17 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
   }
 
   private async loadInitialVotes() {
-    if (!this.matchId) return;
+    // ✅ SIGNALS: Extrair valor do input signal
+    const currentMatchId = this.matchId();
+    if (!currentMatchId) return;
 
     try {
       // Carregar votos atuais do backend
-      const votes = await firstValueFrom(this.apiService.getMatchVotes(this.matchId));
+      const votes = await firstValueFrom(this.apiService.getMatchVotes(currentMatchId));
       if (votes) {
-        this.voteCounts = new Map(Object.entries(votes).map(([k, v]) => [Number(k), Number(v)]));
+        // ✅ SIGNALS: Criar novo Map e atualizar signal
+        const newVoteCounts = new Map(Object.entries(votes).map(([k, v]) => [Number(k), Number(v)]));
+        this.voteCounts.set(newVoteCounts);
         this.updateVoteCountsInOptions();
       }
     } catch (error) {
@@ -206,11 +225,14 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
   private handleVoteUpdate(data: any) {
     console.log('🗳️ [WinnerModal] Atualização de votos recebida:', data);
 
-    if (data.matchId !== this.matchId) return;
+    const currentMatchId = this.matchId();
+    if (data.matchId !== currentMatchId) return;
 
     // Atualizar contadores de votos
     if (data.voteCounts) {
-      this.voteCounts = new Map(Object.entries(data.voteCounts).map(([k, v]) => [Number(k), Number(v)]));
+      // ✅ SIGNALS: Criar novo Map e atualizar signal
+      const newVoteCounts = new Map(Object.entries(data.voteCounts).map(([k, v]) => [Number(k), Number(v)]));
+      this.voteCounts.set(newVoteCounts);
       this.updateVoteCountsInOptions();
     }
   }
@@ -228,22 +250,35 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
   }
 
   private updateVoteCountsInOptions() {
-    this.matchOptions.forEach(option => {
-      const voteCount = this.voteCounts.get(option.match.gameId) || 0;
-      option.voteCount = voteCount;
-    });
+    // ✅ SIGNALS: Extrair valores dos signals
+    const currentVoteCounts = this.voteCounts();
+    const currentOptions = this.matchOptions();
+
+    // ✅ SIGNALS: Criar novo array com contadores atualizados
+    const updatedOptions = currentOptions.map(option => ({
+      ...option,
+      voteCount: currentVoteCounts.get(option.match.gameId) || 0
+    }));
+
+    // ✅ SIGNALS: Atualizar signal com novo array
+    this.matchOptions.set(updatedOptions);
   }
 
   selectMatch(index: number) {
-    // ✅ CORREÇÃO: Apenas marcar a seleção, não votar ainda
-    this.selectedMatchIndex = index;
-    console.log('🎯 [WinnerModal] Partida selecionada:', index, this.matchOptions[index].match.gameId);
+    // ✅ SIGNALS: Usar set() para atualizar signal
+    this.selectedMatchIndex.set(index);
+
+    const options = this.matchOptions();
+    console.log('🎯 [WinnerModal] Partida selecionada:', index, options[index].match.gameId);
   }
 
   private processMatches() {
-    console.log(`🔍 [WinnerModal] processMatches: ${this.customMatches.length} partidas recebidas`);
+    // ✅ SIGNALS: Extrair valor do input signal
+    const matches = this.customMatches();
+    console.log(`🔍 [WinnerModal] processMatches: ${matches.length} partidas recebidas`);
 
-    this.matchOptions = this.customMatches.map((match, index) => {
+    // ✅ SIGNALS: Criar novo array para matchOptions
+    const newMatchOptions = matches.map((match, index) => {
       console.log(`🔍 [WinnerModal] Processando partida ${index + 1}:`, {
         gameId: match.gameId,
         participants: match.participants?.length || 0,
@@ -266,7 +301,10 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
       };
     });
 
-    console.log(`✅ [WinnerModal] ${this.matchOptions.length} opções de partida criadas`);
+    // ✅ SIGNALS: Atualizar signal com novo array
+    this.matchOptions.set(newMatchOptions);
+
+    console.log(`✅ [WinnerModal] ${newMatchOptions.length} opções de partida criadas`);
   }
 
   /**
@@ -404,19 +442,25 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
   }
 
   async confirmSelection() {
-    console.log('🔍 [DEBUG 1/10] ===== confirmSelection INICIADO =====');
-    console.log('🔍 [DEBUG 2/10] selectedMatchIndex:', this.selectedMatchIndex);
-    console.log('🔍 [DEBUG 3/10] matchOptions.length:', this.matchOptions?.length);
-    console.log('🔍 [DEBUG 4/10] matchId:', this.matchId);
+    // ✅ SIGNALS: Extrair valores dos signals
+    const currentSelectedIndex = this.selectedMatchIndex();
+    const currentOptions = this.matchOptions();
+    const currentMatchId = this.matchId();
+    const player = this.currentPlayer();
 
-    if (this.selectedMatchIndex === null) {
+    console.log('🔍 [DEBUG 1/10] ===== confirmSelection INICIADO =====');
+    console.log('🔍 [DEBUG 2/10] selectedMatchIndex:', currentSelectedIndex);
+    console.log('🔍 [DEBUG 3/10] matchOptions.length:', currentOptions?.length);
+    console.log('🔍 [DEBUG 4/10] matchId:', currentMatchId);
+
+    if (currentSelectedIndex === null) {
       console.log('❌ [DEBUG] FALHOU: selectedMatchIndex é null');
       alert('Por favor, selecione uma partida primeiro.');
       return;
     }
 
-    console.log('✅ [DEBUG 5/10] selectedMatchIndex válido:', this.selectedMatchIndex);
-    const selectedOption = this.matchOptions[this.selectedMatchIndex];
+    console.log('✅ [DEBUG 5/10] selectedMatchIndex válido:', currentSelectedIndex);
+    const selectedOption = currentOptions[currentSelectedIndex];
     console.log('🔍 [DEBUG 6/10] selectedOption:', selectedOption);
 
     if (!selectedOption.winningTeam) {
@@ -428,7 +472,7 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
     console.log('✅ [DEBUG 7/10] winningTeam válido:', selectedOption.winningTeam);
 
     // ✅ VERIFICAÇÃO: Apenas verificar se currentPlayer está disponível (sem confirmação crítica)
-    if (!this.currentPlayer) {
+    if (!player) {
       console.error('❌ [WinnerModal] currentPlayer não disponível');
       alert('Erro: Jogador não identificado. Não é possível votar.');
       return;
@@ -437,13 +481,13 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
     console.log('✅ [WinnerModal] currentPlayer disponível, prosseguindo com votação...');
 
     // ✅ NOVO: Garantir que a configuração do special user esteja salva antes de votar
-    if (this.isSpecialUser) {
+    if (this.isSpecialUser()) {
       console.log('🌟 [WinnerModal] Special user detectado, salvando configuração antes de votar...');
       await this.saveSpecialUserConfig();
     }
 
     // ✅ VOTAÇÃO: Enviar voto ao backend
-    if (!this.matchId) {
+    if (!currentMatchId) {
       console.warn('⚠️ [DEBUG 8/10] FALHOU: Match ID não fornecido, pulando votação');
       // Apenas emitir confirmação sem votar
       this.onConfirm.emit({
@@ -453,7 +497,7 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
       return;
     }
 
-    console.log('✅ [DEBUG 9/10] matchId válido:', this.matchId);
+    console.log('✅ [DEBUG 9/10] matchId válido:', currentMatchId);
     const lcuGameId = selectedOption.match.gameId;
     console.log('🔍 [DEBUG 10/10] lcuGameId:', lcuGameId);
 
@@ -461,25 +505,25 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
       // ✅ PADRONIZAÇÃO: Usar HTTP POST direto (mesma técnica do draft pick/ban e draft confirmation)
       console.log('🗳️ [WinnerModal] >>> ENVIANDO VOTO VIA HTTP POST DIRETO <<<');
       console.log('🗳️ [WinnerModal] Parametros:', {
-        matchId: this.matchId,
+        matchId: currentMatchId,
         lcuGameId: lcuGameId,
-        currentPlayer: this.currentPlayer
+        currentPlayer: player
       });
 
       // ✅ MESMA TÉCNICA DO DRAFT: Construir summonerName do currentPlayer (prioridade igual ao draft)
       let summonerName = '';
 
       // Prioridade 1: gameName#tagLine (formato completo com tag, usado no backend)
-      if (this.currentPlayer?.gameName && this.currentPlayer?.tagLine) {
-        summonerName = `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`;
+      if (player?.gameName && player?.tagLine) {
+        summonerName = `${player.gameName}#${player.tagLine}`;
         console.log('🎯 [WinnerModal] Usando gameName#tagLine:', summonerName);
-      } else if (this.currentPlayer?.displayName) {
+      } else if (player?.displayName) {
         // Prioridade 2: displayName (pode incluir tag)
-        summonerName = this.currentPlayer.displayName;
+        summonerName = player.displayName;
         console.log('🎯 [WinnerModal] Usando displayName:', summonerName);
-      } else if (this.currentPlayer?.summonerName) {
+      } else if (player?.summonerName) {
         // Prioridade 3: summonerName (pode não ter tag)
-        summonerName = this.currentPlayer.summonerName;
+        summonerName = player.summonerName;
         console.log('🎯 [WinnerModal] Usando summonerName:', summonerName);
       }
 
@@ -490,7 +534,7 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
       }
 
       // ✅ HTTP POST DIRETO (igual ao draft pick/ban e draft confirmation)
-      const url = `${this.baseUrl}/match/${this.matchId}/vote`;
+      const url = `${this.baseUrl}/match/${currentMatchId}/vote`;
       const body = {
         summonerName: summonerName,
         lcuGameId: lcuGameId
@@ -505,7 +549,8 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
       );
 
       console.log('✅ [WinnerModal] <<< HTTP POST RETORNOU <<<');
-      this.myVotedGameId = lcuGameId;
+      // ✅ SIGNALS: Atualizar signal
+      this.myVotedGameId.set(lcuGameId);
 
       console.log('✅ [WinnerModal] Voto registrado para LCU game:', lcuGameId);
       console.log('📊 [WinnerModal] Resposta do voto:', voteResponse);
@@ -786,13 +831,15 @@ Items: ${items || 'Nenhum'}`;
 
   // ✅ CORRIGIDO: Verificar se o participante é o jogador logado via LCU
   isPlayerInOurMatch(participant: any): boolean {
-    if (!this.currentPlayer) {
+    // ✅ SIGNALS: Extrair valor do input signal
+    const player = this.currentPlayer();
+    if (!player) {
       return false;
     }
 
     // Construir nome completo do jogador logado
-    const currentPlayerName = (this.currentPlayer.summonerName || this.currentPlayer.gameName || '').toLowerCase().trim();
-    const currentPlayerTagLine = this.currentPlayer.tagLine || '';
+    const currentPlayerName = (player.summonerName || player.gameName || '').toLowerCase().trim();
+    const currentPlayerTagLine = player.tagLine || '';
     const fullPlayerName = currentPlayerTagLine
       ? `${currentPlayerName}#${currentPlayerTagLine}`.toLowerCase()
       : currentPlayerName;
@@ -810,15 +857,17 @@ Items: ${items || 'Nenhum'}`;
    * Identifica o usuário atual via LCU
    */
   private identifyCurrentUser(): void {
-    if (this.currentPlayer) {
+    // ✅ SIGNALS: Extrair valor do input signal
+    const player = this.currentPlayer();
+    if (player) {
       console.log('🔍 [WinnerModal] Usuário atual identificado via LCU:', {
-        displayName: this.currentPlayer.displayName,
-        summonerName: this.currentPlayer.summonerName,
-        gameName: this.currentPlayer.gameName,
-        tagLine: this.currentPlayer.tagLine
+        displayName: player.displayName,
+        summonerName: player.summonerName,
+        gameName: player.gameName,
+        tagLine: player.tagLine
       });
 
-      this.markCurrentUserInPlayers(this.currentPlayer);
+      this.markCurrentUserInPlayers(player);
     } else {
       console.log('⚠️ [WinnerModal] Usuário atual não disponível via LCU');
     }
@@ -828,7 +877,9 @@ Items: ${items || 'Nenhum'}`;
    * Marca o jogador atual nos dados da partida
    */
   private markCurrentUserInPlayers(currentUser: any): void {
-    this.currentPlayers.forEach(player => {
+    // ✅ SIGNALS: Extrair valor do input signal e iterar
+    const players = this.currentPlayers();
+    players.forEach(player => {
       if (this.isPlayerCurrentUser(player, currentUser)) {
         player.isCurrentUser = true;
         console.log('✅ [WinnerModal] Jogador marcado como usuário atual:', player.summonerName);
@@ -879,7 +930,9 @@ Items: ${items || 'Nenhum'}`;
    * Obtém o status de votação de um jogador
    */
   getPlayerVoteStatus(summonerName: string): 'pending' | 'voted' | 'declined' | 'timeout' {
-    const status = this.playerVoteStatuses.get(summonerName);
+    // ✅ SIGNALS: Extrair valor do signal e buscar no Map
+    const statuses = this.playerVoteStatuses();
+    const status = statuses.get(summonerName);
     return status?.voteStatus || 'pending';
   }
 
@@ -909,7 +962,9 @@ Items: ${items || 'Nenhum'}`;
    */
   getVoteCount(): { voted: number; total: number } {
     let voted = 0;
-    this.currentPlayers.forEach(player => {
+    // ✅ SIGNALS: Extrair valor do input signal e iterar
+    const players = this.currentPlayers();
+    players.forEach(player => {
       if (this.getPlayerVoteStatus(player.summonerName) === 'voted') {
         voted++;
       }
@@ -917,7 +972,7 @@ Items: ${items || 'Nenhum'}`;
 
     return {
       voted,
-      total: this.currentPlayers.length
+      total: players.length
     };
   }
 

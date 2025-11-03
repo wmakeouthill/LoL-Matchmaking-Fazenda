@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, OnChanges, SimpleChanges, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
+import { Component, input, output, OnInit, OnDestroy, OnChanges, SimpleChanges, ChangeDetectionStrategy, ChangeDetectorRef, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ApiService } from '../../services/api';
 import { ChampionService } from '../../services/champion.service';
@@ -68,35 +68,38 @@ function logGameInProgress(...args: any[]) {
   changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
-  @Input() gameData: GameData | null = null;
-  @Input() currentPlayer: any = null;
-  @Output() onGameComplete = new EventEmitter<GameResult>();
-  @Output() onGameCancel = new EventEmitter<void>();
+  // ✅ SIGNALS: Converter @Input → input<T>()
+  gameData = input<GameData | null>(null);
+  currentPlayer = input<any>(null);
 
-  // Game state
-  gameStatus: 'waiting' | 'in-progress' | 'ended' = 'waiting';
-  gameStartTime: Date | null = null;
-  gameDuration: number = 0;
+  // ✅ SIGNALS: Converter @Output → output<T>()
+  onGameComplete = output<GameResult>();
+  onGameCancel = output<void>();
+
+  // ✅ SIGNALS: Game state convertido para signal()
+  gameStatus = signal<'waiting' | 'in-progress' | 'ended'>('waiting');
+  gameStartTime = signal<Date | null>(null);
+  gameDuration = signal<number>(0);
 
   // LCU detection - DISABLED (detecção automática removida)
-  lcuGameDetected: boolean = false;
-  lcuDetectionEnabled: boolean = false; // ✅ DESABILITADO
+  lcuGameDetected = signal<boolean>(false);
+  lcuDetectionEnabled = signal<boolean>(false); // ✅ DESABILITADO
 
   // Manual result declaration
-  selectedWinner: TeamColor | null = null;
+  selectedWinner = signal<TeamColor | null>(null);
 
-  // ✅ ÚNICO SISTEMA: Modal de confirmação de vencedor manual
-  showWinnerConfirmationModal: boolean = false;
-  customMatchesForConfirmation: any[] = [];
-  isAutoDetecting: boolean = false;
+  // ✅ SIGNALS: Modal de confirmação de vencedor manual
+  showWinnerConfirmationModal = signal<boolean>(false);
+  customMatchesForConfirmation = signal<any[]>([]);
+  isAutoDetecting = signal<boolean>(false);
 
-  // ✅ NOVO: Controle do modal de espectadores
-  showSpectatorsModal: boolean = false;
+  // ✅ SIGNALS: Controle do modal de espectadores
+  showSpectatorsModal = signal<boolean>(false);
 
-  // ✅ NOVO: Status de votação dos jogadores
-  playerVoteStatuses: Map<string, PlayerVoteStatus> = new Map();
-  votedCount: number = 0;
-  totalPlayers: number = 10;
+  // ✅ SIGNALS: Status de votação dos jogadores
+  playerVoteStatuses = signal<Map<string, PlayerVoteStatus>>(new Map());
+  votedCount = signal<number>(0);
+  totalPlayers = signal<number>(10);
 
   // ✅ NOVO: WebSocket subscription para atualizações em tempo real
   private voteWsSubscription?: Subscription;
@@ -104,36 +107,40 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   // ✅ NOVO: Array para gerenciar subscrições de observables (mesma técnica do draft confirmation)
   private subscriptions: Subscription[] = [];
 
-  // ✅ NOVO: Getter para obter o matchId com fallback robusto
+  // ✅ SIGNALS: Getter para obter o matchId com fallback robusto
   get matchId(): number | undefined {
+    // ✅ SIGNALS: Extrair valor do input signal
+    const data = this.gameData();
     // Tentar todas as propriedades possíveis onde o backend pode enviar o ID
-    return this.gameData?.matchId ||
-      this.gameData?.id ||
-      this.gameData?.originalMatchId;
+    return data?.matchId ||
+      data?.id ||
+      data?.originalMatchId;
   }
 
-  // ✅ NOVO: Getter para obter summoner name do currentPlayer
+  // ✅ SIGNALS: Getter para obter summoner name do currentPlayer
   get summonerName(): string {
-    if (!this.currentPlayer) return '';
+    // ✅ SIGNALS: Extrair valor do input signal
+    const player = this.currentPlayer();
+    if (!player) return '';
 
     // Prioridade 1: displayName
-    if (this.currentPlayer.displayName) {
-      return this.currentPlayer.displayName;
+    if (player.displayName) {
+      return player.displayName;
     }
 
     // Prioridade 2: gameName#tagLine
-    if (this.currentPlayer.gameName && this.currentPlayer.tagLine) {
-      return `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`;
+    if (player.gameName && player.tagLine) {
+      return `${player.gameName}#${player.tagLine}`;
     }
 
     // Prioridade 3: summonerName
-    if (this.currentPlayer.summonerName) {
-      return this.currentPlayer.summonerName;
+    if (player.summonerName) {
+      return player.summonerName;
     }
 
     // Prioridade 4: name
-    if (this.currentPlayer.name) {
-      return this.currentPlayer.name;
+    if (player.name) {
+      return player.name;
     }
 
     return '';
@@ -163,17 +170,21 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     private electronEvents: ElectronEventsService
   ) { } ngOnInit() {
     logGameInProgress('🚀 [GameInProgress] Inicializando componente...');
+
+    // ✅ SIGNALS: Extrair valor do input signal
+    const data = this.gameData();
+
     logGameInProgress('📊 [GameInProgress] gameData recebido:', {
-      hasGameData: !!this.gameData,
-      originalMatchId: this.gameData?.originalMatchId, // ✅ VERIFICAR ESTE VALOR
-      gameDataKeys: this.gameData ? Object.keys(this.gameData) : [],
-      hasTeam1: !!(this.gameData?.team1),
-      hasTeam2: !!(this.gameData?.team2),
-      team1Length: this.gameData?.team1?.length || 0,
-      team2Length: this.gameData?.team2?.length || 0,
-      fullGameData: this.gameData // ✅ LOG COMPLETO
+      hasGameData: !!data,
+      originalMatchId: data?.originalMatchId,
+      gameDataKeys: data ? Object.keys(data) : [],
+      hasTeam1: !!(data?.team1),
+      hasTeam2: !!(data?.team2),
+      team1Length: data?.team1?.length || 0,
+      team2Length: data?.team2?.length || 0,
+      fullGameData: data
     });
-    logGameInProgress('👤 [GameInProgress] currentPlayer:', this.currentPlayer);
+    logGameInProgress('👤 [GameInProgress] currentPlayer:', this.currentPlayer());
 
     // ✅ NOVO: Identificar usuário atual
     this.identifyCurrentUser();
@@ -182,8 +193,8 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     this.setupVoteWebSocketListeners();
     this.setupVoteObservables(); // ✅ NOVO: Usar observables do ElectronEventsService (mesma técnica do draft)
 
-    // ✅ CORREÇÃO: Só inicializar se temos gameData
-    if (this.gameData) {
+    // ✅ SIGNALS: Verificar se temos gameData usando o valor extraído
+    if (data) {
       this.initializeGame();
 
       // ✅ NOVO: Inicializar status de votação
@@ -415,13 +426,14 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       };
 
       // Hidratar times
-      if (Array.isArray(this.gameData.team1)) {
+      const data = this.gameData();
+      if (data && Array.isArray(data.team1)) {
         logGameInProgress('🔍 Resolvendo campeões do Team 1...');
-        this.gameData.team1.forEach(resolvePlayerChampion);
+        data.team1.forEach(resolvePlayerChampion);
       }
-      if (Array.isArray(this.gameData.team2)) {
+      if (data && Array.isArray(data.team2)) {
         logGameInProgress('🔍 Resolvendo campeões do Team 2...');
-        this.gameData.team2.forEach(resolvePlayerChampion);
+        data.team2.forEach(resolvePlayerChampion);
       }
 
       logGameInProgress('✅ [GameInProgress] Jogadores hidratados com nomes de campeões');
@@ -431,37 +443,41 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   private logGameDataSnapshot(): void {
+    const data = this.gameData();
     logGameInProgress('📊 [GameInProgress] gameData atual:', {
-      gameData: this.gameData,
-      hasGameData: !!this.gameData,
-      sessionId: this.gameData?.sessionId,
-      team1Length: this.gameData?.team1?.length || 0,
-      team2Length: this.gameData?.team2?.length || 0,
-      team1Sample: this.gameData?.team1?.[0],
-      team2Sample: this.gameData?.team2?.[0]
+      gameData: data,
+      hasGameData: !!data,
+      sessionId: data?.sessionId,
+      team1Length: data?.team1?.length || 0,
+      team2Length: data?.team2?.length || 0,
+      team1Sample: data?.team1?.[0],
+      team2Sample: data?.team2?.[0]
     });
   }
 
   private ensureGameData(): boolean {
-    if (!this.gameData) {
+    // ✅ SIGNALS: Extrair valor do input signal
+    const data = this.gameData();
+
+    if (!data) {
       logGameInProgress('❌ [GameInProgress] gameData não está disponível');
       return false;
     }
 
     // ✅ CORREÇÃO: Verificar se temos os dados mínimos necessários
-    if (!this.gameData.team1 || !this.gameData.team2) {
+    if (!data.team1 || !data.team2) {
       logGameInProgress('❌ [GameInProgress] Dados dos times não estão disponíveis:', {
-        hasTeam1: !!this.gameData.team1,
-        hasTeam2: !!this.gameData.team2,
-        gameDataKeys: Object.keys(this.gameData)
+        hasTeam1: !!data.team1,
+        hasTeam2: !!data.team2,
+        gameDataKeys: Object.keys(data)
       });
       return false;
     }
 
-    if (this.gameData.team1.length === 0 || this.gameData.team2.length === 0) {
+    if (data.team1.length === 0 || data.team2.length === 0) {
       logGameInProgress('❌ [GameInProgress] Times estão vazios:', {
-        team1Length: this.gameData.team1.length,
-        team2Length: this.gameData.team2.length
+        team1Length: data.team1.length,
+        team2Length: data.team2.length
       });
       return false;
     }
@@ -470,20 +486,25 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   private setupInitialState(): void {
-    this.gameStartTime = new Date();
-    this.gameStatus = 'waiting';
+    // ✅ SIGNALS: Usar .set() para atualizar signals
+    this.gameStartTime.set(new Date());
+    this.gameStatus.set('waiting');
 
+    // ✅ SIGNALS: Extrair valor do input signal para log
+    const data = this.gameData();
     logGameInProgress('✅ [GameInProgress] Partida inicializada com sucesso:', {
-      sessionId: this.gameData?.sessionId,
-      team1: this.gameData?.team1?.length || 0,
-      team2: this.gameData?.team2?.length || 0,
-      isCustom: this.gameData?.isCustomGame
+      sessionId: data?.sessionId,
+      team1: data?.team1?.length || 0,
+      team2: data?.team2?.length || 0,
+      isCustom: data?.isCustomGame
     });
   }
 
   private normalizePickBanDataSafe(): void {
     try {
-      if (!this.gameData) return;
+      // ✅ SIGNALS: Extrair valor do input signal
+      const data = this.gameData();
+      if (!data) return;
 
       const maybePickBan = (this as any)._normalizedPickBanData || null;
       if (maybePickBan) return;
@@ -556,7 +577,8 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
         (this as any)._normalizedPickBanData = parsedPickBan || null;
       }
 
-      if ((this as any)._normalizedPickBanData && !this.gameData.pickBanData && dr) {
+      const currentData = this.gameData();
+      if ((this as any)._normalizedPickBanData && !currentData?.pickBanData && dr) {
         logGameInProgress('✅ [GameInProgress] pickBanData normalizado a partir de draftResults');
       }
     } catch (e) {
@@ -566,8 +588,9 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
 
   private startGameTimer() {
     this.gameTimer = interval(1000).subscribe(() => {
-      if (this.gameStartTime) {
-        this.gameDuration = Math.floor((Date.now() - this.gameStartTime.getTime()) / 1000);
+      const startTime = this.gameStartTime();
+      if (startTime) {
+        this.gameDuration.set(Math.floor((Date.now() - startTime.getTime()) / 1000));
       }
     });
   }
@@ -741,44 +764,46 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   */
 
   private autoCompleteGame(winner: TeamColor, detectedByLCU: boolean) {
-    if (!this.gameData) return;
+    const data = this.gameData();
+    if (!data) return;
 
     const result: GameResult = {
-      sessionId: this.gameData.sessionId,
+      sessionId: data.sessionId,
       gameId: this.generateGameId(),
       winner: winner,
-      duration: this.gameDuration,
+      duration: this.gameDuration(),
       endTime: new Date(),
-      team1: this.gameData.team1,
-      team2: this.gameData.team2,
-      pickBanData: this.gameData.pickBanData,
+      team1: data.team1,
+      team2: data.team2,
+      pickBanData: data.pickBanData,
       detectedByLCU: detectedByLCU,
       isCustomGame: true,
-      originalMatchId: this.gameData.originalMatchId,
-      originalMatchData: this.gameData.originalMatchData,
-      riotId: this.gameData.riotId
+      originalMatchId: data.originalMatchId,
+      originalMatchData: data.originalMatchData,
+      riotId: data.riotId
     };
 
     this.onGameComplete.emit(result);
   }
   // Novo método para completar jogo com dados reais do LCU
   private autoCompleteGameWithRealData(winner: TeamColor | null, detectedByLCU: boolean, lcuMatchData: any) {
-    if (!this.gameData) return;
+    const data = this.gameData();
+    if (!data) return;
 
     const result: GameResult = {
-      sessionId: this.gameData.sessionId,
+      sessionId: data.sessionId,
       gameId: this.generateGameId(),
       winner: winner,
-      duration: this.gameDuration,
+      duration: this.gameDuration(),
       endTime: new Date(),
-      team1: this.gameData.team1,
-      team2: this.gameData.team2,
-      pickBanData: this.gameData.pickBanData,
+      team1: data.team1,
+      team2: data.team2,
+      pickBanData: data.pickBanData,
       detectedByLCU: detectedByLCU,
       isCustomGame: true,
-      originalMatchId: this.gameData.originalMatchId || lcuMatchData.gameId,
+      originalMatchId: data.originalMatchId || lcuMatchData.gameId,
       originalMatchData: lcuMatchData, // Incluir dados completos da partida do LCU
-      riotId: this.gameData.riotId || (lcuMatchData.platformId ? `${lcuMatchData.platformId}_${lcuMatchData.gameId}` : `BR1_${lcuMatchData.gameId}`)
+      riotId: data.riotId || (lcuMatchData.platformId ? `${lcuMatchData.platformId}_${lcuMatchData.gameId}` : `BR1_${lcuMatchData.gameId}`)
     };
 
     logGameInProgress('✅ Partida concluída automaticamente com dados reais do LCU:', result);
@@ -787,40 +812,43 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
 
   // Manual winner declaration
   declareWinner(winner: TeamColor) {
-    this.selectedWinner = winner;
+    this.selectedWinner.set(winner);
   }
   confirmWinner() {
-    if (!this.selectedWinner || !this.gameData) return;
+    const winner = this.selectedWinner();
+    const data = this.gameData();
+    if (!winner || !data) return;
 
     // ❌ REMOVIDO: detecção automática via LCU
     // Agora sempre usa conclusão manual
     logGameInProgress('✅ Confirmando vencedor (manual)');
     const result: GameResult = {
-      sessionId: this.gameData.sessionId,
+      sessionId: data.sessionId,
       gameId: this.generateGameId(),
-      winner: this.selectedWinner,
-      duration: this.gameDuration,
+      winner: winner,
+      duration: this.gameDuration(),
       endTime: new Date(),
-      team1: this.gameData.team1,
-      team2: this.gameData.team2,
-      pickBanData: this.gameData.pickBanData,
+      team1: data.team1,
+      team2: data.team2,
+      pickBanData: data.pickBanData,
       detectedByLCU: false,
       isCustomGame: true,
-      originalMatchId: this.gameData.originalMatchId,
-      originalMatchData: this.gameData.originalMatchData,
-      riotId: this.gameData.riotId
+      originalMatchId: data.originalMatchId,
+      originalMatchData: data.originalMatchData,
+      riotId: data.riotId
     };
 
     this.onGameComplete.emit(result);
   }  // Cancel game
   async cancelGame() {
+    const data = this.gameData();
     logGameInProgress('❌ [GameInProgress] Cancelando partida...');
     logGameInProgress('📊 [GameInProgress] gameData atual:', {
-      hasGameData: !!this.gameData,
-      gameDataKeys: this.gameData ? Object.keys(this.gameData) : [],
-      originalMatchId: this.gameData?.originalMatchId,
-      matchId: this.gameData?.matchId,
-      fullGameData: this.gameData
+      hasGameData: !!data,
+      gameDataKeys: data ? Object.keys(data) : [],
+      originalMatchId: data?.originalMatchId,
+      matchId: data?.matchId,
+      fullGameData: data
     });
 
     // ✅ CORREÇÃO: Usar getter com fallback robusto
@@ -866,7 +894,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     logGameInProgress('📊 Partida selecionada:', data.match);
 
     // Fechar modal
-    this.showWinnerConfirmationModal = false;
+    this.showWinnerConfirmationModal.set(false);
 
     // Completar jogo com dados da partida do LCU
     this.autoCompleteGameWithRealData(data.winner, true, data.match);
@@ -874,17 +902,18 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
 
   onWinnerConfirmationCancelled() {
     logGameInProgress('🚫 Confirmação de vencedor cancelada pelo usuário');
-    this.showWinnerConfirmationModal = false;
-    this.customMatchesForConfirmation = [];
-    this.isAutoDetecting = false;
+    this.showWinnerConfirmationModal.set(false);
+    this.customMatchesForConfirmation.set([]);
+    this.isAutoDetecting.set(false);
     this.cdr.markForCheck();
   }
 
   // ✅ NOVO: Retorna todos os jogadores (team1 + team2)
   getAllPlayers(): any[] {
-    if (!this.gameData) return [];
-    const team1 = this.gameData.team1 || [];
-    const team2 = this.gameData.team2 || [];
+    const data = this.gameData();
+    if (!data) return [];
+    const team1 = data.team1 || [];
+    const team2 = data.team2 || [];
     return [...team1, ...team2];
   }
 
@@ -906,10 +935,10 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
 
   // ✅ NOVO: Método para identificar vencedor manualmente via modal
   async retryAutoDetection() {
-    logGameInProgress('�️ Abrindo modal de confirmação de vencedor manual...');
+    logGameInProgress('🔍️ Abrindo modal de confirmação de vencedor manual...');
 
     // Set loading state
-    this.isAutoDetecting = true;
+    this.isAutoDetecting.set(true);
     this.cdr.markForCheck();
 
     try {
@@ -928,7 +957,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       if (!historyResponse?.success || !historyResponse?.matches?.length) {
         logGameInProgress('⚠️ Nenhuma partida encontrada no histórico do LCU');
         alert('Nenhuma partida encontrada no histórico do LCU. Certifique-se de que o League of Legends está aberto e que você jogou partidas recentemente.');
-        this.isAutoDetecting = false;
+        this.isAutoDetecting.set(false);
         this.cdr.markForCheck();
         return;
       }
@@ -983,7 +1012,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
         logGameInProgress('⚠️ Total de partidas recebidas:', last3Matches.length);
         logGameInProgress('⚠️ Partidas válidas após filtro:', validMatches.length);
         alert('As partidas encontradas não possuem dados completos. Tente novamente em alguns segundos.');
-        this.isAutoDetecting = false;
+        this.isAutoDetecting.set(false);
         this.cdr.markForCheck();
         return;
       }
@@ -991,15 +1020,15 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       logGameInProgress(`✅ ${validMatches.length} partidas válidas com todos os 10 jogadores`);
 
       // ✅ Abrir modal de confirmação
-      this.customMatchesForConfirmation = validMatches;
-      this.showWinnerConfirmationModal = true;
-      this.isAutoDetecting = false;
+      this.customMatchesForConfirmation.set(validMatches);
+      this.showWinnerConfirmationModal.set(true);
+      this.isAutoDetecting.set(false);
       this.cdr.markForCheck();
 
     } catch (error) {
       logGameInProgress('❌ Erro ao buscar histórico do LCU:', error);
       alert('Erro ao acessar o histórico do LCU. Certifique-se de que o League of Legends está aberto.');
-      this.isAutoDetecting = false;
+      this.isAutoDetecting.set(false);
       this.cdr.markForCheck();
     }
   }
@@ -1514,12 +1543,13 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       this.lcuDetectionTimer.unsubscribe();
       this.lcuDetectionTimer = null;
     }
-    this.lcuGameDetected = false;
+    this.lcuGameDetected.set(false);
   }
 
   // Template helper methods
   getGameStatusIcon(): string {
-    switch (this.gameStatus) {
+    const status = this.gameStatus();
+    switch (status) {
       case 'waiting': return '⏳';
       case 'in-progress': return '🎮';
       case 'ended': return '🏁';
@@ -1528,7 +1558,8 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   getGameStatusText(): string {
-    switch (this.gameStatus) {
+    const status = this.gameStatus();
+    switch (status) {
       case 'waiting': return 'Aguardando início';
       case 'in-progress': return 'Jogo em andamento';
       case 'ended': return 'Jogo finalizado';
@@ -1537,8 +1568,9 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   getGameDurationFormatted(): string {
-    const minutes = Math.floor(this.gameDuration / 60);
-    const seconds = this.gameDuration % 60;
+    const duration = this.gameDuration();
+    const minutes = Math.floor(duration / 60);
+    const seconds = duration % 60;
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   }
 
@@ -1556,11 +1588,12 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       return this.cachedTeamPlayers.get(team)!;
     }
 
-    if (!this.gameData) {
+    const data = this.gameData();
+    if (!data) {
       return [];
     }
 
-    const players = team === 'blue' ? this.gameData.team1 : this.gameData.team2;
+    const players = team === 'blue' ? data.team1 : data.team2;
     const result = players || [];
 
     // ✅ CACHE: Armazenar resultado
@@ -1570,18 +1603,20 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   getMyTeam(): TeamColor | null {
-    if (!this.gameData || !this.currentPlayer) return null;
+    const data = this.gameData();
+    const player = this.currentPlayer();
+    if (!data || !player) return null;
 
-    const isInTeam1 = this.gameData.team1.some(player =>
-      player.id === this.currentPlayer?.id ||
-      player.summonerName === this.currentPlayer?.summonerName
+    const isInTeam1 = data.team1.some((p: any) =>
+      p.id === player?.id ||
+      p.summonerName === player?.summonerName
     );
 
     if (isInTeam1) return 'blue';
 
-    const isInTeam2 = this.gameData.team2.some(player =>
-      player.id === this.currentPlayer?.id ||
-      player.summonerName === this.currentPlayer?.summonerName
+    const isInTeam2 = data.team2.some((p: any) =>
+      p.id === player?.id ||
+      p.summonerName === player?.summonerName
     );
 
     if (isInTeam2) return 'red';
@@ -1590,7 +1625,8 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   }
   isMyTeamWinner(): boolean {
     const myTeam = this.getMyTeam();
-    return myTeam === this.selectedWinner;
+    const winner = this.selectedWinner();
+    return myTeam === winner;
   }
 
   /**
@@ -1669,14 +1705,15 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
 
     // Usar pickBanData normalizado se existir
     const normalizedPickBan = (this as any)._normalizedPickBanData;
-    const hasPickBan = !!(normalizedPickBan || this.gameData?.pickBanData);
+    const data = this.gameData();
+    const hasPickBan = !!(normalizedPickBan || data?.pickBanData);
     if (!hasPickBan) {
       this.cachedTeamBans.set(team, []);
       return [];
     }
 
     try {
-      const pickBanData = normalizedPickBan || this.gameData?.pickBanData;
+      const pickBanData = normalizedPickBan || data?.pickBanData;
 
       logGameInProgress(`🔍 [GameInProgress] pickBanData para team ${team}:`, pickBanData);
       logGameInProgress(`🔍 [GameInProgress] blueBans:`, pickBanData?.blueBans);
@@ -1822,7 +1859,8 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     }
 
     const normalizedPickBan2 = (this as any)._normalizedPickBanData;
-    const hasPickBan2 = !!(normalizedPickBan2 || this.gameData?.pickBanData);
+    const data2 = this.gameData();
+    const hasPickBan2 = !!(normalizedPickBan2 || data2?.pickBanData);
     if (!hasPickBan2) {
       const emptyResult: any[] = [];
       this.cachedTeamPicks.set(team, emptyResult);
@@ -1830,7 +1868,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     }
 
     try {
-      const pickBanData = normalizedPickBan2 || this.gameData?.pickBanData;
+      const pickBanData = normalizedPickBan2 || data2?.pickBanData;
 
       // ✅ CORREÇÃO: Extrair picks das phases (estrutura correta)
       if (Array.isArray(pickBanData?.phases)) {
@@ -2234,7 +2272,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
    */
   openSpectatorsModal(): void {
     console.log('[GameInProgress] Abrindo modal de espectadores');
-    this.showSpectatorsModal = true;
+    this.showSpectatorsModal.set(true);
   }
 
   /**
@@ -2242,7 +2280,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
    */
   closeSpectatorsModal(): void {
     console.log('[GameInProgress] Fechando modal de espectadores');
-    this.showSpectatorsModal = false;
+    this.showSpectatorsModal.set(false);
   }
 
   /**
@@ -2251,12 +2289,13 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
    */
   private sendGameAcknowledgment(): void {
     try {
-      if (!this.gameData?.matchId && !this.gameData?.id) {
+      const data = this.gameData();
+      if (!data?.matchId && !data?.id) {
         logGameInProgress('⚠️ Sem matchId para enviar acknowledgment');
         return;
       }
 
-      const matchId = this.gameData.matchId || this.gameData.id;
+      const matchId = data.matchId || data.id;
       const playerName = this.summonerName;
 
       if (!playerName) {
@@ -2284,15 +2323,16 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
    * Identifica o usuário atual via LCU
    */
   private identifyCurrentUser(): void {
-    if (this.currentPlayer) {
+    const player = this.currentPlayer();
+    if (player) {
       console.log('🔍 [GameInProgress] Usuário atual identificado via LCU:', {
-        displayName: this.currentPlayer.displayName,
-        summonerName: this.currentPlayer.summonerName,
-        gameName: this.currentPlayer.gameName,
-        tagLine: this.currentPlayer.tagLine
+        displayName: player.displayName,
+        summonerName: player.summonerName,
+        gameName: player.gameName,
+        tagLine: player.tagLine
       });
 
-      this.markCurrentUserInPlayers(this.currentPlayer);
+      this.markCurrentUserInPlayers(player);
     } else {
       console.log('⚠️ [GameInProgress] Usuário atual não disponível via LCU');
     }
@@ -2302,11 +2342,12 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
    * Marca o jogador atual nos dados da partida
    */
   private markCurrentUserInPlayers(currentUser: any): void {
-    if (!this.gameData) return;
+    const data = this.gameData();
+    if (!data) return;
 
     const allPlayers = [
-      ...(this.gameData.team1 || []),
-      ...(this.gameData.team2 || [])
+      ...(data.team1 || []),
+      ...(data.team2 || [])
     ];
 
     allPlayers.forEach(player => {
@@ -2361,9 +2402,10 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
    */
   getPlayerVoteStatus(summonerName: string): 'pending' | 'voted' {
     // ✅ CORREÇÃO: Apenas pending ou voted (sem declined/timeout)
+    const data = this.gameData();
     const allPlayers = [
-      ...(this.gameData?.team1 || []),
-      ...(this.gameData?.team2 || [])
+      ...(data?.team1 || []),
+      ...(data?.team2 || [])
     ];
 
     const player = allPlayers.find(p => p.summonerName === summonerName);
@@ -2395,11 +2437,12 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
    */
   getVoteCount(): { voted: number; total: number } {
     let voted = 0;
-    if (!this.gameData) return { voted: 0, total: 0 };
+    const data = this.gameData();
+    if (!data) return { voted: 0, total: 0 };
 
     const allPlayers = [
-      ...(this.gameData.team1 || []),
-      ...(this.gameData.team2 || [])
+      ...(data.team1 || []),
+      ...(data.team2 || [])
     ];
 
     allPlayers.forEach(player => {
@@ -2533,9 +2576,10 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
 
     if (data.votedPlayers && Array.isArray(data.votedPlayers)) {
       // ✅ CORREÇÃO: Usar mesma técnica do draft - buscar nos dados dos jogadores
+      const gameData = this.gameData();
       const allPlayers = [
-        ...(this.gameData?.team1 || []),
-        ...(this.gameData?.team2 || [])
+        ...(gameData?.team1 || []),
+        ...(gameData?.team2 || [])
       ];
 
       console.log(`🗳️ [GameInProgress] Processando ${data.votedPlayers.length} votos para ${allPlayers.length} jogadores`);
@@ -2565,11 +2609,11 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
         }
       });
 
-      // Atualizar contadores
-      this.votedCount = data.votedCount || 0;
-      this.totalPlayers = data.totalPlayers || 10;
+      // Atualizar contadores usando signals
+      this.votedCount.set(data.votedCount || 0);
+      this.totalPlayers.set(data.totalPlayers || 10);
 
-      console.log(`🗳️ [GameInProgress] Atualizado: ${this.votedCount}/${this.totalPlayers} votaram`);
+      console.log(`🗳️ [GameInProgress] Atualizado: ${this.votedCount()}/${this.totalPlayers()} votaram`);
       console.log(`🗳️ [GameInProgress] Progresso: ${this.getVoteProgress()}%`);
       console.log(`🗳️ [GameInProgress] Status final dos jogadores:`, allPlayers.map(p => ({ name: p.summonerName, status: p.voteStatus })));
 
@@ -2591,9 +2635,10 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
     console.log('🔄 [GameInProgress] Atualização de votação recebida:', data);
 
     if (data.playerName && data.status) {
+      const gameData = this.gameData();
       const allPlayers = [
-        ...(this.gameData?.team1 || []),
-        ...(this.gameData?.team2 || [])
+        ...(gameData?.team1 || []),
+        ...(gameData?.team2 || [])
       ];
 
       const player = allPlayers.find(p => p.summonerName === data.playerName);
@@ -2615,11 +2660,12 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
    * Reseta o status de votação de todos os jogadores para 'pending'
    */
   private resetAllVoteStatuses(): void {
-    if (!this.gameData) return;
+    const data = this.gameData();
+    if (!data) return;
 
     const allPlayers = [
-      ...(this.gameData.team1 || []),
-      ...(this.gameData.team2 || [])
+      ...(data.team1 || []),
+      ...(data.team2 || [])
     ];
 
     allPlayers.forEach(player => {
