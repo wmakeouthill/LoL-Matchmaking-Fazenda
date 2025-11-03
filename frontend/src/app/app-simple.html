@@ -108,7 +108,7 @@
     @case ('queue') {
     <div class="view-container">
       <app-queue
-        [isInQueue]="isInQueue"
+        [isInQueue]="_isInQueueSignal()"
         [queueStatus]="queueStatus"
         [currentPlayer]="currentPlayer"
         [inDraftPhase]="inDraftPhase"
@@ -153,7 +153,12 @@
 
         <!-- Settings Grid -->
         <div style="display: grid; gap: 2rem; grid-template-columns: 1fr">
-          <!-- Auto Detection Card -->
+
+          <!-- ========================================== -->
+          <!-- SEÇÕES PÚBLICAS (Todos os Usuários)       -->
+          <!-- ========================================== -->
+
+          <!-- 1. Auto Detection Card (PÚBLICO) -->
           <div
             style="
               background: linear-gradient(135deg, #1e2328 0%, #0f1419 100%);
@@ -260,7 +265,7 @@
             }
           </div>
 
-          <!-- Manual Configuration Card -->
+          <!-- 2. Manual Configuration Card (PÚBLICO) -->
           @if (!currentPlayer) {
           <div
             style="
@@ -386,7 +391,7 @@
           </div>
           }
 
-          <!-- Current Configuration Card -->
+          <!-- 3. Current Configuration Card (PÚBLICO) -->
           @if (currentPlayer) {
           <div
             style="
@@ -525,7 +530,12 @@
           </div>
           }
 
-          <!-- Riot API Configuration Card -->
+          <!-- ========================================== -->
+          <!-- SEÇÕES RESTRITAS (Special Users Only)     -->
+          <!-- ========================================== -->
+
+          <!-- 4. Riot API Configuration Card (Special Users Only) -->
+          @if (isSpecialUser()) {
           <div
             style="
               background: linear-gradient(135deg, #1e2328 0%, #0f1419 100%);
@@ -618,8 +628,9 @@
               🔑 Configurar API Key
             </button>
           </div>
+          }
 
-          <!-- Discord Bot Configuration Card -->
+          <!-- 5. Discord Bot Configuration Card (Special Users Only) -->
           @if (isSpecialUser()) {
           <div
             style="
@@ -800,7 +811,7 @@
           </div>
           }
 
-          <!-- Development Tools Card -->
+          <!-- 6. Development Tools Card (Special Users Only) -->
           @if (isSpecialUser()) {
           <div
             style="
@@ -992,7 +1003,7 @@
   <!-- Match Found Modal -->
   <app-match-found
     [matchData]="matchFoundData"
-    [isVisible]="showMatchFound"
+    [isVisible]="_showMatchFoundSignal()"
     (acceptMatch)="onAcceptMatch($event)"
     (declineMatch)="onDeclineMatch($event)"
   >

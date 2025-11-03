@@ -103,11 +103,13 @@ export class DiscordIntegrationService {
       case 'discord_users':
         console.log(`👥 [DiscordService #${this.instanceId}] Usuários Discord recebidos:`, data.users?.length || 0, 'usuários');
 
-        // ✅ CORREÇÃO: Mesclar dados em vez de substituir completamente
+        // ✅ CORREÇÃO: SEMPRE criar nova referência para signals detectarem mudanças
         if (data.users && data.users.length > 0) {
-          this.discordUsersOnline = data.users;
-          this.usersSubject.next(this.discordUsersOnline);
-          console.log(`✅ [DiscordService #${this.instanceId}] Usuários atualizados:`, this.discordUsersOnline.length, 'usuários');
+          // ✅ CRÍTICO: Criar nova referência com spread operator
+          this.discordUsersOnline = [...data.users];
+          // ✅ CRÍTICO: Enviar nova referência para o Subject também
+          this.usersSubject.next([...this.discordUsersOnline]);
+          console.log(`✅ [DiscordService #${this.instanceId}] Usuários atualizados (nova referência):`, this.discordUsersOnline.length, 'usuários');
         } else {
           // Só limpar se explicitamente indicado (ex: canal vazio)
           console.log(`⚠️ [DiscordService #${this.instanceId}] Lista vazia recebida, mantendo dados existentes`);
@@ -201,8 +203,9 @@ export class DiscordIntegrationService {
         next: (response: any) => {
           const users = response.users || response.data || [];
           console.log(`👥 [DiscordService #${this.instanceId}] Usuários Discord recebidos via backend:`, users.length, 'usuários');
-          this.discordUsersOnline = users;
-          this.usersSubject.next(this.discordUsersOnline);
+          // ✅ CRÍTICO: Criar nova referência para signals detectarem mudanças
+          this.discordUsersOnline = [...users];
+          this.usersSubject.next([...this.discordUsersOnline]);
           this.lastAutoUpdate = Date.now();
         },
         error: (err: any) => {
@@ -222,8 +225,9 @@ export class DiscordIntegrationService {
           const users = response.users || response.data || [];
           console.log(`👥 [DiscordService #${this.instanceId}] Usuários Discord recebidos via REST:`, users.length, 'usuários');
 
-          this.discordUsersOnline = users;
-          this.usersSubject.next(this.discordUsersOnline);
+          // ✅ CRÍTICO: Criar nova referência para signals detectarem mudanças
+          this.discordUsersOnline = [...users];
+          this.usersSubject.next([...this.discordUsersOnline]);
         },
         error: (error: any) => {
           console.error(`❌ [DiscordService #${this.instanceId}] Erro ao obter usuários via REST:`, error);
@@ -339,7 +343,8 @@ export class DiscordIntegrationService {
   }
 
   getDiscordUsersOnline(): any[] {
-    return this.discordUsersOnline;
+    // ✅ CRÍTICO: Retornar nova referência para signals detectarem mudanças
+    return [...this.discordUsersOnline];
   }
 
   // Observables
@@ -433,13 +438,14 @@ export class DiscordIntegrationService {
   getUsersWithFallback(): any[] {
     this.checkDataStaleness();
 
+    // ✅ CRÍTICO: SEMPRE retornar nova referência para signals detectarem mudanças
     // Se há dados stale mas não há conexão, mostrar dados cached
     if (this.isDataStale && !this.isBackendConnected && this.discordUsersOnline.length > 0) {
       console.log(`🔄 [DiscordService #${this.instanceId}] Usando dados cached (stale) durante reconexão`);
-      return this.discordUsersOnline;
+      return [...this.discordUsersOnline]; // ✅ Nova referência
     }
 
-    return this.discordUsersOnline;
+    return [...this.discordUsersOnline]; // ✅ SEMPRE nova referência
   }
 
   // ✅ NOVO: Verificar se deve mostrar indicador de dados stale

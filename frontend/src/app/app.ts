@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, ChangeDetectorRef, ViewChild, inject } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectorRef, ViewChild, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -53,7 +53,9 @@ export class App implements OnInit, OnDestroy {
   currentView: 'dashboard' | 'queue' | 'history' | 'leaderboard' | 'settings' = 'dashboard';
   isElectron = false;
   isConnected = false;
-  isInQueue: boolean = false;
+
+  // ✅ REFATORADO: isInQueue agora é signal para performance otimizada
+  protected _isInQueueSignal = signal<boolean>(false);
 
   // ✅ MANTIDO: Dados do jogador (com setter para sincronizar com CurrentSummonerService)
   private _currentPlayer: Player | null = null;
@@ -90,7 +92,9 @@ export class App implements OnInit, OnDestroy {
 
   // ✅ MANTIDO: Estados das fases (interface)
   matchFoundData: MatchFoundData | null = null;
-  showMatchFound = false;
+
+  // ✅ REFATORADO: showMatchFound agora é signal para transição instantânea
+  protected _showMatchFoundSignal = signal<boolean>(false);
   inDraftPhase = false;
   // ✅ SIGNAL FIX: Inicializar com objeto vazio em vez de null para evitar transformFn error
   draftData: any = { matchId: null, phases: [], teams: { team1: [], team2: [] } };
@@ -261,7 +265,7 @@ export class App implements OnInit, OnDestroy {
           _updateTimestamp: Date.now()
         };
 
-        this.showMatchFound = false;
+        this._showMatchFoundSignal.set(false);
         this.inDraftPhase = true;
         this.cdr.markForCheck();
 
@@ -355,7 +359,7 @@ export class App implements OnInit, OnDestroy {
         // ✅ CRÍTICO: Parar todos os sons
         this.audioService.stopDraftMusic();
         this.audioService.stopMatchFound();
-        this.showMatchFound = false;
+        this._showMatchFoundSignal.set(false);
         this.inDraftPhase = false;
         this.inGamePhase = false;
         this.cdr.markForCheck();
@@ -369,7 +373,7 @@ export class App implements OnInit, OnDestroy {
         // ✅ CRÍTICO: Parar todos os sons
         this.audioService.stopDraftMusic();
         this.audioService.stopMatchFound();
-        this.showMatchFound = false;
+        this._showMatchFoundSignal.set(false);
         this.inDraftPhase = false;
         this.inGamePhase = false;
         this.cdr.markForCheck();
@@ -383,7 +387,7 @@ export class App implements OnInit, OnDestroy {
         // ✅ CRÍTICO: Parar todos os sons
         this.audioService.stopDraftMusic();
         this.audioService.stopMatchFound();
-        this.showMatchFound = false;
+        this._showMatchFoundSignal.set(false);
         this.inDraftPhase = false;
         this.inGamePhase = false;
         this.cdr.markForCheck();
@@ -1155,8 +1159,8 @@ export class App implements OnInit, OnDestroy {
       };
       this.inGamePhase = true;
       this.inDraftPhase = false;
-      this.showMatchFound = false;
-      this.isInQueue = false;
+      this._showMatchFoundSignal.set(false);
+      this._isInQueueSignal.set(false);
       this.lastMatchId = matchId;
       this.addNotification('success', 'Jogo Iniciado!', 'A partida começou.');
     } catch (e) {
@@ -1276,7 +1280,7 @@ export class App implements OnInit, OnDestroy {
         this.isRestoredMatch = true; // ✅ MARCAR COMO RESTAURADO
         this.inDraftPhase = true;
         this.inGamePhase = false;
-        this.showMatchFound = false;
+        this._showMatchFoundSignal.set(false);
 
         // ✅ CRÍTICO: Filtrar status/phase "completed" que vem do backend
         // Backend pode retornar draft finalizado, mas queremos restaurar o estado ATIVO
@@ -1372,7 +1376,7 @@ export class App implements OnInit, OnDestroy {
         this.isRestoredMatch = true; // ✅ MARCAR COMO RESTAURADO
         this.inGamePhase = true;
         this.inDraftPhase = false;
-        this.showMatchFound = false;
+        this._showMatchFoundSignal.set(false);
 
         console.log('🔍 [App] APÓS FLAGS: inGamePhase =', this.inGamePhase, ', isRestoredMatch =', this.isRestoredMatch);
 
@@ -1413,13 +1417,13 @@ export class App implements OnInit, OnDestroy {
         console.log('ℹ️ [App] Aguardando todos aceitarem para iniciar draft...');
 
         // ✅ Exibir modal de match found se ainda não estiver visível
-        if (!this.showMatchFound) {
+        if (!this._showMatchFoundSignal()) {
           this.matchFoundData = {
             ...activeMatch,
             matchId: activeMatch.matchId || activeMatch.id,
             id: activeMatch.matchId || activeMatch.id
           };
-          this.showMatchFound = true;
+          this._showMatchFoundSignal.set(true);
           this.inDraftPhase = false;
           this.inGamePhase = false;
 
@@ -1458,7 +1462,7 @@ export class App implements OnInit, OnDestroy {
       inGamePhase: this.inGamePhase,
       inDraftPhase: this.inDraftPhase,
       isRestoredMatch: this.isRestoredMatch,
-      showMatchFound: this.showMatchFound,
+      showMatchFound: this._showMatchFoundSignal(),
       draftDataMatchId: this.draftData?.matchId
     });
     console.log(`📡 [App] ========================================`);
@@ -1520,7 +1524,7 @@ export class App implements OnInit, OnDestroy {
       case 'acceptance_progress':
         console.log('📊 [App] Progresso de aceitação:', message);
         // Atualizar dados do MatchFoundComponent se estiver visível
-        if (this.showMatchFound && this.matchFoundData) {
+        if (this._showMatchFoundSignal() && this.matchFoundData) {
           const progressData = message.data || message;
 
           // ✅ CRÍTICO: Criar NOVA referência ao invés de mutar diretamente
@@ -1589,7 +1593,7 @@ export class App implements OnInit, OnDestroy {
         console.log('🔄 [App] Processando match_cancelled (matchId: {})', message.matchId || message.data?.matchId);
 
         // Limpar estado de match found
-        this.showMatchFound = false;
+        this._showMatchFoundSignal.set(false);
         this.matchFoundData = null;
 
         // ✅ CRÍTICO: Limpar estado de draft e game in progress
@@ -1953,7 +1957,7 @@ export class App implements OnInit, OnDestroy {
         }));
         break;
         // ✅ Esconder modal de match found mas MANTER os dados para o draft
-        this.showMatchFound = false;
+        this._showMatchFoundSignal.set(false);
         this.cdr.markForCheck();
         // Nota: matchFoundData será usado quando draft_started chegar
         console.log('⏳ [App] Aguardando mensagem draft_started do backend...');
@@ -1962,9 +1966,9 @@ export class App implements OnInit, OnDestroy {
         console.log('✅ [App] Todos os jogadores aceitaram:', message);
         // Aguardar evento draft_started para iniciar o draft
         // Por enquanto, apenas esconder o match found e preparar para o draft
-        if (this.showMatchFound) {
+        if (this._showMatchFoundSignal()) {
           console.log('🎯 [App] Preparando para iniciar draft...');
-          this.showMatchFound = false;
+          this._showMatchFoundSignal.set(false);
           // Aguardar draft_started será disparado pelo backend
         }
         break;
@@ -2054,7 +2058,7 @@ export class App implements OnInit, OnDestroy {
         // Entrar no draft
         this.inDraftPhase = true;
         this.draftTimer = 30; // ✅ RESETAR timer ao iniciar draft
-        this.showMatchFound = false; // ✅ CRÍTICO: Destruir componente MatchFound
+        this._showMatchFoundSignal.set(false); // ✅ CRÍTICO: Destruir componente MatchFound
 
         // ✅ CORREÇÃO: Preservar matchId antes de limpar matchFoundData
         const preservedMatchId = this.matchFoundData?.matchId;
@@ -2072,7 +2076,7 @@ export class App implements OnInit, OnDestroy {
         break;
       case 'acceptance_timer':
         // Atualizar timer do MatchFoundComponent
-        if (this.showMatchFound && this.matchFoundData) {
+        if (this._showMatchFoundSignal() && this.matchFoundData) {
           const timerData = message.data || message;
           const newTimer = timerData.secondsRemaining || timerData.timeLeft || timerData.secondsLeft || 30;
 
@@ -2128,7 +2132,7 @@ export class App implements OnInit, OnDestroy {
         this.gameData = { ...gameData };
         this.inGamePhase = true;
         this.inDraftPhase = false;
-        this.showMatchFound = false;
+        this._showMatchFoundSignal.set(false);
         this.matchFoundData = null;
         this.draftData = null;
 
@@ -2178,7 +2182,7 @@ export class App implements OnInit, OnDestroy {
       inGamePhase: this.inGamePhase,
       inDraftPhase: this.inDraftPhase,
       isRestoredMatch: this.isRestoredMatch,
-      showMatchFound: this.showMatchFound,
+      showMatchFound: this._showMatchFoundSignal(),
       hasGameData: !!this.gameData,
       hasDraftData: !!this.draftData
     });
@@ -2191,7 +2195,7 @@ export class App implements OnInit, OnDestroy {
     const data = message.data || message;
 
     // ✅ CRÍTICO: Não duplicar modal se já estiver sendo exibido para o MESMO matchId
-    if (this.showMatchFound && this.matchFoundData?.matchId === data.matchId) {
+    if (this._showMatchFoundSignal() && this.matchFoundData?.matchId === data.matchId) {
       console.log('⏭️ [App] Match found JÁ está sendo exibido para matchId:', data.matchId);
       return;
     }
@@ -2238,7 +2242,7 @@ export class App implements OnInit, OnDestroy {
     // ✅ CRÍTICO: Usar pick_ban_data DIRETAMENTE (zero cópias!)
     this.matchFoundData = data;
 
-    this.showMatchFound = true;
+    this._showMatchFoundSignal.set(true);
     this.cdr.markForCheck();
 
     console.log('✅ [App] Modal Match Found exibido');
@@ -2369,7 +2373,7 @@ export class App implements OnInit, OnDestroy {
       console.log('🎮 [App] Estado atual: inDraftPhase={}, inGamePhase={}', this.inDraftPhase, this.inGamePhase);
 
       // ✅ CRÍTICO: Só verificar se NÃO estamos em partida ativa
-      if (!this.inDraftPhase && !this.inGamePhase && !this.showMatchFound) {
+      if (!this.inDraftPhase && !this.inGamePhase && !this._showMatchFoundSignal()) {
         console.log('✅ [App] Não estamos em partida - verificando my-active-match...');
         this.checkAndRestoreActiveMatch();
       } else {
@@ -2629,8 +2633,8 @@ export class App implements OnInit, OnDestroy {
       // ✅ NOVO: Solicitar lista de sessões ativas após entrar na fila
       this.requestActiveSessionsList();
 
-      // ✅ NOVO: Atualizar imediatamente o estado local para mostrar entrada na fila
-      this.isInQueue = true;
+      // ✅ REFATORADO: Usar signal para mudança instantânea na UI
+      this._isInQueueSignal.set(true);
       this.markBackendAction(); // Marcar que acabamos de fazer uma ação no backend
 
       // ✅ NOVO: Adicionar jogador à tabela local imediatamente (otimista)
@@ -2664,8 +2668,8 @@ export class App implements OnInit, OnDestroy {
       await firstValueFrom(this.apiService.joinQueue(data.player, data.preferences));
       console.log('✅ [App] Solicitação de entrada na fila enviada via novo sistema');
 
-      // ✅ NOVO: Atualizar imediatamente o estado local para mostrar entrada na fila
-      this.isInQueue = true;
+      // ✅ REFATORADO: Usar signal para mudança instantânea na UI
+      this._isInQueueSignal.set(true);
       this.markBackendAction(); // Marcar que acabamos de fazer uma ação no backend
 
       // ✅ NOVO: Adicionar jogador à tabela local imediatamente (otimista)
@@ -2706,8 +2710,8 @@ export class App implements OnInit, OnDestroy {
       await firstValueFrom(this.apiService.leaveQueue(undefined, playerIdentifier));
       console.log('✅ [App] Solicitação de saída da fila enviada');
 
-      // ✅ CORRIGIDO: Marcar estado como fora da fila imediatamente
-      this.isInQueue = false;
+      // ✅ REFATORADO: Usar signal para mudança instantânea na UI
+      this._isInQueueSignal.set(false);
       this.hasRecentBackendQueueStatus = true;
 
       this.addNotification('success', 'Saiu da Fila', 'Você saiu da fila com sucesso');
@@ -2911,8 +2915,8 @@ export class App implements OnInit, OnDestroy {
     console.log('📞 [App] Estado atual:', {
       matchId: this.matchFoundData?.matchId,
       currentPlayer: this.currentPlayer?.summonerName,
-      isInQueue: this.isInQueue,
-      showMatchFound: this.showMatchFound
+      isInQueue: this._isInQueueSignal(),
+      showMatchFound: this._showMatchFoundSignal()
     });
 
     if (!this.matchFoundData?.matchId || !this.currentPlayer?.summonerName) {
@@ -2933,17 +2937,17 @@ export class App implements OnInit, OnDestroy {
 
       // ✅ CORREÇÃO: Atualizar estado local imediatamente
       this.lastMatchId = null; // ✅ NOVO: Limpar controle de partida
-      this.showMatchFound = false;
+      this._showMatchFoundSignal.set(false);
       this.matchFoundData = null;
-      this.isInQueue = false;
+      this._isInQueueSignal.set(false);
 
       // ✅ NOVO: Marcar que temos uma resposta recente do backend
       this.hasRecentBackendQueueStatus = true;
 
       console.log('✅ [App] Estado atualizado:', {
-        showMatchFound: this.showMatchFound,
+        showMatchFound: this._showMatchFoundSignal(),
         matchFoundData: this.matchFoundData,
-        isInQueue: this.isInQueue
+        isInQueue: this._isInQueueSignal()
       });
 
       this.addNotification('success', 'Partida Recusada', 'Você recusou a partida e saiu da fila.');
@@ -2970,9 +2974,9 @@ export class App implements OnInit, OnDestroy {
 
         // ✅ CORREÇÃO: Se partida não existe, forçar saída da interface
         this.lastMatchId = null; // ✅ NOVO: Limpar controle de partida
-        this.showMatchFound = false;
+        this._showMatchFoundSignal.set(false);
         this.matchFoundData = null;
-        this.isInQueue = false;
+        this._isInQueueSignal.set(false);
         this.hasRecentBackendQueueStatus = true;
 
         // ✅ NOVO: Tentar sair da fila explicitamente
@@ -2986,9 +2990,9 @@ export class App implements OnInit, OnDestroy {
       } else if (error.status === 409) {
         errorMessage = 'Partida já foi aceita ou cancelada';
         // ✅ CORREÇÃO: Mesmo com erro 409, sair da interface
-        this.showMatchFound = false;
+        this._showMatchFoundSignal.set(false);
         this.matchFoundData = null;
-        this.isInQueue = false;
+        this._isInQueueSignal.set(false);
       } else if (error.error?.message) {
         errorMessage = error.error.message;
       }
@@ -3487,7 +3491,7 @@ export class App implements OnInit, OnDestroy {
     console.log('📊 [App] === REFRESH QUEUE STATUS ===');
     console.log('📊 [App] refreshQueueStatus chamado:', {
       currentPlayerDisplayName: currentPlayerDisplayName,
-      currentIsInQueue: this.isInQueue,
+      currentIsInQueue: this._isInQueueSignal(),
       hasRecentBackendQueueStatus: this.hasRecentBackendQueueStatus,
       refreshInProgress: this.refreshInProgress
     });
@@ -3506,14 +3510,14 @@ export class App implements OnInit, OnDestroy {
         const statusWithPlayerInfo = status as any;
 
         if (statusWithPlayerInfo.isCurrentPlayerInQueue !== undefined) {
-          const previousState = this.isInQueue;
-          this.isInQueue = statusWithPlayerInfo.isCurrentPlayerInQueue;
+          const previousState = this._isInQueueSignal();
+          this._isInQueueSignal.set(statusWithPlayerInfo.isCurrentPlayerInQueue);
 
-          console.log(`✅ [App] Estado da fila atualizado pelo backend: ${previousState} → ${this.isInQueue}`);
+          console.log(`✅ [App] Estado da fila atualizado pelo backend: ${previousState} → ${this._isInQueueSignal()}`);
 
           // ✅ NOVO: Se o estado mudou, notificar
-          if (previousState !== this.isInQueue) {
-            const statusMessage = this.isInQueue ? 'Você está na fila' : 'Você não está na fila';
+          if (previousState !== this._isInQueueSignal()) {
+            const statusMessage = this._isInQueueSignal() ? 'Você está na fila' : 'Você não está na fila';
             console.log(`🔄 [App] Status da fila mudou: ${statusMessage}`);
           }
         } else {
@@ -4239,7 +4243,7 @@ export class App implements OnInit, OnDestroy {
 
     // 🛡️ PROTEÇÃO CRÍTICA: NÃO executar polling durante partida ativa
     // O polling pode retornar dados desatualizados e causar limpeza indevida
-    if (this.inDraftPhase || this.inGamePhase || this.showMatchFound) {
+    if (this.inDraftPhase || this.inGamePhase || this._showMatchFoundSignal()) {
       console.log('⏭️ [App] Polling pausado - em partida ativa (draft/game/match_found)');
       return;
     }
@@ -4366,8 +4370,8 @@ export class App implements OnInit, OnDestroy {
     console.log('🔄 [App] Estado atual:', {
       inGamePhase: this.inGamePhase,
       inDraftPhase: this.inDraftPhase,
-      showMatchFound: this.showMatchFound,
-      isInQueue: this.isInQueue,
+      showMatchFound: this._showMatchFoundSignal(),
+      isInQueue: this._isInQueueSignal(),
       lastMatchId: this.lastMatchId
     });
 
@@ -4394,7 +4398,7 @@ export class App implements OnInit, OnDestroy {
     console.log('🎮 [App] Match found detectado via polling!');
 
     // ✅ VERIFICAR: Se já estamos mostrando match_found
-    if (this.showMatchFound && this.matchFoundData?.matchId === response.matchId) {
+    if (this._showMatchFoundSignal() && this.matchFoundData?.matchId === response.matchId) {
       console.log('✅ [App] Match found já está sendo exibido, ignorando');
       return;
     }
@@ -4443,8 +4447,8 @@ export class App implements OnInit, OnDestroy {
 
     // ✅ ATUALIZAR: Estado local
     this.matchFoundData = matchFoundData;
-    this.isInQueue = false;
-    this.showMatchFound = true;
+    this._isInQueueSignal.set(false);
+    this._showMatchFoundSignal.set(true);
     this.lastMatchId = response.matchId;
 
     console.log('✅ [App] Match found processado via polling:', {
@@ -4500,8 +4504,8 @@ export class App implements OnInit, OnDestroy {
       };
 
       this.inDraftPhase = true;
-      this.showMatchFound = false;
-      this.isInQueue = false;
+      this._showMatchFoundSignal.set(false);
+      this._isInQueueSignal.set(false);
       this.lastMatchId = response.matchId;
       this.addNotification('success', 'Draft Iniciado!', 'A fase de seleção de campeões começou.');
       return;
@@ -4544,8 +4548,8 @@ export class App implements OnInit, OnDestroy {
     // ✅ SIGNAL FIX: Criar NOVA referência com spread operator (mesmo que seja novo objeto)
     this.draftData = { ...draftData };
     this.inDraftPhase = true;
-    this.showMatchFound = false;
-    this.isInQueue = false;
+    this._showMatchFoundSignal.set(false);
+    this._isInQueueSignal.set(false);
     this.lastMatchId = response.matchId;
 
     console.log('✅ [App] Draft processado via polling:', {
@@ -4577,8 +4581,8 @@ export class App implements OnInit, OnDestroy {
       this.gameData = event.gameData;
       this.inGamePhase = true;
       this.inDraftPhase = false;
-      this.showMatchFound = false;
-      this.isInQueue = false;
+      this._showMatchFoundSignal.set(false);
+      this._isInQueueSignal.set(false);
 
       if (event.gameData.matchId) {
         this.lastMatchId = event.gameData.matchId;
@@ -4595,8 +4599,8 @@ export class App implements OnInit, OnDestroy {
     if (event.status === 'in_progress') {
       this.inGamePhase = true;
       this.inDraftPhase = false;
-      this.showMatchFound = false;
-      this.isInQueue = false;
+      this._showMatchFoundSignal.set(false);
+      this._isInQueueSignal.set(false);
 
       // Tentar construir gameData do session/confirmationData
       if (event.confirmationData || event.session) {
@@ -4622,8 +4626,8 @@ export class App implements OnInit, OnDestroy {
     console.log('🎮 [App] Estado atual antes da mudança:', {
       inGamePhase: this.inGamePhase,
       inDraftPhase: this.inDraftPhase,
-      showMatchFound: this.showMatchFound,
-      isInQueue: this.isInQueue,
+      showMatchFound: this._showMatchFoundSignal(),
+      isInQueue: this._isInQueueSignal(),
       gameDataExists: !!this.gameData,
       lastMatchId: this.lastMatchId
     });
@@ -4699,8 +4703,8 @@ export class App implements OnInit, OnDestroy {
     this.gameData = { ...gameData };
     this.inGamePhase = true;
     this.inDraftPhase = false;
-    this.showMatchFound = false;
-    this.isInQueue = false;
+    this._showMatchFoundSignal.set(false);
+    this._isInQueueSignal.set(false);
     this.lastMatchId = response.matchId;
 
     console.log('✅ [App] Game in progress processado via polling:', {
@@ -4718,10 +4722,10 @@ export class App implements OnInit, OnDestroy {
 
     // 🛡️ PROTEÇÃO CRÍTICA: NUNCA limpar estados se estamos em draft/game
     // Não importa se é restaurado ou não - se estamos ATIVAMENTE em partida, manter!
-    if (this.inDraftPhase || this.inGamePhase || this.showMatchFound) {
+    if (this.inDraftPhase || this.inGamePhase || this._showMatchFoundSignal()) {
       console.log('🛡️ [App] EM PARTIDA ATIVA - ignorando status "none" do polling');
       console.log('🛡️ [App] Estado preservado:', {
-        showMatchFound: this.showMatchFound,
+        showMatchFound: this._showMatchFoundSignal(),
         inDraftPhase: this.inDraftPhase,
         inGamePhase: this.inGamePhase,
         isRestoredMatch: this.isRestoredMatch
@@ -4745,7 +4749,7 @@ export class App implements OnInit, OnDestroy {
 
   // ✅ NOVO: Verificar se há estados ativos que precisam ser limpos
   private hasActiveStates(): boolean {
-    return this.showMatchFound || this.inDraftPhase || this.inGamePhase;
+    return this._showMatchFoundSignal() || this.inDraftPhase || this.inGamePhase;
   }
 
   // ✅ NOVO: Aguardar e verificar status se necessário
@@ -4784,7 +4788,7 @@ export class App implements OnInit, OnDestroy {
   private clearActiveStates(): void {
     console.log('🔄 [App] === LIMPANDO ESTADOS ATIVOS ===');
     console.log('🔄 [App] Estado antes da limpeza:', {
-      showMatchFound: this.showMatchFound,
+      showMatchFound: this._showMatchFoundSignal(),
       inDraftPhase: this.inDraftPhase,
       inGamePhase: this.inGamePhase,
       matchFoundData: !!this.matchFoundData,
@@ -4794,7 +4798,7 @@ export class App implements OnInit, OnDestroy {
       isRestoredMatch: this.isRestoredMatch
     });
 
-    this.showMatchFound = false;
+    this._showMatchFoundSignal.set(false);
     this.inDraftPhase = false;
     this.inGamePhase = false;
     this.matchFoundData = null;
@@ -4862,10 +4866,10 @@ export class App implements OnInit, OnDestroy {
     this.cdr.detectChanges();
   }
 
-  // ✅ NOVO: Garantir que está na fila
+  // ✅ REFATORADO: Garantir que está na fila (agora com signal)
   private ensureInQueue(): void {
-    if (!this.isInQueue) {
-      this.isInQueue = true;
+    if (!this._isInQueueSignal()) {
+      this._isInQueueSignal.set(true);
       console.log('🔄 [App] Voltando para fila');
     }
   }

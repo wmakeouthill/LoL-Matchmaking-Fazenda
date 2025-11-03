@@ -322,17 +322,35 @@ export class QueueComponent implements OnInit, OnDestroy {
     this.discordService.onUsersUpdate().pipe(
       takeUntil(this.destroy$)
     ).subscribe(users => {
+      // ✅ CRÍTICO: SEMPRE criar nova referência para forçar detecção de mudanças
+      // Signals comparam por REFERÊNCIA, não por conteúdo!
+      const newUsers = [...users];
+
+      // ✅ OTIMIZAÇÃO: Só atualizar se realmente mudou (comparação rápida por length primeiro)
       const currentUsers = this.discordUsersOnline();
-      if (JSON.stringify(currentUsers) !== JSON.stringify(users)) {
-        this.discordUsersOnline.set(users);
-        console.log(`👥 [Queue] Discord users: ${users.length}`);
+      if (currentUsers.length !== newUsers.length) {
+        this.discordUsersOnline.set(newUsers);
+        console.log(`👥 [Queue] Discord users atualizados (length mudou): ${currentUsers.length} → ${newUsers.length}`);
+        return;
+      }
+
+      // Se length igual, verificar se há mudanças reais comparando IDs
+      const currentIds = currentUsers.map(u => u.id).sort((a, b) => String(a).localeCompare(String(b))).join(',');
+      const newIds = newUsers.map(u => u.id).sort((a, b) => String(a).localeCompare(String(b))).join(',');
+
+      if (currentIds !== newIds) {
+        this.discordUsersOnline.set(newUsers);
+        console.log(`👥 [Queue] Discord users atualizados (IDs diferentes)`);
       }
     });
 
     // ✅ Verificar dados stale periodicamente
     setInterval(() => {
       this.isDataStale.set(this.discordService.isDataStaleIndicator());
-      this.discordUsersOnline.set(this.discordService.getUsersWithFallback());
+
+      // ✅ CRÍTICO: Criar nova referência ao obter dados com fallback
+      const usersWithFallback = this.discordService.getUsersWithFallback();
+      this.discordUsersOnline.set([...usersWithFallback]);
     }, 5000); // Verificar a cada 5 segundos
 
     this.discordService.checkConnection();

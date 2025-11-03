@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { Subscription, firstValueFrom } from 'rxjs';
 import { ApiService } from '../../services/api';
-import { getChampionKeyById } from '../../utils/champion-data';
+import { ChampionService } from '../../services/champion.service';
 
 interface CustomMatch {
   gameId: number;
@@ -86,7 +86,8 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
 
   constructor(
     private apiService: ApiService,
-    private readonly http: HttpClient
+    private readonly http: HttpClient,
+    private championService: ChampionService
   ) {
     this.baseUrl = this.apiService.getBaseUrl();
   }
@@ -614,13 +615,8 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
 
 
   getChampionName(championId: number): string {
-    const key = getChampionKeyById(championId);
-
-    // Convert key back to readable name (e.g., "MissFortune" -> "Miss Fortune")
-    return key
-      .replace(/([A-Z])/g, ' $1') // Add space before capitals
-      .trim() // Remove leading space
-      .replace(/\s+/g, ' '); // Normalize spaces
+    // ✅ Usar ChampionService para obter o nome
+    return this.championService.getChampionName(championId);
   }
 
   getPlayersByTeam(match: CustomMatch, teamId: number) {
@@ -631,12 +627,14 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
   }
 
   getChampionIconUrl(championId: number): string {
-    const key = getChampionKeyById(championId);
-    return `https://ddragon.leagueoflegends.com/cdn/14.1.1/img/champion/${key}.png`;
+    // ✅ Usar ChampionService para consistência
+    return this.championService.getChampionImageUrl(championId);
   }
 
   getChampionKeyById(championId: number): string {
-    return getChampionKeyById(championId);
+    // ✅ Usar ChampionService para obter o ID
+    const championIdStr = this.championService.getChampionIdByName(this.championService.getChampionName(championId));
+    return championIdStr || championId.toString();
   }
 
   getItemIconUrl(itemId: number): string {
@@ -822,8 +820,8 @@ Items: ${items || 'Nenhum'}`;
   }
 
   getChampionImageUrl(championId: number): string {
-    const key = getChampionKeyById(championId);
-    return `https://ddragon.leagueoflegends.com/cdn/14.1.1/img/champion/${key}.png`;
+    // ✅ Usar ChampionService como no match-history para consistência
+    return this.championService.getChampionImageUrl(championId);
   }
 
   getItemImageUrl(itemId: number): string {

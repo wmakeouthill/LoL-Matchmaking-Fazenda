@@ -77,10 +77,6 @@
           [class.current-player]="currentPlayer && player.id === currentPlayer.id"
           [class.voted-player]="getPlayerVoteStatus(player.summonerName) === 'voted'"
         >
-          <!-- Status de votação -->
-          <div class="vote-status" [class]="getVoteStatusClass(player)">
-            <span class="status-icon">{{ getVoteStatusIcon(player) }}</span>
-          </div>
           <div class="player-lane">
             <span class="lane-icon"
               >{{ getLaneIcon(player.assignedLane || player.lane || player.role)
@@ -140,6 +136,8 @@
             <span class="champion-name"
               >🏆 {{ player.championName || player.champion?.name }}</span
             >
+            <!-- Status de votação ao lado do nome do campeão -->
+            <span class="status-icon" [class]="getVoteStatusClass(player)">{{ getVoteStatusIcon(player) }}</span>
           </div>
           <div
             class="player-champion"
@@ -195,10 +193,6 @@
           [class.current-player]="currentPlayer && player.id === currentPlayer.id"
           [class.voted-player]="getPlayerVoteStatus(player.summonerName) === 'voted'"
         >
-          <!-- Status de votação -->
-          <div class="vote-status" [class]="getVoteStatusClass(player)">
-            <span class="status-icon">{{ getVoteStatusIcon(player) }}</span>
-          </div>
           <div class="player-lane">
             <span class="lane-icon"
               >{{ getLaneIcon(player.assignedLane || player.lane || player.role)
@@ -258,6 +252,8 @@
             <span class="champion-name"
               >🏆 {{ player.championName || player.champion?.name }}</span
             >
+            <!-- Status de votação ao lado do nome do campeão -->
+            <span class="status-icon" [class]="getVoteStatusClass(player)">{{ getVoteStatusIcon(player) }}</span>
           </div>
           <div
             class="player-champion"
