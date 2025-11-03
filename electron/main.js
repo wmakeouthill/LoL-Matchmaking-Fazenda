@@ -27,9 +27,9 @@ let lastIdentifiedSession = null;
 let lastIdentificationTimestamp = 0;
 const IDENTIFICATION_COOLDOWN = 5000; // 5 segundos de cooldown
 
-// ✅ LOGS HABILITADOS - Salvar arquivos de log
-let LOG_FILE = path.join(__dirname, "..", "electron.log");
-let FRONTEND_LOG_FILE = path.join(__dirname, "..", "frontend.log");
+// ✅ LOGS DESABILITADOS - Não salvar arquivos de log na raiz
+let LOG_FILE = null; // Desabilitado: path.join(__dirname, "..", "electron.log");
+let FRONTEND_LOG_FILE = null; // Desabilitado: path.join(__dirname, "..", "frontend.log");
 
 function sanitizeForLog(value) {
   try {
