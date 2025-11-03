@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, ChangeDetectorRef, ViewChild } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectorRef, ViewChild, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -78,7 +78,8 @@ export class App implements OnInit, OnDestroy {
   matchFoundData: MatchFoundData | null = null;
   showMatchFound = false;
   inDraftPhase = false;
-  draftData: any = null;
+  // ✅ SIGNAL FIX: Inicializar com objeto vazio em vez de null para evitar transformFn error
+  draftData: any = { matchId: null, phases: [], teams: { team1: [], team2: [] } };
   draftTimer: number = 30; // ✅ TIMER SEPARADO
 
   // ✅ DEBUG: Propriedade com setter para rastrear mudanças
@@ -156,18 +157,19 @@ export class App implements OnInit, OnDestroy {
   private lcuTelemetryInterval: any = null;
   private readonly LCU_TELEMETRY_INTERVAL_MS = 5000;
 
-  constructor(
-    private readonly http: HttpClient,
-    private readonly apiService: ApiService,
-    private readonly queueStateService: QueueStateService,
-    private readonly discordService: DiscordIntegrationService,
-    private readonly botService: BotService,
-    private readonly currentSummonerService: CurrentSummonerService,
-    private readonly electronEvents: ElectronEventsService,
-    private readonly notificationService: GlobalNotificationService,
-    private readonly cdr: ChangeDetectorRef,
-    private readonly audioService: AudioService
-  ) {
+  // ✅ SIGNALS: Injeção moderna com inject() (compatível com Signals)
+  private readonly http = inject(HttpClient);
+  private readonly apiService = inject(ApiService);
+  private readonly queueStateService = inject(QueueStateService);
+  private readonly discordService = inject(DiscordIntegrationService);
+  private readonly botService = inject(BotService);
+  private readonly currentSummonerService = inject(CurrentSummonerService);
+  private readonly electronEvents = inject(ElectronEventsService);
+  private readonly notificationService = inject(GlobalNotificationService);
+  private readonly cdr = inject(ChangeDetectorRef);
+  private readonly audioService = inject(AudioService);
+
+  constructor() {
     console.log(`[App] Constructor`);
 
     // ✅ REMOVIDO: Não criar interval duplicado aqui (será criado em ngOnInit)
@@ -194,7 +196,9 @@ export class App implements OnInit, OnDestroy {
     });
 
     // ✅ DRAFT_STARTED: Ir para tela de draft
+    console.log('🔧 [App] Registrando listener para draftStarted$...');
     this.electronEvents.draftStarted$.subscribe(draftData => {
+      console.log('🎯🎯🎯 [App] draftStarted$ DISPARADO!', draftData);
       if (draftData) {
         console.log('🎯 [App] draft-started recebido:', {
           matchId: draftData.matchId,
@@ -202,8 +206,9 @@ export class App implements OnInit, OnDestroy {
           actionsCount: draftData.actions?.length || draftData.phases?.length || 0
         });
 
-        // ✅ SIMPLIFICADO: Usar dados diretamente (backend já envia estrutura correta)
+        // ✅ CRÍTICO: Criar NOVA referência de objeto para que input() signals detectem a mudança
         this.draftData = {
+          ...this.draftData, // Preservar dados existentes
           matchId: draftData.matchId,
           teams: draftData.teams,
           team1: draftData.teams?.blue?.players || draftData.team1 || [], // Fallback para compatibilidade
@@ -514,15 +519,15 @@ export class App implements OnInit, OnDestroy {
 
       this.draftTimer = newTimeRemaining;
 
-      // ✅ CRÍTICO: Atualizar draftData.timeRemaining para o componente detectar
-      if (this.draftData) {
-        this.draftData.timeRemaining = newTimeRemaining;
-      }
+      // ✅ CORRETO: Criar nova referência do objeto para Signals + OnPush detectarem
+      this.draftData = {
+        ...this.draftData,
+        timeRemaining: newTimeRemaining
+      };
 
       console.log(`⏰ [App] Timer atualizado via Electron: ${this.draftTimer}s`);
 
-      // ✅ CRÍTICO: Com OnPush, SEMPRE forçar detecção de mudanças após atualizar timer
-      this.cdr.detectChanges();
+      // ✅ Signals detectam automaticamente a nova referência - não precisa detectChanges()
     }
   }
 
@@ -540,10 +545,11 @@ export class App implements OnInit, OnDestroy {
 
       this.draftTimer = newTimeRemaining;
 
-      // ✅ CRÍTICO: Atualizar matchData.timeRemaining para o componente detectar
-      if (this.draftData) {
-        this.draftData.timeRemaining = newTimeRemaining;
-      }
+      // ✅ CORRETO: Criar nova referência do objeto para Signals + OnPush detectarem
+      this.draftData = {
+        ...this.draftData,
+        timeRemaining: newTimeRemaining
+      };
 
       console.log(`⏰ [App] Timer atualizado: ${this.draftTimer}s`);
 
@@ -1364,13 +1370,13 @@ export class App implements OnInit, OnDestroy {
             ? timerData.timeRemaining
             : 30;
 
-          // ✅ CRÍTICO: Atualizar matchData.timeRemaining para o componente detectar
-          if (this.draftData) {
-            this.draftData.timeRemaining = this.draftTimer;
-          }
+          // ✅ CORRETO: Criar nova referência do objeto para Signals + OnPush detectarem
+          this.draftData = {
+            ...this.draftData,
+            timeRemaining: this.draftTimer
+          };
 
           console.log(`⏰ [App] Timer atualizado: ${this.draftTimer}s`);
-          this.cdr.detectChanges();
         }
         break;
 
@@ -1621,8 +1627,9 @@ export class App implements OnInit, OnDestroy {
           'effectiveMatchId': effectiveMatchId
         });
 
-        // ✅ Preparar dados do draft com informações completas dos times
+        // ✅ CRÍTICO: Criar NOVA referência para Signals detectarem mudança
         this.draftData = {
+          ...this.draftData, // ✅ Preservar dados existentes
           matchId: effectiveMatchId,
           team1: draftData.team1 || this.matchFoundData?.teams?.blue?.players || [],
           team2: draftData.team2 || this.matchFoundData?.teams?.red?.players || [],
@@ -4075,7 +4082,9 @@ export class App implements OnInit, OnDestroy {
         ? JSON.parse(response.pick_ban_data)
         : response.pick_ban_data;
 
+      // ✅ CRÍTICO: Criar NOVA referência para Signals detectarem mudança
       this.draftData = {
+        ...this.draftData, // Preservar dados existentes
         matchId: response.matchId,
         blueTeam: pickBanData.team1 || [], // Sempre: blueTeam = team1
         redTeam: pickBanData.team2 || [],  // Sempre: redTeam = team2
@@ -4131,8 +4140,8 @@ export class App implements OnInit, OnDestroy {
       currentAction: 0
     };
 
-    // ✅ ATUALIZAR: Estado local
-    this.draftData = draftData;
+    // ✅ SIGNAL FIX: Criar NOVA referência com spread operator (mesmo que seja novo objeto)
+    this.draftData = { ...draftData };
     this.inDraftPhase = true;
     this.showMatchFound = false;
     this.isInQueue = false;

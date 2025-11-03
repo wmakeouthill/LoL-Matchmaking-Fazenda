@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, ChangeDetectorRef, ChangeDetectionStrategy, OnChanges, SimpleChanges, ViewChild } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectorRef, ChangeDetectionStrategy, OnChanges, SimpleChanges, input, output, viewChild, signal, computed, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -45,101 +45,106 @@ function saveLogToRoot(message: string, filename: string = 'draft-debug.log') {
   changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
-  @Input() matchData: any = null;
-  @Input() currentPlayer: any = null;
-  @Output() draftComplete = new EventEmitter<any>();
-  @Output() onPickBanComplete = new EventEmitter<any>();
-  @Output() onPickBanCancel = new EventEmitter<void>();
-  @Output() onOpenanyModal = new EventEmitter<void>();
-  @Output() onOpenConfirmationModal = new EventEmitter<void>();
+  // ✅ SIGNALS: Inputs convertidos para a nova API
+  matchData = input<any>(null);
+  currentPlayer = input<any>(null);
 
-  // ✅ PROPRIEDADES SIMPLIFICADAS - apenas para exibição
-  session: any = null;
-  champions: any[] = [];
-  championsByRole: any = {};
-  showChampionModal: boolean = false; // ✅ CORREÇÃO: Nome correto para o HTML
-  showConfirmationModal: boolean = false;
-  confirmationData: any = null; // ✅ NOVO: Dados de confirmação dos jogadores
-  isMyTurn: boolean = false;
-  isWaitingBackend: boolean = false;
-  timeRemaining: number = 30; // ✅ CORREÇÃO: Este valor será sempre atualizado pelo backend via WebSocket
-  matchId: number | null = null;
-  currentPlayerTurn: any = null;
-  realTimeSyncTimer: number | null = null;
-  championsLoaded: boolean = false;
+  // ✅ SIGNALS: Outputs convertidos para a nova API
+  draftComplete = output<any>();
+  onPickBanComplete = output<any>();
+  onPickBanCancel = output<void>();
+  onOpenanyModal = output<void>();
+  onOpenConfirmationModal = output<void>();
 
-  // ✅ NOVO: Propriedades para modo de edição
-  isEditingMode: boolean = false;
-  currentEditingPlayer: { playerId: string, phaseIndex: number } | null = null;
+  // ✅ SIGNALS: ViewChild convertido para a nova API
+  confirmationModal = viewChild<DraftConfirmationModalComponent>('confirmationModal');
 
-  // ✅ NOVO: Controles de concorrência
+  // ✅ SIGNALS: Estados internos convertidos para signal()
+  session = signal<any>(null);
+  champions = signal<any[]>([]);
+  championsByRole = signal<any>({});
+  showChampionModal = signal<boolean>(false);
+  showConfirmationModal = signal<boolean>(false);
+  confirmationData = signal<any>(null);
+  isMyTurn = signal<boolean>(false);
+  isWaitingBackend = signal<boolean>(false);
+  timeRemaining = signal<number>(30);
+  matchId = signal<number | null>(null);
+  currentPlayerTurn = signal<any>(null);
+  realTimeSyncTimer = signal<number | null>(null);
+  championsLoaded = signal<boolean>(false);
+
+  // ✅ SIGNALS: Propriedades para modo de edição
+  isEditingMode = signal<boolean>(false);
+  currentEditingPlayer = signal<{ playerId: string, phaseIndex: number } | null>(null);
+
+  // ✅ SIGNALS: Controle do modal de ajuda do jogador
+  showPlayerHelpModal = signal<boolean>(false);
+  selectedPlayerForHelp = signal<string>('');
+  selectedPlayerNameForHelp = signal<string>('');
+
+  // ✅ SIGNALS: Controle do modal de espectadores
+  showSpectatorsModal = signal<boolean>(false);
+
+  // ✅ SIGNALS: Controle de som do draft
+  isSoundMuted = signal<boolean>(false);
+
+  // ✅ Propriedades privadas que não precisam ser signals (não afetam UI)
   private ngOnChangesDebounceTimer: number | null = null;
   private isInitializing: boolean = false;
   private lastMatchDataHash: string = '';
   private updateInProgress: boolean = false;
-
-  // ✅ CORREÇÃO: Timer para forçar atualização do UI do timer
   private timerUpdateInterval: any = null;
-
-  // ✅ NOVO: Controle do modal de ajuda do jogador
-  showPlayerHelpModal: boolean = false;
-  selectedPlayerForHelp: string = '';
-  selectedPlayerNameForHelp: string = '';
-
-  // ✅ NOVO: Controle do modal de espectadores
-  showSpectatorsModal: boolean = false;
-
-  // ✅ NOVO: Controle de som do draft
-  isSoundMuted: boolean = false;
   private readonly draftAudio: HTMLAudioElement | null = null;
-  private audioInitialized: boolean = false; // ✅ Flag para evitar múltiplas inicializações
+  private audioInitialized: boolean = false;
 
-  // ✅ NOVO: Getter para obter o matchId com fallback robusto
-  get draftMatchId(): number | undefined {
+  // ✅ SIGNALS: Computed signals para valores derivados
+  draftMatchId = computed<number | undefined>(() => {
     // Tentar todas as propriedades possíveis onde o backend pode enviar o ID
-    return this.session?.matchId ||
-      (this.session as any)?.id ||
-      this.matchId;
-  }
+    const sessionValue = this.session();
+    return sessionValue?.matchId ||
+      (sessionValue as any)?.id ||
+      this.matchId();
+  });
 
-  // ✅ NOVO: Getter para obter summoner name do currentPlayer
-  get summonerName(): string {
-    if (!this.currentPlayer) return '';
+  summonerName = computed<string>(() => {
+    const player = this.currentPlayer();
+    if (!player) return '';
 
     // Prioridade 1: displayName
-    if (this.currentPlayer.displayName) {
-      return this.currentPlayer.displayName;
+    if (player.displayName) {
+      return player.displayName;
     }
 
     // Prioridade 2: gameName#tagLine
-    if (this.currentPlayer.gameName && this.currentPlayer.tagLine) {
-      return `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`;
+    if (player.gameName && player.tagLine) {
+      return `${player.gameName}#${player.tagLine}`;
     }
 
     // Prioridade 3: summonerName
-    if (this.currentPlayer.summonerName) {
-      return this.currentPlayer.summonerName;
+    if (player.summonerName) {
+      return player.summonerName;
     }
 
     return '';
-  }
-
-  @ViewChild('confirmationModal') confirmationModal!: DraftConfirmationModalComponent;
-  private readonly baseUrl: string;
+  });
 
   // ✅ NOVO: Array para gerenciar subscrições de observables
   private subscriptions: Subscription[] = [];
 
-  constructor(
-    public championService: ChampionService,
-    public botService: BotService,
-    public cdr: ChangeDetectorRef,
-    private readonly http: HttpClient,
-    private readonly apiService: ApiService,
-    private readonly electronEvents: ElectronEventsService,
-    private readonly audioService: AudioService
-  ) {
-    this.baseUrl = this.apiService.getBaseUrl();
+  // ✅ SIGNALS: Injeção de dependências com inject()
+  private readonly championService = inject(ChampionService);
+  private readonly botService = inject(BotService);
+  private readonly cdr = inject(ChangeDetectorRef);
+  private readonly http = inject(HttpClient);
+  private readonly apiService = inject(ApiService);
+  private readonly electronEvents = inject(ElectronEventsService);
+  private readonly audioService = inject(AudioService);
+  private readonly baseUrl: string = this.apiService.getBaseUrl();
+
+  // ✅ SIGNALS: Constructor removido - inicialização inline
+  // Preservado apenas o log que estava no constructor
+  constructor() {
     logDraft('[DraftPickBan] Constructor inicializado');
   }
 
@@ -151,8 +156,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     // Parar som de match_found
     this.audioService.stopMatchFound();
 
-    // Sincronizar estado de mute
-    this.isSoundMuted = this.audioService.isDraftMuted();
+    // ✅ SIGNALS: Sincronizar estado de mute
+    this.isSoundMuted.set(this.audioService.isDraftMuted());
 
     // ❌ REMOVIDO TEMPORARIAMENTE: Audio initialization causing crashes
     // this.initializeDraftAudio();
@@ -162,7 +167,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     this.setupBackendListeners();
     this.startTimerUpdateInterval();
 
-    if (this.matchData) {
+    // ✅ SIGNALS: Verificar se matchData tem valor
+    if (this.matchData()) {
       setTimeout(() => this.finishInitialization(), 200);
     } else {
       this.finishInitialization();
@@ -182,17 +188,19 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       return;
     }
 
-    // ✅ BUSCAR TIMESTAMP: Priorizar matchData, fallback para session
-    const draftStartTimestamp = this.matchData?.draftStartTimestamp ||
-      (this.session as any)?.draftStartTimestamp ||
-      (this.session as any)?.lastActionStartMs;
+    // ✅ SIGNALS: BUSCAR TIMESTAMP: Priorizar matchData, fallback para session
+    const matchDataValue = this.matchData();
+    const sessionValue = this.session();
+    const draftStartTimestamp = matchDataValue?.draftStartTimestamp ||
+      (sessionValue as any)?.draftStartTimestamp ||
+      (sessionValue as any)?.lastActionStartMs;
 
     console.log('[DraftPickBan] 🎵 Inicializando áudio do draft', {
       hasTimestamp: !!draftStartTimestamp,
       timestamp: draftStartTimestamp,
-      source: this.matchData?.draftStartTimestamp ? 'matchData' :
-        (this.session as any)?.draftStartTimestamp ? 'session.draftStartTimestamp' :
-          (this.session as any)?.lastActionStartMs ? 'session.lastActionStartMs' : 'none'
+      source: matchDataValue?.draftStartTimestamp ? 'matchData' :
+        (sessionValue as any)?.draftStartTimestamp ? 'session.draftStartTimestamp' :
+          (sessionValue as any)?.lastActionStartMs ? 'session.lastActionStartMs' : 'none'
     });
 
     // ✅ MARCAR COMO INICIALIZADO (evita múltiplas tentativas)
@@ -210,16 +218,19 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
   private finishInitialization(): void {
     try {
-      if (this.matchData) {
-        logDraft('🚀 [DraftPickBan] matchData recebido:', this.matchData);
+      // ✅ SIGNALS: Obter valor do matchData
+      const matchDataValue = this.matchData();
+      if (matchDataValue) {
+        logDraft('🚀 [DraftPickBan] matchData recebido:', matchDataValue);
         saveLogToRoot(`🚀 [finishInitialization] matchData recebido`);
 
-        // ✅ CORREÇÃO: Garantir que matchId seja sempre definido
-        this.matchId = this.matchData.matchId || this.matchData.id || null;
-        saveLogToRoot(`🚀 [finishInitialization] matchId definido: ${this.matchId}`);
+        // ✅ SIGNALS: Garantir que matchId seja sempre definido
+        const newMatchId = matchDataValue.matchId || matchDataValue.id || null;
+        this.matchId.set(newMatchId);
+        saveLogToRoot(`🚀 [finishInitialization] matchId definido: ${newMatchId}`);
 
-        // ✅ NOVO: Só inicializar se session não foi criada por ngOnChanges
-        if (!this.session) {
+        // ✅ SIGNALS: Só inicializar se session não foi criada por ngOnChanges
+        if (!this.session()) {
           saveLogToRoot(`🚀 [finishInitialization] Session não existe - inicializando`);
           this.initializeSessionFromMatchData();
         } else {
@@ -235,9 +246,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         // ✅ Iniciar sincronização periódica da sessão
         this.startSessionSync();
 
-        // ✅ CORREÇÃO: Garantir que o estado inicial seja processado
+        // ✅ SIGNALS: Garantir que o estado inicial seja processado
         setTimeout(() => {
-          if (this.session) {
+          if (this.session()) {
             saveLogToRoot(`🔄 [finishInitialization] Processando estado inicial do draft`);
             this.updateDraftState();
           }
@@ -263,16 +274,17 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     this.subscriptions.forEach(sub => sub.unsubscribe());
     this.subscriptions = [];
 
-    // ✅ NOVO: Fechar modal de ajuda se estiver aberto
-    if (this.showPlayerHelpModal) {
-      this.showPlayerHelpModal = false;
+    // ✅ SIGNALS: Fechar modal de ajuda se estiver aberto
+    if (this.showPlayerHelpModal()) {
+      this.showPlayerHelpModal.set(false);
       saveLogToRoot(`🔄 [ngOnDestroy] Modal de ajuda fechado`);
     }
 
-    // ✅ NOVO: Preservar dados importantes antes da destruição
-    if (this.session?.actions?.length > 0) {
-      saveLogToRoot(`💾 [ngOnDestroy] Preservando ${this.session.actions.length} ações do draft antes da destruição`);
-      saveLogToRoot(`💾 [ngOnDestroy] Ações preservadas: ${JSON.stringify(this.session.actions.map((a: any) => ({ champion: a.champion?.name, action: a.action, player: a.playerName })))}`);
+    // ✅ SIGNALS: Preservar dados importantes antes da destruição
+    const sessionValue = this.session();
+    if (sessionValue?.actions?.length > 0) {
+      saveLogToRoot(`💾 [ngOnDestroy] Preservando ${sessionValue.actions.length} ações do draft antes da destruição`);
+      saveLogToRoot(`💾 [ngOnDestroy] Ações preservadas: ${JSON.stringify(sessionValue.actions.map((a: any) => ({ champion: a.champion?.name, action: a.action, player: a.playerName })))}`);
 
       // ❌ REMOVIDO: localStorage backup
       // Backend via Redis é a fonte ÚNICA da verdade
@@ -355,31 +367,33 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       this.updateInProgress = true;
 
       try {
-        // ✅ CORREÇÃO: Garantir que matchId seja sempre atualizado
+        // ✅ SIGNALS: Garantir que matchId seja sempre atualizado
         const newMatchId = currentValue.matchId || currentValue.id || null;
-        if (newMatchId !== this.matchId) {
-          this.matchId = newMatchId;
-          saveLogToRoot(`🔄 [processNgOnChanges] matchId atualizado: ${this.matchId}`);
+        const currentMatchIdValue = this.matchId();
+        if (newMatchId !== currentMatchIdValue) {
+          this.matchId.set(newMatchId);
+          saveLogToRoot(`🔄 [processNgOnChanges] matchId atualizado: ${newMatchId}`);
         }
 
-        // ✅ MELHORADO: Só inicializar se não estivermos no meio de uma inicialização
-        if (!this.session || (this.session.currentAction === undefined && !this.isInitializing)) {
-          // ✅ CORREÇÃO CRÍTICA: Atualizar matchData ANTES de inicializar
-          this.matchData = currentValue;
-          saveLogToRoot(`🔄 [processNgOnChanges] matchData atualizado, chamando initializeSessionFromMatchData()`);
+        // ✅ SIGNALS: Só inicializar se não estivermos no meio de uma inicialização
+        const sessionValue = this.session();
+        if (!sessionValue || (sessionValue.currentAction === undefined && !this.isInitializing)) {
+          saveLogToRoot(`🔄 [processNgOnChanges] Session não existe ou sem currentAction - inicializando`);
 
           // ✅ Chamar método que faz mapeamento correto de team1/team2 → blueTeam/redTeam
           this.initializeSessionFromMatchData();
 
-          saveLogToRoot(`✅ [processNgOnChanges] Session inicializada via initializeSessionFromMatchData: matchId=${this.matchId}`);
-          saveLogToRoot(`  - blueTeam: ${this.session?.blueTeam?.length || 0} jogadores`);
-          saveLogToRoot(`  - redTeam: ${this.session?.redTeam?.length || 0} jogadores`);
+          saveLogToRoot(`✅ [processNgOnChanges] Session inicializada via initializeSessionFromMatchData: matchId=${newMatchId}`);
+          const newSessionValue = this.session();
+          saveLogToRoot(`  - blueTeam: ${newSessionValue?.blueTeam?.length || 0} jogadores`);
+          saveLogToRoot(`  - redTeam: ${newSessionValue?.redTeam?.length || 0} jogadores`);
 
           this.updateDraftState();
         } else {
-          // ✅ CORREÇÃO: Mesclar novos dados com os existentes, mas PERMITIR atualização de currentAction e phases
-          const oldBlueTeam = this.session.blueTeam || [];
-          const oldRedTeam = this.session.redTeam || [];
+          // ✅ SIGNALS: Mesclar novos dados com os existentes, mas PERMITIR atualização de currentAction e phases
+          const oldSessionValue = this.session();
+          const oldBlueTeam = oldSessionValue.blueTeam || [];
+          const oldRedTeam = oldSessionValue.redTeam || [];
 
           // ✅ LOGS DETALHADOS para debug
           console.log('🔍 [processNgOnChanges] currentValue recebido:', {
@@ -393,19 +407,20 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
             phasesFirst3: currentValue.phases?.slice(0, 3) || []
           });
 
-          this.session = {
-            ...this.session,
+          // ✅ SIGNALS: Criar novo objeto de sessão (imutável)
+          const newSession = {
+            ...oldSessionValue,
             ...currentValue,
             // ✅ ATUALIZAR phases/actions se vierem novos valores com elementos
             phases: (currentValue.phases && currentValue.phases.length > 0) ? currentValue.phases :
               (currentValue.actions && currentValue.actions.length > 0) ? currentValue.actions :
-                (this.session.phases && this.session.phases.length > 0) ? this.session.phases : [],
+                (oldSessionValue.phases && oldSessionValue.phases.length > 0) ? oldSessionValue.phases : [],
             // ✅ ATUALIZAR currentAction se vier novo valor
             currentAction: currentValue.currentAction !== undefined ? currentValue.currentAction :
               currentValue.currentIndex !== undefined ? currentValue.currentIndex :
-                this.session.currentAction,
+                oldSessionValue.currentAction,
             // ✅ ATUALIZAR currentPlayer se vier novo valor
-            currentPlayer: currentValue.currentPlayer !== undefined ? currentValue.currentPlayer : this.session.currentPlayer,
+            currentPlayer: currentValue.currentPlayer !== undefined ? currentValue.currentPlayer : oldSessionValue.currentPlayer,
             // ✅ PRESERVAR times se não vierem novos
             blueTeam: (currentValue.blueTeam && currentValue.blueTeam.length > 0) ? currentValue.blueTeam :
               (currentValue.team1 && currentValue.team1.length > 0) ? currentValue.team1 :
@@ -414,14 +429,17 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
               (currentValue.team2 && currentValue.team2.length > 0) ? currentValue.team2 :
                 oldRedTeam,
             // ✅ CRÍTICO: Preservar estrutura teams
-            teams: currentValue.teams || this.session?.teams
+            teams: currentValue.teams || oldSessionValue?.teams
           };
 
-          // ✅ CORREÇÃO CRÍTICA: Atualizar timer via @Input (OnPush funciona)
+          // ✅ SIGNALS: Atualizar o signal da session
+          this.session.set(newSession);
+
+          // ✅ SIGNALS: Atualizar timer via @Input (OnPush funciona)
           if (currentValue.timeRemaining !== undefined) {
-            this.timeRemaining = currentValue.timeRemaining;
-            console.log(`⏰ [processNgOnChanges] Timer atualizado via @Input: ${this.timeRemaining}s`);
-            saveLogToRoot(`⏰ [processNgOnChanges] Timer atualizado via @Input matchData: ${this.timeRemaining}s`);
+            this.timeRemaining.set(currentValue.timeRemaining);
+            console.log(`⏰ [processNgOnChanges] Timer atualizado via @Input: ${currentValue.timeRemaining}s`);
+            saveLogToRoot(`⏰ [processNgOnChanges] Timer atualizado via @Input matchData: ${currentValue.timeRemaining}s`);
             // ✅ CRÍTICO: markForCheck para OnPush (ngOnChanges já dispara detecção, mas garantimos)
             this.cdr.markForCheck();
           } else {
@@ -429,7 +447,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
             saveLogToRoot(`⚠️ [processNgOnChanges] matchData veio SEM timeRemaining: ${JSON.stringify(currentValue)}`);
           }
 
-          // ✅ NOVA ESTRUTURA HIERÁRQUICA: Processar teams.blue/red se existirem
+          // ✅ SIGNALS: NOVA ESTRUTURA HIERÁRQUICA: Processar teams.blue/red se existirem
           if (currentValue.teams) {
             console.log('🔨 [processNgOnChanges] Estrutura hierárquica detectada:', {
               hasBlue: !!currentValue.teams.blue,
@@ -440,38 +458,46 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
               currentTeam: currentValue.currentTeam
             });
 
-            // ✅ Armazenar estrutura hierárquica na session
-            this.session.teams = currentValue.teams;
-            this.session.currentPhase = currentValue.currentPhase;
-            this.session.currentTeam = currentValue.currentTeam;
-            this.session.currentActionType = currentValue.currentActionType;
+            // ✅ SIGNALS: Atualizar estrutura hierárquica na session (imutável)
+            const updatedSession = {
+              ...this.session(),
+              teams: currentValue.teams,
+              currentPhase: currentValue.currentPhase,
+              currentTeam: currentValue.currentTeam,
+              currentActionType: currentValue.currentActionType
+            };
 
             // ✅ ATUALIZAR blueTeam/redTeam a partir da estrutura hierárquica
             if (currentValue.teams.blue?.players?.length > 0) {
-              this.session.blueTeam = currentValue.teams.blue.players;
+              updatedSession.blueTeam = currentValue.teams.blue.players;
             }
             if (currentValue.teams.red?.players?.length > 0) {
-              this.session.redTeam = currentValue.teams.red.players;
+              updatedSession.redTeam = currentValue.teams.red.players;
             }
 
+            // ✅ SIGNALS: Aplicar as mudanças
+            this.session.set(updatedSession);
+
             console.log('✅ [processNgOnChanges] Estrutura hierárquica processada:', {
-              blueTeamSize: this.session.blueTeam?.length || 0,
-              redTeamSize: this.session.redTeam?.length || 0,
-              currentPhase: this.session.currentPhase,
-              currentTeam: this.session.currentTeam
+              blueTeamSize: updatedSession.blueTeam?.length || 0,
+              redTeamSize: updatedSession.redTeam?.length || 0,
+              currentPhase: updatedSession.currentPhase,
+              currentTeam: updatedSession.currentTeam
             });
           }
 
+          // ✅ SIGNALS: Log da session após atualização
+          const finalSession = this.session();
           console.log('✅ [processNgOnChanges] Session após atualização:', {
-            phasesLength: this.session.phases?.length || 0,
-            currentAction: this.session.currentAction,
-            currentPlayer: this.session.currentPlayer,
-            hasTeams: !!this.session.teams,
-            timeRemaining: this.timeRemaining,
-            phasesFirst3: this.session.phases?.slice(0, 3) || []
+            phasesLength: finalSession.phases?.length || 0,
+            currentAction: finalSession.currentAction,
+            currentPlayer: finalSession.currentPlayer,
+            hasTeams: !!finalSession.teams,
+            timeRemaining: this.timeRemaining(),
+            phasesFirst3: finalSession.phases?.slice(0, 3) || []
           });
 
-          saveLogToRoot(`⏭️ [processNgOnChanges] Session atualizada: currentAction=${this.session.currentAction}, currentPlayer=${this.session.currentPlayer}, phases=${this.session.phases?.length || 0}`);
+          saveLogToRoot(`⏭️ [processNgOnChanges] Session atualizada: currentAction=${finalSession.currentAction}, currentPlayer=${finalSession.currentPlayer}, phases=${finalSession.phases?.length || 0}`);
 
           // ✅ CRÍTICO: Chamar updateDraftState() para verificar se é o turno do jogador
           this.updateDraftState();
@@ -497,16 +523,18 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       this.electronEvents.draftTimer$.subscribe((data: any) => {
         if (!data) return;
 
+        // ✅ SIGNALS: Obter matchId atual
+        const componentMatchId = Number(this.matchId());
+
         console.log('⏰⏰⏰ [draftTimer$] EVENTO RECEBIDO via ElectronEventsService!', {
           eventMatchId: data.matchId,
-          componentMatchId: this.matchId,
+          componentMatchId: componentMatchId,
           timeRemaining: data.timeRemaining,
-          matches: data.matchId === this.matchId
+          matches: data.matchId === componentMatchId
         });
 
         // ✅ CRÍTICO: Comparar como números (converter strings)
         const eventMatchId = Number(data.matchId);
-        const componentMatchId = Number(this.matchId);
 
         if (eventMatchId === componentMatchId) {
           console.log('✅ [draftTimer$] MatchId BATE! Atualizando timer...');
@@ -517,15 +545,16 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
             eventMatchId,
             componentMatchId,
             eventType: typeof data.matchId,
-            componentType: typeof this.matchId
+            componentType: typeof componentMatchId
           });
         }
       })
     );
 
-    // Listener para timeouts via WebSocket
+    // ✅ SIGNALS: Listener para timeouts via WebSocket
     document.addEventListener('draftTimeout', (event: any) => {
-      if (event.detail?.matchId === this.matchId) {
+      const currentMatchId = this.matchId();
+      if (event.detail?.matchId === currentMatchId) {
         logDraft('⏰ [DraftPickBan] Timeout recebido via WebSocket:', event.detail);
         this.handleDraftTimeout(event.detail);
       }
@@ -534,7 +563,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     // ✅ CRÍTICO: Listener para draft-updated (AÇÕES COMPLETAS)
     this.subscriptions.push(
       this.electronEvents.draftUpdated$.subscribe((data: any) => {
-        if (data && data.matchId === this.matchId) {
+        // ✅ SIGNALS: Obter matchId atual
+        const currentMatchId = this.matchId();
+        if (data && data.matchId === currentMatchId) {
           console.log('✅✅✅ [draftUpdated$] EVENTO RECEBIDO via ElectronEventsService!', {
             matchId: data.matchId,
             currentPlayer: data.currentPlayer,
@@ -542,21 +573,22 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
             hasPhases: !!(data.phases || data.actions)
           });
 
-          // ✅ Atualizar session completo com ações (CRIAR NOVA REFERÊNCIA para OnPush)
+          // ✅ SIGNALS: Atualizar session completo com ações (CRIAR NOVA REFERÊNCIA para OnPush)
           // ✅ CRÍTICO: Criar nova referência completa para que o modal de confirmação detecte mudanças
-          this.session = {
-            ...this.session,
-            id: data.id || this.session.id,
-            matchId: data.matchId || this.session.matchId,
-            phase: data.phase || this.session.phase,
-            phases: data.phases || data.actions || this.session.phases,
-            actions: data.phases || data.actions || this.session.actions,
-            currentAction: data.currentAction !== undefined ? data.currentAction : this.session.currentAction,
-            currentIndex: data.currentIndex !== undefined ? data.currentIndex : this.session.currentIndex,
-            currentPlayer: data.currentPlayer || this.session.currentPlayer,
-            teams: data.teams ? { ...data.teams } : this.session.teams, // ✅ NOVA REFERÊNCIA para teams também
-            blueTeam: data.blueTeam || this.session.blueTeam,
-            redTeam: data.redTeam || this.session.redTeam
+          const currentSession = this.session();
+          const newSession = {
+            ...currentSession,
+            id: data.id || currentSession.id,
+            matchId: data.matchId || currentSession.matchId,
+            phase: data.phase || currentSession.phase,
+            phases: data.phases || data.actions || currentSession.phases,
+            actions: data.phases || data.actions || currentSession.actions,
+            currentAction: data.currentAction !== undefined ? data.currentAction : currentSession.currentAction,
+            currentIndex: data.currentIndex !== undefined ? data.currentIndex : currentSession.currentIndex,
+            currentPlayer: data.currentPlayer || currentSession.currentPlayer,
+            teams: data.teams ? { ...data.teams } : currentSession.teams, // ✅ NOVA REFERÊNCIA para teams também
+            blueTeam: data.blueTeam || currentSession.blueTeam,
+            redTeam: data.redTeam || currentSession.redTeam
           };
 
           // ✅ CRÍTICO: Se teams foi atualizado, criar nova referência para arrays também
@@ -567,26 +599,29 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
               players: data.teams.blue.players ? [...data.teams.blue.players] : [],
               allBans: data.teams.blue.allBans ? [...data.teams.blue.allBans] : [],
               allPicks: data.teams.blue.allPicks ? [...data.teams.blue.allPicks] : []
-            } : this.session.teams?.blue;
+            } : currentSession.teams?.blue;
 
             const newRed = data.teams.red ? {
               ...data.teams.red,
               players: data.teams.red.players ? [...data.teams.red.players] : [],
               allBans: data.teams.red.allBans ? [...data.teams.red.allBans] : [],
               allPicks: data.teams.red.allPicks ? [...data.teams.red.allPicks] : []
-            } : this.session.teams?.red;
+            } : currentSession.teams?.red;
 
             // ✅ CRÍTICO: Atribuir ambos de uma vez para não perder referências
-            this.session.teams = {
+            newSession.teams = {
               blue: newBlue,
               red: newRed
             };
           }
 
+          // ✅ SIGNALS: Aplicar as mudanças
+          this.session.set(newSession);
+
           console.log('✅ [draftUpdated$] Session atualizado:', {
-            phases: this.session.phases?.length || 0,
-            currentAction: this.session.currentAction,
-            currentPlayer: this.session.currentPlayer,
+            phases: newSession.phases?.length || 0,
+            currentAction: newSession.currentAction,
+            currentPlayer: newSession.currentPlayer,
             draftStartTimestamp: data.draftStartTimestamp
           });
 
@@ -650,26 +685,27 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
       // ✅ CRÍTICO: Comparar como números (converter strings)
       const eventMatchId = Number(event.detail?.matchId);
-      const componentMatchId = Number(this.matchId);
+      const componentMatchId = Number(this.matchId());
 
       if (eventMatchId === componentMatchId) {
         console.log('✅ [draftUpdate] MatchId BATE! Processando update...');
         logDraft('🔄 [DraftPickBan] draftUpdate recebido via WebSocket:', event.detail);
         saveLogToRoot(`🚀 [WebSocket] draftUpdate recebido - atualizando session diretamente`);
 
-        // ✅ CRÍTICO: Atualizar session diretamente como fallback (caso ngOnChanges não dispare)
+        // ✅ SIGNALS: Atualizar session diretamente como fallback (caso ngOnChanges não dispare)
         const updateData = event.detail;
-        if (this.session) {
+        const currentSession = this.session();
+        if (currentSession) {
           const newPhases = (updateData.phases && updateData.phases.length > 0) ? updateData.phases :
             (updateData.actions && updateData.actions.length > 0) ? updateData.actions :
-              this.session.phases;
+              currentSession.phases;
 
           const newCurrentAction = updateData.currentAction !== undefined ? updateData.currentAction :
             updateData.currentIndex !== undefined ? updateData.currentIndex :
-              this.session.currentAction;
+              currentSession.currentAction;
 
-          const newCurrentPlayer = updateData.currentPlayer !== undefined ? updateData.currentPlayer : this.session.currentPlayer;
-          const newTimeRemaining = updateData.timeRemaining !== undefined ? updateData.timeRemaining : this.timeRemaining;
+          const newCurrentPlayer = updateData.currentPlayer !== undefined ? updateData.currentPlayer : currentSession.currentPlayer;
+          const newTimeRemaining = updateData.timeRemaining !== undefined ? updateData.timeRemaining : this.timeRemaining();
 
           console.log('🔄 [draftUpdate] Valores extraídos:', {
             newPhases: newPhases?.length || 0,
@@ -679,32 +715,35 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           });
 
           console.log('🔄 [draftUpdate] Atualizando session:', {
-            oldPhases: this.session.phases?.length || 0,
+            oldPhases: currentSession.phases?.length || 0,
             newPhases: newPhases?.length || 0,
-            oldCurrentAction: this.session.currentAction,
+            oldCurrentAction: currentSession.currentAction,
             newCurrentAction: newCurrentAction,
-            oldCurrentPlayer: this.session.currentPlayer,
+            oldCurrentPlayer: currentSession.currentPlayer,
             newCurrentPlayer: newCurrentPlayer,
             newTimeRemaining: newTimeRemaining
           });
 
-          // ✅ Criar novo objeto session para garantir detecção de mudança
-          this.session = {
-            ...this.session,
+          // ✅ SIGNALS: Criar novo objeto session para garantir detecção de mudança
+          const updatedSession = {
+            ...currentSession,
             phases: newPhases,
             actions: newPhases,
             currentAction: newCurrentAction,
             currentIndex: newCurrentAction,
             currentPlayer: newCurrentPlayer,
             // ✅ CRÍTICO: Usar teams do evento se disponível, senão preservar o existente
-            teams: updateData.teams || this.session?.teams
+            teams: updateData.teams || currentSession?.teams
           };
+
+          // ✅ SIGNALS: Aplicar mudanças
+          this.session.set(updatedSession);
 
           // ✅ LOG DEBUG: Verificar se teams foi incluído
           console.log('🔍 [draftUpdate] teams após atualização:', {
-            hasTeams: !!this.session.teams,
+            hasTeams: !!updatedSession.teams,
             fromEvent: !!updateData.teams,
-            fromSession: !!this.session?.teams
+            fromSession: !!currentSession?.teams
           });
 
           console.log(`⏰ [draftUpdate] Timer recebido: ${newTimeRemaining}s`);
@@ -714,8 +753,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
             this.updateTimerFromBackend({ timeRemaining: newTimeRemaining });
             // ✅ updateTimerFromBackend já chama markForCheck(), não precisa duplicar
           } else {
-            // Fallback se timeRemaining não vier no updateData
-            this.timeRemaining = newTimeRemaining;
+            // ✅ SIGNALS: Fallback se timeRemaining não vier no updateData
+            this.timeRemaining.set(newTimeRemaining);
             this.cdr.markForCheck();
           }
 
@@ -768,7 +807,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     // ✅ CRÍTICO: Listener para confirmações do draft via Observable (igual draft_updated)
     this.subscriptions.push(
       this.electronEvents.draftConfirmationUpdate$.subscribe((data: any) => {
-        if (data && data.matchId === this.matchId) {
+        // ✅ SIGNALS: Obter matchId atual
+        const currentMatchId = this.matchId();
+        if (data && data.matchId === currentMatchId) {
           console.log('📊📊📊 [draftConfirmationUpdate$] PROGRESSO RECEBIDO via ElectronEventsService!', {
             matchId: data.matchId,
             confirmedCount: data.confirmedCount,
@@ -776,15 +817,15 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
             allConfirmed: data.allConfirmed
           });
 
-          // ✅ CRÍTICO: Criar NOVA referência de objeto para disparar ngOnChanges no modal (OnPush)
-          this.confirmationData = {
+          // ✅ SIGNALS: Criar NOVA referência de objeto para disparar ngOnChanges no modal (OnPush)
+          this.confirmationData.set({
             confirmations: [...(data.confirmations || [])], // ✅ Nova referência de array
             confirmedCount: data.confirmedCount || 0,
             totalPlayers: data.totalPlayers || 10,
             allConfirmed: data.allConfirmed || false
-          };
+          });
 
-          console.log('📊 [draftConfirmationUpdate$] Progresso atualizado:', this.confirmationData);
+          console.log('📊 [draftConfirmationUpdate$] Progresso atualizado:', this.confirmationData());
           console.log('📊 [draftConfirmationUpdate$] Nova referência criada para OnPush detection');
 
           // ✅ Se todos confirmaram, apenas aguardar game_started (não fechar modal ainda)
@@ -801,7 +842,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     // ✅ CRÍTICO: Listener para quando o jogo inicia (transição para game in progress)
     this.subscriptions.push(
       this.electronEvents.gameStarted$.subscribe((data: any) => {
-        if (data && data.matchId === this.matchId) {
+        // ✅ SIGNALS: Obter matchId e session atuais
+        const currentMatchId = this.matchId();
+        if (data && data.matchId === currentMatchId) {
           console.log('🎮🎮🎮 [gameStarted$] EVENTO RECEBIDO via ElectronEventsService!', {
             matchId: data.matchId,
             hasGameData: !!data.gameData,
@@ -814,13 +857,13 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           // ✅ CORREÇÃO: Limpar completamente o áudio quando o jogo inicia
           this.clearGlobalDraftAudio();
 
-          // ✅ Fechar modal de confirmação
-          this.showConfirmationModal = false;
+          // ✅ SIGNALS: Fechar modal de confirmação
+          this.showConfirmationModal.set(false);
 
-          // ✅ CRÍTICO: Emitir evento de conclusão com gameData completo
+          // ✅ SIGNALS: Emitir evento de conclusão com gameData completo
           this.onPickBanComplete.emit({
-            matchData: this.matchData,
-            session: this.session,
+            matchData: this.matchData(),
+            session: this.session(),
             gameData: data.gameData || data, // ✅ gameData com teams + champions
             status: 'in_progress'
           });
@@ -897,58 +940,60 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     logDraft('🚀 [DraftPickBan] Inicializando sessão com dados do matchData');
     saveLogToRoot(`🚀 [initializeSessionFromMatchData] Inicializando sessão`);
 
-    // ✅ Extrair phases/actions com verificação
-    const phases = (this.matchData.phases && this.matchData.phases.length > 0) ? this.matchData.phases :
-      (this.matchData.actions && this.matchData.actions.length > 0) ? this.matchData.actions : [];
+    // ✅ SIGNALS: Obter valor atual de matchData
+    const currentMatchData = this.matchData();
 
-    const currentAction = this.matchData.currentAction !== undefined ? this.matchData.currentAction :
-      this.matchData.currentIndex !== undefined ? this.matchData.currentIndex : 0;
+    // ✅ Extrair phases/actions com verificação
+    const phases = (currentMatchData.phases && currentMatchData.phases.length > 0) ? currentMatchData.phases :
+      (currentMatchData.actions && currentMatchData.actions.length > 0) ? currentMatchData.actions : [];
+
+    const currentAction = currentMatchData.currentAction !== undefined ? currentMatchData.currentAction :
+      currentMatchData.currentIndex !== undefined ? currentMatchData.currentIndex : 0;
 
     console.log('🎯 [initializeSessionFromMatchData] Dados recebidos:', {
-      hasPhases: !!this.matchData.phases,
-      phasesLength: this.matchData.phases?.length,
-      hasActions: !!this.matchData.actions,
-      actionsLength: this.matchData.actions?.length,
+      hasPhases: !!currentMatchData.phases,
+      phasesLength: currentMatchData.phases?.length,
+      hasActions: !!currentMatchData.actions,
+      actionsLength: currentMatchData.actions?.length,
       extractedPhasesLength: phases.length,
       currentAction: currentAction,
-      currentPlayer: this.matchData.currentPlayer  // ✅ Log do currentPlayer
+      currentPlayer: currentMatchData.currentPlayer  // ✅ Log do currentPlayer
     });
 
-    saveLogToRoot(`🎯 [initializeSessionFromMatchData] phases=${phases.length}, currentAction=${currentAction}, currentPlayer=${this.matchData.currentPlayer}, matchData.phases=${this.matchData.phases?.length}, matchData.actions=${this.matchData.actions?.length}`);
+    saveLogToRoot(`🎯 [initializeSessionFromMatchData] phases=${phases.length}, currentAction=${currentAction}, currentPlayer=${currentMatchData.currentPlayer}, matchData.phases=${currentMatchData.phases?.length}, matchData.actions=${currentMatchData.actions?.length}`);
 
-    this.session = {
-      id: this.matchData.matchId || 0,
-      blueTeam: this.matchData.blueTeam || this.matchData.team1 || [],
-      redTeam: this.matchData.redTeam || this.matchData.team2 || [],
+    // ✅ SIGNALS: Criar nova sessão com dados do matchData e atualizar o signal
+    this.session.set({
+      id: currentMatchData.matchId || 0,
+      blueTeam: (currentMatchData.blueTeam || currentMatchData.team1 || []).map((p: any) => ({
+        ...p,
+        summonerName: p.summonerName || p.name,
+        teamIndex: 1
+      })),
+      redTeam: (currentMatchData.redTeam || currentMatchData.team2 || []).map((p: any) => ({
+        ...p,
+        summonerName: p.summonerName || p.name,
+        teamIndex: 2
+      })),
       phases: phases,
       currentAction: currentAction,
-      currentPlayer: this.matchData.currentPlayer,  // ✅ CRÍTICO: Incluir jogador da vez
+      currentPlayer: currentMatchData.currentPlayer,  // ✅ CRÍTICO: Incluir jogador da vez
       currentPlayerIndex: 0,
       extendedTime: 0,
-      phase: this.matchData.phase || 'bans',
+      phase: currentMatchData.phase || 'bans',
       // ✅ CRÍTICO: Incluir estrutura teams se vier do backend
-      teams: this.matchData.teams
-    };
+      teams: currentMatchData.teams
+    });
 
-    // ✅ Normalizar dados dos times
-    this.session.blueTeam = (this.session.blueTeam || []).map((p: any) => ({
-      ...p,
-      summonerName: p.summonerName || p.name,
-      teamIndex: 1
-    }));
-
-    this.session.redTeam = (this.session.redTeam || []).map((p: any) => ({
-      ...p,
-      summonerName: p.summonerName || p.name,
-      teamIndex: 2
-    }));
+    // ✅ SIGNALS: Obter a sessão recém-criada para logging
+    const newSession = this.session();
 
     const sessionInfo = {
-      blueTeamCount: this.session?.blueTeam?.length || 0,
-      redTeamCount: this.session?.redTeam?.length || 0,
-      phasesCount: this.session?.phases?.length || 0,
-      currentAction: this.session?.currentAction || 0,
-      phases: this.session?.phases || []
+      blueTeamCount: newSession?.blueTeam?.length || 0,
+      redTeamCount: newSession?.redTeam?.length || 0,
+      phasesCount: newSession?.phases?.length || 0,
+      currentAction: newSession?.currentAction || 0,
+      phases: newSession?.phases || []
     };
 
     logDraft('🚀 [DraftPickBan] Sessão inicializada:', sessionInfo);
@@ -965,8 +1010,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       this.championService.preloadChampions().subscribe({
         next: (loaded: boolean) => {
           if (loaded) {
-            this.champions = []; // TODO: Implementar getAllChampions se necessário
-            this.championsLoaded = true;
+            // ✅ SIGNALS: Usar .set() para atualizar signals
+            this.champions.set([]); // TODO: Implementar getAllChampions se necessário
+            this.championsLoaded.set(true);
             logDraft(`✅ [loadChampions] Champions data loaded`);
             this.organizeChampionsByRole();
           }
@@ -981,12 +1027,12 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   private organizeChampionsByRole() {
-    // TODO: Implementar getChampionsByRole se necessário
-    this.championsByRole = {}; // Temporário
+    // ✅ SIGNALS: Usar .set() para atualizar signals
+    this.championsByRole.set({}); // Temporário
     /*
     this.championService.getChampionsByRole().subscribe({
       next: (championsByRole) => {
-        this.championsByRole = championsByRole;
+        this.championsByRole.set(championsByRole);
       },
       error: (error) => {
         logDraft('❌ [organizeChampionsByRole] Erro ao organizar campeões por role:', error);
@@ -1010,25 +1056,33 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   private stopSessionSync(): void {
-    if (this.realTimeSyncTimer) {
-      clearInterval(this.realTimeSyncTimer);
-      this.realTimeSyncTimer = null;
+    // ✅ SIGNALS: Obter valor atual do timer
+    const currentTimer = this.realTimeSyncTimer();
+    if (currentTimer) {
+      clearInterval(currentTimer);
+      // ✅ SIGNALS: Usar .set() para atualizar signal
+      this.realTimeSyncTimer.set(null);
       logDraft('[stopSessionSync] ⏹️ Sincronização periódica parada');
     }
   }
 
   private validateSyncConditions(): { isValid: boolean; effectiveMatchId?: string } {
-    const effectiveMatchId = this.matchId || this.matchData?.matchId || this.matchData?.id;
-    if (!effectiveMatchId || !this.currentPlayer) {
-      saveLogToRoot(`❌ [syncSessionWithBackend] matchId ou currentPlayer não disponível: matchId=${effectiveMatchId}, currentPlayer=${!!this.currentPlayer}`);
+    // ✅ SIGNALS: Obter valores atuais dos signals
+    const currentMatchId = this.matchId();
+    const currentMatchData = this.matchData();
+    const currentPlayerName = this.currentPlayer();
+
+    const effectiveMatchId = currentMatchId || currentMatchData?.matchId || currentMatchData?.id;
+    if (!effectiveMatchId || !currentPlayerName) {
+      saveLogToRoot(`❌ [syncSessionWithBackend] matchId ou currentPlayer não disponível: matchId=${effectiveMatchId}, currentPlayer=${!!currentPlayerName}`);
       logDraft('[syncSessionWithBackend] ❌ matchId ou currentPlayer não disponível');
       return { isValid: false };
     }
 
-    // Update matchId if necessary
-    if (effectiveMatchId !== this.matchId) {
-      this.matchId = effectiveMatchId;
-      saveLogToRoot(`🔄 [syncSessionWithBackend] matchId corrigido: ${this.matchId}`);
+    // ✅ SIGNALS: Update matchId if necessary
+    if (effectiveMatchId !== currentMatchId) {
+      this.matchId.set(effectiveMatchId);
+      saveLogToRoot(`🔄 [syncSessionWithBackend] matchId corrigido: ${effectiveMatchId}`);
     }
 
     return { isValid: true, effectiveMatchId };
@@ -1036,7 +1090,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
   private mergeSessionData(response: any): void {
     const backendCurrentAction = response.session.currentAction;
-    const currentCurrentAction = this.session?.currentAction || 0;
+    // ✅ SIGNALS: Obter valor atual da sessão
+    const currentSession = this.session();
+    const currentCurrentAction = currentSession?.currentAction || 0;
 
     console.log('🔍 [mergeSessionData] === DADOS RECEBIDOS ===', {
       hasTeams: !!response.session.teams,
@@ -1056,7 +1112,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       return;
     }
 
-    const currentActions = this.session?.actions || [];
+    const currentActions = currentSession?.actions || [];
     const backendActions = response.session.actions || [];
 
     // ✅ CORREÇÃO: Sempre usar dados do backend como fonte de verdade
@@ -1071,10 +1127,11 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     }
 
     // ✅ NOVO: Log antes da atualização
-    const oldSession = { ...this.session };
+    const oldSession = { ...currentSession };
 
-    this.session = {
-      ...this.session,
+    // ✅ SIGNALS: Criar NOVA referência de objeto para session (OnPush)
+    this.session.set({
+      ...currentSession,
       // ✅ SEMPRE usar dados do backend
       actions: actionsToUse,
       team1Picks: response.session.team1Picks || [],
@@ -1084,39 +1141,42 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       currentAction: backendCurrentAction,
       phase: response.session.phase || 'bans',
       // ✅ CORREÇÃO: Usar teams do backend para garantir consistência
-      blueTeam: response.session.blueTeam || response.session.team1 || this.session?.blueTeam || [],
-      redTeam: response.session.redTeam || response.session.team2 || this.session?.redTeam || [],
-      phases: response.session.phases || this.session?.phases || [],
+      blueTeam: response.session.blueTeam || response.session.team1 || currentSession?.blueTeam || [],
+      redTeam: response.session.redTeam || response.session.team2 || currentSession?.redTeam || [],
+      phases: response.session.phases || currentSession?.phases || [],
       // ✅ CRÍTICO: Incluir estrutura teams que vem do backend!
-      teams: response.session.teams || this.session?.teams
-    };
+      teams: response.session.teams || currentSession?.teams
+    });
 
-    // ✅ NOVO: Extrair dados de confirmação
-    this.confirmationData = response.session.confirmations ? {
+    // ✅ SIGNALS: Extrair dados de confirmação e usar .set()
+    this.confirmationData.set(response.session.confirmations ? {
       confirmations: response.session.confirmations,
       allConfirmed: response.session.allConfirmed || false
-    } : null;
+    } : null);
 
-    logDraft(`✅ [mergeSessionData] Dados de confirmação extraídos:`, this.confirmationData);
+    logDraft(`✅ [mergeSessionData] Dados de confirmação extraídos:`, this.confirmationData());
+
+    // ✅ SIGNALS: Obter nova sessão para logging
+    const newSession = this.session();
 
     // ✅ NOVO: Log após a atualização
     console.log('✅ [mergeSessionData] === APÓS MERGE ===', {
-      sessionHasTeams: !!this.session.teams,
-      sessionTeamsBlue: !!this.session.teams?.blue,
-      sessionTeamsRed: !!this.session.teams?.red,
-      currentAction: this.session.currentAction
+      sessionHasTeams: !!newSession.teams,
+      sessionTeamsBlue: !!newSession.teams?.blue,
+      sessionTeamsRed: !!newSession.teams?.red,
+      currentAction: newSession.currentAction
     });
 
-    logDraft(`✅ [mergeSessionData] Merge concluído - currentAction atualizado: ${oldSession.currentAction} → ${this.session.currentAction}`);
+    logDraft(`✅ [mergeSessionData] Merge concluído - currentAction atualizado: ${oldSession.currentAction} → ${newSession.currentAction}`);
     logDraft(`✅ [mergeSessionData] teams recebido do backend:`, response.session.teams ? 'PRESENTE' : 'AUSENTE');
     if (response.session.teams) {
       logDraft(`✅ [mergeSessionData] teams.blue:`, response.session.teams.blue ? 'OK' : 'MISSING');
       logDraft(`✅ [mergeSessionData] teams.red:`, response.session.teams.red ? 'OK' : 'MISSING');
     }
-    logDraft(`✅ [mergeSessionData] teams na session após merge:`, this.session.teams ? 'PRESENTE' : 'AUSENTE');
+    logDraft(`✅ [mergeSessionData] teams na session após merge:`, newSession.teams ? 'PRESENTE' : 'AUSENTE');
     saveLogToRoot(`✅ [mergeSessionData] Ações atualizadas: ${actionsToUse.length}, currentAction: ${backendCurrentAction}`);
-    saveLogToRoot(`🔄 [mergeSessionData] Session.currentAction agora é: ${this.session.currentAction}`);
-    saveLogToRoot(`🔄 [mergeSessionData] Session.teams presente: ${!!this.session.teams}`);
+    saveLogToRoot(`🔄 [mergeSessionData] Session.currentAction agora é: ${newSession.currentAction}`);
+    saveLogToRoot(`🔄 [mergeSessionData] Session.teams presente: ${!!newSession.teams}`);
 
     // ✅ CRÍTICO: Forçar detecção de mudanças para OnPush após atualizar session
     this.cdr.markForCheck();
@@ -1142,10 +1202,13 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         return;
       }
 
-      const oldCurrentAction = this.session?.currentAction || 0;
+      // ✅ SIGNALS: Capturar session atual para comparação
+      const currentSession = this.session();
+
+      const oldCurrentAction = currentSession?.currentAction || 0;
       // ✅ Aceitar currentAction OU currentIndex (backend envia currentIndex)
       const newCurrentAction = response.currentAction !== undefined ? response.currentAction : response.currentIndex || 0;
-      const oldPhasesCount = this.session?.phases?.length || 0;
+      const oldPhasesCount = currentSession?.phases?.length || 0;
       // ✅ Aceitar phases OU actions (backend envia actions)
       const newPhasesCount = (response.phases || response.actions)?.length || 0;
 
@@ -1156,8 +1219,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       // ✅ Passar resposta direta (não response.session)
       this.mergeSessionData({ session: response });
 
-      // ✅ CORREÇÃO: SEMPRE atualizar na primeira sincronização ou quando há mudanças
-      const isFirstSync = !this.session || this.session.currentAction === undefined;
+      // ✅ SIGNALS: CORREÇÃO - SEMPRE atualizar na primeira sincronização ou quando há mudanças
+      const isFirstSync = !currentSession || currentSession.currentAction === undefined;
       const hasChanges = oldCurrentAction !== newCurrentAction || oldPhasesCount !== newPhasesCount;
 
       if (isFirstSync || hasChanges) {
@@ -1247,18 +1310,23 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
     try {
       logDraft('🔄 [updateDraftState] === INICIANDO ATUALIZAÇÃO DE ESTADO ===');
-      saveLogToRoot(`🔄 [updateDraftState] Iniciando atualização de estado. currentAction=${this.session.currentAction}, phases.length=${this.session.phases?.length || 0}, isEditingMode=${this.isEditingMode}`);
+
+      // ✅ SIGNALS: Obter valores atuais dos signals
+      const currentSession = this.session();
+      const currentIsEditingMode = this.isEditingMode();
+
+      saveLogToRoot(`🔄 [updateDraftState] Iniciando atualização de estado. currentAction=${currentSession.currentAction}, phases.length=${currentSession.phases?.length || 0}, isEditingMode=${currentIsEditingMode}`);
 
       // ✅ CRÍTICO: Se estamos em modo de edição, NÃO fazer atualizações que alterem a interface
-      if (this.isEditingMode) {
+      if (currentIsEditingMode) {
         logDraft('🎯 [updateDraftState] MODO EDIÇÃO ATIVO - saltando atualizações da interface');
         saveLogToRoot(`🎯 [updateDraftState] MODO EDIÇÃO ATIVO - preservando estado dos modais`);
         return;
       }
 
       // ✅ CORREÇÃO: Verificar se currentAction é válido
-      if (this.session.currentAction === undefined || this.session.currentAction === null) {
-        saveLogToRoot(`⚠️ [updateDraftState] currentAction undefined/null (${this.session.currentAction}), aguardando ngOnChanges...`);
+      if (currentSession.currentAction === undefined || currentSession.currentAction === null) {
+        saveLogToRoot(`⚠️ [updateDraftState] currentAction undefined/null (${currentSession.currentAction}), aguardando ngOnChanges...`);
         logDraft('⚠️ [updateDraftState] currentAction undefined/null, aguardando ngOnChanges...');
         // ✅ CRÍTICO: NÃO forçar sync HTTP - aguardar WebSocket + ngOnChanges
         // this.syncSessionWithBackend();
@@ -1266,27 +1334,27 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       }
 
       // ✅ CORREÇÃO: Verificar se draft foi completado ANTES de considerar currentAction inválido
-      if (this.session.currentAction >= this.session.phases.length) {
-        const isDraftCompleted = this.session.phase === 'completed' ||
-          this.session.currentAction >= this.session.phases.length;
+      if (currentSession.currentAction >= currentSession.phases.length) {
+        const isDraftCompleted = currentSession.phase === 'completed' ||
+          currentSession.currentAction >= currentSession.phases.length;
 
         if (isDraftCompleted) {
           logDraft('🎯 [updateDraftState] Draft completado detectado - exibindo modal de confirmação');
-          saveLogToRoot(`✅ [updateDraftState] Draft completado (currentAction=${this.session.currentAction}, phases=${this.session.phases.length})`);
+          saveLogToRoot(`✅ [updateDraftState] Draft completado (currentAction=${currentSession.currentAction}, phases=${currentSession.phases.length})`);
 
           // ✅ LOGS DETALHADOS: Investigar dados da sessão para o modal
           console.log('🔍 [Modal Confirmação] Dados da sessão:', {
-            currentAction: this.session.currentAction,
-            phase: this.session.phase,
-            phasesCount: this.session.phases?.length,
-            phasesWithanys: this.session.phases?.filter((phase: any) => phase.champion)?.length || 0,
-            blueTeamLength: this.session.blueTeam?.length || 0,
-            redTeamLength: this.session.redTeam?.length || 0,
-            confirmationData: this.confirmationData
+            currentAction: currentSession.currentAction,
+            phase: currentSession.phase,
+            phasesCount: currentSession.phases?.length,
+            phasesWithanys: currentSession.phases?.filter((phase: any) => phase.champion)?.length || 0,
+            blueTeamLength: currentSession.blueTeam?.length || 0,
+            redTeamLength: currentSession.redTeam?.length || 0,
+            confirmationData: this.confirmationData()
           });
 
           // Log detalhado das fases
-          this.session.phases?.forEach((phase: any, index: number) => {
+          currentSession.phases?.forEach((phase: any, index: number) => {
             console.log(`🔍 [Modal Confirmação] Fase ${index}:`, {
               action: phase.action,
               team: phase.team,
@@ -1300,58 +1368,64 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           // ✅ CORREÇÃO: Limpar completamente o áudio quando draft completa
           this.clearGlobalDraftAudio();
 
-          // Atualizar estado da interface para mostrar modal de confirmação
-          this.isMyTurn = false;
-          this.showChampionModal = false;
-          this.showConfirmationModal = true;
+          // ✅ SIGNALS: Atualizar estado da interface para mostrar modal de confirmação
+          this.isMyTurn.set(false);
+          this.showChampionModal.set(false);
+          this.showConfirmationModal.set(true);
           // ✅ CRÍTICO: Forçar detecção de mudanças para OnPush
           this.cdr.markForCheck();
           return;
         }
 
-        saveLogToRoot(`⚠️ [updateDraftState] currentAction inválido (${this.session.currentAction}), aguardando ngOnChanges...`);
+        saveLogToRoot(`⚠️ [updateDraftState] currentAction inválido (${currentSession.currentAction}), aguardando ngOnChanges...`);
         logDraft('⚠️ [updateDraftState] currentAction inválido, aguardando ngOnChanges...');
         // ✅ CRÍTICO: NÃO forçar sync HTTP - aguardar WebSocket + ngOnChanges
         // this.syncSessionWithBackend();
         return;
       }
 
+      // ✅ SIGNALS: Obter valores atuais
+      const currentMatchId = this.matchId();
+      const currentMatchData = this.matchData();
+
       // ✅ CORREÇÃO: Verificar se matchId está disponível
-      if (!this.matchId) {
+      if (!currentMatchId) {
         saveLogToRoot(`⚠️ [updateDraftState] matchId não disponível, tentando corrigir`);
-        const effectiveMatchId = this.matchData?.matchId || this.matchData?.id;
+        const effectiveMatchId = currentMatchData?.matchId || currentMatchData?.id;
         if (effectiveMatchId) {
-          this.matchId = effectiveMatchId;
-          saveLogToRoot(`✅ [updateDraftState] matchId corrigido: ${this.matchId}`);
+          // ✅ SIGNALS: Usar .set() para atualizar matchId
+          this.matchId.set(effectiveMatchId);
+          saveLogToRoot(`✅ [updateDraftState] matchId corrigido: ${effectiveMatchId}`);
         } else {
           saveLogToRoot(`❌ [updateDraftState] Não foi possível corrigir matchId`);
           return;
         }
       }
 
-      const currentPhase = this.session.phases[this.session.currentAction];
+      const currentPhase = currentSession.phases[currentSession.currentAction];
       if (!currentPhase) {
-        saveLogToRoot(`❌ [updateDraftState] Fase atual não existe para currentAction=${this.session.currentAction}`);
-        logDraft('🔄 [updateDraftState] ❌ Fase atual não existe para currentAction:', this.session.currentAction);
+        saveLogToRoot(`❌ [updateDraftState] Fase atual não existe para currentAction=${currentSession.currentAction}`);
+        logDraft('🔄 [updateDraftState] ❌ Fase atual não existe para currentAction:', currentSession.currentAction);
         return;
       }
 
-      // ✅ MELHORADO: Atualizar jogador da vez com mais informações
-      this.currentPlayerTurn = {
+      // ✅ SIGNALS: Atualizar jogador da vez com mais informações
+      this.currentPlayerTurn.set({
         playerId: currentPhase.byPlayer, // ✅ CORREÇÃO: byPlayer ao invés de playerId
         playerName: currentPhase.byPlayer, // ✅ CORREÇÃO: byPlayer contém o nome
         team: currentPhase.team,
         action: currentPhase.type, // ✅ CRÍTICO: type ao invés de action (estrutura do backend)
         actionIndex: currentPhase.index, // ✅ CORREÇÃO: index ao invés de actionIndex
         playerIndex: currentPhase.index // ✅ CORREÇÃO: index serve como playerIndex também
-      };
+      });
 
-      saveLogToRoot(`🔄 [updateDraftState] CurrentPlayerTurn definido: ${JSON.stringify(this.currentPlayerTurn)}`);
+      saveLogToRoot(`🔄 [updateDraftState] CurrentPlayerTurn definido: ${JSON.stringify(this.currentPlayerTurn())}`);
 
       // ✅ MELHORADO: Verificar se é a vez do jogador atual
-      this.isMyTurn = this.checkIfMyTurn();
+      const myTurn = this.checkIfMyTurn();
+      this.isMyTurn.set(myTurn);
 
-      saveLogToRoot(`🔄 [updateDraftState] isMyTurn=${this.isMyTurn}`);
+      saveLogToRoot(`🔄 [updateDraftState] isMyTurn=${myTurn}`);
 
       // ✅ MELHORADO: Atualizar estado da interface
       this.updateInterfaceState();
@@ -1368,98 +1442,111 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
   private updateInterfaceState(): void {
     logDraft('🔄 [updateInterfaceState] === ATUALIZANDO INTERFACE ===');
-    saveLogToRoot(`🔄 [updateInterfaceState] Atualizando interface. isMyTurn=${this.isMyTurn}, currentPlayerTurn.action=${this.currentPlayerTurn?.action}, isEditingMode=${this.isEditingMode}`);
+
+    // ✅ SIGNALS: Obter valores atuais
+    const currentIsMyTurn = this.isMyTurn();
+    const currentPlayerTurn = this.currentPlayerTurn();
+    const currentIsEditingMode = this.isEditingMode();
+    const currentSession = this.session();
+
+    saveLogToRoot(`🔄 [updateInterfaceState] Atualizando interface. isMyTurn=${currentIsMyTurn}, currentPlayerTurn.action=${currentPlayerTurn?.action}, isEditingMode=${currentIsEditingMode}`);
 
     // ✅ CRÍTICO: Se está em modo de edição, NÃO alterar estados dos modais
-    if (this.isEditingMode) {
+    if (currentIsEditingMode) {
       logDraft('🔄 [updateInterfaceState] Modo de edição ativo - mantendo modal de campeão aberto');
       saveLogToRoot(`🎯 [updateInterfaceState] Modo de edição ativo - preservando estado do modal`);
-      saveLogToRoot(`🔍 [updateInterfaceState] Estado preservado: showChampionModal=${this.showChampionModal}, showConfirmationModal=${this.showConfirmationModal}`);
+
+      const currentShowChampionModal = this.showChampionModal();
+      const currentShowConfirmationModal = this.showConfirmationModal();
+      saveLogToRoot(`🔍 [updateInterfaceState] Estado preservado: showChampionModal=${currentShowChampionModal}, showConfirmationModal=${currentShowConfirmationModal}`);
 
       // ✅ NOVO: Garantir que o modal de campeão está aberto durante edição
-      if (!this.showChampionModal) {
+      if (!currentShowChampionModal) {
         saveLogToRoot(`⚠️ [updateInterfaceState] CORREÇÃO: Modal de campeão estava fechado durante edição - reabrindo`);
-        this.showChampionModal = true;
+        this.showChampionModal.set(true);
       }
 
       // ✅ NOVO: Garantir que o modal de confirmação está fechado durante edição
-      if (this.showConfirmationModal) {
+      if (currentShowConfirmationModal) {
         saveLogToRoot(`⚠️ [updateInterfaceState] CORREÇÃO: Modal de confirmação estava aberto durante edição - fechando`);
-        this.showConfirmationModal = false;
+        this.showConfirmationModal.set(false);
       }
 
-      saveLogToRoot(`🎯 [updateInterfaceState] Estado final modo edição: showChampionModal=${this.showChampionModal}, showConfirmationModal=${this.showConfirmationModal}`);
+      saveLogToRoot(`🎯 [updateInterfaceState] Estado final modo edição: showChampionModal=${this.showChampionModal()}, showConfirmationModal=${this.showConfirmationModal()}`);
       // ✅ CRÍTICO: Forçar detecção de mudanças para OnPush
       this.cdr.markForCheck();
       return;
     }
 
     // ✅ NOVO: Verificar se draft foi completado
-    const isDraftCompleted = this.session.phase === 'completed' ||
-      this.session.currentAction >= (this.session.phases?.length || 0);
+    const isDraftCompleted = currentSession.phase === 'completed' ||
+      currentSession.currentAction >= (currentSession.phases?.length || 0);
 
     if (isDraftCompleted) {
       logDraft('🎯 [updateInterfaceState] Draft completado - mostrando modal de confirmação');
       saveLogToRoot(`✅ [updateInterfaceState] Draft completado - mostrando modal de confirmação`);
-      this.showChampionModal = false;
-      this.showConfirmationModal = true;
+      this.showChampionModal.set(false);
+      this.showConfirmationModal.set(true);
       // ✅ CRÍTICO: Forçar detecção de mudanças para OnPush
       this.cdr.markForCheck();
       return;
     }
 
     // ✅ MELHORADO: Verificar se deve mostrar o modal de campeões
-    const actionIsPick = this.currentPlayerTurn?.action === 'pick';
-    const actionIsBan = this.currentPlayerTurn?.action === 'ban';
+    const actionIsPick = currentPlayerTurn?.action === 'pick';
+    const actionIsBan = currentPlayerTurn?.action === 'ban';
     const actionIsValid = actionIsPick || actionIsBan;
-    const hasSession = !!this.session;
-    const isBeforeEnd = this.session && this.session.currentAction < (this.session.phases?.length || 0);
+    const hasSession = !!currentSession;
+    const isBeforeEnd = currentSession && currentSession.currentAction < (currentSession.phases?.length || 0);
 
-    const shouldShowModal = this.isMyTurn && actionIsValid && hasSession && isBeforeEnd;
+    const shouldShowModal = currentIsMyTurn && actionIsValid && hasSession && isBeforeEnd;
+
+    // ✅ SIGNALS: Obter currentPlayer para debug
+    const currentPlayerName = this.currentPlayer();
 
     // ✅ DEBUG CRÍTICO: Logs SUPER detalhados
     console.log('🔍🔍🔍 [updateInterfaceState] DEBUG COMPLETO DO MODAL:', {
-      '1_isMyTurn': this.isMyTurn,
-      '2_currentPlayerTurn': this.currentPlayerTurn,
-      '3_action': this.currentPlayerTurn?.action,
+      '1_isMyTurn': currentIsMyTurn,
+      '2_currentPlayerTurn': currentPlayerTurn,
+      '3_action': currentPlayerTurn?.action,
       '4_actionIsPick': actionIsPick,
       '5_actionIsBan': actionIsBan,
       '6_actionIsValid': actionIsValid,
       '7_hasSession': hasSession,
-      '8_currentAction': this.session?.currentAction,
-      '9_phasesLength': this.session?.phases?.length || 0,
+      '8_currentAction': currentSession?.currentAction,
+      '9_phasesLength': currentSession?.phases?.length || 0,
       '10_isBeforeEnd': isBeforeEnd,
       '11_shouldShowModal': shouldShowModal,
-      '12_currentPlayer_local': this.currentPlayer?.summonerName || this.currentPlayer?.displayName,
-      '13_currentPlayer_session': this.session?.currentPlayer
+      '12_currentPlayer_local': currentPlayerName?.summonerName || currentPlayerName?.displayName,
+      '13_currentPlayer_session': currentSession?.currentPlayer
     });
 
-    saveLogToRoot(`🔍 [updateInterfaceState] MODAL DEBUG: isMyTurn=${this.isMyTurn}, action=${this.currentPlayerTurn?.action}, shouldShowModal=${shouldShowModal}`);
+    saveLogToRoot(`🔍 [updateInterfaceState] MODAL DEBUG: isMyTurn=${currentIsMyTurn}, action=${currentPlayerTurn?.action}, shouldShowModal=${shouldShowModal}`);
 
     if (shouldShowModal) {
       console.log('✅ [updateInterfaceState] ABRINDO MODAL DE CAMPEÕES!');
       logDraft('🔄 [updateInterfaceState] É minha vez de pick ou ban - mostrando modal');
-      saveLogToRoot(`✅ [updateInterfaceState] Mostrando modal de campeões para ação: ${this.currentPlayerTurn?.action}`);
-      this.showChampionModal = true;
-      this.showConfirmationModal = false;
+      saveLogToRoot(`✅ [updateInterfaceState] Mostrando modal de campeões para ação: ${currentPlayerTurn?.action}`);
+      this.showChampionModal.set(true);
+      this.showConfirmationModal.set(false);
     } else {
       console.log('❌ [updateInterfaceState] NÃO ABRIR MODAL');
       logDraft('🔄 [updateInterfaceState] Não é minha vez ou condições não atendidas - ocultando modal');
-      saveLogToRoot(`❌ [updateInterfaceState] Ocultando modal. isMyTurn=${this.isMyTurn}, action=${this.currentPlayerTurn?.action}, currentAction=${this.session?.currentAction}, phasesLength=${this.session?.phases?.length || 0}`);
-      this.showChampionModal = false;
+      saveLogToRoot(`❌ [updateInterfaceState] Ocultando modal. isMyTurn=${currentIsMyTurn}, action=${currentPlayerTurn?.action}, currentAction=${currentSession?.currentAction}, phasesLength=${currentSession?.phases?.length || 0}`);
+      this.showChampionModal.set(false);
     }
 
     // ✅ NOVO: Log detalhado do estado da interface
     const interfaceState = {
-      showChampionModal: this.showChampionModal,
-      showConfirmationModal: this.showConfirmationModal,
-      isMyTurn: this.isMyTurn,
-      currentAction: this.session?.currentAction,
-      phasesLength: this.session?.phases?.length || 0,
-      currentPhaseAction: this.currentPlayerTurn?.action,
+      showChampionModal: this.showChampionModal(),
+      showConfirmationModal: this.showConfirmationModal(),
+      isMyTurn: currentIsMyTurn,
+      currentAction: currentSession?.currentAction,
+      phasesLength: currentSession?.phases?.length || 0,
+      currentPhaseAction: currentPlayerTurn?.action,
       shouldShowModal,
       isDraftCompleted,
-      isEditingMode: this.isEditingMode
+      isEditingMode: currentIsEditingMode
     };
 
     logDraft('🔄 [updateInterfaceState] Interface atualizada:', interfaceState);
@@ -1471,47 +1558,51 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
   // ✅ MELHORADO: Verificação de turno com logs detalhados
   private checkIfMyTurn(): boolean {
-    if (!this.session || !this.currentPlayer) {
-      saveLogToRoot(`❌ [checkIfMyTurn] Session ou currentPlayer não disponível: session=${!!this.session}, currentPlayer=${!!this.currentPlayer}`);
+    // ✅ SIGNALS: Obter valores atuais
+    const currentSession = this.session();
+    const currentPlayerData = this.currentPlayer();
+
+    if (!currentSession || !currentPlayerData) {
+      saveLogToRoot(`❌ [checkIfMyTurn] Session ou currentPlayer não disponível: session=${!!currentSession}, currentPlayer=${!!currentPlayerData}`);
       return false;
     }
 
-    const currentPhase = this.session.phases[this.session.currentAction];
+    const currentPhase = currentSession.phases[currentSession.currentAction];
     if (!currentPhase) {
-      saveLogToRoot(`❌ [checkIfMyTurn] Fase atual não encontrada: currentAction=${this.session.currentAction}, phases.length=${this.session.phases?.length || 0}`);
+      saveLogToRoot(`❌ [checkIfMyTurn] Fase atual não encontrada: currentAction=${currentSession.currentAction}, phases.length=${currentSession.phases?.length || 0}`);
       return false;
     }
 
     // ✅ MELHORADO: Múltiplas formas de identificar o jogador atual
     const currentPlayerIdentifiers = [
-      this.currentPlayer.puuid,
-      this.currentPlayer.summonerName,
-      this.currentPlayer.displayName,
-      this.currentPlayer.name,
-      this.currentPlayer.gameName ? `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}` : null
+      currentPlayerData.puuid,
+      currentPlayerData.summonerName,
+      currentPlayerData.displayName,
+      currentPlayerData.name,
+      currentPlayerData.gameName ? `${currentPlayerData.gameName}#${currentPlayerData.tagLine}` : null
     ].filter(Boolean);
 
     // ✅ PRIORIDADE MÁXIMA: Usar currentPlayer do backend (enviado pelo DraftFlowService)
     const turnPlayerIdentifiers = [
-      this.session.currentPlayer,  // ✅ CRÍTICO: Backend calcula corretamente quem é o jogador da vez
+      currentSession.currentPlayer,  // ✅ CRÍTICO: Backend calcula corretamente quem é o jogador da vez
       currentPhase.byPlayer, // ✅ CORREÇÃO: byPlayer ao invés de playerId/playerName
       currentPhase.byPlayer // ✅ Garantir que está no array
     ].filter(Boolean);
 
     // ✅ NOVO: Log detalhado para debug
     const debugInfo = {
-      currentAction: this.session.currentAction,
+      currentAction: currentSession.currentAction,
       currentPhaseAction: currentPhase.type, // ✅ CORREÇÃO: type ao invés de action
       currentPhaseTeam: currentPhase.team,
       currentPlayerIdentifiers,
       turnPlayerIdentifiers,
       currentPlayer: {
-        puuid: this.currentPlayer.puuid,
-        summonerName: this.currentPlayer.summonerName,
-        displayName: this.currentPlayer.displayName,
-        name: this.currentPlayer.name,
-        gameName: this.currentPlayer.gameName,
-        tagLine: this.currentPlayer.tagLine
+        puuid: currentPlayerData.puuid,
+        summonerName: currentPlayerData.summonerName,
+        displayName: currentPlayerData.displayName,
+        name: currentPlayerData.name,
+        gameName: currentPlayerData.gameName,
+        tagLine: currentPlayerData.tagLine
       },
       currentPhase: {
         byPlayer: currentPhase.byPlayer, // ✅ CORREÇÃO: byPlayer ao invés de playerId
@@ -1525,7 +1616,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     console.warn('🚨🚨🚨 [checkIfMyTurn] DEBUG COMPLETO:', debugInfo);
     console.warn('🚨 [checkIfMyTurn] currentPlayerIdentifiers:', currentPlayerIdentifiers);
     console.warn('🚨 [checkIfMyTurn] turnPlayerIdentifiers:', turnPlayerIdentifiers);
-    console.warn('🚨 [checkIfMyTurn] sessionCurrentPlayer:', this.session.currentPlayer);
+    console.warn('🚨 [checkIfMyTurn] sessionCurrentPlayer:', currentSession.currentPlayer);
     logDraft('🔄 [checkIfMyTurn] Verificando turno:', debugInfo);
     saveLogToRoot(`🔍 [checkIfMyTurn] Debug: ${JSON.stringify(debugInfo)}`);
 
@@ -1552,14 +1643,16 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
   // ✅ MÉTODOS DE EXIBIÇÃO
   getBannedChampions(): any[] {
-    if (!this.session) return [];
+    // ✅ SIGNALS: Obter valor atual da sessão
+    const currentSession = this.session();
+    if (!currentSession) return [];
 
     const bannedChampions: any[] = [];
 
     // ✅ Usar allBans da estrutura hierárquica (mais simples e direto)
-    if (this.session.teams) {
+    if (currentSession.teams) {
       // Time azul
-      const blueBans = this.session.teams.blue?.allBans || [];
+      const blueBans = currentSession.teams.blue?.allBans || [];
       blueBans.forEach((championId: string) => {
         const champion = this.getChampionFromCache(parseInt(championId, 10));
         if (champion) {
@@ -1568,7 +1661,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       });
 
       // Time vermelho
-      const redBans = this.session.teams.red?.allBans || [];
+      const redBans = currentSession.teams.red?.allBans || [];
       redBans.forEach((championId: string) => {
         const champion = this.getChampionFromCache(parseInt(championId, 10));
         if (champion) {
@@ -1579,8 +1672,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       console.log(`✅ [getBannedChampions] Encontrados ${bannedChampions.length} bans:`, bannedChampions.map(c => c.name));
     }
     // FALLBACK: Estrutura antiga (phases)
-    else if (this.session.phases) {
-      const bannedFromPhases = this.session.phases
+    else if (currentSession.phases) {
+      const bannedFromPhases = currentSession.phases
         .filter((phase: any) => phase.action === 'ban' && phase.champion && phase.locked)
         .map((phase: any) => phase.champion!)
         .filter((champion: any, index: number, self: any[]) =>
@@ -1635,7 +1728,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     // ✅ Usar getChampionById para forçar carregamento do cache
     this.championService.getChampionById(1).subscribe({
       next: () => {
-        this.championsLoaded = true;
+        // ✅ SIGNALS: Usar .set() para atualizar signal
+        this.championsLoaded.set(true);
         const cacheSize = (this.championService as any).championsCache?.size || 0;
         console.log('✅ [loadChampionsForDraft] Campeões carregados:', cacheSize);
       },
@@ -1646,17 +1740,19 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   getSortedTeamByLane(team: 'blue' | 'red'): any[] {
-    if (!this.session) {
+    // ✅ SIGNALS: Obter valor atual da sessão
+    const currentSession = this.session();
+    if (!currentSession) {
       return [];
     }
 
     // ✅ PRIORIDADE 1: Usar teams.blue/red.players (estrutura hierárquica MySQL)
     let teamPlayers: any[];
-    if (this.session.teams?.[team]?.players) {
-      teamPlayers = this.session.teams[team].players;
+    if (currentSession.teams?.[team]?.players) {
+      teamPlayers = currentSession.teams[team].players;
     } else {
       // ✅ FALLBACK: Usar blueTeam/redTeam (estrutura flat - compatibilidade)
-      teamPlayers = this.isBlueTeam(team) ? this.session.blueTeam : this.session.redTeam;
+      teamPlayers = this.isBlueTeam(team) ? currentSession.blueTeam : currentSession.redTeam;
     }
 
     const sortedPlayers = this.sortPlayersByLane(teamPlayers);
@@ -1711,17 +1807,22 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   isCurrentPlayer(player: any): boolean {
-    if (!this.currentPlayer || !player) return false;
-    return this.botService.comparePlayers(this.currentPlayer, player);
+    // ✅ SIGNALS: Obter valor atual do currentPlayer
+    const currentPlayerData = this.currentPlayer();
+    if (!currentPlayerData || !player) return false;
+    return this.botService.comparePlayers(currentPlayerData, player);
   }
 
   isCurrentPlayerForPick(team: 'blue' | 'red', pickIndex: number): boolean {
-    if (!this.currentPlayer || !this.session) return false;
+    // ✅ SIGNALS: Obter valores atuais
+    const currentPlayerData = this.currentPlayer();
+    const currentSession = this.session();
+    if (!currentPlayerData || !currentSession) return false;
 
-    const teamPlayers = this.isBlueTeam(team) ? this.session.blueTeam : this.session.redTeam;
+    const teamPlayers = this.isBlueTeam(team) ? currentSession.blueTeam : currentSession.redTeam;
     const player = teamPlayers.find((p: any) => p.teamIndex === pickIndex);
 
-    return player ? this.botService.comparePlayers(this.currentPlayer, player) : false;
+    return player ? this.botService.comparePlayers(currentPlayerData, player) : false;
   }
 
   isChampionBanned(champion: any): boolean {
@@ -1770,16 +1871,21 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   private findPlayerInTeam(team: 'blue' | 'red', player: any): any {
-    if (!this.session) return null;
+    // ✅ SIGNALS: Obter valor atual da sessão
+    const currentSession = this.session();
+    if (!currentSession) return null;
 
-    const teamPlayers = team === 'blue' ? this.session.blueTeam : this.session.redTeam;
+    const teamPlayers = team === 'blue' ? currentSession.blueTeam : currentSession.redTeam;
     return teamPlayers.find((p: any) => this.checkPlayerMatch(p, player));
   }
 
   private findPickInActions(foundPlayer: any, team: 'blue' | 'red'): any | null {
+    // ✅ SIGNALS: Obter valor atual da sessão
+    const currentSession = this.session();
+
     // ✅ PRIORIDADE 1: Buscar em teams.blue/red.players[].actions (estrutura hierárquica MySQL)
-    if (this.session.teams?.[team]?.players) {
-      const player = this.session.teams[team].players.find((p: any) =>
+    if (currentSession.teams?.[team]?.players) {
+      const player = currentSession.teams[team].players.find((p: any) =>
         p.summonerName === foundPlayer.summonerName ||
         p.summonerName === foundPlayer.name ||
         p.summonerName === `${foundPlayer.gameName}#${foundPlayer.tagLine}`
@@ -1814,11 +1920,11 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     }
 
     // ✅ FALLBACK: Buscar em phases (estrutura flat - compatibilidade)
-    if (!this.session.phases?.length) return null;
+    if (!currentSession.phases?.length) return null;
 
     const teamNumber = team === 'blue' ? 1 : 2;
 
-    const pickAction = this.session.phases.find((action: any) => {
+    const pickAction = currentSession.phases.find((action: any) => {
       const isCorrectTeam = action.team === teamNumber;
       const isPickAction = action.type === 'pick';
       const hasChampion = action.championId && action.byPlayer;
@@ -1884,20 +1990,25 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   // ✅ REMOVIDO: Método duplicado getPlayerBans() - usar getPlayerBans(playerName, teamColor) na seção de métodos hierárquicos
 
   getCurrentPlayerName(): string {
+    // ✅ SIGNALS: Obter valores atuais
+    const currentIsEditingMode = this.isEditingMode();
+    const currentEditingPlayerData = this.currentEditingPlayer();
+    const currentSession = this.session();
+
     // ✅ LOG DEBUG: Sempre logar a chamada do método
     const debugInfo = {
-      isEditingMode: this.isEditingMode,
-      currentEditingPlayer: this.currentEditingPlayer,
-      sessionExists: !!this.session,
-      currentAction: this.session?.currentAction,
-      phasesLength: this.session?.phases?.length
+      isEditingMode: currentIsEditingMode,
+      currentEditingPlayer: currentEditingPlayerData,
+      sessionExists: !!currentSession,
+      currentAction: currentSession?.currentAction,
+      phasesLength: currentSession?.phases?.length
     };
 
     // ✅ CRITICAL: Usar console.log para garantir que aparece nos logs
     console.log('🎯 [getCurrentPlayerName] CHAMADO:', debugInfo);
     saveLogToRoot(`🎯 [getCurrentPlayerName] CHAMADO: ${JSON.stringify(debugInfo)}`);
 
-    if (!this.session) {
+    if (!currentSession) {
       logDraft('❌ [getCurrentPlayerName] Session não existe');
       console.log('❌ [getCurrentPlayerName] Session não existe');
       saveLogToRoot('❌ [getCurrentPlayerName] Session não existe');
@@ -1905,43 +2016,43 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     }
 
     // ✅ PRIORIDADE MÁXIMA: Usar currentPlayer do backend se disponível (exceto em modo de edição)
-    if (!this.isEditingMode && this.session.currentPlayer && typeof this.session.currentPlayer === 'string') {
-      logDraft('✅ [getCurrentPlayerName] Usando currentPlayer do backend:', this.session.currentPlayer);
-      console.log('✅ [getCurrentPlayerName] Usando currentPlayer do backend:', this.session.currentPlayer);
-      saveLogToRoot(`✅ [getCurrentPlayerName] Usando currentPlayer do backend: ${this.session.currentPlayer}`);
-      return this.session.currentPlayer;
+    if (!currentIsEditingMode && currentSession.currentPlayer && typeof currentSession.currentPlayer === 'string') {
+      logDraft('✅ [getCurrentPlayerName] Usando currentPlayer do backend:', currentSession.currentPlayer);
+      console.log('✅ [getCurrentPlayerName] Usando currentPlayer do backend:', currentSession.currentPlayer);
+      saveLogToRoot(`✅ [getCurrentPlayerName] Usando currentPlayer do backend: ${currentSession.currentPlayer}`);
+      return currentSession.currentPlayer;
     } else {
       console.log('⚠️ [getCurrentPlayerName] currentPlayer NÃO disponível:', {
-        isEditingMode: this.isEditingMode,
-        hasCurrentPlayer: !!this.session.currentPlayer,
-        currentPlayerValue: this.session.currentPlayer,
-        currentPlayerType: typeof this.session.currentPlayer
+        isEditingMode: currentIsEditingMode,
+        hasCurrentPlayer: !!currentSession.currentPlayer,
+        currentPlayerValue: currentSession.currentPlayer,
+        currentPlayerType: typeof currentSession.currentPlayer
       });
-      saveLogToRoot(`⚠️ [getCurrentPlayerName] currentPlayer NÃO disponível: isEditingMode=${this.isEditingMode}, currentPlayer=${this.session.currentPlayer}`);
+      saveLogToRoot(`⚠️ [getCurrentPlayerName] currentPlayer NÃO disponível: isEditingMode=${currentIsEditingMode}, currentPlayer=${currentSession.currentPlayer}`);
     }
 
     // ✅ PRIORIDADE ALTA: Se estamos em modo de edição, SEMPRE usar os dados do jogador sendo editado
-    if (this.isEditingMode && this.currentEditingPlayer) {
-      console.log('🚨 [getCurrentPlayerName] MODO EDIÇÃO DETECTADO!', this.currentEditingPlayer);
-      saveLogToRoot(`🚨 [getCurrentPlayerName] MODO EDIÇÃO DETECTADO: ${JSON.stringify(this.currentEditingPlayer)}`);
+    if (currentIsEditingMode && currentEditingPlayerData) {
+      console.log('🚨 [getCurrentPlayerName] MODO EDIÇÃO DETECTADO!', currentEditingPlayerData);
+      saveLogToRoot(`🚨 [getCurrentPlayerName] MODO EDIÇÃO DETECTADO: ${JSON.stringify(currentEditingPlayerData)}`);
 
-      logDraft('🎯 [getCurrentPlayerName] MODO EDIÇÃO ATIVO - ignorando currentAction, buscando jogador editado:', this.currentEditingPlayer);
+      logDraft('🎯 [getCurrentPlayerName] MODO EDIÇÃO ATIVO - ignorando currentAction, buscando jogador editado:', currentEditingPlayerData);
 
       // PRIMEIRO: Tentar encontrar a fase baseada no phaseIndex
-      if (this.currentEditingPlayer.phaseIndex !== undefined &&
-        this.session.phases &&
-        this.session.phases[this.currentEditingPlayer.phaseIndex]) {
-        const editPhase = this.session.phases[this.currentEditingPlayer.phaseIndex];
+      if (currentEditingPlayerData.phaseIndex !== undefined &&
+        currentSession.phases &&
+        currentSession.phases[currentEditingPlayerData.phaseIndex]) {
+        const editPhase = currentSession.phases[currentEditingPlayerData.phaseIndex];
         logDraft('✅ [getCurrentPlayerName] [EDIÇÃO] Encontrado por phaseIndex:', editPhase.playerName || editPhase.playerId);
         return editPhase.playerName || editPhase.playerId || 'Jogador em Edição';
       }
 
       // SEGUNDO: Buscar por playerId nas fases (busca mais flexível)
-      if (this.session.phases) {
-        const editPhase = this.session.phases.find((phase: any) => {
+      if (currentSession.phases) {
+        const editPhase = currentSession.phases.find((phase: any) => {
           // Comparar diferentes formatos de playerId
           const phasePlayerId = phase.playerId || phase.playerName;
-          const editPlayerId = this.currentEditingPlayer?.playerId;
+          const editPlayerId = currentEditingPlayerData?.playerId;
 
           logDraft('🔍 [getCurrentPlayerName] [EDIÇÃO] Comparando:', phasePlayerId, 'vs', editPlayerId);
 
@@ -1957,35 +2068,35 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       }
 
       // TERCEIRO: Se ainda não encontrou, usar o playerId diretamente
-      logDraft('⚠️ [getCurrentPlayerName] [EDIÇÃO] Jogador não encontrado nas fases, usando ID direto:', this.currentEditingPlayer.playerId);
-      return this.currentEditingPlayer.playerId || 'Jogador em Edição';
+      logDraft('⚠️ [getCurrentPlayerName] [EDIÇÃO] Jogador não encontrado nas fases, usando ID direto:', currentEditingPlayerData.playerId);
+      return currentEditingPlayerData.playerId || 'Jogador em Edição';
     }
 
     // ✅ CORREÇÃO: Verificar se currentAction é válido (apenas quando NÃO está em modo de edição)
-    if (this.session.currentAction === undefined || this.session.currentAction === null) {
-      logDraft('❌ [getCurrentPlayerName] currentAction inválido:', this.session.currentAction);
+    if (currentSession.currentAction === undefined || currentSession.currentAction === null) {
+      logDraft('❌ [getCurrentPlayerName] currentAction inválido:', currentSession.currentAction);
       return 'Jogador Desconhecido';
     }
 
     // ✅ NOVO: Se o draft está completo (currentAction >= phases.length), não há fase atual
-    if (this.session.currentAction >= this.session.phases.length) {
+    if (currentSession.currentAction >= currentSession.phases.length) {
       logDraft('🏁 [getCurrentPlayerName] Draft completado - todas as ações concluídas');
       return 'Draft Completo';
     }
 
-    const currentPhase = this.session.phases[this.session.currentAction];
+    const currentPhase = currentSession.phases[currentSession.currentAction];
     if (!currentPhase) {
       logDraft('❌ [getCurrentPlayerName] Fase atual não encontrada:', {
-        currentAction: this.session.currentAction,
-        phasesLength: this.session.phases?.length || 0,
-        phases: this.session.phases?.slice(0, 3) // Log das primeiras 3 fases para debug
+        currentAction: currentSession.currentAction,
+        phasesLength: currentSession.phases?.length || 0,
+        phases: currentSession.phases?.slice(0, 3) // Log das primeiras 3 fases para debug
       });
       return 'Jogador Desconhecido';
     }
 
     // ✅ MELHORADO: Log detalhado da fase atual
     logDraft('🔍 [getCurrentPlayerName] Fase atual:', {
-      currentAction: this.session.currentAction,
+      currentAction: currentSession.currentAction,
       phase: currentPhase,
       playerName: currentPhase.playerName,
       playerId: currentPhase.playerId,
@@ -2007,7 +2118,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     }
 
     // ✅ FALLBACK: Buscar por playerIndex nos times
-    const teamPlayers = currentPhase.team === 'blue' || currentPhase.team === 1 ? this.session.blueTeam : this.session.redTeam;
+    const teamPlayers = currentPhase.team === 'blue' || currentPhase.team === 1 ? currentSession.blueTeam : currentSession.redTeam;
 
     if (currentPhase.playerIndex !== undefined && teamPlayers?.[currentPhase.playerIndex]) {
       const player = teamPlayers[currentPhase.playerIndex];
@@ -2021,7 +2132,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
     // ✅ ÚLTIMO FALLBACK: Buscar por actionIndex nas fases
     if (currentPhase.actionIndex !== undefined) {
-      const phaseByActionIndex = this.session.phases.find((p: any) => p.actionIndex === currentPhase.actionIndex);
+      const phaseByActionIndex = currentSession.phases.find((p: any) => p.actionIndex === currentPhase.actionIndex);
       if (phaseByActionIndex && (phaseByActionIndex.playerName || phaseByActionIndex.playerId)) {
         const playerName = phaseByActionIndex.playerName || phaseByActionIndex.playerId;
         logDraft('✅ [getCurrentPlayerName] Encontrado por actionIndex:', playerName);
@@ -2034,18 +2145,22 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   getCurrentActionText(): string {
-    if (!this.session) return '';
+    // ✅ SIGNALS: Obter valor atual da sessão
+    const currentSession = this.session();
+    if (!currentSession) return '';
 
-    const currentPhase = this.session.phases[this.session.currentAction];
+    const currentPhase = currentSession.phases[currentSession.currentAction];
     if (!currentPhase) return '';
 
     return currentPhase.action === 'ban' ? 'Banir Campeão' : 'Escolher Campeão';
   }
 
   getCurrentActionIcon(): string {
-    if (!this.session) return '';
+    // ✅ SIGNALS: Obter valor atual da sessão
+    const currentSession = this.session();
+    if (!currentSession) return '';
 
-    const currentPhase = this.session.phases[this.session.currentAction];
+    const currentPhase = currentSession.phases[currentSession.currentAction];
     if (!currentPhase) return '';
 
     return currentPhase.action === 'ban' ? '🚫' : '⭐';
@@ -2056,21 +2171,28 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   getPlayerTeam(): 'blue' | 'red' {
-    if (!this.currentPlayer || !this.session) return 'blue';
+    // ✅ SIGNALS: Obter valores atuais
+    const currentPlayerData = this.currentPlayer();
+    const currentSession = this.session();
+    if (!currentPlayerData || !currentSession) return 'blue';
 
-    const blueTeamPlayer = this.session.blueTeam.find((p: any) => this.botService.comparePlayers(p, this.currentPlayer));
+    const blueTeamPlayer = currentSession.blueTeam.find((p: any) => this.botService.comparePlayers(p, currentPlayerData));
     return blueTeamPlayer ? 'blue' : 'red';
   }
 
   getPhaseProgress(): number {
-    if (!this.session?.phases?.length) return 0;
-    return Math.floor((this.session.currentAction / this.session.phases.length) * 100);
+    // ✅ SIGNALS: Obter valor atual da sessão
+    const currentSession = this.session();
+    if (!currentSession?.phases?.length) return 0;
+    return Math.floor((currentSession.currentAction / currentSession.phases.length) * 100);
   }
 
   // ✅ NOVO: Verifica se estamos na última ação (vigésima) para mostrar botão de confirmação
   isLastAction(): boolean {
-    if (!this.session?.phases?.length) return false;
-    return this.session.currentAction >= this.session.phases.length - 1;
+    // ✅ SIGNALS: Obter valor atual da sessão
+    const currentSession = this.session();
+    if (!currentSession?.phases?.length) return false;
+    return currentSession.currentAction >= currentSession.phases.length - 1;
   }
 
   // ✅ MÉTODOS DE INTERFACE
@@ -2083,7 +2205,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     logDraft('🎯 [openChampionModal] === ABRINDO MODAL DE CAMPEÕES ===');
     saveLogToRoot(`🎯 [openChampionModal] Tentando abrir modal de campeões`);
 
-    if (!this.session) {
+    // ✅ SIGNALS: Obter valor atual da sessão
+    const currentSession = this.session();
+    if (!currentSession) {
       console.log('❌ [openChampionModal] Session não existe');
       logDraft('❌ [openChampionModal] Session não existe - não abrindo modal');
       saveLogToRoot(`❌ [openChampionModal] Session não existe`);
@@ -2094,60 +2218,67 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     this.updateDraftState();
 
     // ✅ PERMITIR reabrir modal mesmo se não for mais a vez (caso tenha fechado sem querer)
-    console.log('✅ [openChampionModal] Abrindo modal - isMyTurn:', this.isMyTurn);
+    console.log('✅ [openChampionModal] Abrindo modal - isMyTurn:', this.isMyTurn());
 
-    if (this.session.phase === 'completed' || this.session.currentAction >= this.session.phases.length) {
+    if (currentSession.phase === 'completed' || currentSession.currentAction >= currentSession.phases.length) {
       console.log('❌ [openChampionModal] Draft completado');
       logDraft('❌ [openChampionModal] Sessão completada ou inválida - não abrindo modal');
-      saveLogToRoot(`❌ [openChampionModal] Sessão completada ou inválida. phase=${this.session.phase}, currentAction=${this.session.currentAction}, phases.length=${this.session.phases.length}`);
+      saveLogToRoot(`❌ [openChampionModal] Sessão completada ou inválida. phase=${currentSession.phase}, currentAction=${currentSession.currentAction}, phases.length=${currentSession.phases.length}`);
       return;
     }
 
-    this.showChampionModal = true;
+    // ✅ SIGNALS: Usar .set() para atualizar signal
+    this.showChampionModal.set(true);
     // ✅ CRÍTICO: Forçar detecção de mudanças para OnPush
     this.cdr.markForCheck();
-    console.log('✅ [openChampionModal] Modal ABERTO! showChampionModal =', this.showChampionModal);
-    console.log('⏰ [openChampionModal] Timer atual no modal:', this.timeRemaining);
+    console.log('✅ [openChampionModal] Modal ABERTO! showChampionModal =', this.showChampionModal());
+    console.log('⏰ [openChampionModal] Timer atual no modal:', this.timeRemaining());
     logDraft('🎯 [openChampionModal] === FIM DA ABERTURA DO MODAL ===');
 
     // ✅ CORREÇÃO: Forçar atualização adicional para garantir que o timer seja exibido
     setTimeout(() => {
       this.cdr.detectChanges();
-      console.log('⏰ [openChampionModal] Timer após timeout:', this.timeRemaining);
+      console.log('⏰ [openChampionModal] Timer após timeout:', this.timeRemaining());
     }, 100);
 
     // ✅ CORREÇÃO: Forçar atualização adicional para garantir que o timer seja exibido
     setTimeout(() => {
       this.cdr.detectChanges();
-      console.log('⏰ [openChampionModal] Timer após segundo timeout:', this.timeRemaining);
+      console.log('⏰ [openChampionModal] Timer após segundo timeout:', this.timeRemaining());
     }, 500);
-    saveLogToRoot(`✅ [openChampionModal] Modal aberto com sucesso. showChampionModal=${this.showChampionModal}`);
+    saveLogToRoot(`✅ [openChampionModal] Modal aberto com sucesso. showChampionModal=${this.showChampionModal()}`);
   }
 
   openConfirmationModal(): void {
     logDraft('🎯 [openConfirmationModal] === ABRINDO MODAL DE CONFIRMAÇÃO ===');
+
+    // ✅ SIGNALS: Obter valor atual da sessão
+    const currentSession = this.session();
+
     console.log('🟢 [openConfirmationModal] Abrindo modal - session atual:', {
-      hasSession: !!this.session,
-      sessionId: this.session?.id || this.session?.matchId,
-      hasTeams: !!this.session?.teams,
-      bluePlayersCount: this.session?.teams?.blue?.players?.length || 0,
-      redPlayersCount: this.session?.teams?.red?.players?.length || 0
+      hasSession: !!currentSession,
+      sessionId: currentSession?.id || currentSession?.matchId,
+      hasTeams: !!currentSession?.teams,
+      bluePlayersCount: currentSession?.teams?.blue?.players?.length || 0,
+      redPlayersCount: currentSession?.teams?.red?.players?.length || 0
     });
 
     // ✅ NOVO: Sincronizar dados antes de abrir modal
     this.syncConfirmationData();
 
     // ✅ CRÍTICO: Invalidar cache do modal ANTES de abrir para garantir dados frescos
-    if (this.confirmationModal) {
+    const confirmationModalRef = this.confirmationModal();
+    if (confirmationModalRef) {
       setTimeout(() => {
-        if (typeof (this.confirmationModal as any).forceRefresh === 'function') {
-          (this.confirmationModal as any).forceRefresh();
+        if (typeof (confirmationModalRef as any).forceRefresh === 'function') {
+          (confirmationModalRef as any).forceRefresh();
           console.log('✅ [openConfirmationModal] Cache do modal invalidado - dados serão recalculados');
         }
       }, 0);
     }
 
-    this.showConfirmationModal = true;
+    // ✅ SIGNALS: Usar .set() para atualizar signal
+    this.showConfirmationModal.set(true);
     this.cdr.markForCheck();
 
     console.log('✅ [openConfirmationModal] Modal aberto');
@@ -2196,45 +2327,54 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     logDraft('🎯 [onanySelected] === CAMPEÃO SELECIONADO ===');
     logDraft('🎯 [onanySelected] Campeão selecionado:', champion.name);
 
+    // ✅ SIGNALS: Obter valores atuais
+    const currentSession = this.session();
+    const currentPlayerData = this.currentPlayer();
+    const currentMatchId = this.matchId();
+    const isEditing = this.isEditingMode();
+
     // ✅ LOGS DETALHADOS DE DEBUG
-    const currentPhasePreview = this.session?.phases?.[this.session?.currentAction];
+    const currentPhasePreview = currentSession?.phases?.[currentSession?.currentAction];
     saveLogToRoot(`\n========== [onanySelected] INÍCIO DA AÇÃO ==========`);
     saveLogToRoot(`🎯 Campeão: ${champion.name} (ID: ${champion.id})`);
-    saveLogToRoot(`🎯 MatchId: ${this.matchId}`);
-    saveLogToRoot(`🎯 Current Action Index: ${this.session?.currentAction}`);
+    saveLogToRoot(`🎯 MatchId: ${currentMatchId}`);
+    saveLogToRoot(`🎯 Current Action Index: ${currentSession?.currentAction}`);
     saveLogToRoot(`🎯 Fase Atual: ${currentPhasePreview?.action} (Team: ${currentPhasePreview?.team})`);
     saveLogToRoot(`🎯 Jogador da Vez: ${currentPhasePreview?.playerName} (ID: ${currentPhasePreview?.playerId})`);
-    saveLogToRoot(`🎯 Current Player: ${this.currentPlayer?.summonerName || this.currentPlayer?.displayName}`);
-    saveLogToRoot(`🎯 Is Editing Mode: ${this.isEditingMode}`);
-    saveLogToRoot(`🎯 Total Phases: ${this.session?.phases?.length || 0}`);
+    saveLogToRoot(`🎯 Current Player: ${currentPlayerData?.summonerName || currentPlayerData?.displayName}`);
+    saveLogToRoot(`🎯 Is Editing Mode: ${isEditing}`);
+    saveLogToRoot(`🎯 Total Phases: ${currentSession?.phases?.length || 0}`);
     saveLogToRoot(`====================================================\n`);
 
-    if (!this.session) {
+    if (!currentSession) {
       logDraft('❌ [onanySelected] Session não existe');
       saveLogToRoot(`❌ [onanySelected] Session não existe`);
       return;
     }
 
+    // ✅ SIGNALS: Obter editingPlayer
+    const editingPlayer = this.currentEditingPlayer();
+
     // ✅ NOVO: Verificar se estamos em modo de edição
-    if (this.isEditingMode && this.currentEditingPlayer) {
+    if (isEditing && editingPlayer) {
       logDraft('🔄 [onanySelected] Modo edição - sobrescrevendo pick anterior');
-      saveLogToRoot(`🔄 [onanySelected] Editando pick de ${this.currentEditingPlayer.playerId} para ${champion.name}`);
+      saveLogToRoot(`🔄 [onanySelected] Editando pick de ${editingPlayer.playerId} para ${champion.name}`);
 
-      await this.updatePlayerPick(this.currentEditingPlayer.playerId, champion);
+      await this.updatePlayerPick(editingPlayer.playerId, champion);
 
-      // Resetar modo de edição
-      this.isEditingMode = false;
-      this.currentEditingPlayer = null;
-      this.showChampionModal = false;
-      this.showConfirmationModal = true; // Voltar para modal de confirmação
+      // ✅ SIGNALS: Resetar modo de edição
+      this.isEditingMode.set(false);
+      this.currentEditingPlayer.set(null);
+      this.showChampionModal.set(false);
+      this.showConfirmationModal.set(true); // Voltar para modal de confirmação
       // ✅ CRÍTICO: Forçar detecção de mudanças para OnPush
       this.cdr.markForCheck();
       return;
     }
 
     // ✅ NOVO: Verificar se estamos em draft completado (modo confirmação)
-    const isDraftCompleted = this.session.phase === 'completed' ||
-      this.session.currentAction >= (this.session.phases?.length || 0);
+    const isDraftCompleted = currentSession.phase === 'completed' ||
+      currentSession.currentAction >= (currentSession.phases?.length || 0);
 
     if (isDraftCompleted) {
       logDraft('🔄 [onanySelected] Draft completado - editando pick via botão');
@@ -2243,10 +2383,10 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       return;
     }
 
-    const currentPhase = this.session.phases[this.session.currentAction];
+    const currentPhase = currentSession.phases[currentSession.currentAction];
     if (!currentPhase) {
       logDraft('❌ [onanySelected] Fase atual não existe');
-      saveLogToRoot(`❌ [onanySelected] Fase atual não existe para currentAction=${this.session.currentAction}`);
+      saveLogToRoot(`❌ [onanySelected] Fase atual não existe para currentAction=${currentSession.currentAction}`);
       return;
     }
 
@@ -2257,19 +2397,20 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     currentPhase.champion = champion;
     currentPhase.locked = true;
     currentPhase.timeRemaining = 0;
-    this.showChampionModal = false;
+    this.showChampionModal.set(false);
 
-    if (!this.botService.isBot(this.currentPlayer)) {
-      this.isWaitingBackend = true;
+    if (!this.botService.isBot(currentPlayerData)) {
+      this.isWaitingBackend.set(true);
     }
 
     // ✅ CORREÇÃO: Garantir que matchId seja sempre válido
-    const effectiveMatchId = this.matchId || this.matchData?.matchId || this.matchData?.id;
+    const matchData = this.matchData();
+    const effectiveMatchId = currentMatchId || matchData?.matchId || matchData?.id;
     if (effectiveMatchId) {
       saveLogToRoot(`🎯 [onanySelected] Usando matchId: ${effectiveMatchId}`);
       try {
         // 🔍 DEBUG: Mostrar TODO o conteúdo de currentPlayer
-        saveLogToRoot(`🔍 [onanySelected] currentPlayer COMPLETO: ${JSON.stringify(this.currentPlayer, null, 2)}`);
+        saveLogToRoot(`🔍 [onanySelected] currentPlayer COMPLETO: ${JSON.stringify(currentPlayerData, null, 2)}`);
         saveLogToRoot(`🔍 [onanySelected] currentPhase.playerName: ${currentPhase.playerName}`);
         saveLogToRoot(`🔍 [onanySelected] currentPhase.playerId: ${currentPhase.playerId}`);
 
@@ -2277,12 +2418,12 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         let playerIdentifier = '';
 
         // Prioridade 1: gameName#tagLine (formato completo com tag, usado no backend)
-        if (this.currentPlayer?.gameName && this.currentPlayer?.tagLine) {
-          playerIdentifier = `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`;
+        if (currentPlayerData?.gameName && currentPlayerData?.tagLine) {
+          playerIdentifier = `${currentPlayerData.gameName}#${currentPlayerData.tagLine}`;
           saveLogToRoot(`🎯 [onanySelected] Usando gameName#tagLine: ${playerIdentifier}`);
-        } else if (this.currentPlayer?.displayName) {
+        } else if (currentPlayerData?.displayName) {
           // Prioridade 2: displayName (pode incluir tag)
-          playerIdentifier = this.currentPlayer.displayName;
+          playerIdentifier = currentPlayerData.displayName;
           saveLogToRoot(`🎯 [onanySelected] Usando displayName: ${playerIdentifier}`);
         } else if (currentPhase.playerName) {
           // Prioridade 3: playerName da fase (vem do backend com formato correto)
@@ -2292,13 +2433,13 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           // Prioridade 4: playerId da fase
           playerIdentifier = currentPhase.playerId;
           saveLogToRoot(`🎯 [onanySelected] Usando playerId da fase: ${playerIdentifier}`);
-        } else if (this.currentPlayer?.summonerName) {
+        } else if (currentPlayerData?.summonerName) {
           // Prioridade 5: summonerName (pode não ter tag)
-          playerIdentifier = this.currentPlayer.summonerName;
+          playerIdentifier = currentPlayerData.summonerName;
           saveLogToRoot(`🎯 [onanySelected] Usando summonerName: ${playerIdentifier}`);
-        } else if (this.currentPlayer?.puuid) {
+        } else if (currentPlayerData?.puuid) {
           // Última opção: PUUID
-          playerIdentifier = this.currentPlayer.puuid;
+          playerIdentifier = currentPlayerData.puuid;
           saveLogToRoot(`🎯 [onanySelected] Usando PUUID como fallback: ${playerIdentifier}`);
         }
 
@@ -2308,7 +2449,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           playerId: playerIdentifier,
           championId: champion.id,  // ✅ Usando nome do campeão (ex: "Ahri")
           action: currentPhase.action,
-          actionIndex: this.session.currentAction
+          actionIndex: currentSession.currentAction
         };
 
         console.log('📡📡📡 [onanySelected] ENVIANDO PARA BACKEND!');
@@ -2340,7 +2481,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
         // ✅ MELHORADO: Aguardar um pouco antes de parar o loading
         setTimeout(() => {
-          this.isWaitingBackend = false;
+          this.isWaitingBackend.set(false);
           logDraft('✅ [onanySelected] Loading finalizado');
           saveLogToRoot(`✅ [onanySelected] Loading finalizado`);
         }, 1000);
@@ -2359,7 +2500,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
             playerId: currentPhase.playerName || currentPhase.playerId,
             championId: champion.id,  // ✅ Usando nome do campeão (ex: "Ahri")
             action: currentPhase.action,
-            actionIndex: this.session.currentAction
+            actionIndex: currentSession.currentAction
           };
 
           try {
@@ -2372,7 +2513,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
             // Se o fallback funcionar, seguir o fluxo normal
             this.syncSessionWithRetry();
             setTimeout(() => {
-              this.isWaitingBackend = false;
+              this.isWaitingBackend.set(false);
               logDraft('✅ [onanySelected] Loading finalizado (fallback)');
               saveLogToRoot(`✅ [onanySelected] Loading finalizado (fallback)`);
             }, 1000);
@@ -2382,22 +2523,25 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           }
         }
 
-        this.isWaitingBackend = false;
+        this.isWaitingBackend.set(false);
       }
     } else {
       logDraft('❌ [onanySelected] Nenhum matchId disponível');
       saveLogToRoot(`❌ [onanySelected] Nenhum matchId disponível`);
-      this.isWaitingBackend = false;
+      this.isWaitingBackend.set(false);
     }
   }
 
   // ✅ REMOVIDO: onEditRequested - não é mais necessário, o backend controla tudo
 
   completePickBan() {
+    // ✅ SIGNALS: Obter valor atual da sessão
+    const currentSession = this.session();
+
     this.onPickBanComplete.emit({
-      session: this.session,
-      blueTeam: this.session?.blueTeam,
-      redTeam: this.session?.redTeam
+      session: currentSession,
+      blueTeam: currentSession?.blueTeam,
+      redTeam: currentSession?.redTeam
     });
   }
 
@@ -2408,7 +2552,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   // ✅ NOVO: Métodos para modal de confirmação
   onConfirmationModalClose(): void {
     logDraft('🎯 [onConfirmationModalClose] Fechando modal de confirmação');
-    this.showConfirmationModal = false;
+    this.showConfirmationModal.set(false);
     // ✅ CRÍTICO: Forçar detecção de mudanças para OnPush
     this.cdr.markForCheck();
   }
@@ -2417,18 +2561,22 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     logDraft('🎯 [onConfirmationModalConfirm] === CONFIRMANDO DRAFT ===');
     saveLogToRoot(`✅ [onConfirmationModalConfirm] Jogador confirmando draft`);
 
+    // ✅ SIGNALS: Obter valores atuais
+    const currentMatchId = this.matchId();
+    const currentPlayerData = this.currentPlayer();
+
     try {
-      if (!this.matchId || !this.currentPlayer) {
+      if (!currentMatchId || !currentPlayerData) {
         throw new Error('matchId ou currentPlayer não disponível');
       }
 
-      const playerId = this.currentPlayer.id?.toString() ||
-        (this.currentPlayer.gameName && this.currentPlayer.tagLine
-          ? `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`
-          : this.currentPlayer.summonerName || this.currentPlayer.name);
+      const playerId = currentPlayerData.id?.toString() ||
+        (currentPlayerData.gameName && currentPlayerData.tagLine
+          ? `${currentPlayerData.gameName}#${currentPlayerData.tagLine}`
+          : currentPlayerData.summonerName || currentPlayerData.name);
 
       const response = await firstValueFrom(this.http.post(`${this.baseUrl}/match/confirm-draft`, {
-        matchId: this.matchId,
+        matchId: currentMatchId,
         playerId: playerId
       }, {
         headers: this.apiService.getAuthenticatedHeaders()
@@ -2437,10 +2585,13 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       logDraft('✅ [onConfirmationModalConfirm] Draft confirmado com sucesso:', response);
       saveLogToRoot(`✅ [onConfirmationModalConfirm] Draft confirmado com sucesso: ${JSON.stringify(response)}`);
 
+      // ✅ SIGNALS: Obter referência do modal
+      const confirmationModalRef = this.confirmationModal();
+
       // ✅ NOVO: Atualizar estado do modal de confirmação
       const responseData = response as any;
-      if (this.confirmationModal) {
-        this.confirmationModal.updateConfirmationState(
+      if (confirmationModalRef) {
+        confirmationModalRef.updateConfirmationState(
           responseData.success || false,
           responseData.allConfirmed || false
         );
@@ -2452,9 +2603,12 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       logDraft('❌ [onConfirmationModalConfirm] Erro ao confirmar draft:', error);
       saveLogToRoot(`❌ [onConfirmationModalConfirm] Erro: ${JSON.stringify(error)}`);
 
+      // ✅ SIGNALS: Obter referência do modal
+      const confirmationModalRef = this.confirmationModal();
+
       // ✅ NOVO: Atualizar estado em caso de erro
-      if (this.confirmationModal) {
-        this.confirmationModal.updateConfirmationState(false, false);
+      if (confirmationModalRef) {
+        confirmationModalRef.updateConfirmationState(false, false);
       }
     }
   }
@@ -2462,7 +2616,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   onConfirmationModalCancel(): void {
     logDraft('🎯 [onConfirmationModalCancel] === CANCELANDO PARTIDA ===');
     saveLogToRoot(`❌ [onConfirmationModalCancel] Jogador cancelando partida`);
-    this.showConfirmationModal = false;
+    this.showConfirmationModal.set(false);
     this.onPickBanCancel.emit();
   }
 
@@ -2484,20 +2638,23 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     saveLogToRoot(`🔍 [onConfirmationModalEditPick] ANTES: showanyModal=${this.showChampionModal}, showConfirmationModal=${this.showConfirmationModal}, isEditingMode=${this.isEditingMode}`);
 
     // ✅ CRÍTICO: Definir modo de edição PRIMEIRO para bloquear updateInterfaceState
-    this.isEditingMode = true;
+    this.isEditingMode.set(true);
     console.log('🔵 [EDIT-PICK] Modo de edição ATIVADO!');
     saveLogToRoot(`🔒 [onConfirmationModalEditPick] MODO EDIÇÃO ATIVADO: isEditingMode=${this.isEditingMode}`);
 
-    // ✅ Armazenar dados da edição ANTES de alterar modais
-    this.currentEditingPlayer = {
+    // ✅ SIGNALS: Armazenar dados da edição ANTES de alterar modais
+    this.currentEditingPlayer.set({
       playerId: data.playerId,
       phaseIndex: data.phaseIndex
-    };
+    });
     saveLogToRoot(`� [onConfirmationModalEditPick] Dados de edição armazenados: ${JSON.stringify(this.currentEditingPlayer)}`);
 
+    // ✅ SIGNALS: Capturar session para validação
+    const currentSession = this.session();
+
     // ✅ VERIFICAR: Buscar informações do jogador nas fases para validação
-    if (this.session?.phases && data.phaseIndex !== undefined && this.session.phases[data.phaseIndex]) {
-      const targetPhase = this.session.phases[data.phaseIndex];
+    if (currentSession?.phases && data.phaseIndex !== undefined && currentSession.phases[data.phaseIndex]) {
+      const targetPhase = currentSession.phases[data.phaseIndex];
       saveLogToRoot(`🔍 [onConfirmationModalEditPick] Jogador encontrado: ${JSON.stringify({
         phaseIndex: data.phaseIndex,
         playerId: targetPhase.playerId,
@@ -2509,19 +2666,19 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       saveLogToRoot(`⚠️ [onConfirmationModalEditPick] AVISO: Fase não encontrada para phaseIndex=${data.phaseIndex}`);
     }
 
-    // ✅ ALTERAR MODAIS: Fechar confirmação e abrir campeão
-    this.showConfirmationModal = false;
-    this.showChampionModal = true;
-    saveLogToRoot(`🔄 [onConfirmationModalEditPick] MODAIS ALTERADOS: showanyModal=${this.showChampionModal}, showConfirmationModal=${this.showConfirmationModal}`);
+    // ✅ SIGNALS: ALTERAR MODAIS - Fechar confirmação e abrir campeão
+    this.showConfirmationModal.set(false);
+    this.showChampionModal.set(true);
+    saveLogToRoot(`🔄 [onConfirmationModalEditPick] MODAIS ALTERADOS: showChampionModal=${this.showChampionModal()}, showConfirmationModal=${this.showConfirmationModal()}`);
 
     logDraft('✅ [onConfirmationModalEditPick] Modal de edição configurado');
     saveLogToRoot(`✅ [onConfirmationModalEditPick] Modo edição ativado para jogador: ${data.playerId}`);
 
     // ✅ DIAGNÓSTICO: Verificar condições do template ANTES de detectChanges
-    const sessionOk = this.session ? 'true' : 'false';
-    const phaseOk = this.session?.phase !== 'completed' ? 'true' : 'false';
-    const actionOk = this.session ? this.session.currentAction < this.session.phases.length : 'session_null';
-    saveLogToRoot(`🔍 [onConfirmationModalEditPick] CONDIÇÕES TEMPLATE: isVisible=${this.showChampionModal}, session=${sessionOk}, phase!='completed'=${phaseOk}, currentAction<phases.length=${actionOk}`);
+    const sessionOk = currentSession ? 'true' : 'false';
+    const phaseOk = currentSession?.phase !== 'completed' ? 'true' : 'false';
+    const actionOk = currentSession ? currentSession.currentAction < currentSession.phases.length : 'session_null';
+    saveLogToRoot(`🔍 [onConfirmationModalEditPick] CONDIÇÕES TEMPLATE: isVisible=${this.showChampionModal()}, session=${sessionOk}, phase!='completed'=${phaseOk}, currentAction<phases.length=${actionOk}`);
 
     // ✅ FORÇAR detecção de mudanças IMEDIATAMENTE (OnPush)
     this.cdr.markForCheck();
@@ -2529,19 +2686,20 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
     // ✅ VERIFICAÇÃO: Timeout para garantir que o estado não foi sobrescrito
     setTimeout(() => {
-      saveLogToRoot(`🕒 [onConfirmationModalEditPick] VERIFICAÇÃO (100ms): showanyModal=${this.showChampionModal}, showConfirmationModal=${this.showConfirmationModal}, isEditingMode=${this.isEditingMode}`);
+      const currentSession2 = this.session();
+      saveLogToRoot(`🕒 [onConfirmationModalEditPick] VERIFICAÇÃO (100ms): showChampionModal=${this.showChampionModal()}, showConfirmationModal=${this.showConfirmationModal()}, isEditingMode=${this.isEditingMode()}`);
 
       // ✅ DIAGNÓSTICO: Verificar condições do template APÓS timeout
-      const sessionOk2 = this.session ? 'true' : 'false';
-      const phaseOk2 = this.session?.phase !== 'completed' ? 'true' : 'false';
-      const actionOk2 = this.session ? this.session.currentAction < this.session.phases.length : 'session_null';
-      saveLogToRoot(`🔍 [onConfirmationModalEditPick] CONDIÇÕES TEMPLATE (100ms): isVisible=${this.showChampionModal}, session=${sessionOk2}, phase!='completed'=${phaseOk2}, currentAction<phases.length=${actionOk2}`);
+      const sessionOk2 = currentSession2 ? 'true' : 'false';
+      const phaseOk2 = currentSession2?.phase !== 'completed' ? 'true' : 'false';
+      const actionOk2 = currentSession2 ? currentSession2.currentAction < currentSession2.phases.length : 'session_null';
+      saveLogToRoot(`🔍 [onConfirmationModalEditPick] CONDIÇÕES TEMPLATE (100ms): isVisible=${this.showChampionModal()}, session=${sessionOk2}, phase!='completed'=${phaseOk2}, currentAction<phases.length=${actionOk2}`);
 
-      if (!this.showChampionModal || this.showConfirmationModal || !this.isEditingMode) {
+      if (!this.showChampionModal() || this.showConfirmationModal() || !this.isEditingMode()) {
         saveLogToRoot(`🚨 [onConfirmationModalEditPick] ESTADO INCORRETO - CORRIGINDO`);
-        this.isEditingMode = true;
-        this.showChampionModal = true;
-        this.showConfirmationModal = false;
+        this.isEditingMode.set(true);
+        this.showChampionModal.set(true);
+        this.showConfirmationModal.set(false);
         // ✅ CRÍTICO: Forçar detecção de mudanças para OnPush
         this.cdr.markForCheck();
         saveLogToRoot(`🔧 [onConfirmationModalEditPick] Estado corrigido`);
@@ -2580,19 +2738,24 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         throw new Error('matchId ou currentPlayer não disponível');
       }
 
-      const playerId = this.currentPlayer.id?.toString() ||
-        (this.currentPlayer.gameName && this.currentPlayer.tagLine
-          ? `${this.currentPlayer.gameName}#${this.currentPlayer.tagLine}`
-          : this.currentPlayer.summonerName || this.currentPlayer.name);
+      // ✅ SIGNALS: Capturar sinais de jogador e edição
+      const currentPlayerData = this.currentPlayer();
+      const currentEditingPlayerData = this.currentEditingPlayer();
+      const currentSession = this.session();
+
+      const playerId = currentPlayerData.id?.toString() ||
+        (currentPlayerData.gameName && currentPlayerData.tagLine
+          ? `${currentPlayerData.gameName}#${currentPlayerData.tagLine}`
+          : currentPlayerData.summonerName || currentPlayerData.name);
 
       // ✅ CORREÇÃO: Encontrar o phaseIndex correto do pick do jogador
       let actionIndex = 0;
-      if (this.currentEditingPlayer?.phaseIndex !== undefined) {
-        actionIndex = this.currentEditingPlayer.phaseIndex;
+      if (currentEditingPlayerData?.phaseIndex !== undefined) {
+        actionIndex = currentEditingPlayerData.phaseIndex;
         logDraft(`✅ [changePlayerPick] Usando phaseIndex do currentEditingPlayer: ${actionIndex}`);
-      } else if (this.session?.phases) {
+      } else if (currentSession?.phases) {
         // Buscar o phaseIndex do pick do jogador atual
-        const playerPickPhase = this.session.phases.findIndex((phase: any) => {
+        const playerPickPhase = currentSession.phases.findIndex((phase: any) => {
           const isPick = phase.type === 'pick' || phase.action === 'pick';
           const matchesPlayer = phase.playerId === playerId ||
             phase.playerName === playerId ||
@@ -2622,8 +2785,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       saveLogToRoot(`✅ [changePlayerPick] Pick alterado com sucesso: ${JSON.stringify(response)}`);
 
       // ✅ CRÍTICO: Atualizar session local IMEDIATAMENTE após sucesso (antes do WebSocket)
-      if (this.session && this.session.phases && actionIndex >= 0 && actionIndex < this.session.phases.length) {
-        const phase = this.session.phases[actionIndex];
+      if (currentSession && currentSession.phases && actionIndex >= 0 && actionIndex < currentSession.phases.length) {
+        const phase = currentSession.phases[actionIndex];
         if (phase) {
           // Buscar campeão no cache (mesma técnica usada em getBannedChampions)
           const champion = this.getChampionFromCache(championId);
@@ -2639,22 +2802,22 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
             logDraft(`✅ [changePlayerPick] Session atualizada localmente para phaseIndex ${actionIndex}`);
 
             // ✅ CRÍTICO: Atualizar teams ANTES de criar nova referência de session
-            let updatedTeams = this.session.teams;
-            if (this.session.teams && this.currentEditingPlayer) {
+            let updatedTeams = currentSession.teams;
+            if (currentSession.teams && currentEditingPlayerData) {
               // ✅ CORREÇÃO: Normalizar playerId para comparação (pode vir como gameName#tagLine ou summonerName)
               const normalizePlayerId = (p: any): string => {
                 if (p.gameName && p.tagLine) return `${p.gameName}#${p.tagLine}`;
                 return p.summonerName || p.name || '';
               };
 
-              const team = this.session.blueTeam?.some((p: any) => {
+              const team = currentSession.blueTeam?.some((p: any) => {
                 const normalizedPlayerId = normalizePlayerId(p);
                 return normalizedPlayerId === playerId || p.summonerName === playerId || p.name === playerId;
               }) ? 'blue' : 'red';
 
-              if (this.session.teams[team]?.players) {
+              if (currentSession.teams[team]?.players) {
                 // ✅ CORREÇÃO: Buscar player usando comparação normalizada
-                const player = this.session.teams[team].players.find((p: any) => {
+                const player = currentSession.teams[team].players.find((p: any) => {
                   const normalizedPlayerId = normalizePlayerId(p);
                   return normalizedPlayerId === playerId || p.summonerName === playerId || p.name === playerId;
                 });
@@ -2662,7 +2825,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
                 console.log('🔍 [changePlayerPick] Buscando player:', {
                   searchPlayerId: playerId,
                   team: team,
-                  playersInTeam: this.session.teams[team].players.length,
+                  playersInTeam: currentSession.teams[team].players.length,
                   foundPlayer: player ? {
                     summonerName: player.summonerName,
                     name: player.name,
@@ -2681,7 +2844,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
                     // ✅ ATUALIZAR allPicks PRIMEIRO (antes de criar nova referência)
                     const oldChampionId = pickAction.championId;
-                    const currentAllPicks = [...(this.session.teams[team].allPicks || [])];
+                    const currentAllPicks = [...(currentSession.teams[team].allPicks || [])];
                     const pickIndex = currentAllPicks.findIndex((id: string) =>
                       parseInt(id) === parseInt(oldChampionId)
                     );
@@ -2701,7 +2864,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
                       championName: champion.name
                     };
 
-                    const updatedPlayers = [...this.session.teams[team].players];
+                    const updatedPlayers = [...currentSession.teams[team].players];
                     const playerIndex = updatedPlayers.findIndex((p: any) => {
                       const normalizedPlayerId = normalizePlayerId(p);
                       return normalizedPlayerId === playerId || p.summonerName === playerId || p.name === playerId;
@@ -2730,9 +2893,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
                     }
 
                     updatedTeams = {
-                      ...this.session.teams,
+                      ...currentSession.teams,
                       [team]: {
-                        ...this.session.teams[team],
+                        ...currentSession.teams[team],
                         players: updatedPlayers,
                         allPicks: currentAllPicks
                       }
@@ -2747,43 +2910,46 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
             // ✅ CORREÇÃO: Criar uma referência PROFUNDA nova, incluindo todos os objetos aninhados
             // ✅ CRÍTICO: Criar nova referência PROFUNDA incluindo TODOS os objetos aninhados da estrutura teams
             const newSession = {
-              ...this.session,
-              phases: this.session.phases.map((phase: any, idx: number) =>
+              ...currentSession,
+              phases: currentSession.phases.map((phase: any, idx: number) =>
                 idx === actionIndex
                   ? { ...phase, champion: { ...phase.champion }, championId: championId.toString() }
                   : { ...phase, champion: phase.champion ? { ...phase.champion } : undefined }
               ), // ✅ Nova referência do array com phase atualizada
               teams: updatedTeams, // ✅ Nova referência completa de teams (já criada acima)
               // ✅ CRÍTICO: Garantir que todos os objetos aninhados são novos também
-              blueTeam: this.session.blueTeam ? [...this.session.blueTeam] : this.session.blueTeam,
-              redTeam: this.session.redTeam ? [...this.session.redTeam] : this.session.redTeam,
+              blueTeam: currentSession.blueTeam ? [...currentSession.blueTeam] : currentSession.blueTeam,
+              redTeam: currentSession.redTeam ? [...currentSession.redTeam] : currentSession.redTeam,
               // ✅ CRÍTICO: Adicionar campo temporário para forçar mudança de referência
               _lastUpdate: Date.now()
             };
 
-            // ✅ Atribuir nova referência
-            this.session = newSession;
+            // ✅ SIGNALS: Atribuir nova referência usando .set()
+            this.session.set(newSession);
 
             // ✅ Remover campo temporário (para não poluir)
-            delete (this.session as any)._lastUpdate;
+            delete (newSession as any)._lastUpdate;
 
             logDraft('✅ [changePlayerPick] Session atualizada com nova referência profunda');
+
+            // ✅ SIGNALS: Obter session atualizada para log
+            const updatedSession = this.session();
             console.log('✅ [changePlayerPick] Session atualizada:', {
-              hasTeams: !!this.session.teams,
-              blueTeamPicks: this.session.teams?.blue?.allPicks,
-              redTeamPicks: this.session.teams?.red?.allPicks,
-              modalVisible: this.showConfirmationModal
+              hasTeams: !!updatedSession.teams,
+              blueTeamPicks: updatedSession.teams?.blue?.allPicks,
+              redTeamPicks: updatedSession.teams?.red?.allPicks,
+              modalVisible: this.showConfirmationModal()
             });
           }
         }
       }
 
-      // Resetar modo de edição
-      this.isEditingMode = false;
-      this.currentEditingPlayer = null;
+      // ✅ SIGNALS: Resetar modo de edição com .set()
+      this.isEditingMode.set(false);
+      this.currentEditingPlayer.set(null);
 
-      // ✅ CRÍTICO: Fechar modal de campeão PRIMEIRO
-      this.showChampionModal = false;
+      // ✅ SIGNALS: Fechar modal de campeão PRIMEIRO
+      this.showChampionModal.set(false);
 
       // ✅ CRÍTICO: FORÇAR DETECÇÃO DE MUDANÇAS para propagar a nova session para o modal filho
       // Isso garante que o @Input [session] do modal recebe a nova referência ANTES de reabrir
@@ -2795,11 +2961,12 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       // ✅ CRÍTICO: Aguardar um micro-tick para garantir que a nova session foi propagada para o modal
       setTimeout(() => {
         // ✅ AGORA sim invalidar cache (modal já tem session atualizada via @Input)
-        if (this.confirmationModal) {
+        const confirmationModalRef = this.confirmationModal();
+        if (confirmationModalRef) {
           try {
             console.log('🔄 [changePlayerPick] Invalidando cache do modal (session já atualizada via @Input)');
-            if (typeof (this.confirmationModal as any).forceRefresh === 'function') {
-              (this.confirmationModal as any).forceRefresh();
+            if (typeof (confirmationModalRef as any).forceRefresh === 'function') {
+              (confirmationModalRef as any).forceRefresh();
               console.log('✅ [changePlayerPick] Cache invalidado - dados recalculados com session nova');
               logDraft('✅ [changePlayerPick] Cache invalidado após propagação da session');
             }
@@ -2810,8 +2977,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
         // ✅ CRÍTICO: Aguardar mais um micro-tick para garantir que forceRefresh completou
         setTimeout(() => {
-          // ✅ AGORA abrir o modal (que já tem dados corretos)
-          this.showConfirmationModal = true;
+          // ✅ SIGNALS: AGORA abrir o modal (que já tem dados corretos)
+          this.showConfirmationModal.set(true);
 
           // ✅ Forçar detecção de mudanças final
           this.cdr.markForCheck();
@@ -2883,12 +3050,15 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
       logDraft('✅ [updatePlayerPick] Pick atualizado com sucesso:', response);
 
+      // ✅ SIGNALS: Capturar session atual para atualização local
+      const currentSession = this.session();
+
       // ✅ CRÍTICO: Atualizar session LOCAL com o novo campeão ANTES de reabrir modal
-      if (this.session && this.session.phases) {
+      if (currentSession && currentSession.phases) {
         // Encontrar a phase do jogador que foi editado
         let phaseIndex = -1;
-        for (let i = 0; i < this.session.phases.length; i++) {
-          const phase = this.session.phases[i];
+        for (let i = 0; i < currentSession.phases.length; i++) {
+          const phase = currentSession.phases[i];
           if (phase.action === 'pick' &&
             (phase.playerId === playerId ||
               phase.playerName === playerId ||
@@ -2902,7 +3072,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           console.log('✅ [updatePlayerPick] Encontrada phase do jogador no índice:', phaseIndex);
 
           // Atualizar a phase com o novo campeão
-          const updatedPhases = [...this.session.phases];
+          const updatedPhases = [...currentSession.phases];
           updatedPhases[phaseIndex] = {
             ...updatedPhases[phaseIndex],
             championId: Number(championId).toString(),
@@ -2911,13 +3081,13 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
           };
 
           // Atualizar também na estrutura teams
-          let updatedTeams = this.session.teams;
-          if (this.session.teams) {
-            const phase = this.session.phases[phaseIndex];
+          let updatedTeams = currentSession.teams;
+          if (currentSession.teams) {
+            const phase = currentSession.phases[phaseIndex];
             const team = phase.team === 1 ? 'blue' : 'red';
 
-            if (this.session.teams[team]?.players) {
-              const players = [...this.session.teams[team].players];
+            if (currentSession.teams[team]?.players) {
+              const players = [...currentSession.teams[team].players];
               const playerIndex = players.findIndex(p =>
                 p.summonerName === playerId ||
                 p.name === playerId ||
@@ -2943,9 +3113,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
                 };
 
                 updatedTeams = {
-                  ...this.session.teams,
+                  ...currentSession.teams,
                   [team]: {
-                    ...this.session.teams[team],
+                    ...currentSession.teams[team],
                     players: players
                   }
                 };
@@ -2953,30 +3123,31 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
             }
           }
 
-          // ✅ CRÍTICO: Criar nova referência da session para disparar ngOnChanges no modal
+          // ✅ SIGNALS: CRÍTICO - Criar nova referência da session para disparar ngOnChanges no modal
           // Isso garante que o Angular detecte a mudança com OnPush
-          this.session = {
-            ...this.session,
+          const updatedSession = {
+            ...currentSession,
             phases: updatedPhases,
             teams: updatedTeams
           };
+          this.session.set(updatedSession);
 
           console.log('✅ [updatePlayerPick] Session atualizada localmente com novo campeão:', champion.name);
           console.log('✅ [updatePlayerPick] Session completa:', {
-            hasTeams: !!this.session.teams,
-            bluePlayersCount: this.session.teams?.blue?.players?.length || 0,
-            redPlayersCount: this.session.teams?.red?.players?.length || 0,
-            bluePicksCount: this.session.teams?.blue?.allPicks?.length || 0,
-            redPicksCount: this.session.teams?.red?.allPicks?.length || 0
+            hasTeams: !!updatedSession.teams,
+            bluePlayersCount: updatedSession.teams?.blue?.players?.length || 0,
+            redPlayersCount: updatedSession.teams?.red?.players?.length || 0,
+            bluePicksCount: updatedSession.teams?.blue?.allPicks?.length || 0,
+            redPicksCount: updatedSession.teams?.red?.allPicks?.length || 0
           });
-          logDraft('✅ [updatePlayerPick] Session atualizada:', this.session);
+          logDraft('✅ [updatePlayerPick] Session atualizada:', updatedSession);
         }
       }
 
-      // Resetar modo de edição
-      this.isEditingMode = false;
-      this.currentEditingPlayer = null;
-      this.showChampionModal = false;
+      // ✅ SIGNALS: Resetar modo de edição com .set()
+      this.isEditingMode.set(false);
+      this.currentEditingPlayer.set(null);
+      this.showChampionModal.set(false);
 
       // ✅ CRÍTICO: Forçar detecção de mudanças para propagar session atualizada AO MODAL
       this.cdr.markForCheck();
@@ -2988,7 +3159,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       // O modal vai detectar a mudança via ngOnChanges e recalcular automaticamente
       setTimeout(() => {
         console.log('✅ [updatePlayerPick] Reabrindo modal de confirmação');
-        this.showConfirmationModal = true;
+        this.showConfirmationModal.set(true);
         this.cdr.markForCheck();
         console.log(`✅ [updatePlayerPick] Modal reaberto - ngOnChanges do modal vai detectar session atualizada`);
       }, 100); // ✅ Aumentei para 100ms para garantir propagação
@@ -3044,16 +3215,17 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       return;
     }
 
-    const isTimeoutForCurrentPlayer = data.playerId && this.currentPlayer &&
-      (data.playerId === this.currentPlayer.displayName ||
-        data.playerId === this.currentPlayer.summonerName ||
-        data.playerId === this.currentPlayer.name);
+    const currentPlayerValue = this.currentPlayer();
+    const isTimeoutForCurrentPlayer = data.playerId && currentPlayerValue &&
+      (data.playerId === currentPlayerValue.displayName ||
+        data.playerId === currentPlayerValue.summonerName ||
+        data.playerId === currentPlayerValue.name);
 
     if (isTimeoutForCurrentPlayer) {
       logDraft('⏰ [DraftPickBan] Timeout para o jogador atual, fechando modais');
-      this.showChampionModal = false;
-      this.showConfirmationModal = false;
-      this.isWaitingBackend = false;
+      this.showChampionModal.set(false);
+      this.showConfirmationModal.set(false);
+      this.isWaitingBackend.set(false);
     }
 
     // ✅ CRÍTICO: Forçar detecção de mudanças para OnPush
@@ -3069,48 +3241,52 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
    * Obtém o time azul da estrutura hierárquica ou fallback para flat
    */
   getBlueTeam(): any[] {
-    if (this.session?.teams?.blue?.players) {
-      return this.session.teams.blue.players;
+    const currentSession = this.session();
+    if (currentSession?.teams?.blue?.players) {
+      return currentSession.teams.blue.players;
     }
-    return this.session?.blueTeam || [];
+    return currentSession?.blueTeam || [];
   }
 
   /**
    * Obtém o time vermelho da estrutura hierárquica ou fallback para flat
    */
   getRedTeam(): any[] {
-    if (this.session?.teams?.red?.players) {
-      return this.session.teams.red.players;
+    const currentSession = this.session();
+    if (currentSession?.teams?.red?.players) {
+      return currentSession.teams.red.players;
     }
-    return this.session?.redTeam || [];
+    return currentSession?.redTeam || [];
   }
 
   /**
    * Obtém todas as ações (bans/picks) de um jogador específico
    */
   getPlayerActions(playerName: string, teamColor: 'blue' | 'red'): any[] {
-    if (this.session?.teams?.[teamColor]?.players) {
-      const player = this.session.teams[teamColor].players.find(
+    const currentSession = this.session();
+    if (currentSession?.teams?.[teamColor]?.players) {
+      const player = currentSession.teams[teamColor].players.find(
         (p: any) => p.summonerName === playerName
       );
       return player?.actions || [];
     }
     // Fallback: buscar na estrutura flat
-    return this.session?.phases?.filter((action: any) => action.byPlayer === playerName) || [];
+    return currentSession?.phases?.filter((action: any) => action.byPlayer === playerName) || [];
   }
 
   /**
    * Obtém apenas os bans de um jogador
    */
   getPlayerBans(playerName: string, teamColor: 'blue' | 'red'): any[] {
-    if (this.session?.teams?.[teamColor]?.players) {
-      const player = this.session.teams[teamColor].players.find(
+    const currentSession = this.session();
+    if (currentSession?.teams?.[teamColor]?.players) {
+      const player = currentSession.teams[teamColor].players.find(
         (p: any) => p.summonerName === playerName
       );
       return player?.bans || [];
     }
     // Fallback: buscar na estrutura flat
-    return this.session?.phases?.filter((action: any) =>
+    return currentSession?.phases?.filter((action: any) =>
       action.byPlayer === playerName && action.type === 'ban'
     ) || [];
   }
@@ -3119,14 +3295,15 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
    * Obtém apenas os picks de um jogador
    */
   getPlayerPicks(playerName: string, teamColor: 'blue' | 'red'): any[] {
-    if (this.session?.teams?.[teamColor]?.players) {
-      const player = this.session.teams[teamColor].players.find(
+    const currentSession = this.session();
+    if (currentSession?.teams?.[teamColor]?.players) {
+      const player = currentSession.teams[teamColor].players.find(
         (p: any) => p.summonerName === playerName
       );
       return player?.picks || [];
     }
     // Fallback: buscar na estrutura flat
-    return this.session?.phases?.filter((action: any) =>
+    return currentSession?.phases?.filter((action: any) =>
       action.byPlayer === playerName && action.type === 'pick'
     ) || [];
   }
@@ -3135,9 +3312,10 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
    * Obtém todos os bans de um time
    */
   getTeamBans(teamColor: 'blue' | 'red'): any[] {
+    const currentSession = this.session();
     // ✅ Retornar objetos de campeão com image como URL string (igual aos picks)
-    if (this.session?.teams?.[teamColor]?.allBans) {
-      const bans = this.session.teams[teamColor].allBans
+    if (currentSession?.teams?.[teamColor]?.allBans) {
+      const bans = currentSession.teams[teamColor].allBans
         .filter((championId: string) => championId !== 'SKIPPED'); // ✅ Filtrar bans pulados
       return bans.map((championId: string) => {
         const parsedId = parseInt(championId, 10);
@@ -3165,7 +3343,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
     // Fallback: buscar na estrutura flat
     const teamNumber = teamColor === 'blue' ? 1 : 2;
-    const championIds = this.session?.phases
+    const championIds = currentSession?.phases
       ?.filter((action: any) => action.type === 'ban' && action.team === teamNumber && action.championId)
       ?.map((action: any) => action.championId) || [];
 
@@ -3191,9 +3369,10 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
    * Obtém todos os picks de um time (como objetos de campeão)
    */
   getTeamPicks(teamColor: 'blue' | 'red'): any[] {
+    const currentSession = this.session();
     // ✅ Retornar objetos de campeão com image como URL string (igual aos bans)
-    if (this.session?.teams?.[teamColor]?.allPicks) {
-      const picks = this.session.teams[teamColor].allPicks
+    if (currentSession?.teams?.[teamColor]?.allPicks) {
+      const picks = currentSession.teams[teamColor].allPicks
         .filter((championId: string) => championId !== 'SKIPPED'); // ✅ Filtrar picks pulados
       return picks.map((championId: string) => {
         const parsedId = parseInt(championId, 10);
@@ -3221,7 +3400,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
     // Fallback: buscar na estrutura flat
     const teamNumber = teamColor === 'blue' ? 1 : 2;
-    const championIds = this.session?.phases
+    const championIds = currentSession?.phases
       ?.filter((action: any) => action.type === 'pick' && action.team === teamNumber && action.championId)
       ?.map((action: any) => action.championId) || [];
 
@@ -3247,21 +3426,24 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
    * Obtém a fase atual do draft (ban1, pick1, ban2, pick2)
    */
   getCurrentPhase(): string {
-    return this.session?.currentPhase || 'ban1';
+    const currentSession = this.session();
+    return currentSession?.currentPhase || 'ban1';
   }
 
   /**
    * Obtém o time atual da ação (blue/red)
    */
   getCurrentTeam(): string {
-    return this.session?.currentTeam || 'blue';
+    const currentSession = this.session();
+    return currentSession?.currentTeam || 'blue';
   }
 
   /**
    * Obtém o tipo da ação atual (ban/pick)
    */
   getCurrentActionType(): string {
-    return this.session?.currentActionType || 'ban';
+    const currentSession = this.session();
+    return currentSession?.currentActionType || 'ban';
   }
 
   private isBlueTeam(team: any): boolean {
@@ -3301,13 +3483,14 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
     // Atualizar dados da sessão com informações do backend
     if (data.currentAction !== undefined) {
-      this.session = {
-        ...this.session,
+      const currentSession = this.session();
+      this.session.set({
+        ...currentSession,
         currentAction: data.currentAction,
         lastAction: data.lastAction,
         // ✅ CRÍTICO: Preservar estrutura teams
-        teams: this.session?.teams
-      };
+        teams: currentSession?.teams
+      });
     }
 
     // Atualizar interface
@@ -3327,12 +3510,13 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
     // Atualizar currentAction da sessão
     if (data.currentAction !== undefined) {
-      this.session = {
-        ...this.session,
+      const currentSession = this.session();
+      this.session.set({
+        ...currentSession,
         currentAction: data.currentAction,
         // ✅ CRÍTICO: Preservar estrutura teams
-        teams: this.session?.teams
-      };
+        teams: currentSession?.teams
+      });
     }
 
     // Atualizar interface
@@ -3352,7 +3536,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     saveLogToRoot(`🔄 [handleDraftDataSync] Dados recebidos: ${JSON.stringify(data)}`);
 
     // ✅ NOVO: Log detalhado do currentAction antes da atualização
-    const oldCurrentAction = this.session?.currentAction || 0;
+    const currentSession = this.session();
+    const oldCurrentAction = currentSession?.currentAction || 0;
     saveLogToRoot(`🔄 [handleDraftDataSync] currentAction ANTES: ${oldCurrentAction}`);
 
     // Atualizar dados da sessão com informações sincronizadas
@@ -3366,18 +3551,18 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       saveLogToRoot(`🔄 [handleDraftDataSync] Backend currentAction: ${data.currentAction}`);
       saveLogToRoot(`🔄 [handleDraftDataSync] Backend actions.length: ${pickBanData.actions?.length || 0}`);
 
-      this.session = {
-        ...this.session,
-        blueTeam: pickBanData.team1 || this.session.blueTeam || [],
-        redTeam: pickBanData.team2 || this.session.redTeam || [],
-        phases: pickBanData.phases || this.session.phases || [],
+      this.session.set({
+        ...currentSession,
+        blueTeam: pickBanData.team1 || currentSession.blueTeam || [],
+        redTeam: pickBanData.team2 || currentSession.redTeam || [],
+        phases: pickBanData.phases || currentSession.phases || [],
         currentAction: data.currentAction || 0, // ✅ CORREÇÃO: Usar currentAction do backend
-        phase: pickBanData.phase || this.session.phase || 'bans',
-        actions: pickBanData.actions || this.session.actions || [],
-        team1Picks: pickBanData.team1Picks || this.session.team1Picks || [],
-        team1Bans: pickBanData.team1Bans || this.session.team1Bans || [],
-        team2Picks: pickBanData.team2Picks || this.session.team2Picks || [],
-        team2Bans: pickBanData.team2Bans || this.session.team2Bans || [],
+        phase: pickBanData.phase || currentSession.phase || 'bans',
+        actions: pickBanData.actions || currentSession.actions || [],
+        team1Picks: pickBanData.team1Picks || currentSession.team1Picks || [],
+        team1Bans: pickBanData.team1Bans || currentSession.team1Bans || [],
+        team2Picks: pickBanData.team2Picks || currentSession.team2Picks || [],
+        team2Bans: pickBanData.team2Bans || currentSession.team2Bans || [],
         totalActions: data.totalActions,
         totalPicks: data.totalPicks,
         totalBans: data.totalBans,
@@ -3386,12 +3571,13 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         lastAction: data.lastAction,
         lastSyncTime: Date.now(),
         // ✅ CRÍTICO: Preservar estrutura teams do backend
-        teams: pickBanData.teams || this.session?.teams
-      };
+        teams: pickBanData.teams || currentSession?.teams
+      });
     }
 
     // ✅ NOVO: Log detalhado do currentAction após a atualização
-    const newCurrentAction = this.session?.currentAction || 0;
+    const updatedSession = this.session();
+    const newCurrentAction = updatedSession?.currentAction || 0;
     saveLogToRoot(`🔄 [handleDraftDataSync] currentAction DEPOIS: ${newCurrentAction}`);
     saveLogToRoot(`🔄 [handleDraftDataSync] Mudança: ${oldCurrentAction} → ${newCurrentAction}`);
 
@@ -3433,7 +3619,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     // Determinar nome para exibição
     this.selectedPlayerNameForHelp = player.name || player.gameName || player.summonerName || 'Jogador';
 
-    this.showPlayerHelpModal = true;
+    this.showPlayerHelpModal.set(true);
 
     saveLogToRoot(`📊 [openPlayerHelpModal] Modal aberto para: ${this.selectedPlayerNameForHelp} (${this.selectedPlayerForHelp})`);
 
@@ -3446,7 +3632,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
    */
   closePlayerHelpModal(): void {
     logDraft('[DraftPickBan] Fechando modal de ajuda');
-    this.showPlayerHelpModal = false;
+    this.showPlayerHelpModal.set(false);
     saveLogToRoot(`📊 [closePlayerHelpModal] Modal fechado`);
     // ✅ CRÍTICO: Forçar detecção de mudanças para OnPush
     this.cdr.markForCheck();
@@ -3456,15 +3642,16 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
    * ✅ NOVO: Abre o modal de espectadores
    */
   openSpectatorsModal(): void {
+    const currentSession = this.session();
     console.log('👥 [openSpectatorsModal] Iniciando abertura do modal');
-    console.log('📦 [openSpectatorsModal] session completo:', JSON.stringify(this.session, null, 2));
-    console.log('🔑 [openSpectatorsModal] session?.matchId:', this.session?.matchId);
-    console.log('🔑 [openSpectatorsModal] session?.id:', (this.session as any)?.id);
-    console.log('🔑 [openSpectatorsModal] session?.data?.matchId:', (this.session as any)?.data?.matchId);
-    console.log('🗝️ [openSpectatorsModal] Todas as keys:', this.session ? Object.keys(this.session) : 'session é null/undefined');
+    console.log('📦 [openSpectatorsModal] session completo:', JSON.stringify(currentSession, null, 2));
+    console.log('🔑 [openSpectatorsModal] session?.matchId:', currentSession?.matchId);
+    console.log('🔑 [openSpectatorsModal] session?.id:', (currentSession as any)?.id);
+    console.log('🔑 [openSpectatorsModal] session?.data?.matchId:', (currentSession as any)?.data?.matchId);
+    console.log('🗝️ [openSpectatorsModal] Todas as keys:', currentSession ? Object.keys(currentSession) : 'session é null/undefined');
 
     logDraft('[DraftPickBan] Abrindo modal de espectadores');
-    this.showSpectatorsModal = true;
+    this.showSpectatorsModal.set(true);
     saveLogToRoot(`👥 [openSpectatorsModal] Modal de espectadores aberto`);
     console.log('✅ [openSpectatorsModal] Modal marcado como visível');
     // ✅ CRÍTICO: Forçar detecção de mudanças para OnPush
@@ -3476,7 +3663,7 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
    */
   closeSpectatorsModal(): void {
     logDraft('[DraftPickBan] Fechando modal de espectadores');
-    this.showSpectatorsModal = false;
+    this.showSpectatorsModal.set(false);
     saveLogToRoot(`👥 [closeSpectatorsModal] Modal de espectadores fechado`);
     // ✅ CRÍTICO: Forçar detecção de mudanças para OnPush
     this.cdr.markForCheck();
@@ -3513,8 +3700,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
    * ✅ TIMER: Pega timer de matchData (atualizado via WebSocket)
    */
   getDraftTimer(): number {
+    const currentMatchData = this.matchData();
     // ✅ Lê de matchData.timeRemaining (atualizado pelo app.ts via draft_update)
-    return this.matchData?.timeRemaining !== undefined ? this.matchData.timeRemaining : 30;
+    return currentMatchData?.timeRemaining !== undefined ? currentMatchData.timeRemaining : 30;
   }
 
   /**
@@ -3547,8 +3735,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       // Parar a música do draft via AudioService
       this.audioService.stopDraftMusic();
       // Sincronizar estado local com AudioService
-      this.isSoundMuted = this.audioService.isDraftMuted();
-      console.log('🔇 [DraftPickBan] Instância de áudio limpa via AudioService (mute preservado:', this.isSoundMuted, ')');
+      this.isSoundMuted.set(this.audioService.isDraftMuted());
+      console.log('🔇 [DraftPickBan] Instância de áudio limpa via AudioService (mute preservado:', this.isSoundMuted(), ')');
     } catch (error) {
       console.error('❌ [DraftPickBan] Erro ao limpar áudio via AudioService:', error);
     }
@@ -3558,9 +3746,9 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
    * ✅ NOVO: Toggle mute do som do draft
    */
   toggleDraftSound(): void {
-    console.log('[DraftPickBan] � Toggle mute');
+    console.log('[DraftPickBan] 🔊 Toggle mute');
     this.audioService.toggleDraftMute();
-    this.isSoundMuted = this.audioService.isDraftMuted();
+    this.isSoundMuted.set(this.audioService.isDraftMuted());
     this.cdr.markForCheck();
   }
 }

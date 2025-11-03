@@ -1,5 +1,5 @@
 <!-- Draft Pick & Ban - Visual clássico estilo LoL -->
-<div class="draft-pick-ban" *ngIf="session">
+<div class="draft-pick-ban" *ngIf="session()">
   <div class="pick-ban-header">
     <div class="header-content">
       <div class="title-section">
@@ -10,11 +10,11 @@
       <button
         class="sound-toggle-btn"
         (click)="toggleDraftSound()"
-        [title]="isSoundMuted ? 'Ativar som' : 'Mutear som'"
-        [attr.aria-label]="isSoundMuted ? 'Ativar som' : 'Mutear som'"
+        [title]="isSoundMuted() ? 'Ativar som' : 'Mutear som'"
+        [attr.aria-label]="isSoundMuted() ? 'Ativar som' : 'Mutear som'"
       >
-        <span [class]="isSoundMuted ? 'sound-icon muted' : 'sound-icon'">
-          {{ isSoundMuted ? '🔇' : '🔊' }}
+        <span [class]="isSoundMuted() ? 'sound-icon muted' : 'sound-icon'">
+          {{ isSoundMuted() ? '🔇' : '🔊' }}
         </span>
       </button>
 
@@ -284,7 +284,7 @@
     </div>
   </div>
 
-  <div class="action-buttons" *ngIf="isMyTurn && !isWaitingBackend">
+  <div class="action-buttons" *ngIf="isMyTurn() && !isWaitingBackend()">
     <button class="btn btn-primary btn-compact" (click)="openChampionModal()">
       <span class="btn-icon">🎯</span>
       <span class="btn-text">Selecionar Campeão</span>
@@ -317,22 +317,22 @@
 
   <!-- Modals -->
   <app-draft-champion-modal
-    [session]="session"
-    [currentPlayer]="currentPlayer"
-    [isVisible]="showChampionModal"
-    [isEditingMode]="isEditingMode"
-    [timeRemaining]="timeRemaining"
-    (onClose)="showChampionModal = false"
+    [session]="session()"
+    [currentPlayer]="currentPlayer()"
+    [isVisible]="showChampionModal()"
+    [isEditingMode]="isEditingMode()"
+    [timeRemaining]="timeRemaining()"
+    (onClose)="showChampionModal.set(false)"
     (onanySelected)="onanySelected($event)"
   >
   </app-draft-champion-modal>
 
   <app-draft-confirmation-modal
     #confirmationModal
-    [session]="session"
-    [currentPlayer]="currentPlayer"
-    [confirmationData]="confirmationData"
-    [isVisible]="showConfirmationModal"
+    [session]="session()"
+    [currentPlayer]="currentPlayer()"
+    [confirmationData]="confirmationData()"
+    [isVisible]="showConfirmationModal()"
     (onClose)="onConfirmationModalClose()"
     (onConfirm)="onConfirmationModalConfirm()"
     (onCancel)="onConfirmationModalCancel()"
@@ -343,24 +343,24 @@
 
   <!-- ✅ NOVO: Modal de Ajuda do Jogador -->
   <app-draft-player-help-modal
-    [isVisible]="showPlayerHelpModal"
-    [playerName]="selectedPlayerNameForHelp"
-    [playerSummonerName]="selectedPlayerForHelp"
+    [isVisible]="showPlayerHelpModal()"
+    [playerName]="selectedPlayerNameForHelp()"
+    [playerSummonerName]="selectedPlayerForHelp()"
     (closed)="closePlayerHelpModal()"
   >
   </app-draft-player-help-modal>
 
   <!-- ✅ NOVO: Modal de Espectadores -->
   <app-spectators-modal
-    *ngIf="showSpectatorsModal"
-    [matchId]="draftMatchId"
-    [summonerName]="summonerName"
+    *ngIf="showSpectatorsModal()"
+    [matchId]="draftMatchId()"
+    [summonerName]="summonerName()"
     (closed)="closeSpectatorsModal()"
   >
   </app-spectators-modal>
 </div>
 
 <!-- Loading state -->
-<div class="draft-loading" *ngIf="!session">
+<div class="draft-loading" *ngIf="!session()">
   <p>Carregando draft...</p>
 </div>
