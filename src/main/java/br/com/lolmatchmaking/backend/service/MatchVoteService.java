@@ -46,6 +46,14 @@ public class MatchVoteService {
 
     @Transactional
     public Map<String, Object> processVote(Long matchId, Long playerId, Long lcuGameId) {
+        return processVote(matchId, playerId, lcuGameId, null); // Delega para a versão com voteWeight
+    }
+
+    /**
+     * ✅ NOVO: Processa voto com peso customizado (para special users)
+     */
+    @Transactional
+    public Map<String, Object> processVote(Long matchId, Long playerId, Long lcuGameId, Integer customVoteWeight) {
         // 🔒 NOVO: ADQUIRIR LOCK DE VOTAÇÃO
         if (!matchVoteLockService.acquireVoteLock(matchId, playerId)) {
             log.warn("⏭️ [MatchVote] Jogador {} já está processando voto para match {}", playerId, matchId);
@@ -101,8 +109,15 @@ public class MatchVoteService {
                 SpecialUserService.SpecialUserConfig config = specialUserService
                         .getSpecialUserConfig(player.getSummonerName());
 
-                log.info("🌟 Special user detectado! Configuração: weight={}, multiple={}, max={}",
-                        config.getVoteWeight(), config.isAllowMultipleVotes(), config.getMaxVotes());
+                // ✅ CORREÇÃO CRÍTICA: Usar customVoteWeight do request, se fornecido
+                int effectiveVoteWeight = (customVoteWeight != null && customVoteWeight > 0)
+                        ? customVoteWeight
+                        : config.getVoteWeight();
+
+                log.info(
+                        "🌟 Special user detectado! Configuração: weight={}, customWeight={}, effective={}, multiple={}, max={}",
+                        config.getVoteWeight(), customVoteWeight, effectiveVoteWeight, config.isAllowMultipleVotes(),
+                        config.getMaxVotes());
 
                 // ✅ NOVO: Verificar se pode votar múltiplas vezes
                 if (config.isAllowMultipleVotes()) {
@@ -123,33 +138,33 @@ public class MatchVoteService {
                     // Registrar voto adicional do special user
                     redisMatchVote.addSpecialUserVote(matchId, player.getSummonerName(), lcuGameId);
                     log.info("✅ Special user {} votou pela {}ª vez (peso: {})",
-                            player.getSummonerName(), currentVotes + 1, config.getVoteWeight());
+                            player.getSummonerName(), currentVotes + 1, effectiveVoteWeight);
                 }
 
                 // ✅ CORREÇÃO: Verificar se o peso do voto atinge o limite necessário
-                boolean shouldLink = config.getVoteWeight() >= VOTES_REQUIRED_FOR_AUTO_LINK;
-                
-                log.info("🔍 [MatchVote] Verificação de peso: voteWeight={}, required={}, shouldLink={}", 
-                        config.getVoteWeight(), VOTES_REQUIRED_FOR_AUTO_LINK, shouldLink);
-                
+                boolean shouldLink = effectiveVoteWeight >= VOTES_REQUIRED_FOR_AUTO_LINK;
+
+                log.info("🔍 [MatchVote] Verificação de peso: voteWeight={}, required={}, shouldLink={}",
+                        effectiveVoteWeight, VOTES_REQUIRED_FOR_AUTO_LINK, shouldLink);
+
                 Map<String, Object> result = new HashMap<>();
                 result.put("success", true);
                 result.put("shouldLink", shouldLink);
                 result.put("lcuGameId", lcuGameId);
                 result.put("specialUserVote", true);
-                result.put("voteWeight", config.getVoteWeight());
-                result.put("voteCount", config.getVoteWeight()); // ✅ CORREÇÃO: Usar peso como contagem
+                result.put("voteWeight", effectiveVoteWeight);
+                result.put("voteCount", effectiveVoteWeight); // ✅ CORREÇÃO: Usar peso como contagem
                 result.put("playerVote", lcuGameId);
                 result.put("totalVoters", redisMatchVote.getTotalVoters(matchId));
-                
+
                 if (shouldLink) {
-                    log.info("🎯 Special user {} com peso {} atingiu limite de {} votos! Finalizando partida...", 
-                            player.getSummonerName(), config.getVoteWeight(), VOTES_REQUIRED_FOR_AUTO_LINK);
+                    log.info("🎯 Special user {} com peso {} atingiu limite de {} votos! Finalizando partida...",
+                            player.getSummonerName(), effectiveVoteWeight, VOTES_REQUIRED_FOR_AUTO_LINK);
                 } else {
-                    log.info("⏳ Special user {} com peso {} ainda não atingiu limite de {} votos", 
-                            player.getSummonerName(), config.getVoteWeight(), VOTES_REQUIRED_FOR_AUTO_LINK);
+                    log.info("⏳ Special user {} com peso {} ainda não atingiu limite de {} votos",
+                            player.getSummonerName(), effectiveVoteWeight, VOTES_REQUIRED_FOR_AUTO_LINK);
                 }
-                
+
                 return result;
             }
 

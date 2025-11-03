@@ -6,16 +6,8 @@
       <button class="close-btn" (click)="closeModal()">✕</button>
     </div>
 
-    <!-- ✅ NOVO: Auto-refresh Toggle e Botão Manual -->
-    <div class="auto-refresh-control">
-      <label class="checkbox-label">
-        <input
-          type="checkbox"
-          [checked]="autoRefresh"
-          (change)="toggleAutoRefresh()"
-        />
-        <span>🔄 Atualizar automaticamente (5s)</span>
-      </label>
+    <!-- ✅ Botão de Atualização Manual -->
+    <div class="manual-refresh-control">
       <button
         class="manual-refresh-btn"
         (click)="loadSpectators()"
@@ -23,7 +15,7 @@
         title="Atualizar agora"
       >
         <span>🔄</span>
-        <span>Atualizar</span>
+        <span>{{ loading ? 'Atualizando...' : 'Atualizar' }}</span>
       </button>
     </div>
 
@@ -98,7 +90,7 @@
     <!-- Footer -->
     <div class="modal-footer">
       <small class="refresh-info">
-        🔄 Atualização automática a cada 5 segundos
+        � As atualizações acontecem automaticamente via eventos do servidor
       </small>
     </div>
   </div>

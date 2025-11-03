@@ -1,8 +1,10 @@
 import { Component, Input, Output, EventEmitter, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
+import { Subscription } from 'rxjs';
 import { ApiService } from '../../services/api';
 import { CurrentSummonerService } from '../../services/current-summoner.service';
+import { ElectronEventsService } from '../../services/electron-events.service';
 
 interface SpectatorDTO {
   discordId: string;
@@ -39,9 +41,8 @@ export class SpectatorsModalComponent implements OnInit, OnDestroy {
   spectators: SpectatorDTO[] = [];
   loading = false;
   error: string | null = null;
-  autoRefresh = true; // ✅ NOVO: Controle de auto-refresh
-  private refreshInterval: any = null; // ✅ NOVO: Referência ao interval
   private readonly baseUrl: string;
+  private readonly subscriptions: Subscription[] = [];
 
   // ✅ CORREÇÃO FALLBACK: Manter matchId fixo durante toda a vida do modal
   private cachedMatchId: number | null = null;
@@ -49,13 +50,35 @@ export class SpectatorsModalComponent implements OnInit, OnDestroy {
   constructor(
     private readonly http: HttpClient,
     private readonly apiService: ApiService,
-    private readonly currentSummonerService: CurrentSummonerService
+    private readonly currentSummonerService: CurrentSummonerService,
+    private readonly electronEvents: ElectronEventsService
   ) {
     this.baseUrl = this.apiService.getBaseUrl();
     console.log('🎯 [SpectatorsModal] CONSTRUCTOR - Componente criado!', {
       baseUrl: this.baseUrl,
       timestamp: new Date().toISOString()
     });
+
+    // ✅ INTEGRAÇÃO COM SIGNALS: Ouvir eventos de mute/unmute do Electron
+    // Quando alguém muta/desmuta um espectador, o evento vem via Electron
+    // e precisa atualizar a lista local
+    this.subscriptions.push(
+      this.electronEvents.spectatorMuted$.subscribe(muteData => {
+        if (muteData) {
+          console.log('🔇 [SpectatorsModal] Evento spectatorMuted recebido:', muteData);
+          this.handleSpectatorMuteEvent(muteData, true);
+        }
+      })
+    );
+
+    this.subscriptions.push(
+      this.electronEvents.spectatorUnmuted$.subscribe(unmuteData => {
+        if (unmuteData) {
+          console.log('🔊 [SpectatorsModal] Evento spectatorUnmuted recebido:', unmuteData);
+          this.handleSpectatorMuteEvent(unmuteData, false);
+        }
+      })
+    );
   }
 
   ngOnInit(): void {
@@ -80,48 +103,55 @@ export class SpectatorsModalComponent implements OnInit, OnDestroy {
     console.log('💾 [SpectatorsModal] matchId cacheado:', this.cachedMatchId);
 
     this.loadSpectators();
-    // ✅ NOVO: Auto-refresh condicional
-    this.startAutoRefresh();
   }
 
   /**
-   * ✅ NOVO: Inicia o auto-refresh
+   * ✅ INTEGRAÇÃO COM SIGNALS: Manipula eventos de mute/unmute vindos do Electron
+   * Quando outro usuário muta/desmuta um espectador, o evento chega via WebSocket/Electron
+   * e precisa atualizar a lista local sem precisar fazer uma nova requisição HTTP
    */
-  private startAutoRefresh(): void {
-    if (this.autoRefresh && !this.refreshInterval) {
-      this.refreshInterval = setInterval(() => this.loadSpectators(), 5000);
-      console.log('🔄 [SpectatorsModal] Auto-refresh ATIVADO (5s)');
+  private handleSpectatorMuteEvent(eventData: any, isMuted: boolean): void {
+    console.log(`🎯 [SpectatorsModal] Processando evento de ${isMuted ? 'mute' : 'unmute'}:`, eventData);
+
+    // Verificar se o evento é da partida atual
+    if (eventData.matchId && this.cachedMatchId && eventData.matchId !== this.cachedMatchId) {
+      console.log(`⏭️ [SpectatorsModal] Evento ignorado - matchId diferente (evento: ${eventData.matchId}, modal: ${this.cachedMatchId})`);
+      return;
     }
-  }
 
-  /**
-   * ✅ NOVO: Para o auto-refresh
-   */
-  private stopAutoRefresh(): void {
-    if (this.refreshInterval) {
-      clearInterval(this.refreshInterval);
-      this.refreshInterval = null;
-      console.log('⏸️ [SpectatorsModal] Auto-refresh DESATIVADO');
+    const discordId = eventData.spectator?.discordId || eventData.discordId;
+    if (!discordId) {
+      console.warn('⚠️ [SpectatorsModal] Evento não contém discordId, ignorando');
+      return;
     }
-  }
 
-  /**
-   * ✅ NOVO: Toggle do auto-refresh
-   */
-  toggleAutoRefresh(): void {
-    this.autoRefresh = !this.autoRefresh;
-    console.log(`🔄 [SpectatorsModal] Auto-refresh ${this.autoRefresh ? 'ATIVADO' : 'DESATIVADO'}`);
+    // Encontrar e atualizar o espectador na lista
+    const spectatorIndex = this.spectators.findIndex(s => s.discordId === discordId);
+    if (spectatorIndex >= 0) {
+      // ✅ CRÍTICO: Criar NOVA referência do array para signals detectarem
+      const updatedSpectators = [...this.spectators];
+      // ✅ CRÍTICO: Criar NOVA referência do objeto para signals detectarem
+      updatedSpectators[spectatorIndex] = {
+        ...updatedSpectators[spectatorIndex],
+        isMuted: isMuted
+      };
+      // Atribuir nova referência
+      this.spectators = updatedSpectators;
 
-    if (this.autoRefresh) {
-      this.startAutoRefresh();
+      console.log(`✅ [SpectatorsModal] Espectador ${updatedSpectators[spectatorIndex].discordUsername} atualizado para ${isMuted ? 'MUTADO' : 'DESMUTADO'} via evento`);
     } else {
-      this.stopAutoRefresh();
+      console.log(`ℹ️ [SpectatorsModal] Espectador ${discordId} não encontrado na lista local, recarregando lista completa...`);
+      // Se o espectador não está na lista, recarregar tudo
+      this.loadSpectators();
     }
   }
 
   ngOnDestroy(): void {
-    // ✅ NOVO: Limpar interval ao destruir componente
-    this.stopAutoRefresh();
+    console.log('🔴 [SpectatorsModal] ngOnDestroy - Componente destruído');
+    // ✅ Limpar todas as subscriptions para evitar memory leaks
+    for (const sub of this.subscriptions) {
+      sub.unsubscribe();
+    }
   }
 
   /**

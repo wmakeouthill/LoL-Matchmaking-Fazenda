@@ -46,7 +46,7 @@ public class MatchVoteController {
     /**
      * DTO para requisição de voto
      */
-    record VoteRequest(String summonerName, Long lcuGameId) {
+    record VoteRequest(String summonerName, Long lcuGameId, Integer voteWeight) {
     }
 
     /**
@@ -117,7 +117,8 @@ public class MatchVoteController {
             Map<String, Object> voteResult = matchVoteService.processVote(
                     matchId,
                     player.getId(),
-                    request.lcuGameId());
+                    request.lcuGameId(),
+                    request.voteWeight()); // ✅ NOVO: Passar voteWeight do request
 
             boolean shouldLink = (boolean) voteResult.getOrDefault("shouldLink", false);
             int voteCount = (int) voteResult.getOrDefault("voteCount", 0);

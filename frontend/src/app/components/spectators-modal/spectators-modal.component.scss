@@ -172,41 +172,16 @@ $dark-panel: #1a1a2e;
   }
 }
 
-/* Auto-refresh Control */
-.auto-refresh-control {
+/* Manual Refresh Control */
+.manual-refresh-control {
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
-  gap: 12px;
-  padding: 10px 20px;
+  padding: 12px 20px;
   background: rgba(0, 0, 0, 0.3);
   border-bottom: 1px solid rgba(0, 243, 255, 0.2);
   position: relative;
   z-index: 1;
-}
-
-.checkbox-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: $lol-dark-gold;
-  cursor: pointer;
-  font-size: $base-font-size;
-  font-family: $pixel-font;
-  user-select: none;
-  text-shadow: 0 0 5px $lol-dark-gold;
-
-  &:hover span {
-    color: $cyber-green;
-    text-shadow: 0 0 10px $cyber-green;
-  }
-}
-
-.checkbox-label input[type="checkbox"] {
-  width: 14px;
-  height: 14px;
-  cursor: pointer;
-  accent-color: $cyber-green;
 }
 
 /* Botão de Atualização Manual */
@@ -214,7 +189,7 @@ $dark-panel: #1a1a2e;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
+  padding: 8px 16px;
   background: rgba(0, 255, 65, 0.2);
   color: $cyber-green;
   border: 2px solid $cyber-green;
@@ -237,6 +212,10 @@ $dark-panel: #1a1a2e;
   &:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+    color: #666;
+    border-color: #666;
+    box-shadow: none;
+    text-shadow: none;
   }
 
   &:active:not(:disabled) {

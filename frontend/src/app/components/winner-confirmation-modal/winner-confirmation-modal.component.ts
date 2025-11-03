@@ -537,7 +537,8 @@ export class WinnerConfirmationModalComponent implements OnInit, OnDestroy {
       const url = `${this.baseUrl}/match/${currentMatchId}/vote`;
       const body = {
         summonerName: summonerName,
-        lcuGameId: lcuGameId
+        lcuGameId: lcuGameId,
+        voteWeight: this.selectedVoteWeight() // ✅ NOVO: Incluir peso do voto para special users
       };
 
       console.log('📡 [WinnerModal] ENVIANDO HTTP POST:', { url, body });
