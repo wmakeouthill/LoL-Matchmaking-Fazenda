@@ -333,11 +333,11 @@
     [currentPlayer]="currentPlayer()"
     [confirmationData]="confirmationData()"
     [isVisible]="showConfirmationModal()"
-    (onClose)="onConfirmationModalClose()"
-    (onConfirm)="onConfirmationModalConfirm()"
-    (onCancel)="onConfirmationModalCancel()"
-    (onEditPick)="onConfirmationModalEditPick($event)"
-    (onRefreshDraft)="onConfirmationModalRefresh()"
+    (closed)="onConfirmationModalClose()"
+    (confirmed)="onConfirmationModalConfirm()"
+    (cancelled)="onConfirmationModalCancel()"
+    (editPick)="onConfirmationModalEditPick($event)"
+    (refreshDraft)="onConfirmationModalRefresh()"
   >
   </app-draft-confirmation-modal>
 
