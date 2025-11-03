@@ -343,22 +343,37 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     if (changes['matchData']?.currentValue) {
       const currentValue = changes['matchData'].currentValue;
 
-      // ✅ CORREÇÃO: Comparar propriedades críticas ao invés de hash completo
+      // ✅ CORREÇÃO: Comparar propriedades críticas + campeões selecionados
       // Isso previne ignorar atualizações quando apenas currentAction/currentPlayer mudam
+      // E TAMBÉM detecta quando campeões são alterados via changePick (draft finalizado)
       const criticalProperties = {
         currentAction: currentValue.currentAction,
         currentIndex: currentValue.currentIndex,
         currentPlayer: currentValue.currentPlayer,
         timeRemaining: currentValue.timeRemaining,
         currentPhase: currentValue.currentPhase,
-        currentTeam: currentValue.currentTeam
+        currentTeam: currentValue.currentTeam,
+        // ✅ CRÍTICO: Incluir picks/bans para detectar changePick APÓS draft finalizado
+        blueAllPicks: currentValue.teams?.blue?.allPicks || [],
+        redAllPicks: currentValue.teams?.red?.allPicks || [],
+        blueAllBans: currentValue.teams?.blue?.allBans || [],
+        redAllBans: currentValue.teams?.red?.allBans || []
       };
       const criticalHash = JSON.stringify(criticalProperties);
 
+      console.log('🔍 [processNgOnChanges] criticalProperties:', {
+        currentAction: criticalProperties.currentAction,
+        bluePicksCount: criticalProperties.blueAllPicks.length,
+        redPicksCount: criticalProperties.redAllPicks.length,
+        blueAllPicks: criticalProperties.blueAllPicks,
+        redAllPicks: criticalProperties.redAllPicks
+      });
+
       if (criticalHash === this.lastMatchDataHash) {
-        saveLogToRoot(`⏭️ [processNgOnChanges] Dados idênticos (propriedades críticas) - ignorando`);
+        saveLogToRoot(`⏭️ [processNgOnChanges] Dados idênticos (propriedades críticas + campeões) - ignorando`);
         return;
       }
+      console.log('✅ [processNgOnChanges] Hash mudou - processando atualização');
       this.lastMatchDataHash = criticalHash;
 
       logDraft('🔄 [DraftPickBan] === ngOnChanges CHAMADO ===');
@@ -454,14 +469,35 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
               hasRed: !!currentValue.teams.red,
               bluePlayers: currentValue.teams.blue?.players?.length || 0,
               redPlayers: currentValue.teams.red?.players?.length || 0,
+              blueAllPicks: currentValue.teams.blue?.allPicks || [],
+              redAllPicks: currentValue.teams.red?.allPicks || [],
               currentPhase: currentValue.currentPhase,
               currentTeam: currentValue.currentTeam
             });
 
+            // ✅ CRÍTICO: SEMPRE criar novas referências PROFUNDAS para teams
+            // Isso garante que mudanças em allPicks/allBans sejam detectadas pelo OnPush
+            const newBlue = currentValue.teams.blue ? {
+              ...currentValue.teams.blue,
+              players: currentValue.teams.blue.players ? [...currentValue.teams.blue.players] : [],
+              allBans: currentValue.teams.blue.allBans ? [...currentValue.teams.blue.allBans] : [],
+              allPicks: currentValue.teams.blue.allPicks ? [...currentValue.teams.blue.allPicks] : []
+            } : this.session()?.teams?.blue;
+
+            const newRed = currentValue.teams.red ? {
+              ...currentValue.teams.red,
+              players: currentValue.teams.red.players ? [...currentValue.teams.red.players] : [],
+              allBans: currentValue.teams.red.allBans ? [...currentValue.teams.red.allBans] : [],
+              allPicks: currentValue.teams.red.allPicks ? [...currentValue.teams.red.allPicks] : []
+            } : this.session()?.teams?.red;
+
             // ✅ SIGNALS: Atualizar estrutura hierárquica na session (imutável)
             const updatedSession = {
               ...this.session(),
-              teams: currentValue.teams,
+              teams: {
+                blue: newBlue,
+                red: newRed
+              },
               currentPhase: currentValue.currentPhase,
               currentTeam: currentValue.currentTeam,
               currentActionType: currentValue.currentActionType
@@ -478,9 +514,11 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
             // ✅ SIGNALS: Aplicar as mudanças
             this.session.set(updatedSession);
 
-            console.log('✅ [processNgOnChanges] Estrutura hierárquica processada:', {
+            console.log('✅ [processNgOnChanges] Estrutura hierárquica processada COM NOVAS REFERÊNCIAS:', {
               blueTeamSize: updatedSession.blueTeam?.length || 0,
               redTeamSize: updatedSession.redTeam?.length || 0,
+              bluePicksCount: updatedSession.teams?.blue?.allPicks?.length || 0,
+              redPicksCount: updatedSession.teams?.red?.allPicks?.length || 0,
               currentPhase: updatedSession.currentPhase,
               currentTeam: updatedSession.currentTeam
             });
@@ -2362,11 +2400,13 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
       await this.updatePlayerPick(editingPlayer.playerId, champion);
 
-      // ✅ SIGNALS: Resetar modo de edição
+      // ✅ SIGNALS: Resetar modo de edição (modal será reaberto por updatePlayerPick)
       this.isEditingMode.set(false);
       this.currentEditingPlayer.set(null);
       this.showChampionModal.set(false);
-      this.showConfirmationModal.set(true); // Voltar para modal de confirmação
+      // ❌ REMOVIDO: this.showConfirmationModal.set(true);
+      // → updatePlayerPick já reabre o modal após atualizar session
+
       // ✅ CRÍTICO: Forçar detecção de mudanças para OnPush
       this.cdr.markForCheck();
       return;
@@ -3006,17 +3046,21 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     try {
       console.log('✅ [updatePlayerPick] Dentro do try block');
 
-      if (!this.matchId) {
+      // ✅ SIGNALS: Obter valor atual do matchId
+      const currentMatchId = this.matchId();
+      if (!currentMatchId) {
         console.error('❌ [updatePlayerPick] matchId não disponível!');
         throw new Error('matchId não disponível');
       }
-      console.log(`✅ [updatePlayerPick] matchId: ${this.matchId}`);
+      console.log(`✅ [updatePlayerPick] matchId: ${currentMatchId}`);
 
-      if (!this.currentEditingPlayer) {
+      // ✅ SIGNALS: Obter valor atual do currentEditingPlayer
+      const editingPlayer = this.currentEditingPlayer();
+      if (!editingPlayer) {
         console.error('❌ [updatePlayerPick] currentEditingPlayer não disponível!');
         throw new Error('currentEditingPlayer não disponível');
       }
-      console.log(`✅ [updatePlayerPick] currentEditingPlayer: ${JSON.stringify(this.currentEditingPlayer)}`);
+      console.log(`✅ [updatePlayerPick] currentEditingPlayer: ${JSON.stringify(editingPlayer)}`);
 
       // ✅ DEBUG: Mostrar estrutura completa do champion
       console.log(`🔍 [updatePlayerPick] Champion completo: ${JSON.stringify(champion, null, 2)}`);
@@ -3031,8 +3075,8 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       const championId = champion.key || champion.id;
       console.log(`🔍 [updatePlayerPick] championId final: ${championId}`);
 
-      // ✅ CORREÇÃO CRÍTICA: baseUrl já contém /api, então NÃO adicionar de novo
-      const fullUrl = `${this.baseUrl}/draft/${this.matchId}/changePick`;
+      // ✅ SIGNALS: Usar currentMatchId (valor do signal) ao invés de this.matchId (função)
+      const fullUrl = `${this.baseUrl}/draft/${currentMatchId}/changePick`;
       const requestBody = {
         playerId: playerId,
         championId: Number(championId),
@@ -3043,10 +3087,16 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       console.log(`🔍 [updatePlayerPick] Request body: ${JSON.stringify(requestBody, null, 2)}`);
 
       console.log('📤 [updatePlayerPick] Enviando requisição HTTP...');
+      console.log('📤 [updatePlayerPick] ⏰ TIMESTAMP ANTES DA REQUISIÇÃO:', Date.now());
+
       const response = await firstValueFrom(this.http.post(fullUrl, requestBody, {
         headers: this.apiService.getAuthenticatedHeaders()
       }));
-      console.log('✅ [updatePlayerPick] Resposta recebida:', response);
+
+      console.log('✅✅✅ [updatePlayerPick] RESPOSTA RECEBIDA DO BACKEND!');
+      console.log('✅ [updatePlayerPick] ⏰ TIMESTAMP APÓS RESPOSTA:', Date.now());
+      console.log('✅ [updatePlayerPick] Resposta completa:', JSON.stringify(response, null, 2));
+      console.log('✅ [updatePlayerPick] Status HTTP: 200 (sucesso)');
 
       logDraft('✅ [updatePlayerPick] Pick atualizado com sucesso:', response);
 
@@ -3112,11 +3162,26 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
                   actions: updatedActions
                 };
 
+                // ✅ CRÍTICO: Reconstruir allPicks a partir das actions de TODOS os players
+                // Isso garante que allPicks sempre reflita o estado atual dos picks
+                const updatedAllPicks: string[] = [];
+                for (const p of players) {
+                  const pickAction = p.actions?.find((a: any) =>
+                    a.type === 'pick' && a.status === 'completed'
+                  );
+                  if (pickAction && pickAction.championId) {
+                    updatedAllPicks.push(pickAction.championId);
+                  }
+                }
+
+                console.log(`✅ [updatePlayerPick] allPicks reconstruído para ${team} team:`, updatedAllPicks);
+
                 updatedTeams = {
                   ...currentSession.teams,
                   [team]: {
                     ...currentSession.teams[team],
-                    players: players
+                    players: players,
+                    allPicks: updatedAllPicks // ✅ CRÍTICO: Atualizar allPicks!
                   }
                 };
               }
@@ -3154,15 +3219,32 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
       this.cdr.detectChanges();
 
       console.log('🔄 [updatePlayerPick] Aguardando propagação da session para o modal...');
+      console.log('🔄 [updatePlayerPick] Session signal atualizado com novas referências');
 
-      // ✅ SIMPLIFICADO: Aguardar propagação e depois reabrir modal
-      // O modal vai detectar a mudança via ngOnChanges e recalcular automaticamente
+      const currentSessionAfterUpdate = this.session();
+      console.log('🔄 [updatePlayerPick] Session atual:', {
+        hasPhases: !!currentSessionAfterUpdate?.phases,
+        phasesCount: currentSessionAfterUpdate?.phases?.length,
+        hasTeams: !!currentSessionAfterUpdate?.teams,
+        blueAllPicks: currentSessionAfterUpdate?.teams?.blue?.allPicks,
+        redAllPicks: currentSessionAfterUpdate?.teams?.red?.allPicks
+      });
+
+      // ✅ CRÍTICO: Aumentar timeout para garantir que Angular processe TODAS as mudanças
+      // O modal precisa receber a session atualizada ANTES de reabrir
       setTimeout(() => {
         console.log('✅ [updatePlayerPick] Reabrindo modal de confirmação');
+        console.log('✅ [updatePlayerPick] Verificando session antes de reabrir:');
+        console.log('   - Session signal:', this.session());
+        console.log('   - Session.teams.blue.allPicks:', this.session()?.teams?.blue?.allPicks);
+        console.log('   - Session.teams.red.allPicks:', this.session()?.teams?.red?.allPicks);
+
         this.showConfirmationModal.set(true);
         this.cdr.markForCheck();
-        console.log(`✅ [updatePlayerPick] Modal reaberto - ngOnChanges do modal vai detectar session atualizada`);
-      }, 100); // ✅ Aumentei para 100ms para garantir propagação
+        this.cdr.detectChanges();
+
+        console.log(`✅ [updatePlayerPick] Modal reaberto - ngOnChanges do modal DEVE ter detectado session atualizada`);
+      }, 200); // ✅ AUMENTADO para 200ms para garantir propagação completa
     } catch (error) {
       console.error('❌ [updatePlayerPick] ERRO:', error);
       console.error(`❌ [updatePlayerPick] Erro detalhado: ${JSON.stringify(error, null, 2)}`);

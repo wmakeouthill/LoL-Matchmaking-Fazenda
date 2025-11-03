@@ -242,9 +242,22 @@ export class SpectatorsModalComponent implements OnInit, OnDestroy {
     this.http.post<MuteResponse>(url, {}, { headers }).subscribe({
       next: (response: MuteResponse) => {
         if (response.success) {
-          // Atualizar estado local imediatamente
-          spectator.isMuted = !spectator.isMuted;
-          console.log(`✅ [SpectatorsModal] ${spectator.discordUsername} ${spectator.isMuted ? 'mutado' : 'desmutado'}`);
+          // ✅ CRÍTICO: Criar NOVA referência do array ao invés de mutar diretamente
+          // Isso garante que Signals detectem a mudança se o componente pai estiver observando
+          const spectatorIndex = this.spectators.findIndex(s => s.discordId === spectator.discordId);
+          if (spectatorIndex >= 0) {
+            // Criar nova referência do array
+            const updatedSpectators = [...this.spectators];
+            // Criar nova referência do spectator
+            updatedSpectators[spectatorIndex] = {
+              ...updatedSpectators[spectatorIndex],
+              isMuted: !updatedSpectators[spectatorIndex].isMuted
+            };
+            // Atualizar com nova referência
+            this.spectators = updatedSpectators;
+
+            console.log(`✅ [SpectatorsModal] ${spectator.discordUsername} ${updatedSpectators[spectatorIndex].isMuted ? 'mutado' : 'desmutado'} (nova referência)`);
+          }
         } else {
           console.error(`❌ [SpectatorsModal] Erro: ${response.message}`);
           this.error = response.message;

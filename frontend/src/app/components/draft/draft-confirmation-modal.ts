@@ -2066,35 +2066,61 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
     console.log('📊 [ConfirmationModal] Progresso de confirmação recebido:', data);
 
     if (data.confirmations && Array.isArray(data.confirmations)) {
-      // ✅ CORREÇÃO: Usar mesma técnica do match_found
-      const allPlayers = [
-        ...(this.session?.blueTeam || []),
-        ...(this.session?.redTeam || [])
-      ];
-
-      console.log(`📊 [ConfirmationModal] Processando ${data.confirmations.length} confirmações para ${allPlayers.length} jogadores`);
-
-      // Atualizar status de todos os jogadores para 'pending' primeiro
-      allPlayers.forEach(player => {
-        player.acceptanceStatus = 'pending';
-        console.log(`📊 [ConfirmationModal] Resetando ${player.summonerName} para pending`);
+      // ✅ CORREÇÃO: Usar mesma técnica do match_found MAS criar NOVAS referências
+      // ✅ CRÍTICO: NÃO mutar diretamente - criar novos objetos para Signals detectarem
+      const blueTeamPlayers = (this.session?.blueTeam || []).map(player => {
+        // Resetar para 'pending' criando novo objeto
+        return { ...player, acceptanceStatus: 'pending' };
       });
 
-      // Marcar jogadores confirmados como 'confirmed'
+      const redTeamPlayers = (this.session?.redTeam || []).map(player => {
+        // Resetar para 'pending' criando novo objeto
+        return { ...player, acceptanceStatus: 'pending' };
+      });
+
+      const allPlayers = [...blueTeamPlayers, ...redTeamPlayers];
+
+      console.log(`📊 [ConfirmationModal] Processando ${data.confirmations.length} confirmações para ${allPlayers.length} jogadores`);
+      console.log(`📊 [ConfirmationModal] Todos jogadores resetados para 'pending' com novas referências`);
+
+      // Marcar jogadores confirmados como 'confirmed' (COM NOVAS REFERÊNCIAS)
       data.confirmations.forEach((confirmedPlayerName: string) => {
-        const player = allPlayers.find(p =>
+        const playerIndex = allPlayers.findIndex(p =>
           p.summonerName?.toLowerCase() === confirmedPlayerName?.toLowerCase() ||
           (p.riotIdGameName && p.riotIdTagline && `${p.riotIdGameName}#${p.riotIdTagline}`.toLowerCase() === confirmedPlayerName?.toLowerCase())
         );
 
-        if (player) {
-          player.acceptanceStatus = 'confirmed';
-          player.acceptedAt = new Date().toISOString();
-          console.log('✅ [ConfirmationModal] Jogador confirmado:', player.summonerName);
+        if (playerIndex >= 0) {
+          // ✅ CRÍTICO: Criar NOVA referência do player para Signals detectarem
+          allPlayers[playerIndex] = {
+            ...allPlayers[playerIndex],
+            acceptanceStatus: 'confirmed',
+            acceptedAt: new Date().toISOString()
+          };
+          console.log('✅ [ConfirmationModal] Jogador confirmado (nova referência):', allPlayers[playerIndex].summonerName);
         } else {
           console.log('⚠️ [ConfirmationModal] Jogador não encontrado:', confirmedPlayerName);
         }
       });
+
+      // ✅ CRÍTICO: Atualizar session com NOVAS REFERÊNCIAS dos arrays
+      if (this.session) {
+        // Separar novamente em blue/red
+        const blueCount = this.session.blueTeam?.length || 0;
+        const updatedBlueTeam = allPlayers.slice(0, blueCount);
+        const updatedRedTeam = allPlayers.slice(blueCount);
+
+        // ✅ CRÍTICO: Notificar componente PAI via Output para atualizar session
+        // O modal NÃO deve modificar @Input diretamente
+        // (Isso será implementado no próximo passo - por ora apenas criar novas referências localmente)
+        this.session = {
+          ...this.session,
+          blueTeam: updatedBlueTeam,
+          redTeam: updatedRedTeam
+        };
+
+        console.log('✅ [ConfirmationModal] Session atualizada com novas referências dos teams');
+      }
 
       // Atualizar contadores
       this.confirmedCount = data.confirmedCount || 0;
@@ -2123,21 +2149,59 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
     console.log('🔄 [ConfirmationModal] Atualização de confirmação recebida:', data);
 
     if (data.playerName && data.status) {
-      const allPlayers = [
-        ...(this.session?.blueTeam || []),
-        ...(this.session?.redTeam || [])
-      ];
+      // ✅ CRÍTICO: Criar NOVAS referências dos arrays ao invés de mutar
+      const blueTeam = this.session?.blueTeam || [];
+      const redTeam = this.session?.redTeam || [];
 
-      const player = allPlayers.find(p => p.summonerName === data.playerName);
-      if (player) {
-        player.acceptanceStatus = data.status;
-        if (data.status === 'confirmed') {
-          player.acceptedAt = new Date().toISOString();
+      // Procurar player em blue team
+      const bluePlayerIndex = blueTeam.findIndex(p => p.summonerName === data.playerName);
+      if (bluePlayerIndex >= 0) {
+        // ✅ CRÍTICO: Criar NOVA referência do array e do player
+        const updatedBlueTeam = [...blueTeam];
+        updatedBlueTeam[bluePlayerIndex] = {
+          ...blueTeam[bluePlayerIndex],
+          acceptanceStatus: data.status,
+          acceptedAt: data.status === 'confirmed' ? new Date().toISOString() : updatedBlueTeam[bluePlayerIndex].acceptedAt
+        };
+
+        if (this.session) {
+          // ✅ CRÍTICO: Criar NOVA referência da session
+          this.session = {
+            ...this.session,
+            blueTeam: updatedBlueTeam
+          };
         }
-        console.log(`🔄 [ConfirmationModal] Status atualizado para ${data.playerName}: ${data.status}`);
-        // ✅ NOVO: Forçar detecção de mudanças
+
+        console.log(`🔄 [ConfirmationModal] Status atualizado para ${data.playerName}: ${data.status} (blue team, nova referência)`);
         this.cdr.markForCheck();
+        return;
       }
+
+      // Procurar player em red team
+      const redPlayerIndex = redTeam.findIndex(p => p.summonerName === data.playerName);
+      if (redPlayerIndex >= 0) {
+        // ✅ CRÍTICO: Criar NOVA referência do array e do player
+        const updatedRedTeam = [...redTeam];
+        updatedRedTeam[redPlayerIndex] = {
+          ...redTeam[redPlayerIndex],
+          acceptanceStatus: data.status,
+          acceptedAt: data.status === 'confirmed' ? new Date().toISOString() : updatedRedTeam[redPlayerIndex].acceptedAt
+        };
+
+        if (this.session) {
+          // ✅ CRÍTICO: Criar NOVA referência da session
+          this.session = {
+            ...this.session,
+            redTeam: updatedRedTeam
+          };
+        }
+
+        console.log(`🔄 [ConfirmationModal] Status atualizado para ${data.playerName}: ${data.status} (red team, nova referência)`);
+        this.cdr.markForCheck();
+        return;
+      }
+
+      console.log('⚠️ [ConfirmationModal] Jogador não encontrado:', data.playerName);
     }
   }
 
@@ -2151,24 +2215,35 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
       return;
     }
 
-    const allPlayers = [
-      ...(this.session.blueTeam || []),
-      ...(this.session.redTeam || [])
-    ];
+    console.log(`🔄 [ConfirmationModal] Inicializando status de confirmação`);
 
-    console.log(`🔄 [ConfirmationModal] Inicializando ${allPlayers.length} jogadores`);
+    // ✅ CRÍTICO: Criar NOVAS referências dos arrays ao invés de mutar
+    const updatedBlueTeam = (this.session.blueTeam || []).map(player => ({
+      ...player,
+      acceptanceStatus: 'pending',
+      isCurrentUser: player.isCurrentUser || false
+    }));
 
-    allPlayers.forEach(player => {
-      // ✅ CORREÇÃO: Usar mesma técnica do match_found - inicializar como pending
-      player.acceptanceStatus = 'pending';
-      player.isCurrentUser = player.isCurrentUser || false;
-      console.log(`🔄 [ConfirmationModal] Jogador ${player.summonerName} inicializado como pending`);
-    });
+    const updatedRedTeam = (this.session.redTeam || []).map(player => ({
+      ...player,
+      acceptanceStatus: 'pending',
+      isCurrentUser: player.isCurrentUser || false
+    }));
+
+    console.log(`🔄 [ConfirmationModal] Inicializando ${updatedBlueTeam.length + updatedRedTeam.length} jogadores com novas referências`);
+
+    // ✅ CRÍTICO: Atualizar session com NOVAS referências
+    this.session = {
+      ...this.session,
+      blueTeam: updatedBlueTeam,
+      redTeam: updatedRedTeam
+    };
 
     this.confirmedCount = 0;
-    this.totalPlayers = allPlayers.length;
+    this.totalPlayers = updatedBlueTeam.length + updatedRedTeam.length;
 
     console.log(`🔄 [ConfirmationModal] Status inicializados: ${this.confirmedCount}/${this.totalPlayers} jogadores`);
     console.log(`🔄 [ConfirmationModal] Progresso inicial: ${this.getConfirmationProgress()}%`);
+    console.log(`✅ [ConfirmationModal] Todas as referências foram criadas novas para Signals detectarem`);
   }
 }

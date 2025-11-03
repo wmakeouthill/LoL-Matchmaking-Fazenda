@@ -572,7 +572,8 @@ export class App implements OnInit, OnDestroy {
    * ✅ NOVO: Atualizar draft após ação (todos os jogadores recebem)
    */
   private updateDraftUpdated(updatedData: any) {
-    console.log('✅ [App] Draft updated - ação realizada:', updatedData.currentActionType, 'por', updatedData.currentPlayer);
+    console.log('✅✅✅ [App] Draft updated - ação realizada:', updatedData.currentActionType, 'por', updatedData.currentPlayer);
+    console.log('🔍 [App] updatedData completo:', JSON.stringify(updatedData, null, 2));
 
     // ✅ CRÍTICO: Atualizar estado do draft com novas ações
     if (this.inDraftPhase && this.draftData) {
@@ -585,7 +586,40 @@ export class App implements OnInit, OnDestroy {
       const currentAction = data.currentAction !== undefined ? data.currentAction :
         data.currentIndex !== undefined ? data.currentIndex : 0;
 
-      // ✅ Atualizar draftData
+      console.log('🔍 [App] Dados extraídos:', {
+        hasPhases: !!phases,
+        phasesLength: phases.length,
+        currentAction: currentAction,
+        hasTeams: !!data.teams,
+        blueAllPicks: data.teams?.blue?.allPicks,
+        redAllPicks: data.teams?.red?.allPicks
+      });
+
+      // ✅ CRITICAL: Se teams vier do backend, criar novas referências para todos os níveis
+      let updatedTeams = this.draftData.teams;
+      if (data.teams) {
+        console.log('🔄 [App] Criando novas referências para teams...');
+        updatedTeams = {
+          blue: data.teams.blue ? {
+            ...data.teams.blue,
+            players: data.teams.blue.players ? [...data.teams.blue.players] : [],
+            allBans: data.teams.blue.allBans ? [...data.teams.blue.allBans] : [],
+            allPicks: data.teams.blue.allPicks ? [...data.teams.blue.allPicks] : []
+          } : this.draftData.teams?.blue,
+          red: data.teams.red ? {
+            ...data.teams.red,
+            players: data.teams.red.players ? [...data.teams.red.players] : [],
+            allBans: data.teams.red.allBans ? [...data.teams.red.allBans] : [],
+            allPicks: data.teams.red.allPicks ? [...data.teams.red.allPicks] : []
+          } : this.draftData.teams?.red
+        };
+        console.log('✅ [App] Teams com novas referências:', {
+          bluePicksCount: updatedTeams.blue?.allPicks?.length,
+          redPicksCount: updatedTeams.red?.allPicks?.length
+        });
+      }
+
+      // ✅ SIGNALS FIX: Criar nova referência do draftData (OnPush detection)
       this.draftData = {
         ...this.draftData,
         phases: phases,
@@ -594,16 +628,19 @@ export class App implements OnInit, OnDestroy {
         currentIndex: currentAction,
         currentPlayer: data.currentPlayer,
         timeRemaining: data.timeRemaining !== undefined ? data.timeRemaining : this.draftData.timeRemaining,
-        teams: data.teams || this.draftData.teams,
+        teams: updatedTeams,
         currentPhase: data.currentPhase,
         currentTeam: data.currentTeam,
         currentActionType: data.currentActionType
       };
 
-      console.log('✅ [App] DraftData atualizado:', {
+      console.log('✅ [App] DraftData atualizado COM NOVA REFERÊNCIA:', {
         phasesLength: this.draftData.phases?.length,
         currentAction: this.draftData.currentAction,
-        currentPlayer: this.draftData.currentPlayer
+        currentPlayer: this.draftData.currentPlayer,
+        hasTeams: !!this.draftData.teams,
+        blueAllPicks: this.draftData.teams?.blue?.allPicks,
+        redAllPicks: this.draftData.teams?.red?.allPicks
       });
 
       this.cdr.detectChanges();
