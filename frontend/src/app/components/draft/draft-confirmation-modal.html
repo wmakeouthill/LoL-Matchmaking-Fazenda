@@ -193,34 +193,34 @@
       <!-- Mensagem de estado -->
       <p
         class="confirmation-message"
-        *ngIf="confirmationMessage"
-        [class.error]="confirmationMessage.includes('Erro')"
+        *ngIf="confirmationMessage()"
+        [class.error]="confirmationMessage().includes('Erro')"
       >
-        {{ confirmationMessage }}
+        {{ confirmationMessage() }}
       </p>
 
       <button
         class="btn btn-danger btn-lg"
         (click)="cancelFinalDraft()"
-        [disabled]="isConfirming"
+        [disabled]="isConfirming()"
       >
         ❌ Cancelar Partida
       </button>
       <button
         class="btn btn-secondary btn-lg"
         (click)="startEditingCurrentPlayer()"
-        [disabled]="isConfirming"
+        [disabled]="isConfirming()"
       >
         ✏️ Editar Minha Seleção
       </button>
       <button
         class="btn btn-success btn-lg btn-confirm"
         (click)="confirmFinalDraft()"
-        [disabled]="isConfirming"
-        [class.loading]="isConfirming"
+        [disabled]="isConfirming()"
+        [class.loading]="isConfirming()"
       >
-        <span *ngIf="!isConfirming">✅ Confirmar Draft Final</span>
-        <span *ngIf="isConfirming">⏳ Confirmando...</span>
+        <span *ngIf="!isConfirming()">✅ Confirmar Draft Final</span>
+        <span *ngIf="isConfirming()">⏳ Confirmando...</span>
       </button>
     </div>
   </div>

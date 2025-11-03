@@ -1076,12 +1076,13 @@ export class DraftConfirmationModalComponent implements OnInit, OnDestroy {
       playerName: player?.summonerName || player?.name
     });
 
-    if (!this.currentPlayer || !player) {
+    const currentPlayerValue = this.currentPlayer();  // ✅ CORRIGIDO: Adicionar ()
+    if (!currentPlayerValue || !player) {
       logConfirmationModal('❌ [isCurrentPlayer] currentPlayer ou player é null');
       return false;
     }
 
-    const result = this.comparePlayers(this.currentPlayer, player);
+    const result = this.comparePlayers(currentPlayerValue, player);  // ✅ CORRIGIDO: Usar valor extraído
     logConfirmationModal('🔍 [isCurrentPlayer] Resultado final:', result);
     return result;
   }
@@ -1307,7 +1308,7 @@ export class DraftConfirmationModalComponent implements OnInit, OnDestroy {
     }
 
     logConfirmationModal('🔍 [shouldShowEditButton] === VERIFICANDO BOTÃO ===');
-    logConfirmationModal('🔍 [shouldShowEditButton] currentPlayer:', this.currentPlayer);
+    logConfirmationModal('🔍 [shouldShowEditButton] currentPlayer:', this.currentPlayer());  // ✅ CORRIGIDO: Adicionar ()
     logConfirmationModal('🔍 [shouldShowEditButton] slot.player:', {
       id: slot.player.id,
       summonerName: slot.player.summonerName,
@@ -1372,7 +1373,8 @@ export class DraftConfirmationModalComponent implements OnInit, OnDestroy {
     console.log('🎯 [EDITAR MEU PICK] === INICIANDO ===');
     logConfirmationModal('🎯 [startEditingCurrentPlayer] === INICIANDO EDIÇÃO DO JOGADOR LOGADO ===');
 
-    if (!this.session) {
+    const currentSession = this.session();  // ✅ CORRIGIDO: Adicionar ()
+    if (!currentSession) {
       console.error('❌ [EDITAR MEU PICK] Session não disponível');
       logConfirmationModal('❌ [startEditingCurrentPlayer] Session não disponível');
       return;
@@ -1833,7 +1835,7 @@ export class DraftConfirmationModalComponent implements OnInit, OnDestroy {
       confirmed: count.confirmed,
       total: count.total,
       progress: progress + '%',
-      hasConfirmationData: !!this.confirmationData
+      hasConfirmationData: !!this.confirmationData()  // ✅ CORRIGIDO: Adicionar ()
     });
 
     return progress;
@@ -1965,16 +1967,15 @@ export class DraftConfirmationModalComponent implements OnInit, OnDestroy {
       // ✅ CORREÇÃO: Trabalhar com dados locais - InputSignals são read-only
       // A UI usa os métodos getter que já acessam this.session() corretamente
 
-      // Atualizar contadores de estado interno
+      // ✅ CRÍTICO: Atualizar contadores de estado interno com novas referências
       this.confirmedCount.set(data.confirmedCount || 0);
       this.totalPlayers.set(data.totalPlayers || 10);
 
       console.log(`📊 [ConfirmationModal] Atualizado: ${this.confirmedCount()}/${this.totalPlayers()} confirmados`);
       console.log(`📊 [ConfirmationModal] Progresso: ${this.getConfirmationProgress()}%`);
 
-      // ✅ NOVO: Forçar detecção de mudanças
+      // ✅ CRÍTICO: markForCheck() propaga mudanças para o template (OnPush requer)
       this.cdr.markForCheck();
-      this.cdr.detectChanges(); // ✅ CRÍTICO: Forçar detecção imediata (OnPush requer)
 
       setTimeout(() => {
         console.log(`🔄 [ConfirmationModal] Re-check progresso: ${this.getConfirmationProgress()}%`);

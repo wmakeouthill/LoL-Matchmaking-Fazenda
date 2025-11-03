@@ -744,7 +744,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
   // Causava finalização automática sem confirmação do usuário
   /*
   private startLCUDetection() {
-    if (!this.lcuDetectionEnabled) return;
+    if (!this.lcuDetectionEnabled()) return;  // ✅ CORRIGIDO: Adicionar ()
     this.lcuDetectionTimer = interval(5000).subscribe(() => {
       this.checkLCUStatus();
     });
@@ -1336,7 +1336,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
 
     if (winner) {
       logGameInProgress('🏆 Vencedor detectado automaticamente via LCU:', winner);
-      this.selectedWinner = winner;
+      this.selectedWinner.set(winner);  // ✅ CORRIGIDO: Usar .set()
 
       // Completar jogo automaticamente com dados reais - APENAS uma vez via evento onGameComplete
       this.autoCompleteGameWithRealData(winner, true, lcuMatch);
@@ -2024,7 +2024,7 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
 
     // Apply the confirmed result to the game
     if (winner) {
-      this.selectedWinner = winner;
+      this.selectedWinner.set(winner);  // ✅ CORRIGIDO: Usar .set()
       console.log('🏆 Winner applied from LCU confirmation:', winner);
 
       // Complete the game with LCU data
