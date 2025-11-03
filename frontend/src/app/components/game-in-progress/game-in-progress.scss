@@ -348,8 +348,10 @@ $dark-panel: #1a1a2e;
 
         .player-info {
           display: flex;
-          flex-direction: column;
-          gap: 4px;
+          flex-direction: row;
+          align-items: center;
+          gap: 6px;
+          min-width: 0; // allow text to ellipsize/wrap inside
 
           .player-name {
             font-family: $pixel-font;
@@ -357,25 +359,26 @@ $dark-panel: #1a1a2e;
             color: #f0e6d2;
             font-size: $player-card-font-size;
             text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.8);
-          }
-
-          // ✅ NOVO: Container para lane badge ficar inline
-          .lane-info {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-          }
-
-          // ✅ NOVO: Estilos para lane badge
-          .lane-badge {
             display: inline-block;
+            min-width: 0;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+          }
+
+          // ✅ Improved: lane badge sits inline to the left of avatar/name and is sized to its content
+          .lane-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
             padding: 2px 6px;
-            border-radius: 3px;
-            font-size: 9px;
-            font-weight: 600;
+            margin-right: 6px;
+            border-radius: 4px;
+            font-size: $player-card-font-size;
+            font-weight: 700;
+            font-family: $pixel-font;
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
             white-space: nowrap;
             flex-shrink: 0;
 
@@ -383,18 +386,21 @@ $dark-panel: #1a1a2e;
               background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
               color: white;
               border: 1px solid rgba(76, 175, 80, 0.3);
+              text-shadow: 0 0 5px rgba(76, 175, 80, 0.5);
             }
 
             &.badge-secondary {
               background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
               color: white;
               border: 1px solid rgba(33, 150, 243, 0.3);
+              text-shadow: 0 0 5px rgba(33, 150, 243, 0.5);
             }
 
             &.badge-autofill {
               background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);
               color: white;
               border: 1px solid rgba(255, 152, 0, 0.3);
+              text-shadow: 0 0 5px rgba(255, 152, 0, 0.5);
             }
           }
         }
@@ -633,6 +639,8 @@ $dark-panel: #1a1a2e;
     h4 {
       margin: 0 0 15px 0;
       color: #f0e6d2;
+      font-size: $base-font-size;
+      font-family: $pixel-font;
     }
 
     .setting-item {
@@ -678,8 +686,20 @@ $dark-panel: #1a1a2e;
 
       .setting-description {
         margin: 8px 0 0 32px;
-        font-size: 14px;
+        font-size: $base-font-size;
+        font-family: $pixel-font;
         color: #a09b8c;
+      }
+
+      .detection-buttons {
+        margin-bottom: 12px;
+
+        .retry-detection-btn {
+          width: 100%;
+          font-size: $base-font-size;
+          font-family: $pixel-font;
+          padding: 10px 20px;
+        }
       }
     }
   }

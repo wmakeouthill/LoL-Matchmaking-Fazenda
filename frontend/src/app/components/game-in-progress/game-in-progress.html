@@ -90,6 +90,8 @@
               >{{ getLaneName(player.assignedLane || player.lane || player.role)
               }}</span
             >
+          </div>
+          <div class="player-info">
             <span
               class="lane-badge"
               [ngClass]="{
@@ -101,8 +103,6 @@
             >
               {{ getLaneBadgeText(player.laneBadge) }}
             </span>
-          </div>
-          <div class="player-info">
             <ng-container *ngIf="!isPlayerBot(player); else botIcon">
               <img
                 *ngIf="getProfileIconUrlIfHuman(player) | async as iconUrl"
@@ -131,9 +131,7 @@
                 alt="Bot"
               />
             </ng-template>
-            <span class="player-name"
-              >{{ player.summonerName || player.name }}</span
-            >
+            <span class="player-name">{{ player.summonerName || player.name }}</span>
           </div>
           <div
             class="player-champion"
@@ -210,6 +208,8 @@
               >{{ getLaneName(player.assignedLane || player.lane || player.role)
               }}</span
             >
+          </div>
+          <div class="player-info">
             <span
               class="lane-badge"
               [ngClass]="{
@@ -221,8 +221,6 @@
             >
               {{ getLaneBadgeText(player.laneBadge) }}
             </span>
-          </div>
-          <div class="player-info">
             <ng-container *ngIf="!isPlayerBot(player); else botIconRed">
               <img
                 *ngIf="getProfileIconUrlIfHuman(player) | async as iconUrl"
@@ -251,9 +249,7 @@
                 alt="Bot"
               />
             </ng-template>
-            <span class="player-name"
-              >{{ player.summonerName || player.name }}</span
-            >
+            <span class="player-name">{{ player.summonerName || player.name }}</span>
           </div>
           <div
             class="player-champion"
@@ -300,40 +296,7 @@
       </p>
     </div>
   </div>
-  <div class="game-status-section">
-    <div class="status-card">
-      <div class="status-item">
-        <span class="status-label">Status:</span>
-        <span class="status-value" [class]="gameStatus"
-          >{{ getGameStatusText() }}</span
-        >
-      </div>
-
-      <div class="status-item" *ngIf="gameStartTime">
-        <span class="status-label">Início:</span>
-        <span class="status-value">{{ gameStartTime | date:'HH:mm:ss' }}</span>
-      </div>
-
-      <div class="status-item" *ngIf="lcuGameDetected()">
-        <span class="status-label">Detecção LCU:</span>
-        <span class="status-value connected">✅ Ativa</span>
-      </div>
-
-      <!-- ❌ REMOVIDO: Sistema de vinculação automática -->
-    </div>
-
-    <!-- ❌ REMOVIDO: Live Linking Info -->
-    <div class="linking-info" *ngIf="false">
-      <div class="linking-status">
-        <span class="linking-icon">🔗</span>
-        <div class="linking-text">
-          <strong>Sistema de Vinculação Automática</strong>
-          <p>Procurando partida do LoL para vincular automaticamente...</p>
-          <p>Partida vinculada! O resultado será detectado automaticamente.</p>
-        </div>
-      </div>
-    </div>
-  </div>
+  <!-- Removed redundant game status section (start time / waiting) per UI cleanup request -->
 
   <!-- Settings Section -->
   <div class="settings-section">

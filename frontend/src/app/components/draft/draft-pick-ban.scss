@@ -329,9 +329,9 @@ $dark-panel: #1a1a2e;
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  min-width: 50px;
+  min-width: 60px;
   flex: 1;
-  max-width: 60px;
+  max-width: 90px;
 
   .banned-img {
     width: 42px;
@@ -349,10 +349,10 @@ $dark-panel: #1a1a2e;
     color: $cyber-red;
     text-align: center;
     width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    line-height: 1.2;
+    white-space: normal;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    line-height: 1.3;
     text-shadow: 0 0 5px $cyber-red, 1px 1px 0 rgba(0, 0, 0, 0.8);
   }
 }
@@ -362,9 +362,9 @@ $dark-panel: #1a1a2e;
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  min-width: 50px;
+  min-width: 60px;
   flex: 1;
-  max-width: 60px;
+  max-width: 90px;
 
   .ban-placeholder {
     width: 42px;
@@ -385,10 +385,10 @@ $dark-panel: #1a1a2e;
     color: $cyber-red;
     text-align: center;
     width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    line-height: 1.2;
+    white-space: normal;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    line-height: 1.3;
     text-shadow: 0 0 5px $cyber-red, 1px 1px 0 rgba(0, 0, 0, 0.8);
   }
 }
@@ -494,8 +494,12 @@ $dark-panel: #1a1a2e;
   font-size: $player-card-font-size;
   font-weight: bold;
   color: #f0f2f5;
-  line-height: 1.2;
+  line-height: 1.3;
   text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.8);
+  white-space: normal;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  max-width: 100%;
 }
 
 .player-name {
