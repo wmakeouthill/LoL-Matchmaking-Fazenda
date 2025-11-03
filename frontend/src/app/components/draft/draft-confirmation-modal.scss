@@ -377,6 +377,8 @@ $dark-panel: #1a1a2e;
   padding: 12px 20px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.2);
   background: rgba(255, 255, 255, 0.05);
+  position: relative; // ✅ CRÍTICO: Garante stacking context
+  z-index: 5; // ✅ CRÍTICO: Acima do background grid
 
   .header-left {
     display: flex;
@@ -427,6 +429,8 @@ $dark-panel: #1a1a2e;
   padding: 16px 20px;
   overflow-y: auto;
   max-height: 65vh;
+  position: relative; // ✅ CRÍTICO: Garante stacking context
+  z-index: 5; // ✅ CRÍTICO: Acima do background grid
 }
 
 // ========== CONTAINER DOS TIMES ==========
@@ -685,6 +689,8 @@ $dark-panel: #1a1a2e;
   border-top: 1px solid rgba(255, 255, 255, 0.2);
   background: rgba(255, 255, 255, 0.05);
   flex-wrap: wrap;
+  position: relative; // ✅ CRÍTICO: Garante que botões ficam acima do ::after do modal
+  z-index: 10; // ✅ CRÍTICO: Acima do background grid (z-index: 0)
 }
 
 // ✅ NOVO: Estilos para status de confirmação
@@ -732,6 +738,8 @@ $dark-panel: #1a1a2e;
   gap: 6px;
   min-width: 120px;
   justify-content: center;
+  position: relative; // ✅ CRÍTICO: Garante stacking context
+  z-index: 5; // ✅ CRÍTICO: Acima de qualquer outro elemento do modal
 
   &:hover {
     transform: translateY(-1px);

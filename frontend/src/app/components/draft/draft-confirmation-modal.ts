@@ -101,9 +101,8 @@ export class DraftConfirmationModalComponent implements OnInit, OnDestroy {
   isConfirming = signal<boolean>(false);
   confirmationMessage = signal<string>('');
 
-  // ✅ NOVO: Status de confirmação dos jogadores (signals)
-  confirmedCount = signal<number>(0);
-  totalPlayers = signal<number>(10);
+  // ✅ REMOVIDO: confirmedCount e totalPlayers signals duplicados
+  // Agora usamos apenas confirmationData() que vem do pai com atualizações em tempo real
 
   // ✅ NOVO: WebSocket subscription para atualizações em tempo real
   private wsSubscription?: Subscription;
@@ -210,23 +209,9 @@ export class DraftConfirmationModalComponent implements OnInit, OnDestroy {
       }
     });
 
-    // ✅ SIGNALS: Effect para atualizar confirmationData
-    effect(() => {
-      const data = this.confirmationData();
-      if (data) {
-        this.confirmedCount.set(data.confirmedCount || data.confirmations?.length || 0);
-        this.totalPlayers.set(data.totalPlayers || 10);
-
-        console.log('📊 [CONFIRMATION-MODAL] confirmationData atualizado:', {
-          confirmedCount: this.confirmedCount(),
-          totalPlayers: this.totalPlayers(),
-          allConfirmed: data.allConfirmed
-        });
-
-        // ✅ Forçar detecção de mudanças (OnPush requer)
-        this.cdr.markForCheck();
-      }
-    });
+    // ✅ SIGNALS: Effect removido - não é necessário duplicar estado
+    // confirmationData já vem do pai com atualizações em tempo real
+    // Os métodos getter já acessam confirmationData() diretamente
   }
 
   // ✅ NOVO: Configurar observables UMA VEZ no init (mesma técnica do draft-pick-ban)
@@ -1189,6 +1174,7 @@ export class DraftConfirmationModalComponent implements OnInit, OnDestroy {
   }
 
   async confirmFinalDraft(): Promise<void> {
+    console.log('✅✅✅ [CONFIRM-FINAL-DRAFT] === BOTÃO CONFIRMAR CLICADO ===');
     const currentSession = this.session();
     const current = this.currentPlayer();
 
@@ -1265,6 +1251,7 @@ export class DraftConfirmationModalComponent implements OnInit, OnDestroy {
   }
 
   cancelFinalDraft(): void {
+    console.log('❌❌❌ [CANCEL-FINAL-DRAFT] === BOTÃO CANCELAR CLICADO ===');
     logConfirmationModal('❌ [cancelFinalDraft] === CANCELANDO DRAFT ===');
     this.cancelled.emit();
   }
@@ -1370,6 +1357,7 @@ export class DraftConfirmationModalComponent implements OnInit, OnDestroy {
 
   // ✅ NOVO: Método para editar o pick do jogador atual via botão principal
   async startEditingCurrentPlayer(): Promise<void> {
+    console.log('✏️✏️✏️ [EDITAR MEU PICK] === BOTÃO EDITAR CLICADO ===');
     console.log('🎯 [EDITAR MEU PICK] === INICIANDO ===');
     logConfirmationModal('🎯 [startEditingCurrentPlayer] === INICIANDO EDIÇÃO DO JOGADOR LOGADO ===');
 
@@ -1782,16 +1770,8 @@ export class DraftConfirmationModalComponent implements OnInit, OnDestroy {
       };
     }
 
-    // ✅ FALLBACK: Usar valores internos atualizados
-    const currentConfirmedCount = this.confirmedCount();
-    const currentTotalPlayers = this.totalPlayers();
-
-    if (currentConfirmedCount > 0 || currentTotalPlayers > 0) {
-      return {
-        confirmed: currentConfirmedCount,
-        total: currentTotalPlayers
-      };
-    }
+    // ✅ FALLBACK: Não há mais signals internos duplicados
+    // confirmationData é a única fonte de verdade
 
     // ✅ FALLBACK 2: Tentar contar do session (menos confiável)
     let confirmed = 0;
@@ -1956,34 +1936,37 @@ export class DraftConfirmationModalComponent implements OnInit, OnDestroy {
 
   /**
    * Manipula atualizações de progresso de confirmação
+   * ✅ CORREÇÃO: Signals locais são derivados do confirmationData input signal
    */
   private handleConfirmationProgress(data: any): void {
     console.log('📊 [ConfirmationModal] Progresso de confirmação recebido:', data);
+    console.log('📊 [ConfirmationModal] confirmationData atual:', this.confirmationData());
 
-    const currentSession = this.session();
-    if (!currentSession) return;
+    // ✅ CRÍTICO: Inputs signals são READ-ONLY!
+    // O pai (draft-pick-ban) já está atualizando confirmationData.set() com nova referência
+    // Apenas precisamos forçar a detecção de mudanças no template OnPush
 
-    if (data.confirmations && Array.isArray(data.confirmations)) {
-      // ✅ CORREÇÃO: Trabalhar com dados locais - InputSignals são read-only
-      // A UI usa os métodos getter que já acessam this.session() corretamente
+    const currentConfirmationData = this.confirmationData();
 
-      // ✅ CRÍTICO: Atualizar contadores de estado interno com novas referências
-      this.confirmedCount.set(data.confirmedCount || 0);
-      this.totalPlayers.set(data.totalPlayers || 10);
-
-      console.log(`📊 [ConfirmationModal] Atualizado: ${this.confirmedCount()}/${this.totalPlayers()} confirmados`);
-      console.log(`📊 [ConfirmationModal] Progresso: ${this.getConfirmationProgress()}%`);
-
-      // ✅ CRÍTICO: markForCheck() propaga mudanças para o template (OnPush requer)
-      this.cdr.markForCheck();
-
-      setTimeout(() => {
-        console.log(`🔄 [ConfirmationModal] Re-check progresso: ${this.getConfirmationProgress()}%`);
-        console.log(`🔄 [ConfirmationModal] Re-check contagem: ${this.getConfirmationCount().confirmed}/${this.getConfirmationCount().total}`);
-      }, 100);
+    if (currentConfirmationData) {
+      console.log(`📊 [ConfirmationModal] confirmationData do pai: ${currentConfirmationData.confirmedCount}/${currentConfirmationData.totalPlayers}`);
+      console.log(`📊 [ConfirmationModal] Progresso calculado: ${this.getConfirmationProgress()}%`);
     } else {
-      console.log('⚠️ [ConfirmationModal] Dados de confirmação inválidos:', data);
+      console.warn('⚠️ [ConfirmationModal] confirmationData é null - pai não atualizou ainda');
     }
+
+    // ✅ CRÍTICO: markForCheck() força Angular a verificar este componente OnPush
+    // O template vai reler confirmationData() que vem do pai com nova referência
+    this.cdr.markForCheck();
+
+    // ✅ DEBUG: Verificar se UI foi atualizada
+    setTimeout(() => {
+      const currentData = this.confirmationData();
+      if (currentData) {
+        console.log(`🔄 [ConfirmationModal] Re-check após 100ms: ${currentData.confirmedCount}/${currentData.totalPlayers}`);
+        console.log(`🔄 [ConfirmationModal] Progresso UI: ${this.getConfirmationProgress()}%`);
+      }
+    }, 100);
   }
 
   /**
@@ -1996,14 +1979,10 @@ export class DraftConfirmationModalComponent implements OnInit, OnDestroy {
     if (!currentSession) return;
 
     if (data.playerName && data.status) {
-      // ✅ CORREÇÃO: Trabalhar com dados locais - InputSignals são read-only
-      // A UI irá re-render automaticamente quando os dados vierem do parent
+      // ✅ CORREÇÃO: InputSignals são read-only - apenas marcar para re-checagem
+      // O parent (draft-pick-ban) já atualizou confirmationData com novos dados
       console.log(`🔄 [ConfirmationModal] Status de ${data.playerName}: ${data.status}`);
-
-      // Forçar re-checagem dos contadores
-      const counts = this.getConfirmationCount();
-      this.confirmedCount.set(counts.confirmed);
-      this.totalPlayers.set(counts.total);
+      console.log(`🔄 [ConfirmationModal] Contadores atuais:`, this.getConfirmationCount());
 
       this.cdr.markForCheck();
     }
@@ -2012,6 +1991,7 @@ export class DraftConfirmationModalComponent implements OnInit, OnDestroy {
 
   /**
    * Inicializa os status de confirmação de todos os jogadores
+   * ✅ REFATORADO: Agora só lê de confirmationData() que vem do parent
    */
   private initializeConfirmationStatuses(): void {
     const currentSession = this.session();
@@ -2022,15 +2002,11 @@ export class DraftConfirmationModalComponent implements OnInit, OnDestroy {
 
     console.log(`🔄 [ConfirmationModal] Inicializando status de confirmação`);
 
-    // ✅ CORREÇÃO: Apenas resetar contadores locais - session é read-only input
-    const blueTeamSize = currentSession.blueTeam?.length || 0;
-    const redTeamSize = currentSession.redTeam?.length || 0;
-
-    this.confirmedCount.set(0);
-    this.totalPlayers.set(blueTeamSize + redTeamSize);
-
-    console.log(`🔄 [ConfirmationModal] Inicializando ${this.totalPlayers()} jogadores`);
-    console.log(`🔄 [ConfirmationModal] Status inicializados: ${this.confirmedCount()}/${this.totalPlayers()} jogadores`);
+    // ✅ CORREÇÃO: Não há mais signals internos para inicializar
+    // confirmationData já vem do parent com os dados corretos
+    const counts = this.getConfirmationCount();
+    console.log(`🔄 [ConfirmationModal] Inicializando ${counts.total} jogadores`);
+    console.log(`🔄 [ConfirmationModal] Status inicializados: ${counts.confirmed}/${counts.total} jogadores`);
     console.log(`🔄 [ConfirmationModal] Progresso inicial: ${this.getConfirmationProgress()}%`);
 
     this.cdr.markForCheck();
