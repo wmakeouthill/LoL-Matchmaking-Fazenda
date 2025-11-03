@@ -1,87 +1,88 @@
-import { Injectable } from '@angular/core';
-import { BehaviorSubject, Observable } from 'rxjs';
+import { Injectable, signal, WritableSignal } from '@angular/core';
+import { toObservable } from '@angular/core/rxjs-interop';
+import { Observable } from 'rxjs';
 
 /**
- * ✅ SERVIÇO: Eventos do Electron para o Frontend
+ * ✅ SERVIÇO MODERNIZADO: Eventos do Electron para o Frontend usando Signals
  *
  * Este serviço escuta eventos enviados pelo Electron via IPC
- * e os converte em observables do Angular para uso nos componentes.
+ * e os converte em signals do Angular 16+ para uso nos componentes.
+ *
+ * ✅ MIGRADO: BehaviorSubject → signal() (Angular 16+)
+ * ✅ COMPATIBILIDADE: Também expõe Observables via toObservable() para código legado
  */
 @Injectable({
   providedIn: 'root'
 })
 export class ElectronEventsService {
 
-  // === MATCH EVENTS ===
-  private matchFoundSubject = new BehaviorSubject<any>(null);
-  public matchFound$: Observable<any> = this.matchFoundSubject.asObservable();
+  // === MATCH EVENTS (SIGNALS) ===
+  public matchFound: WritableSignal<any> = signal(null);
+  public draftStarted: WritableSignal<any> = signal(null);
+  public gameInProgress: WritableSignal<any> = signal(null);
+  public matchCancelled: WritableSignal<any> = signal(null);
+  public draftCancelled: WritableSignal<any> = signal(null);
+  public gameCancelled: WritableSignal<any> = signal(null);
 
-  private draftStartedSubject = new BehaviorSubject<any>(null);
-  public draftStarted$: Observable<any> = this.draftStartedSubject.asObservable();
+  // === ACCEPTANCE EVENTS (SIGNALS) ===
+  public acceptanceTimer: WritableSignal<any> = signal(null);
+  public acceptanceProgress: WritableSignal<any> = signal(null);
 
-  private gameInProgressSubject = new BehaviorSubject<any>(null);
-  public gameInProgress$: Observable<any> = this.gameInProgressSubject.asObservable();
+  // === DRAFT EVENTS (SIGNALS) ===
+  public draftTimer: WritableSignal<any> = signal(null);
+  public draftUpdate: WritableSignal<any> = signal(null);
+  public draftUpdated: WritableSignal<any> = signal(null);
+  public pickChampion: WritableSignal<any> = signal(null);
+  public banChampion: WritableSignal<any> = signal(null);
+  public draftConfirmed: WritableSignal<any> = signal(null);
+  public draftConfirmationUpdate: WritableSignal<any> = signal(null);
 
-  private matchCancelledSubject = new BehaviorSubject<any>(null);
-  public matchCancelled$: Observable<any> = this.matchCancelledSubject.asObservable();
+  // === GAME EVENTS (SIGNALS) ===
+  public gameStarted: WritableSignal<any> = signal(null);
+  public winnerModal: WritableSignal<any> = signal(null);
+  public voteWinner: WritableSignal<any> = signal(null);
+  public matchVoteProgress: WritableSignal<any> = signal(null);
+  public matchVoteUpdate: WritableSignal<any> = signal(null);
 
-  private draftCancelledSubject = new BehaviorSubject<any>(null);
-  public draftCancelled$: Observable<any> = this.draftCancelledSubject.asObservable();
+  // === SPECTATOR EVENTS (SIGNALS) ===
+  public spectatorMuted: WritableSignal<any> = signal(null);
+  public spectatorUnmuted: WritableSignal<any> = signal(null);
 
-  private gameCancelledSubject = new BehaviorSubject<any>(null);
-  public gameCancelled$: Observable<any> = this.gameCancelledSubject.asObservable();
+  // === QUEUE EVENTS (SIGNALS) ===
+  public queueStatus: WritableSignal<any> = signal(null);
+  public queueUpdate: WritableSignal<any> = signal(null);
 
-  // === ACCEPTANCE EVENTS ===
-  private acceptanceTimerSubject = new BehaviorSubject<any>(null);
-  public acceptanceTimer$: Observable<any> = this.acceptanceTimerSubject.asObservable();
+  // === CONNECTION EVENTS (SIGNALS) ===
+  public backendConnection: WritableSignal<any> = signal(null);
+  public playerSessionUpdate: WritableSignal<any> = signal(null);
 
-  private acceptanceProgressSubject = new BehaviorSubject<any>(null);
-  public acceptanceProgress$: Observable<any> = this.acceptanceProgressSubject.asObservable();
-
-  // === DRAFT EVENTS ===
-  private draftTimerSubject = new BehaviorSubject<any>(null);
-  public draftTimer$: Observable<any> = this.draftTimerSubject.asObservable();
-
-  private draftUpdateSubject = new BehaviorSubject<any>(null);
-  public draftUpdate$: Observable<any> = this.draftUpdateSubject.asObservable();
-
-  private draftUpdatedSubject = new BehaviorSubject<any>(null);
-  public draftUpdated$: Observable<any> = this.draftUpdatedSubject.asObservable();
-
-  private pickChampionSubject = new BehaviorSubject<any>(null);
-  public pickChampion$: Observable<any> = this.pickChampionSubject.asObservable();
-
-  private banChampionSubject = new BehaviorSubject<any>(null);
-  public banChampion$: Observable<any> = this.banChampionSubject.asObservable();
-
-  private draftConfirmedSubject = new BehaviorSubject<any>(null);
-  public draftConfirmed$: Observable<any> = this.draftConfirmedSubject.asObservable();
-
-  private draftConfirmationUpdateSubject = new BehaviorSubject<any>(null);
-  public draftConfirmationUpdate$: Observable<any> = this.draftConfirmationUpdateSubject.asObservable();
-
-  // === GAME EVENTS ===
-  private gameStartedSubject = new BehaviorSubject<any>(null);
-  public gameStarted$: Observable<any> = this.gameStartedSubject.asObservable();
-
-  private winnerModalSubject = new BehaviorSubject<any>(null);
-  public winnerModal$: Observable<any> = this.winnerModalSubject.asObservable();
-
-  private voteWinnerSubject = new BehaviorSubject<any>(null);
-  public voteWinner$: Observable<any> = this.voteWinnerSubject.asObservable();
-
-  private matchVoteProgressSubject = new BehaviorSubject<any>(null);
-  public matchVoteProgress$: Observable<any> = this.matchVoteProgressSubject.asObservable();
-
-  private matchVoteUpdateSubject = new BehaviorSubject<any>(null);
-  public matchVoteUpdate$: Observable<any> = this.matchVoteUpdateSubject.asObservable();
-
-  // === SPECTATOR EVENTS ===
-  private spectatorMutedSubject = new BehaviorSubject<any>(null);
-  public spectatorMuted$: Observable<any> = this.spectatorMutedSubject.asObservable();
-
-  private spectatorUnmutedSubject = new BehaviorSubject<any>(null);
-  public spectatorUnmuted$: Observable<any> = this.spectatorUnmutedSubject.asObservable();
+  // ✅ COMPATIBILIDADE: Observables para código legado (gerados automaticamente dos signals)
+  public readonly matchFound$: Observable<any> = toObservable(this.matchFound);
+  public readonly draftStarted$: Observable<any> = toObservable(this.draftStarted);
+  public readonly gameInProgress$: Observable<any> = toObservable(this.gameInProgress);
+  public readonly matchCancelled$: Observable<any> = toObservable(this.matchCancelled);
+  public readonly draftCancelled$: Observable<any> = toObservable(this.draftCancelled);
+  public readonly gameCancelled$: Observable<any> = toObservable(this.gameCancelled);
+  public readonly acceptanceTimer$: Observable<any> = toObservable(this.acceptanceTimer);
+  public readonly acceptanceProgress$: Observable<any> = toObservable(this.acceptanceProgress);
+  public readonly draftTimer$: Observable<any> = toObservable(this.draftTimer);
+  public readonly draftUpdate$: Observable<any> = toObservable(this.draftUpdate);
+  public readonly draftUpdated$: Observable<any> = toObservable(this.draftUpdated);
+  public readonly pickChampion$: Observable<any> = toObservable(this.pickChampion);
+  public readonly banChampion$: Observable<any> = toObservable(this.banChampion);
+  public readonly draftConfirmed$: Observable<any> = toObservable(this.draftConfirmed);
+  public readonly draftConfirmationUpdate$: Observable<any> = toObservable(this.draftConfirmationUpdate);
+  public readonly gameStarted$: Observable<any> = toObservable(this.gameStarted);
+  public readonly winnerModal$: Observable<any> = toObservable(this.winnerModal);
+  public readonly voteWinner$: Observable<any> = toObservable(this.voteWinner);
+  public readonly matchVoteProgress$: Observable<any> = toObservable(this.matchVoteProgress);
+  public readonly matchVoteUpdate$: Observable<any> = toObservable(this.matchVoteUpdate);
+  public readonly spectatorMuted$: Observable<any> = toObservable(this.spectatorMuted);
+  public readonly spectatorUnmuted$: Observable<any> = toObservable(this.spectatorUnmuted);
+  public readonly queueStatus$: Observable<any> = toObservable(this.queueStatus);
+  public readonly queueUpdate$: Observable<any> = toObservable(this.queueUpdate);
+  public readonly backendConnection$: Observable<any> = toObservable(this.backendConnection);
+  public readonly playerSessionUpdate$: Observable<any> = toObservable(this.playerSessionUpdate);
 
   constructor() {
     this.initializeElectronListeners();
@@ -102,7 +103,8 @@ export class ElectronEventsService {
         // ✅ MATCH_FOUND: Partida encontrada - mostrar modal de aceitar/recusar
         window.electronAPI.onMatchFound((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] match-found recebido:', data);
-          this.matchFoundSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.matchFound.set({ ...data });
         });
 
         // ✅ DRAFT_STARTING: Draft iniciando (evento do backend)
@@ -112,7 +114,8 @@ export class ElectronEventsService {
           console.log('🎯 [ElectronEvents] Teams:', data.teams);
           console.log('🎯 [ElectronEvents] Team1:', data.team1);
           console.log('🎯 [ElectronEvents] Team2:', data.team2);
-          this.draftStartedSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.draftStarted.set({ ...data });
         });
 
         // ✅ DRAFT_STARTED: Draft iniciado - ir para tela de draft
@@ -122,116 +125,163 @@ export class ElectronEventsService {
           console.log('🎯 [ElectronEvents] Teams:', data.teams);
           console.log('🎯 [ElectronEvents] Team1:', data.team1);
           console.log('🎯 [ElectronEvents] Team2:', data.team2);
-          this.draftStartedSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.draftStarted.set({ ...data });
         });
 
         // ✅ GAME_IN_PROGRESS: Partida em andamento - ir para tela de jogo
         window.electronAPI.onGameInProgress((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] game-in-progress recebido:', data);
-          this.gameInProgressSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.gameInProgress.set({ ...data });
         });
 
         // ✅ MATCH_CANCELLED: Partida cancelada - voltar para fila
         window.electronAPI.onMatchCancelled((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] match-cancelled recebido:', data);
-          this.matchCancelledSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.matchCancelled.set({ ...data });
         });
 
         // ✅ DRAFT_CANCELLED: Draft cancelado - voltar para fila
         window.electronAPI.onDraftCancelled((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] draft-cancelled recebido:', data);
-          this.draftCancelledSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.draftCancelled.set({ ...data });
         });
 
         // ✅ GAME_CANCELLED: Jogo cancelado - voltar para fila
         window.electronAPI.onGameCancelled((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] game-cancelled recebido:', data);
-          this.gameCancelledSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.gameCancelled.set({ ...data });
         });
 
         // ✅ ACCEPTANCE_TIMER: Timer de aceitação - atualizar contador
         window.electronAPI.onAcceptanceTimer((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] acceptance-timer recebido:', data);
-          this.acceptanceTimerSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.acceptanceTimer.set({ ...data });
         });
 
         // ✅ ACCEPTANCE_PROGRESS: Progresso de aceitação - atualizar contadores
         window.electronAPI.onAcceptanceProgress((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] acceptance-progress recebido:', data);
-          this.acceptanceProgressSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.acceptanceProgress.set({ ...data });
         });
 
         // ✅ DRAFT EVENTS
         window.electronAPI.onDraftTimer((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] draft-timer recebido:', data);
-          this.draftTimerSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.draftTimer.set({ ...data });
         });
 
         window.electronAPI.onDraftUpdate((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] draft-update recebido:', data);
-          this.draftUpdateSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.draftUpdate.set({ ...data });
         });
 
         window.electronAPI.onDraftUpdated((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] draft-updated recebido:', data);
-          this.draftUpdatedSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.draftUpdated.set({ ...data });
         });
 
         window.electronAPI.onPickChampion((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] pick-champion recebido:', data);
-          this.pickChampionSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.pickChampion.set({ ...data });
         });
 
         window.electronAPI.onBanChampion((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] ban-champion recebido:', data);
-          this.banChampionSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.banChampion.set({ ...data });
         });
 
         window.electronAPI.onDraftConfirmed((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] draft-confirmed recebido:', data);
-          this.draftConfirmedSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.draftConfirmed.set({ ...data });
         });
 
         window.electronAPI.onDraftConfirmationUpdate((event: any, data: any) => {
           console.log('📊 [ElectronEvents] draft-confirmation-update recebido:', data);
-          this.draftConfirmationUpdateSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.draftConfirmationUpdate.set({ ...data });
         });
 
         // ✅ GAME EVENTS
         window.electronAPI.onGameStarted((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] game-started recebido:', data);
-          this.gameStartedSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.gameStarted.set({ ...data });
         });
 
         window.electronAPI.onWinnerModal((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] winner-modal recebido:', data);
-          this.winnerModalSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.winnerModal.set({ ...data });
         });
 
         window.electronAPI.onVoteWinner((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] vote-winner recebido:', data);
-          this.voteWinnerSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.voteWinner.set({ ...data });
         });
 
         window.electronAPI.onMatchVoteProgress((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] match-vote-progress recebido:', data);
-          this.matchVoteProgressSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.matchVoteProgress.set({ ...data });
         });
 
         window.electronAPI.onMatchVoteUpdate((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] match-vote-update recebido:', data);
-          this.matchVoteUpdateSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.matchVoteUpdate.set({ ...data });
         });
 
         // ✅ SPECTATOR EVENTS
         window.electronAPI.onSpectatorMuted((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] spectator-muted recebido:', data);
-          this.spectatorMutedSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.spectatorMuted.set({ ...data });
         });
 
         window.electronAPI.onSpectatorUnmuted((event: any, data: any) => {
           console.log('🎯 [ElectronEvents] spectator-unmuted recebido:', data);
-          this.spectatorUnmutedSubject.next(data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.spectatorUnmuted.set({ ...data });
+        });
+
+        // ✅ QUEUE EVENTS
+        window.electronAPI.onQueueStatus((event: any, data: any) => {
+          console.log('🎯 [ElectronEvents] queue-status recebido:', data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.queueStatus.set({ ...data });
+        });
+
+        window.electronAPI.onQueueUpdate((event: any, data: any) => {
+          console.log('🎯 [ElectronEvents] queue-update recebido:', data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.queueUpdate.set({ ...data });
+        });
+
+        // ✅ CONNECTION EVENTS
+        window.electronAPI.onBackendConnection((event: any, data: any) => {
+          console.log('🎯 [ElectronEvents] backend-connection recebido:', data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.backendConnection.set({ ...data });
+        });
+
+        window.electronAPI.onPlayerSessionUpdate((event: any, data: any) => {
+          console.log('🎯 [ElectronEvents] player-session-update recebido:', data);
+          // ✅ SIGNALS FIX: Criar nova referência para evitar mutação
+          this.playerSessionUpdate.set({ ...data });
         });
 
         console.log('✅ [ElectronEvents] Listeners do Electron configurados com sucesso!');
@@ -254,39 +304,46 @@ export class ElectronEventsService {
 
   /**
    * ✅ Limpar eventos (útil para evitar memory leaks)
+   * ✅ MODERNIZADO: Usar signal.set() ao invés de Subject.next()
    */
   public clearEvents() {
-    this.matchFoundSubject.next(null);
-    this.draftStartedSubject.next(null);
-    this.gameInProgressSubject.next(null);
-    this.matchCancelledSubject.next(null);
+    this.matchFound.set(null);
+    this.draftStarted.set(null);
+    this.gameInProgress.set(null);
+    this.matchCancelled.set(null);
+    this.draftCancelled.set(null);
+    this.gameCancelled.set(null);
   }
 
   /**
    * ✅ Obter último evento de match_found
+   * ✅ MODERNIZADO: Usar signal() ao invés de Subject.value
    */
   public getLastMatchFound(): any {
-    return this.matchFoundSubject.value;
+    return this.matchFound();
   }
 
   /**
    * ✅ Obter último evento de draft_started
+   * ✅ MODERNIZADO: Usar signal() ao invés de Subject.value
    */
   public getLastDraftStarted(): any {
-    return this.draftStartedSubject.value;
+    return this.draftStarted();
   }
 
   /**
    * ✅ Obter último evento de game_in_progress
+   * ✅ MODERNIZADO: Usar signal() ao invés de Subject.value
    */
   public getLastGameInProgress(): any {
-    return this.gameInProgressSubject.value;
+    return this.gameInProgress();
   }
 
   /**
    * ✅ Obter último evento de match_cancelled
+   * ✅ MODERNIZADO: Usar signal() ao invés de Subject.value
    */
   public getLastMatchCancelled(): any {
-    return this.matchCancelledSubject.value;
+    return this.matchCancelled();
   }
 }

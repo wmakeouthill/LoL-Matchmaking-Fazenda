@@ -98,6 +98,10 @@ export class MatchFoundComponent implements OnInit, OnDestroy {
   private countdownTimer?: number;
   private readonly playerIconMap = new Map<string, number>();
 
+  // ✅ NOVO: Flag para evitar tocar o som múltiplas vezes
+  private matchFoundSoundPlayed = false;
+  private lastPlayedMatchId: number | null = null;
+
   // ✅ MODERNIZADO: Injeção de dependências com inject()
   private readonly profileIconService = inject(ProfileIconService);
   public readonly botService = inject(BotService);
@@ -113,15 +117,27 @@ export class MatchFoundComponent implements OnInit, OnDestroy {
         logMatchFound('🎮 [MatchFound] Effect detectou nova partida:', {
           matchId: data.matchId,
           phase: data.phase,
-          timer: data.acceptanceTimer
+          timer: data.acceptanceTimer,
+          soundPlayed: this.matchFoundSoundPlayed,
+          lastPlayedMatchId: this.lastPlayedMatchId
         });
 
         // Identificar usuário atual
         this.identifyCurrentUser();
 
-        // Tocar som de match found
-        if (data.phase === 'match_found') {
-          this.playMatchFoundSound();
+        // ✅ CORREÇÃO: Tocar som APENAS uma vez por match
+        if (data.phase === 'match_found' && data.matchId) {
+          // Verificar se é uma nova partida ou se ainda não tocamos o som
+          const isNewMatch = this.lastPlayedMatchId !== data.matchId;
+
+          if (isNewMatch && !this.matchFoundSoundPlayed) {
+            logMatchFound('🔊 [MatchFound] Tocando som pela primeira vez - matchId:', data.matchId);
+            this.playMatchFoundSound();
+            this.matchFoundSoundPlayed = true;
+            this.lastPlayedMatchId = data.matchId;
+          } else {
+            logMatchFound('⏭️ [MatchFound] Som já foi tocado - ignorando (soundPlayed:', this.matchFoundSoundPlayed, ', isNewMatch:', isNewMatch, ')');
+          }
         }
       }
     });
@@ -137,8 +153,16 @@ export class MatchFoundComponent implements OnInit, OnDestroy {
 
   ngOnInit() {
     const data = this.matchData();
-    if (data && data.phase === 'match_found') {
-      this.playMatchFoundSound();
+    if (data && data.phase === 'match_found' && data.matchId) {
+      // ✅ CORREÇÃO: Verificar se já tocamos antes de tocar novamente
+      const isNewMatch = this.lastPlayedMatchId !== data.matchId;
+
+      if (isNewMatch && !this.matchFoundSoundPlayed) {
+        logMatchFound('🔊 [MatchFound] ngOnInit - Tocando som pela primeira vez - matchId:', data.matchId);
+        this.playMatchFoundSound();
+        this.matchFoundSoundPlayed = true;
+        this.lastPlayedMatchId = data.matchId;
+      }
     }
     this.identifyCurrentUser();
   }
@@ -153,6 +177,8 @@ export class MatchFoundComponent implements OnInit, OnDestroy {
    * Limpa todos os recursos (timer, som, etc)
    */
   private cleanupResources(): void {
+    logMatchFound('🧹 [MatchFound] cleanupResources() - Limpando recursos');
+
     // Garantir que timer local não existe (não deve existir)
     if (this.countdownTimer) {
       logMatchFound('⚠️ [MatchFound] Timer local encontrado - removendo');
@@ -160,9 +186,15 @@ export class MatchFoundComponent implements OnInit, OnDestroy {
       this.countdownTimer = undefined;
     }
 
+    // ✅ NOVO: Resetar flag de som para permitir tocar novamente na próxima partida
+    logMatchFound('🔄 [MatchFound] Resetando flag de som (mantendo lastPlayedMatchId)');
+    this.matchFoundSoundPlayed = false;
+    // Nota: NÃO resetar lastPlayedMatchId aqui - ela deve persistir entre fechamentos do modal
+
     // Garantir que som de match found seja parado
     try {
       this.audioService.stopMatchFound();
+      logMatchFound('✅ [MatchFound] Som de match found parado');
     } catch (err) {
       console.warn('[MatchFound] Erro ao parar som:', err);
     }

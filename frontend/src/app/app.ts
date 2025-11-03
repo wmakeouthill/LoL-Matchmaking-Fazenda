@@ -2,7 +2,7 @@ import { Component, OnInit, OnDestroy, ChangeDetectorRef, ViewChild, inject } fr
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
-import { Subject, takeUntil, take, firstValueFrom, timeout, catchError, of } from 'rxjs';
+import { Subject, takeUntil, take, firstValueFrom, timeout } from 'rxjs';
 
 import { DashboardComponent } from './components/dashboard/dashboard';
 import { QueueComponent } from './components/queue/queue';
@@ -61,6 +61,20 @@ export class App implements OnInit, OnDestroy {
     return this._currentPlayer;
   }
   set currentPlayer(value: Player | null) {
+    if (this._currentPlayer !== value) {
+      console.log('👤 [App] currentPlayer atualizado:', {
+        old: this._currentPlayer ? {
+          displayName: this._currentPlayer.displayName,
+          gameName: this._currentPlayer.gameName,
+          tagLine: this._currentPlayer.tagLine
+        } : null,
+        new: value ? {
+          displayName: value.displayName,
+          gameName: value.gameName,
+          tagLine: value.tagLine
+        } : null
+      });
+    }
     this._currentPlayer = value;
     this.updateCurrentSummonerService();
   }
@@ -207,26 +221,49 @@ export class App implements OnInit, OnDestroy {
         });
 
         // ✅ CRÍTICO: Criar NOVA referência de objeto para que input() signals detectem a mudança
+        // ✅ SIGNALS FIX: Deep clone de arrays e objetos aninhados
+        const newTeam1 = draftData.teams?.blue?.players ?
+          draftData.teams.blue.players.map((p: any) => ({ ...p, actions: p.actions ? p.actions.map((a: any) => ({ ...a })) : [] })) :
+          (draftData.team1 ? draftData.team1.map((p: any) => ({ ...p })) : []);
+
+        const newTeam2 = draftData.teams?.red?.players ?
+          draftData.teams.red.players.map((p: any) => ({ ...p, actions: p.actions ? p.actions.map((a: any) => ({ ...a })) : [] })) :
+          (draftData.team2 ? draftData.team2.map((p: any) => ({ ...p })) : []);
+
+        const newPhases = (draftData.actions || draftData.phases) ? [...(draftData.actions || draftData.phases)] : [];
+
+        const newTeams = draftData.teams ? {
+          blue: draftData.teams.blue ? {
+            ...draftData.teams.blue,
+            players: newTeam1
+          } : undefined,
+          red: draftData.teams.red ? {
+            ...draftData.teams.red,
+            players: newTeam2
+          } : undefined
+        } : undefined;
+
         this.draftData = {
           ...this.draftData, // Preservar dados existentes
           matchId: draftData.matchId,
-          teams: draftData.teams,
-          team1: draftData.teams?.blue?.players || draftData.team1 || [], // Fallback para compatibilidade
-          team2: draftData.teams?.red?.players || draftData.team2 || [],
-          phases: draftData.actions || draftData.phases || [],
-          actions: draftData.actions || draftData.phases || [],
+          teams: newTeams,
+          team1: newTeam1, // Fallback para compatibilidade
+          team2: newTeam2,
+          phases: newPhases,
+          actions: newPhases,
           currentAction: draftData.currentIndex ?? draftData.currentAction ?? 0,
           currentIndex: draftData.currentIndex ?? draftData.currentAction ?? 0,
           currentPlayer: draftData.currentPlayer,
           timeRemaining: draftData.timeRemaining ?? 30,
           currentPhase: draftData.currentPhase,
           currentTeam: draftData.currentTeam,
-          currentActionType: draftData.currentActionType
+          currentActionType: draftData.currentActionType,
+          _updateTimestamp: Date.now()
         };
 
         this.showMatchFound = false;
         this.inDraftPhase = true;
-        this.cdr.detectChanges();
+        this.cdr.markForCheck();
 
         console.log('✅ [App] Transição para draft concluída');
       }
@@ -240,7 +277,7 @@ export class App implements OnInit, OnDestroy {
         this.audioService.stopDraftMusic();
         this.audioService.stopMatchFound();
         this.inGamePhase = true;
-        this.cdr.detectChanges();
+        this.cdr.markForCheck();
       }
     });
 
@@ -260,6 +297,57 @@ export class App implements OnInit, OnDestroy {
       }
     });
 
+    // ✅ QUEUE_STATUS: Atualizar status da fila
+    this.electronEvents.queueStatus$.subscribe(statusData => {
+      if (statusData && statusData.status) {
+        console.log('🎯 [App] queue-status recebido do Electron:', statusData);
+        this.queueStatus = { ...statusData.status };
+        this.cdr.markForCheck();
+      }
+    });
+
+    // ✅ QUEUE_UPDATE: Atualizar lista de jogadores na fila
+    this.electronEvents.queueUpdate$.subscribe(updateData => {
+      if (updateData && updateData.data && Array.isArray(updateData.data)) {
+        console.log('📊 [App] queue-update recebido do Electron via Pub/Sub:', updateData);
+        this.queueStatus = {
+          ...this.queueStatus,
+          playersInQueue: updateData.data.length,
+          playersInQueueList: updateData.data,
+          isActive: true
+        };
+        this.cdr.markForCheck();
+      }
+    });
+
+    // ✅ BACKEND_CONNECTION: Reenviar identify após reconexão
+    this.electronEvents.backendConnection$.subscribe(connectionData => {
+      if (connectionData) {
+        console.log('🔌 [App] Backend conectado via Electron:', connectionData);
+        if (this.currentPlayer) {
+          console.log('🔗 [App] Reconexão detectada - reenviando identify_player...');
+          this.identifyCurrentPlayerOnConnect();
+        }
+      }
+    });
+
+    // ✅ PLAYER_SESSION_UPDATE: Notificação de sessão atualizada
+    this.electronEvents.playerSessionUpdate$.subscribe(sessionData => {
+      if (sessionData) {
+        console.log('🔔 [App] Evento de sessão recebido via Electron:', sessionData);
+        const data = sessionData.data || sessionData;
+        if (data) {
+          this.notificationService.showSessionUpdate({
+            eventType: data.eventType || (data.isReconnection ? 'reconnected' : 'connected'),
+            summonerName: data.summonerName || data.gameName,
+            customSessionId: data.customSessionId,
+            randomSessionId: data.randomSessionId,
+            isReconnection: data.isReconnection
+          });
+        }
+      }
+    });
+
     // ✅ MATCH_CANCELLED: Voltar para fila
     this.electronEvents.matchCancelled$.subscribe(cancelData => {
       if (cancelData) {
@@ -270,7 +358,7 @@ export class App implements OnInit, OnDestroy {
         this.showMatchFound = false;
         this.inDraftPhase = false;
         this.inGamePhase = false;
-        this.cdr.detectChanges();
+        this.cdr.markForCheck();
       }
     });
 
@@ -284,7 +372,7 @@ export class App implements OnInit, OnDestroy {
         this.showMatchFound = false;
         this.inDraftPhase = false;
         this.inGamePhase = false;
-        this.cdr.detectChanges();
+        this.cdr.markForCheck();
       }
     });
 
@@ -298,7 +386,7 @@ export class App implements OnInit, OnDestroy {
         this.showMatchFound = false;
         this.inDraftPhase = false;
         this.inGamePhase = false;
-        this.cdr.detectChanges();
+        this.cdr.markForCheck();
       }
     });
 
@@ -437,8 +525,8 @@ export class App implements OnInit, OnDestroy {
       acceptanceTimer: secondsRemaining
     };
 
-    // ✅ CRÍTICO: Forçar detecção de mudanças para atualizar o timer na view
-    this.cdr.detectChanges();
+    // ✅ CRITICAL: markForCheck() propaga mudanças para componentes filhos OnPush
+    this.cdr.markForCheck();
 
     console.log('⏰ [App] Timer de aceitação atualizado:', secondsRemaining);
     console.log('⏰ [App] ==========================================');
@@ -453,11 +541,12 @@ export class App implements OnInit, OnDestroy {
     const matchId = data.matchId || progressData.matchId;
 
     if (this.matchFoundData && this.matchFoundData.matchId === matchId) {
-      // ✅ CRÍTICO: Clonar arrays de jogadores para criar novas referências
+      // ✅ CRÍTICO: Clonar arrays de jogadores E objetos dentro para criar novas referências
+      // ✅ SIGNALS FIX: Deep clone dos players
       const blueTeamPlayers = this.matchFoundData?.teams?.blue?.players ?
-        [...this.matchFoundData.teams.blue.players] : [];
+        this.matchFoundData.teams.blue.players.map((p: any) => ({ ...p })) : [];
       const redTeamPlayers = this.matchFoundData?.teams?.red?.players ?
-        [...this.matchFoundData.teams.red.players] : [];
+        this.matchFoundData.teams.red.players.map((p: any) => ({ ...p })) : [];
 
       // ✅ OTIMIZADO: Atualizar status individual dos jogadores
       if (data.acceptedPlayers && Array.isArray(data.acceptedPlayers)) {
@@ -497,8 +586,8 @@ export class App implements OnInit, OnDestroy {
         }
       };
 
-      // ✅ CRÍTICO: Forçar detecção de mudanças para atualizar o progresso na view
-      this.cdr.detectChanges();
+      // ✅ CRITICAL: markForCheck() propaga mudanças para componentes filhos OnPush
+      this.cdr.markForCheck();
 
       console.log('📊 [App] Progresso de aceitação atualizado:', data.acceptedCount + '/' + data.totalPlayers);
     }
@@ -564,7 +653,8 @@ export class App implements OnInit, OnDestroy {
       document.dispatchEvent(event);
       console.log('📢 [App] Evento draftTimerUpdate disparado:', event.detail);
 
-      this.cdr.detectChanges();
+      // ✅ CRITICAL: markForCheck() propaga mudanças para componentes filhos OnPush
+      this.cdr.markForCheck();
     }
   }
 
@@ -596,21 +686,38 @@ export class App implements OnInit, OnDestroy {
       });
 
       // ✅ CRITICAL: Se teams vier do backend, criar novas referências para todos os níveis
+      // ✅ SIGNALS FIX: Deep clone players e actions
       let updatedTeams = this.draftData.teams;
       if (data.teams) {
         console.log('🔄 [App] Criando novas referências para teams...');
         updatedTeams = {
           blue: data.teams.blue ? {
             ...data.teams.blue,
-            players: data.teams.blue.players ? [...data.teams.blue.players] : [],
-            allBans: data.teams.blue.allBans ? [...data.teams.blue.allBans] : [],
-            allPicks: data.teams.blue.allPicks ? [...data.teams.blue.allPicks] : []
+            players: data.teams.blue.players ? data.teams.blue.players.map((p: any) => ({
+              ...p,
+              actions: p.actions ? p.actions.map((a: any) => ({ ...a })) : []
+            })) : [],
+            // ✅ CRÍTICO: Deep clone allBans e allPicks (clonar objetos dentro também)
+            allBans: data.teams.blue.allBans ? data.teams.blue.allBans.map((ban: any) =>
+              typeof ban === 'object' ? { ...ban } : ban
+            ) : [],
+            allPicks: data.teams.blue.allPicks ? data.teams.blue.allPicks.map((pick: any) =>
+              typeof pick === 'object' ? { ...pick } : pick
+            ) : []
           } : this.draftData.teams?.blue,
           red: data.teams.red ? {
             ...data.teams.red,
-            players: data.teams.red.players ? [...data.teams.red.players] : [],
-            allBans: data.teams.red.allBans ? [...data.teams.red.allBans] : [],
-            allPicks: data.teams.red.allPicks ? [...data.teams.red.allPicks] : []
+            players: data.teams.red.players ? data.teams.red.players.map((p: any) => ({
+              ...p,
+              actions: p.actions ? p.actions.map((a: any) => ({ ...a })) : []
+            })) : [],
+            // ✅ CRÍTICO: Deep clone allBans e allPicks (clonar objetos dentro também)
+            allBans: data.teams.red.allBans ? data.teams.red.allBans.map((ban: any) =>
+              typeof ban === 'object' ? { ...ban } : ban
+            ) : [],
+            allPicks: data.teams.red.allPicks ? data.teams.red.allPicks.map((pick: any) =>
+              typeof pick === 'object' ? { ...pick } : pick
+            ) : []
           } : this.draftData.teams?.red
         };
         console.log('✅ [App] Teams com novas referências:', {
@@ -619,11 +726,16 @@ export class App implements OnInit, OnDestroy {
         });
       }
 
+      // ✅ CRÍTICO: Clonar phases também (não apenas referenciar)
+      const newPhases = phases && phases.length > 0
+        ? phases.map((p: any) => ({ ...p }))
+        : [];
+
       // ✅ SIGNALS FIX: Criar nova referência do draftData (OnPush detection)
       this.draftData = {
         ...this.draftData,
-        phases: phases,
-        actions: phases,
+        phases: newPhases, // ✅ AGORA É UM CLONE
+        actions: newPhases, // ✅ AGORA É UM CLONE
         currentAction: currentAction,
         currentIndex: currentAction,
         currentPlayer: data.currentPlayer,
@@ -631,7 +743,8 @@ export class App implements OnInit, OnDestroy {
         teams: updatedTeams,
         currentPhase: data.currentPhase,
         currentTeam: data.currentTeam,
-        currentActionType: data.currentActionType
+        currentActionType: data.currentActionType,
+        _updateTimestamp: Date.now() // ✅ Força mudança de referência
       };
 
       console.log('✅ [App] DraftData atualizado COM NOVA REFERÊNCIA:', {
@@ -640,10 +753,13 @@ export class App implements OnInit, OnDestroy {
         currentPlayer: this.draftData.currentPlayer,
         hasTeams: !!this.draftData.teams,
         blueAllPicks: this.draftData.teams?.blue?.allPicks,
-        redAllPicks: this.draftData.teams?.red?.allPicks
+        redAllPicks: this.draftData.teams?.red?.allPicks,
+        _updateTimestamp: this.draftData._updateTimestamp
       });
 
-      this.cdr.detectChanges();
+      // ✅ CRITICAL: markForCheck() propaga para componentes filhos com OnPush
+      // detectChanges() só atualiza este componente, não propaga para draft-pick-ban
+      this.cdr.markForCheck();
     }
   }
 
@@ -670,7 +786,7 @@ export class App implements OnInit, OnDestroy {
     console.log('✅ [App] Draft confirmado, iniciando jogo...');
     this.inDraftPhase = false;
     this.inGamePhase = true;
-    this.cdr.detectChanges();
+    this.cdr.markForCheck();
   }
 
   /**
@@ -679,7 +795,7 @@ export class App implements OnInit, OnDestroy {
   private handleGameStarted(gameData: any) {
     console.log('🎮 [App] Game iniciado!');
     this.inGamePhase = true;
-    this.cdr.detectChanges();
+    this.cdr.markForCheck();
   }
 
   /**
@@ -720,9 +836,9 @@ export class App implements OnInit, OnDestroy {
   private handleMatchVoteProgress(voteData: any) {
     console.log('🗳️ [App] Processando progresso de votação:', voteData);
 
-    // Disparar evento customizado para o game-in-progress
+    // ✅ CRÍTICO: Criar NOVA referência para OnPush + Signals detectarem
     document.dispatchEvent(new CustomEvent('matchVoteProgress', {
-      detail: voteData
+      detail: { ...voteData }
     }));
   }
 
@@ -732,9 +848,9 @@ export class App implements OnInit, OnDestroy {
   private handleMatchVoteUpdate(voteData: any) {
     console.log('🔄 [App] Processando atualização de voto:', voteData);
 
-    // Disparar evento customizado para o game-in-progress
+    // ✅ CRÍTICO: Criar NOVA referência para OnPush + Signals detectarem
     document.dispatchEvent(new CustomEvent('matchVoteUpdate', {
-      detail: voteData
+      detail: { ...voteData }
     }));
   }
 
@@ -866,23 +982,50 @@ export class App implements OnInit, OnDestroy {
   private async setupBackendCommunication(): Promise<void> {
     console.log('🔗 [App] Configurando comunicação com backend...');
 
-    // Configurar listener de mensagens WebSocket
-    this.apiService.onWebSocketMessage().pipe(
-      takeUntil(this.destroy$)
-    ).subscribe({
-      next: (message: any) => {
-        console.log('📨 [App] Mensagem do backend:', message);
-        this.handleBackendMessage(message);
-      },
-      error: (error: any) => {
-        console.error('❌ [App] Erro na comunicação:', error);
-        this.isConnected = false;
-      },
-      complete: () => {
-        console.log('🔌 [App] Conexão WebSocket fechada');
-        this.isConnected = false;
-      }
-    });
+    // ✅ ELECTRON: Eventos são processados via ElectronEventsService (IPC → Observables)
+    // Apenas manter WebSocket conectado, mas NÃO processar mensagens duplicadas aqui
+    if (this.isElectron) {
+      console.log('⚡ [App] Modo Electron: Eventos processados via IPC (ElectronEventsService)');
+      console.log('⚡ [App] WebSocket conectado, mas handleBackendMessage DESABILITADO');
+
+      // Monitorar apenas erros/reconexões do WebSocket
+      this.apiService.onWebSocketMessage().pipe(
+        takeUntil(this.destroy$)
+      ).subscribe({
+        next: (message: any) => {
+          // ✅ Apenas log, não processar (Electron IPC faz isso)
+          console.log('📨 [App] WebSocket ativo (processado via Electron IPC):', message.type);
+        },
+        error: (error: any) => {
+          console.error('❌ [App] Erro na comunicação WebSocket:', error);
+          this.isConnected = false;
+        },
+        complete: () => {
+          console.log('🔌 [App] Conexão WebSocket fechada');
+          this.isConnected = false;
+        }
+      });
+    } else {
+      // ✅ NAVEGADOR: Usar WebSocket direto com handleBackendMessage
+      console.log('🌐 [App] Modo Navegador: Processando eventos via WebSocket direto');
+
+      this.apiService.onWebSocketMessage().pipe(
+        takeUntil(this.destroy$)
+      ).subscribe({
+        next: (message: any) => {
+          console.log('📨 [App] Mensagem do backend:', message);
+          this.handleBackendMessage(message);
+        },
+        error: (error: any) => {
+          console.error('❌ [App] Erro na comunicação:', error);
+          this.isConnected = false;
+        },
+        complete: () => {
+          console.log('🔌 [App] Conexão WebSocket fechada');
+          this.isConnected = false;
+        }
+      });
+    }
 
     // ✅ OTIMIZADO: Carregar dados IMEDIATAMENTE sem esperar eventos
     // Removi o timeout de 10 segundos que estava bloqueando a UI
@@ -1135,24 +1278,85 @@ export class App implements OnInit, OnDestroy {
         this.inGamePhase = false;
         this.showMatchFound = false;
 
-        // ✅ CRÍTICO: Passar TODOS os dados do backend (não filtrar!)
-        // Backend envia: teams, phases, currentPhase, currentIndex, confirmations, etc
+        // ✅ CRÍTICO: Filtrar status/phase "completed" que vem do backend
+        // Backend pode retornar draft finalizado, mas queremos restaurar o estado ATIVO
+        const safeCurrentPhase = (activeMatch.currentPhase === 'completed' || activeMatch.currentPhase === 'complete')
+          ? 'pick2'  // ✅ Fallback para última fase válida
+          : activeMatch.currentPhase;
+
+        const safeStatus = (activeMatch.status === 'completed' || activeMatch.status === 'complete')
+          ? 'draft'  // ✅ Forçar status como "draft" (não "completed")
+          : activeMatch.status;
+
+        console.log('🔍 [App] Restaurando draft - verificando phase:', {
+          originalPhase: activeMatch.currentPhase,
+          originalStatus: activeMatch.status,
+          safePhase: safeCurrentPhase,
+          safeStatus: safeStatus,
+          willOverride: safeCurrentPhase !== activeMatch.currentPhase || safeStatus !== activeMatch.status
+        });
+
+        // ✅ CRÍTICO: Criar NOVA referência com dados filtrados E deep clone de objetos aninhados
+        // ✅ SIGNALS FIX: Deep clone teams, players, actions
+        const restoredTeams = activeMatch.teams ? {
+          blue: activeMatch.teams.blue ? {
+            ...activeMatch.teams.blue,
+            players: activeMatch.teams.blue.players ? activeMatch.teams.blue.players.map((p: any) => ({
+              ...p,
+              actions: p.actions ? p.actions.map((a: any) => ({ ...a })) : []
+            })) : [],
+            allBans: activeMatch.teams.blue.allBans ? [...activeMatch.teams.blue.allBans] : [],
+            allPicks: activeMatch.teams.blue.allPicks ? [...activeMatch.teams.blue.allPicks] : []
+          } : undefined,
+          red: activeMatch.teams.red ? {
+            ...activeMatch.teams.red,
+            players: activeMatch.teams.red.players ? activeMatch.teams.red.players.map((p: any) => ({
+              ...p,
+              actions: p.actions ? p.actions.map((a: any) => ({ ...a })) : []
+            })) : [],
+            allBans: activeMatch.teams.red.allBans ? [...activeMatch.teams.red.allBans] : [],
+            allPicks: activeMatch.teams.red.allPicks ? [...activeMatch.teams.red.allPicks] : []
+          } : undefined
+        } : undefined;
+
+        const restoredPhases = (activeMatch.actions || activeMatch.phases) ?
+          [...(activeMatch.actions || activeMatch.phases)] : [];
+
         this.draftData = {
-          ...activeMatch,  // ✅ Spread - pega TUDO do backend!
+          ...activeMatch,  // ✅ Spread - pega campos simples do backend
           matchId: activeMatch.matchId || activeMatch.id,
-          id: activeMatch.matchId || activeMatch.id
+          id: activeMatch.matchId || activeMatch.id,
+          currentPhase: safeCurrentPhase,  // ✅ OVERRIDE: Phase segura
+          status: safeStatus,  // ✅ OVERRIDE: Status seguro
+          teams: restoredTeams,  // ✅ DEEP CLONED
+          phases: restoredPhases,  // ✅ CLONED
+          actions: restoredPhases,  // ✅ CLONED
+          _updateTimestamp: Date.now()
         };
 
-        console.log('✅ [App] Estado de draft restaurado:', {
+        console.log('✅ [App] Estado de draft restaurado (do banco de dados):', {
           matchId: this.draftData.matchId,
           hasPhases: !!this.draftData.phases,
           phasesCount: this.draftData.phases?.length || 0,
           hasTeams: !!this.draftData.teams,
           currentPhase: this.draftData.currentPhase,
-          currentIndex: this.draftData.currentIndex
+          currentIndex: this.draftData.currentIndex,
+          currentAction: this.draftData.currentAction,
+          status: this.draftData.status
         });
-        this.cdr.detectChanges();
+        console.warn('⚠️ [App] ATENÇÃO: Este estado pode estar DESATUALIZADO!');
+        console.warn('⚠️ [App] Aguarde os eventos draft_updated via WebSocket para sincronizar com o backend em tempo real.');
 
+        // ✅ CRÍTICO: Solicitar ao backend o estado ATUAL do draft em tempo real
+        // O banco de dados pode estar desatualizado, então pedimos a sincronização via WebSocket
+        console.log('🔄 [App] Solicitando estado atual do draft ao backend...');
+        this.apiService.sendWebSocketMessage({
+          type: 'request_draft_state',
+          matchId: this.draftData.matchId
+        });
+
+        this.cdr.markForCheck();
+        return; // ✅ IMPORTANTE: Return aqui para não executar bloco in_progress
       } else if (activeMatch.status === 'in_progress') {
         console.log('🎯 [App] Restaurando estado de GAME IN PROGRESS...');
         console.log('🔍 [App] ANTES: inGamePhase =', this.inGamePhase, ', gameData =', this.gameData);
@@ -1200,9 +1404,9 @@ export class App implements OnInit, OnDestroy {
         });
 
         console.log('🔍 [App] FINAL: inGamePhase =', this.inGamePhase, ', gameData exists =', !!this.gameData);
-        console.log('🔄 [App] Chamando detectChanges para forçar atualização da view...');
-        this.cdr.detectChanges();
-        console.log('✅ [App] detectChanges concluído');
+        console.log('🔄 [App] Chamando markForCheck para forçar atualização da view...');
+        this.cdr.markForCheck();
+        console.log('✅ [App] markForCheck concluído');
 
       } else if (activeMatch.status === 'match_found' || activeMatch.status === 'accepting' || activeMatch.status === 'accepted') {
         console.log('🎯 [App] Match em fase de aceitação:', activeMatch.status);
@@ -1220,7 +1424,7 @@ export class App implements OnInit, OnDestroy {
           this.inGamePhase = false;
 
           console.log('✅ [App] Modal de match found exibido (transição para draft)');
-          this.cdr.detectChanges();
+          this.cdr.markForCheck();
         } else {
           console.log('ℹ️ [App] Modal de match found já está visível');
         }
@@ -1263,8 +1467,9 @@ export class App implements OnInit, OnDestroy {
     // Mensagens "_ack" são apenas confirmações internas e não devem ser processadas como eventos
     const isAckMessage = message.type && message.type.endsWith('_ack');
     if (!isAckMessage) {
-      // ✅ NOVO: Despachar evento customizado para o document (para listeners em outros componentes)
-      const customEvent = new CustomEvent(message.type, { detail: message });
+      // ✅ CRÍTICO: Despachar evento customizado com NOVA referência (OnPush + Signals)
+      // Criar novo objeto ao invés de passar referência direta
+      const customEvent = new CustomEvent(message.type, { detail: { ...message } });
       document.dispatchEvent(customEvent);
     } else {
       console.log(`🔕 [App] Mensagem ACK ignorada (não despachada como evento): ${message.type}`);
@@ -1273,7 +1478,8 @@ export class App implements OnInit, OnDestroy {
     switch (message.type) {
       case 'queue_status':
         if (message.status) {
-          this.queueStatus = message.status;
+          // ✅ CRÍTICO: Criar NOVA referência ao invés de atribuir diretamente
+          this.queueStatus = { ...message.status };
         }
         break;
 
@@ -1316,35 +1522,60 @@ export class App implements OnInit, OnDestroy {
         // Atualizar dados do MatchFoundComponent se estiver visível
         if (this.showMatchFound && this.matchFoundData) {
           const progressData = message.data || message;
-          this.matchFoundData.acceptedCount = progressData.acceptedCount || 0;
-          this.matchFoundData.totalPlayers = progressData.totalPlayers || 10;
+
+          // ✅ CRÍTICO: Criar NOVA referência ao invés de mutar diretamente
+          this.matchFoundData = {
+            ...this.matchFoundData,
+            acceptedCount: progressData.acceptedCount || 0,
+            totalPlayers: progressData.totalPlayers || 10
+          };
 
           // ✅ OTIMIZADO: Atualizar status individual dos jogadores usando teams.blue/red
           if (progressData.acceptedPlayers && Array.isArray(progressData.acceptedPlayers)) {
             console.log('📊 [App] Atualizando status dos jogadores aceitos:', progressData.acceptedPlayers);
 
-            // ✅ CORREÇÃO: NÃO resetar todos para 'pending' (causa flash visual)
-            // Apenas atualizar os jogadores que ainda não aceitaram
-            const allPlayers = [
-              ...(this.matchFoundData?.teams?.blue?.players || []),
-              ...(this.matchFoundData?.teams?.red?.players || [])
-            ];
-
-            // Marcar jogadores que aceitaram como 'accepted'
-            progressData.acceptedPlayers.forEach((acceptedPlayerName: string) => {
-              const player = allPlayers.find(p =>
-                p.summonerName === acceptedPlayerName ||
-                (p.riotIdGameName && p.riotIdTagline && `${p.riotIdGameName}#${p.riotIdTagline}` === acceptedPlayerName)
+            // ✅ CRÍTICO: Criar NOVAS referências dos players ao invés de mutar
+            const bluePlayers = (this.matchFoundData?.teams?.blue?.players || []).map(p => {
+              const isAccepted = progressData.acceptedPlayers.some((name: string) =>
+                p.summonerName === name ||
+                (p.riotIdGameName && p.riotIdTagline && `${p.riotIdGameName}#${p.riotIdTagline}` === name)
               );
 
-              if (player) {
-                player.acceptanceStatus = 'accepted';
-                player.acceptedAt = new Date().toISOString();
-                console.log(`📊 [App] Jogador ${acceptedPlayerName} marcado como aceito`);
-              } else {
-                console.warn(`📊 [App] Jogador ${acceptedPlayerName} não encontrado na lista`);
+              if (isAccepted) {
+                console.log(`📊 [App] Jogador ${p.summonerName} marcado como aceito`);
+                return { ...p, acceptanceStatus: 'accepted' as const, acceptedAt: new Date().toISOString() };
               }
+              return p;
             });
+
+            const redPlayers = (this.matchFoundData?.teams?.red?.players || []).map(p => {
+              const isAccepted = progressData.acceptedPlayers.some((name: string) =>
+                p.summonerName === name ||
+                (p.riotIdGameName && p.riotIdTagline && `${p.riotIdGameName}#${p.riotIdTagline}` === name)
+              );
+
+              if (isAccepted) {
+                console.log(`📊 [App] Jogador ${p.summonerName} marcado como aceito`);
+                return { ...p, acceptanceStatus: 'accepted' as const, acceptedAt: new Date().toISOString() };
+              }
+              return p;
+            });
+
+            // ✅ CRÍTICO: Criar nova referência completa com teams atualizados
+            this.matchFoundData = {
+              ...this.matchFoundData,
+              teams: {
+                ...this.matchFoundData.teams,
+                blue: {
+                  ...this.matchFoundData.teams?.blue,
+                  players: bluePlayers
+                },
+                red: {
+                  ...this.matchFoundData.teams?.red,
+                  players: redPlayers
+                }
+              }
+            };
           }
 
           this.cdr.detectChanges();
@@ -1425,9 +1656,10 @@ export class App implements OnInit, OnDestroy {
         if (message.data?.type === 'draft_confirmation_update') {
           console.log('📊 [App] Atualização de confirmação de draft recebida:', message.data);
 
-          // Disparar evento customizado para o modal de confirmação
+          // ✅ CRÍTICO: Criar NOVA referência para OnPush + Signals detectarem
+          // Não passar referência direta - criar novo objeto
           document.dispatchEvent(new CustomEvent('draftConfirmationUpdate', {
-            detail: message.data
+            detail: { ...message.data }
           }));
           break;
         }
@@ -1462,14 +1694,19 @@ export class App implements OnInit, OnDestroy {
           console.warn('⚠️ currentPhase:', phase);
           console.warn('⚠️ status:', status);
           console.warn('⚠️ currentIndex:', message.data?.currentIndex || message.currentIndex);
-          console.warn('⚠️ Este pode ser o motivo do draft fechar prematuramente!');
+          console.warn('⚠️ IGNORANDO atualização para prevenir fechamento prematuro do draft!');
 
           // ✅ Salvar evento crítico
           localStorage.setItem('draft-critical-event', JSON.stringify({
             timestamp: debugState.timestamp,
             phase, status,
-            currentIndex: message.data?.currentIndex || message.currentIndex
+            currentIndex: message.data?.currentIndex || message.currentIndex,
+            action: 'ignored'
           }));
+
+          // ✅ CRÍTICO: NÃO processar essa mensagem!
+          // O draft só deve ser fechado pelo evento game_started
+          break;
         }
 
         // ✅ Atualizar draftData com as informações recebidas
@@ -1501,28 +1738,59 @@ export class App implements OnInit, OnDestroy {
             timeRemainingMs: updateData.timeRemainingMs
           });
 
-          // ✅ CRÍTICO: Criar NOVO objeto para disparar ngOnChanges (OnPush detection)
-          const newPhases = (updateData.phases && updateData.phases.length > 0) ? updateData.phases :
-            (updateData.actions && updateData.actions.length > 0) ? updateData.actions :
-              this.draftData.phases;
+          // ✅ CRÍTICO: MatchId pode vir como "id" ou "matchId"
+          const effectiveMatchId = updateData.matchId || updateData.id || this.draftData.matchId;
 
+          // ✅ CRÍTICO: Criar NOVO objeto SEMPRE (para OnPush detectar)
+          // ✅ SIGNALS FIX: Criar novas referências em TODOS os níveis (teams, players, actions)
+          // 🚨 DEEP CLONE COMPLETO: Não apenas teams, mas TODAS as propriedades que vêm do backend!
+          const oldDraftData = this.draftData;
+
+          // ✅ Extrair valores simples
           const newCurrentAction = updateData.currentAction !== undefined ? updateData.currentAction :
             updateData.currentIndex !== undefined ? updateData.currentIndex :
               this.draftData.currentAction;
 
           const newCurrentPlayer = updateData.currentPlayer !== undefined ? updateData.currentPlayer : this.draftData.currentPlayer;
 
-          // ❌ REMOVIDO: Timer NÃO vem mais no draft_updated!
-          // O timer agora vem SEPARADO via draft_update
-          // const newTimeRemaining = ...
+          // ✅ Deep clone de TODAS as arrays que vêm do backend
+          const newPhases = (updateData.phases && updateData.phases.length > 0)
+            ? updateData.phases.map((p: any) => ({ ...p }))
+            : (updateData.actions && updateData.actions.length > 0)
+              ? updateData.actions.map((a: any) => ({ ...a }))
+              : (this.draftData.phases ? this.draftData.phases.map((p: any) => ({ ...p })) : []);
 
+          const newActions = (updateData.actions && updateData.actions.length > 0)
+            ? updateData.actions.map((a: any) => ({ ...a }))
+            : newPhases;
+
+          // ✅ Deep clone team1/team2 (arrays planos de jogadores)
+          const newTeam1 = updateData.team1
+            ? updateData.team1.map((p: any) => ({ ...p }))
+            : (this.draftData.team1 ? this.draftData.team1.map((p: any) => ({ ...p })) : undefined);
+
+          const newTeam2 = updateData.team2
+            ? updateData.team2.map((p: any) => ({ ...p }))
+            : (this.draftData.team2 ? this.draftData.team2.map((p: any) => ({ ...p })) : undefined);
+
+          // ✅ Deep clone confirmations (Map de confirmações dos jogadores)
+          const newConfirmations = updateData.confirmations
+            ? { ...updateData.confirmations }
+            : (this.draftData.confirmations ? { ...this.draftData.confirmations } : {});
+
+          // ✅ Deep clone allowedSummoners (lista de jogadores permitidos)
+          const newAllowedSummoners = updateData.allowedSummoners
+            ? [...updateData.allowedSummoners]
+            : (this.draftData.allowedSummoners ? [...this.draftData.allowedSummoners] : []);
+
+          // ✅ LOGS DE DEBUG: Mostrar dados extraídos
           console.log('📋 [App] Dados extraídos do draft_updated (SEM TIMER):', {
             currentPlayer: newCurrentPlayer,
             currentAction: newCurrentAction,
-            phasesLength: newPhases?.length || 0
+            phasesLength: newPhases?.length || 0,
+            actionsLength: newActions?.length || 0
           });
 
-          // ✅ NOVA ESTRUTURA HIERÁRQUICA: Processar teams.blue/red
           console.log('🔨 [App] Processando estrutura hierárquica:', {
             hasTeams: !!updateData.teams,
             hasTeamsBlue: !!updateData.teams?.blue,
@@ -1533,24 +1801,66 @@ export class App implements OnInit, OnDestroy {
             currentTeam: updateData.currentTeam
           });
 
-          // ✅ CRÍTICO: MatchId pode vir como "id" ou "matchId"
-          const effectiveMatchId = updateData.matchId || updateData.id || this.draftData.matchId;
+          // ✅ Deep clone teams (estrutura hierárquica teams.blue/red)
+          const newTeams = updateData.teams ? {
+            blue: updateData.teams.blue ? {
+              ...updateData.teams.blue,
+              players: updateData.teams.blue.players ? updateData.teams.blue.players.map((p: any) => ({
+                ...p,
+                actions: p.actions ? p.actions.map((a: any) => ({ ...a })) : []
+              })) : [],
+              // ✅ CRÍTICO: Clonar allPicks e allBans para Signals detectarem
+              allPicks: updateData.teams.blue.allPicks ? [...updateData.teams.blue.allPicks.map((pick: any) => ({ ...pick }))] : (this.draftData.teams?.blue?.allPicks ? [...this.draftData.teams.blue.allPicks.map((p: any) => ({ ...p }))] : []),
+              allBans: updateData.teams.blue.allBans ? [...updateData.teams.blue.allBans.map((ban: any) => ({ ...ban }))] : (this.draftData.teams?.blue?.allBans ? [...this.draftData.teams.blue.allBans.map((b: any) => ({ ...b }))] : [])
+            } : this.draftData.teams?.blue,
+            red: updateData.teams.red ? {
+              ...updateData.teams.red,
+              players: updateData.teams.red.players ? updateData.teams.red.players.map((p: any) => ({
+                ...p,
+                actions: p.actions ? p.actions.map((a: any) => ({ ...a })) : []
+              })) : [],
+              // ✅ CRÍTICO: Clonar allPicks e allBans para Signals detectarem
+              allPicks: updateData.teams.red.allPicks ? [...updateData.teams.red.allPicks.map((pick: any) => ({ ...pick }))] : (this.draftData.teams?.red?.allPicks ? [...this.draftData.teams.red.allPicks.map((p: any) => ({ ...p }))] : []),
+              allBans: updateData.teams.red.allBans ? [...updateData.teams.red.allBans.map((ban: any) => ({ ...ban }))] : (this.draftData.teams?.red?.allBans ? [...this.draftData.teams.red.allBans.map((b: any) => ({ ...b }))] : [])
+            } : this.draftData.teams?.red
+          } : (this.draftData.teams ? {
+            blue: this.draftData.teams.blue ? {
+              ...this.draftData.teams.blue,
+              players: this.draftData.teams.blue.players ? [...this.draftData.teams.blue.players.map((p: any) => ({
+                ...p,
+                actions: p.actions ? [...p.actions.map((a: any) => ({ ...a }))] : []
+              }))] : [],
+              allPicks: this.draftData.teams.blue.allPicks ? [...this.draftData.teams.blue.allPicks.map((pick: any) => ({ ...pick }))] : [],
+              allBans: this.draftData.teams.blue.allBans ? [...this.draftData.teams.blue.allBans.map((ban: any) => ({ ...ban }))] : []
+            } : undefined,
+            red: this.draftData.teams.red ? {
+              ...this.draftData.teams.red,
+              players: this.draftData.teams.red.players ? [...this.draftData.teams.red.players.map((p: any) => ({
+                ...p,
+                actions: p.actions ? [...p.actions.map((a: any) => ({ ...a }))] : []
+              }))] : [],
+              allPicks: this.draftData.teams.red.allPicks ? [...this.draftData.teams.red.allPicks.map((pick: any) => ({ ...pick }))] : [],
+              allBans: this.draftData.teams.red.allBans ? [...this.draftData.teams.red.allBans.map((ban: any) => ({ ...ban }))] : []
+            } : undefined
+          } : undefined);
 
-          // ✅ CRÍTICO: Criar NOVO objeto SEMPRE (para OnPush detectar)
-          const oldDraftData = this.draftData;
           this.draftData = {
             ...this.draftData,
             matchId: effectiveMatchId, // ✅ CRÍTICO: Usar fallback consistente
-            phases: newPhases,
-            actions: newPhases,
+            phases: newPhases, // ✅ JÁ É UM CLONE
+            actions: newActions, // ✅ JÁ É UM CLONE
             currentAction: newCurrentAction,
             currentIndex: newCurrentAction,
             currentPlayer: newCurrentPlayer,
             // ❌ REMOVIDO: timeRemaining NÃO vem mais no draft_updated!
             // timeRemaining: newTimeRemaining,
 
-            // ✅ NOVA ESTRUTURA HIERÁRQUICA
-            teams: updateData.teams || this.draftData.teams, // teams.blue/red com players e actions
+            // ✅ NOVA ESTRUTURA HIERÁRQUICA com NOVAS referências
+            teams: newTeams, // teams.blue/red com players e actions (DEEP CLONED)
+            team1: newTeam1, // ✅ DEEP CLONE
+            team2: newTeam2, // ✅ DEEP CLONE
+            confirmations: newConfirmations, // ✅ DEEP CLONE
+            allowedSummoners: newAllowedSummoners, // ✅ DEEP CLONE
             currentPhase: updateData.currentPhase || this.draftData.currentPhase, // ban1/pick1/ban2/pick2
             currentTeam: updateData.currentTeam || this.draftData.currentTeam, // blue/red
             currentActionType: updateData.currentActionType || this.draftData.currentActionType, // ban/pick
@@ -1564,6 +1874,36 @@ export class App implements OnInit, OnDestroy {
             new: this.draftData,
             referenceChanged: oldDraftData !== this.draftData
           });
+
+          // ✅ CRÍTICO: Verificar se TODAS as referências de array mudaram (para Signals detectarem)
+          console.log('🔍 [App] Verificação de NOVAS REFERÊNCIAS (Signals):');
+          console.log('  📌 draftData:', oldDraftData !== this.draftData);
+          console.log('  📌 phases:', oldDraftData.phases !== this.draftData.phases);
+          console.log('  📌 actions:', oldDraftData.actions !== this.draftData.actions);
+          console.log('  📌 teams:', oldDraftData.teams !== this.draftData.teams);
+          console.log('  📌 teams.blue:', oldDraftData.teams?.blue !== this.draftData.teams?.blue);
+          console.log('  📌 teams.red:', oldDraftData.teams?.red !== this.draftData.teams?.red);
+          console.log('  📌 teams.blue.allPicks:', oldDraftData.teams?.blue?.allPicks !== this.draftData.teams?.blue?.allPicks);
+          console.log('  📌 teams.blue.allBans:', oldDraftData.teams?.blue?.allBans !== this.draftData.teams?.blue?.allBans);
+          console.log('  📌 teams.red.allPicks:', oldDraftData.teams?.red?.allPicks !== this.draftData.teams?.red?.allPicks);
+          console.log('  📌 teams.red.allBans:', oldDraftData.teams?.red?.allBans !== this.draftData.teams?.red?.allBans);
+          console.log('  📌 team1:', oldDraftData.team1 !== this.draftData.team1);
+          console.log('  📌 team2:', oldDraftData.team2 !== this.draftData.team2);
+          console.log('  📌 confirmations:', oldDraftData.confirmations !== this.draftData.confirmations);
+          console.log('  📌 allowedSummoners:', oldDraftData.allowedSummoners !== this.draftData.allowedSummoners);
+
+          // ✅ Se TODAS forem true, Signals detectarão mudanças corretamente!
+          const allReferencesChanged = [
+            oldDraftData !== this.draftData,
+            oldDraftData.phases !== this.draftData.phases,
+            oldDraftData.teams !== this.draftData.teams,
+            oldDraftData.teams?.blue?.allPicks !== this.draftData.teams?.blue?.allPicks,
+            oldDraftData.teams?.blue?.allBans !== this.draftData.teams?.blue?.allBans,
+            oldDraftData.teams?.red?.allPicks !== this.draftData.teams?.red?.allPicks,
+            oldDraftData.teams?.red?.allBans !== this.draftData.teams?.red?.allBans
+          ].every(changed => changed === true);
+
+          console.log(`${allReferencesChanged ? '✅' : '❌'} [App] Todas as referências mudaram: ${allReferencesChanged}`);
 
           // ✅ CRÍTICO: Log detalhado do matchId antes de disparar evento
           console.log('🔑 [App] Verificando matchId antes de disparar eventos:', {
@@ -1598,23 +1938,23 @@ export class App implements OnInit, OnDestroy {
       case 'match_vote_progress':
         console.log('📊 [App] Progresso de votação recebido:', message);
 
-        // Disparar evento customizado para o game-in-progress
+        // ✅ CRÍTICO: Criar NOVA referência para OnPush + Signals detectarem
         document.dispatchEvent(new CustomEvent('matchVoteProgress', {
-          detail: message.data || message
+          detail: { ...(message.data || message) }
         }));
         break;
 
       case 'match_vote_update':
         console.log('📊 [App] Atualização de votação recebida:', message);
 
-        // Disparar evento customizado para o game-in-progress
+        // ✅ CRÍTICO: Criar NOVA referência para OnPush + Signals detectarem
         document.dispatchEvent(new CustomEvent('matchVoteUpdate', {
-          detail: message.data || message
+          detail: { ...(message.data || message) }
         }));
         break;
         // ✅ Esconder modal de match found mas MANTER os dados para o draft
         this.showMatchFound = false;
-        this.cdr.detectChanges();
+        this.cdr.markForCheck();
         // Nota: matchFoundData será usado quando draft_started chegar
         console.log('⏳ [App] Aguardando mensagem draft_started do backend...');
         break;
@@ -1633,6 +1973,16 @@ export class App implements OnInit, OnDestroy {
       case 'draft_starting':
         console.log('🎯 [App] Draft iniciando:', message);
         const draftData = message.data || message;
+
+        // ✅ CRÍTICO: Proteger contra draft já completo
+        const draftPhase = draftData.currentPhase || draftData.phase;
+        const draftStatus = draftData.status;
+        if (draftPhase === 'completed' || draftPhase === 'complete' || draftStatus === 'completed' || draftStatus === 'complete') {
+          console.warn('⚠️⚠️⚠️ [App] draft_started veio com status/phase COMPLETED!');
+          console.warn('⚠️ Isso indica que o draft JÁ finalizou antes de começar!');
+          console.warn('⚠️ IGNORANDO draft_started e aguardando game_started...');
+          break;
+        }
 
         // ✅ CORREÇÃO CRÍTICA: Backend envia "actions", não "phases"!
         const phases = (draftData.phases && draftData.phases.length > 0) ? draftData.phases :
@@ -1665,20 +2015,28 @@ export class App implements OnInit, OnDestroy {
         });
 
         // ✅ CRÍTICO: Criar NOVA referência para Signals detectarem mudança
+        // ✅ SIGNALS FIX: Clonar arrays para criar novas referências
+        const newTeam1 = draftData.team1 ? [...draftData.team1] :
+          (this.matchFoundData?.teams?.blue?.players ? [...this.matchFoundData.teams.blue.players] : []);
+        const newTeam2 = draftData.team2 ? [...draftData.team2] :
+          (this.matchFoundData?.teams?.red?.players ? [...this.matchFoundData.teams.red.players] : []);
+        const newPhases = phases ? [...phases] : [];
+
         this.draftData = {
           ...this.draftData, // ✅ Preservar dados existentes
           matchId: effectiveMatchId,
-          team1: draftData.team1 || this.matchFoundData?.teams?.blue?.players || [],
-          team2: draftData.team2 || this.matchFoundData?.teams?.red?.players || [],
-          phases: phases,  // ✅ Usar o array extraído corretamente
-          actions: phases,  // ✅ Adicionar também como "actions" para compatibilidade
+          team1: newTeam1,
+          team2: newTeam2,
+          phases: newPhases,  // ✅ Usar o array extraído corretamente
+          actions: newPhases,  // ✅ Adicionar também como "actions" para compatibilidade
           currentAction: currentAction,  // ✅ Passar currentAction explicitamente
           currentIndex: currentAction,  // ✅ Adicionar também como "currentIndex" para compatibilidade
           currentPlayer: draftData.currentPlayer,  // ✅ CRÍTICO: Jogador da VEZ (do backend), não jogador logado
           timeRemaining: draftData.timeRemaining !== undefined ? draftData.timeRemaining : 30,  // ✅ CORREÇÃO: Usar undefined check
           averageMMR: draftData.averageMMR || this.matchFoundData?.averageMMR,
           balanceQuality: draftData.balanceQuality,
-          autofillCount: draftData.autofillCount
+          autofillCount: draftData.autofillCount,
+          _updateTimestamp: Date.now() // ✅ FORÇA mudança de referência
         };
 
         console.log('🎯 [App] Dados do draft preparados:', {
@@ -1716,17 +2074,23 @@ export class App implements OnInit, OnDestroy {
         // Atualizar timer do MatchFoundComponent
         if (this.showMatchFound && this.matchFoundData) {
           const timerData = message.data || message;
-          this.matchFoundData.acceptanceTimer = timerData.secondsRemaining || timerData.timeLeft || timerData.secondsLeft || 30;
-          console.log('⏰ [App] Timer atualizado:', this.matchFoundData.acceptanceTimer, 's');
+          const newTimer = timerData.secondsRemaining || timerData.timeLeft || timerData.secondsLeft || 30;
+
+          // ✅ CRÍTICO: Criar NOVA referência ao invés de mutar diretamente
+          this.matchFoundData = {
+            ...this.matchFoundData,
+            acceptanceTimer: newTimer
+          };
+
+          console.log('⏰ [App] Timer atualizado:', newTimer, 's');
           this.cdr.detectChanges();
 
           // Disparar evento para o MatchFoundComponent
-          const timeLeft = this.matchFoundData.acceptanceTimer || 30;
           const event = new CustomEvent('matchTimerUpdate', {
             detail: {
               matchId: timerData.matchId || this.matchFoundData.matchId,
-              timeLeft: timeLeft,
-              isUrgent: timeLeft <= 10
+              timeLeft: newTimer,
+              isUrgent: newTimer <= 10
             }
           });
           document.dispatchEvent(event);
@@ -1760,8 +2124,8 @@ export class App implements OnInit, OnDestroy {
           pickBanDataKeys: gameData.pickBanData ? Object.keys(gameData.pickBanData) : []
         });
 
-        // ✅ Atualizar estado para game in progress
-        this.gameData = gameData;
+        // ✅ CRÍTICO: Criar NOVA referência ao invés de atribuir diretamente
+        this.gameData = { ...gameData };
         this.inGamePhase = true;
         this.inDraftPhase = false;
         this.showMatchFound = false;
@@ -1875,7 +2239,7 @@ export class App implements OnInit, OnDestroy {
     this.matchFoundData = data;
 
     this.showMatchFound = true;
-    this.cdr.detectChanges();
+    this.cdr.markForCheck();
 
     console.log('✅ [App] Modal Match Found exibido');
 
@@ -4331,8 +4695,8 @@ export class App implements OnInit, OnDestroy {
       pickBanData: response.pick_ban_data // ✅ INCLUIR dados do draft
     };
 
-    // ✅ ATUALIZAR: Estado local
-    this.gameData = gameData;
+    // ✅ CRÍTICO: Criar NOVA referência ao invés de atribuir diretamente
+    this.gameData = { ...gameData };
     this.inGamePhase = true;
     this.inDraftPhase = false;
     this.showMatchFound = false;

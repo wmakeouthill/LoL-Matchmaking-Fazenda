@@ -1,13 +1,13 @@
 <div class="lane-selector-overlay" *ngIf="isVisible" (click)="onClose()">
   <div class="lane-selector-modal" (click)="$event.stopPropagation()">
     <div class="modal-header">
-      <h3>🎯 Selecionar Posições</h3>
+      <h3>⚡ SELECIONAR POSIÇÕES</h3>
       <button class="close-btn" (click)="onClose()">✕</button>
     </div>
 
     <div class="modal-content">
       <div class="selection-section">
-        <h4>Lane Primária</h4>
+        <h4>▸ LANE PRIMÁRIA</h4>
         <div class="lane-grid">
           <button
             *ngFor="let lane of lanes"
@@ -23,7 +23,7 @@
       </div>
 
       <div class="selection-section" *ngIf="selectedPrimary">
-        <h4>Lane Secundária</h4>
+        <h4>▸ LANE SECUNDÁRIA</h4>
         <div class="lane-grid">
           <button
             *ngFor="let lane of lanes"
@@ -44,32 +44,32 @@
         class="selection-summary"
         *ngIf="selectedPrimary && selectedSecondary"
       >
-        <h4>Resumo da Seleção</h4>
+        <h4>✓ RESUMO</h4>
         <div class="summary-item">
-          <strong>Primária:</strong> {{ getLaneIcon(selectedPrimary) }} {{
+          <strong>PRIMÁRIA:</strong> {{ getLaneIcon(selectedPrimary) }} {{
           getLaneName(selectedPrimary) }}
         </div>
         <div class="summary-item">
-          <strong>Secundária:</strong> {{ getLaneIcon(selectedSecondary) }} {{
+          <strong>SECUNDÁRIA:</strong> {{ getLaneIcon(selectedSecondary) }} {{
           getLaneName(selectedSecondary) }}
         </div>
       </div>
 
       <div class="warning-message" *ngIf="!isPlayerOnDiscord && selectedPrimary && selectedSecondary">
         <span class="warning-icon">⚠️</span>
-        <span class="warning-text">Você precisa estar conectado no Discord monitorado para entrar na fila</span>
+        <span class="warning-text">DISCORD OFFLINE - Conecte-se ao Discord monitorado para entrar na fila</span>
       </div>
     </div>
 
     <div class="modal-footer">
-      <button class="btn-secondary" (click)="onClose()">Cancelar</button>
+      <button class="btn-secondary" (click)="onClose()">✕ CANCELAR</button>
       <button
         class="btn-primary"
         [disabled]="!isValidSelection()"
         [title]="!isPlayerOnDiscord ? 'Você precisa estar no Discord monitorado' : ''"
         (click)="onConfirm()"
       >
-        🚀 Entrar na Fila
+        ▶ ENTRAR NA FILA
       </button>
     </div>
   </div>

@@ -1243,6 +1243,7 @@ $dark-panel: #1a1a2e;
   align-items: center;
   transition: all 0.3s ease;
   min-height: 42px; // ✅ COMPACTO: reduzido de 56px para 42px
+  position: relative; // ✅ Para posicionar vote-status absoluto
 
   &:hover {
     background: rgba(30, 35, 47, 0.6);
@@ -1254,6 +1255,48 @@ $dark-panel: #1a1a2e;
     border-color: #c89b3c;
     background: rgba(200, 155, 60, 0.1);
     box-shadow: 0 0 15px rgba(200, 155, 60, 0.3);
+  }
+
+  // ✅ Status de votação visual
+  .vote-status {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    z-index: 10;
+
+    &.vote-status-voted {
+      background: linear-gradient(135deg, #00ff00 0%, #00cc00 100%);
+      animation: statusAccepted 0.6s ease;
+    }
+
+    &.vote-status-pending {
+      background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
+      animation: statusPulse 2s infinite;
+    }
+
+    &.vote-status-declined {
+      background: linear-gradient(135deg, #ff0000 0%, #cc0000 100%);
+      animation: statusDeclined 0.6s ease;
+    }
+
+    &.vote-status-timeout {
+      background: linear-gradient(135deg, #ffaa00 0%, #cc8800 100%);
+      animation: statusTimeout 0.6s ease;
+    }
+
+    .status-icon {
+      font-size: 12px;
+      color: white;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    }
   }
 
   .participant-champion-section {
@@ -1540,3 +1583,26 @@ $dark-panel: #1a1a2e;
   }
 }
 
+// ✅ Animações para status de votação
+@keyframes statusAccepted {
+  0% { transform: scale(0.8); opacity: 0.7; }
+  50% { transform: scale(1.2); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes statusDeclined {
+  0% { transform: scale(0.8); opacity: 0.7; }
+  50% { transform: scale(1.2); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes statusTimeout {
+  0% { transform: scale(0.8); opacity: 0.7; }
+  50% { transform: scale(1.2); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(0.95); }
+}

@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter, OnInit, OnChanges, OnDestroy, SimpleChanges, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectionStrategy, ChangeDetectorRef, input, output, signal, effect, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom, Subscription } from 'rxjs';
@@ -79,28 +79,31 @@ interface TeamSlot {
   styleUrl: './draft-confirmation-modal.scss',
   changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDestroy {
-  @Input() session: CustomPickBanSession | null = null;
-  @Input() currentPlayer: any = null;
-  @Input() isVisible: boolean = false;
-  @Input() confirmationData: any = null; // ✅ NOVO: Dados de confirmação dos jogadores
-  @Output() onClose = new EventEmitter<void>();
-  @Output() onConfirm = new EventEmitter<void>();
-  @Output() onCancel = new EventEmitter<void>();
-  @Output() onEditPick = new EventEmitter<{ playerId: string, phaseIndex: number }>();
-  @Output() onRefreshDraft = new EventEmitter<void>(); // ✅ NOVO: Para atualizar estado do draft
+export class DraftConfirmationModalComponent implements OnInit, OnDestroy {
+  // ✅ SIGNALS: Inputs convertidos para a nova API
+  session = input<CustomPickBanSession | null>(null);
+  currentPlayer = input<any>(null);
+  isVisible = input<boolean>(false);
+  confirmationData = input<any>(null);
+
+  // ✅ SIGNALS: Outputs convertidos para a nova API
+  closed = output<void>();
+  confirmed = output<void>();
+  cancelled = output<void>();
+  editPick = output<{ playerId: string, phaseIndex: number }>();
+  refreshDraft = output<void>();
 
   // ✅ CRÍTICO: MatchId FIXO usado para filtrar eventos draft_updated
   // Definido UMA VEZ quando o modal recebe a session inicial
   private activeMatchId: string | null = null;
 
-  // ✅ NOVO: Estado da confirmação
-  isConfirming: boolean = false;
-  confirmationMessage: string = '';
+  // ✅ SIGNALS: Estado interno da confirmação
+  isConfirming = signal<boolean>(false);
+  confirmationMessage = signal<string>('');
 
-  // ✅ NOVO: Status de confirmação dos jogadores
-  confirmedCount: number = 0;
-  totalPlayers: number = 10;
+  // ✅ NOVO: Status de confirmação dos jogadores (signals)
+  confirmedCount = signal<number>(0);
+  totalPlayers = signal<number>(10);
 
   // ✅ NOVO: WebSocket subscription para atualizações em tempo real
   private wsSubscription?: Subscription;
@@ -109,27 +112,121 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
   private subscriptions: Subscription[] = [];
 
   // PROPRIEDADES PARA CACHE
-  private _cachedBannedanys: any[] | null = null;
+  private _cachedBannedChampions: any[] | null = null;
   private _cachedBlueTeamPicks: any[] | null = null;
   private _cachedRedTeamPicks: any[] | null = null;
   private _cachedBlueTeamByLane: TeamSlot[] | null = null;
   private _cachedRedTeamByLane: TeamSlot[] | null = null;
   private _lastCacheUpdate: number = 0;
   private readonly CACHE_DURATION = 100;
+  private isInitializing: boolean = false; // ✅ Flag mutável para prevenir loop infinito no effect
 
   // HTTP properties
   private readonly baseUrl: string;
 
-  constructor(
-    private readonly championService: ChampionService,
-    private readonly http: HttpClient,
-    private readonly apiService: ApiService,
-    private readonly cdr: ChangeDetectorRef,
-    private readonly electronEvents: ElectronEventsService
-  ) {
+  // ✅ Angular 16+ Standalone: Usando inject() ao invés de constructor DI
+  private readonly championService = inject(ChampionService);
+  private readonly http = inject(HttpClient);
+  private readonly apiService = inject(ApiService);
+  private readonly cdr = inject(ChangeDetectorRef);
+  private readonly electronEvents = inject(ElectronEventsService);
+
+  constructor() {
     console.log('🏗️🏗️🏗️ [CONFIRMATION-MODAL] ============ CONSTRUCTOR EXECUTADO ============');
     console.log('🏗️ [CONFIRMATION-MODAL] Modal está sendo CRIADO pelo Angular!');
     this.baseUrl = this.apiService.getBaseUrl();
+
+    // ✅ SIGNALS: Effect para reagir a mudanças na session
+    effect(() => {
+      const currentSession = this.session();
+      const visible = this.isVisible();
+
+      console.log('🔵🔵🔵 [CONFIRMATION-MODAL] Effect detectou mudança:', {
+        hasSession: !!currentSession,
+        isVisible: visible,
+        sessionId: currentSession?.matchId || currentSession?.id,
+        isInitializing: this.isInitializing
+      });
+
+      // ✅ CRÍTICO: Prevenir loop infinito - se já está inicializando, NÃO fazer nada!
+      if (this.isInitializing) {
+        console.log('⚠️ [CONFIRMATION-MODAL] JÁ está inicializando - ignorando mudança para prevenir loop');
+        return;
+      }
+
+      // ✅ CRÍTICO: Definir activeMatchId UMA VEZ quando receber session pela primeira vez
+      if (currentSession && !this.activeMatchId) {
+        this.activeMatchId = String(currentSession.matchId || currentSession.id);
+        console.log('🎯🎯🎯 [CONFIRMATION-MODAL] activeMatchId DEFINIDO:', this.activeMatchId);
+      }
+
+      // ✅ CRÍTICO: Se a session mudou, SEMPRE invalidar cache IMEDIATAMENTE
+      if (currentSession) {
+        console.log('🔴🔴🔴 [CONFIRMATION-MODAL] SESSION DETECTADA - invalidando cache');
+        this.invalidateCache();
+
+        // ✅ CRÍTICO: Se o modal está visível, forçar recálculo IMEDIATO
+        if (visible) {
+          console.log('🔴 [CONFIRMATION-MODAL] Modal está visível - forçando recálculo COMPLETO');
+          setTimeout(() => {
+            this.getTeamPicks('blue');
+            this.getTeamPicks('red');
+            this.getTeamBans('blue');
+            this.getTeamBans('red');
+            this.getTeamByLane('blue');
+            this.getTeamByLane('red');
+            this.cdr.markForCheck();
+            this.cdr.detectChanges();
+            console.log('✅ [CONFIRMATION-MODAL] Recálculo completo finalizado');
+          }, 0);
+        }
+      }
+
+      // ✅ NOVO: Identificar usuário atual quando modal abre
+      if (visible && currentSession && !this.isInitializing) {
+        console.log('🟢🟢🟢 [CONFIRMATION-MODAL] Modal ABERTO - forçando identificação e refresh');
+
+        // ✅ CRÍTICO: Setar flag ANTES de executar operações que alteram signals
+        this.isInitializing = true;
+
+        // ✅ Executar em microtask para não bloquear o effect
+        Promise.resolve().then(() => {
+          this.identifyCurrentUser();
+          this.initializeConfirmationStatuses();
+          this.setupWebSocketListeners();
+
+          // Auto-confirmar bots para facilitar testes
+          this.autoConfirmBots();
+
+          // ✅ CRÍTICO: Resetar flag DEPOIS para permitir próxima inicialização
+          setTimeout(() => {
+            this.isInitializing = false;
+            console.log('✅ [CONFIRMATION-MODAL] Inicialização concluída - flag resetada');
+          }, 500); // 500ms de cooldown
+        });
+      } else if (!visible) {
+        this.cleanupWebSocketListeners();
+        this.isInitializing = false; // ✅ Reset ao fechar modal
+      }
+    });
+
+    // ✅ SIGNALS: Effect para atualizar confirmationData
+    effect(() => {
+      const data = this.confirmationData();
+      if (data) {
+        this.confirmedCount.set(data.confirmedCount || data.confirmations?.length || 0);
+        this.totalPlayers.set(data.totalPlayers || 10);
+
+        console.log('📊 [CONFIRMATION-MODAL] confirmationData atualizado:', {
+          confirmedCount: this.confirmedCount(),
+          totalPlayers: this.totalPlayers(),
+          allConfirmed: data.allConfirmed
+        });
+
+        // ✅ Forçar detecção de mudanças (OnPush requer)
+        this.cdr.markForCheck();
+      }
+    });
   }
 
   // ✅ NOVO: Configurar observables UMA VEZ no init (mesma técnica do draft-pick-ban)
@@ -192,271 +289,10 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
     return champion;
   }
 
-  ngOnChanges(changes: SimpleChanges): void {
-    // ✅ NOVO: Logs extremamente detalhados para DEBUG
-    console.log('🔵🔵🔵 [CONFIRMATION-MODAL] ============ ngOnChanges CHAMADO ============');
-    console.log('🔵 [CONFIRMATION-MODAL] Changes:', Object.keys(changes));
-    console.log('🔵 [CONFIRMATION-MODAL] isVisible:', this.isVisible);
-    console.log('🔵 [CONFIRMATION-MODAL] session exists:', !!this.session);
-    console.log('🔵 [CONFIRMATION-MODAL] session.matchId:', this.session?.matchId);
-    console.log('🔵 [CONFIRMATION-MODAL] session.id:', this.session?.id);
-    console.log('🔵 [CONFIRMATION-MODAL] activeMatchId ATUAL:', this.activeMatchId);
-
-    // ✅ CRÍTICO: Definir activeMatchId UMA VEZ quando receber session pela primeira vez
-    if (this.session && !this.activeMatchId) {
-      this.activeMatchId = String(this.session.matchId || this.session.id);
-      console.log('🎯🎯🎯 [CONFIRMATION-MODAL] activeMatchId DEFINIDO:', this.activeMatchId);
-      console.log('🎯 [CONFIRMATION-MODAL] Agora o listener vai filtrar APENAS eventos deste matchId!');
-    }
-
-    // ✅ CRÍTICO: Se a session mudou, SEMPRE invalidar cache IMEDIATAMENTE (antes de qualquer outra coisa)
-    if (changes['session']?.currentValue && changes['session']?.currentValue !== changes['session']?.previousValue) {
-      console.log('🔴🔴🔴 [CONFIRMATION-MODAL] SESSION MUDOU VIA @INPUT DO PAI!!!');
-      console.log('🔴 [CONFIRMATION-MODAL] Session anterior:', changes['session']?.previousValue?.matchId);
-      console.log('🔴 [CONFIRMATION-MODAL] Session nova:', changes['session']?.currentValue?.matchId);
-      console.log('🔴 [CONFIRMATION-MODAL] Teams na nova session:', !!changes['session']?.currentValue?.teams);
-      console.log('🔴 [CONFIRMATION-MODAL] Blue picks na nova session:', changes['session']?.currentValue?.teams?.blue?.allPicks);
-      console.log('🔴 [CONFIRMATION-MODAL] Red picks na nova session:', changes['session']?.currentValue?.teams?.red?.allPicks);
-      console.log('🔴 [CONFIRMATION-MODAL] INVALIDANDO CACHE IMEDIATAMENTE!');
-      this.invalidateCache();
-
-      // ✅ CRÍTICO: Se o modal está visível, forçar recálculo IMEDIATO
-      if (this.isVisible) {
-        console.log('🔴 [CONFIRMATION-MODAL] Modal está visível - forçando recálculo COMPLETO');
-        setTimeout(() => {
-          this.getTeamPicks('blue');
-          this.getTeamPicks('red');
-          this.getTeamBans('blue');
-          this.getTeamBans('red');
-          this.getTeamByLane('blue');
-          this.getTeamByLane('red');
-          this.cdr.markForCheck();
-          this.cdr.detectChanges();
-          console.log('✅ [CONFIRMATION-MODAL] Recálculo completo finalizado após mudança de session');
-        }, 0);
-      }
-    }
-
-    // ✅ NOVO: Identificar usuário atual quando modal abre
-    if (this.isVisible) {
-      console.log('🟢🟢🟢 [CONFIRMATION-MODAL] Modal ABERTO - forçando identificação e refresh');
-      this.identifyCurrentUser();
-      this.initializeConfirmationStatuses(); // ✅ NOVO: Inicializar status de confirmação
-      this.setupWebSocketListeners(); // ✅ NOVO: Configurar listeners WebSocket
-
-      // ✅ CRÍTICO: SEMPRE invalidar cache e forçar recálculo quando modal abre
-      // Isso garante que dados estejam atualizados mesmo se session não mudou via @Input
-      console.log('🔴 [CONFIRMATION-MODAL] CRITICAL: Modal aberto - invalidando cache e forçando recálculo TOTAL');
-      this.invalidateCache();
-
-      // ✅ Aguardar um tick para garantir que todas as mudanças foram propagadas
-      setTimeout(() => {
-        if (this.session) {
-          console.log('🔴 [CONFIRMATION-MODAL] Recalculando TODOS os dados do modal...');
-          // Forçar recálculo de tudo
-          this.getTeamPicks('blue');
-          this.getTeamPicks('red');
-          this.getTeamBans('blue');
-          this.getTeamBans('red');
-          this.getTeamByLane('blue');
-          this.getTeamByLane('red');
-          this.cdr.markForCheck();
-          this.cdr.detectChanges();
-          console.log('✅ [CONFIRMATION-MODAL] Dados recalculados após abertura do modal');
-        }
-      }, 0);
-
-      // ✅ CORREÇÃO: setupObservableListeners movido para ngOnInit (configurar UMA VEZ)
-    } else {
-      this.cleanupWebSocketListeners(); // ✅ NOVO: Limpar listeners quando modal fecha
-      // Subscrições são limpas no ngOnDestroy
-    }
-
-    // ✅ CRÍTICO: Atualizar dados de confirmação quando confirmationData mudar
-    if (changes['confirmationData']) {
-      const newData = changes['confirmationData'].currentValue;
-      if (newData) {
-        this.confirmedCount = newData.confirmedCount || newData.confirmations?.length || 0;
-        this.totalPlayers = newData.totalPlayers || 10;
-
-        console.log('📊 [CONFIRMATION-MODAL] confirmationData atualizado:', {
-          confirmedCount: this.confirmedCount,
-          totalPlayers: this.totalPlayers,
-          allConfirmed: newData.allConfirmed,
-          confirmations: newData.confirmations
-        });
-
-        // ✅ Forçar detecção de mudanças (OnPush requer)
-        this.cdr.markForCheck();
-        this.cdr.detectChanges();
-      }
-    }
-
-    // ✅ NOVO: Invalidar cache quando session ou isVisible mudam
-    if (changes['session'] || changes['isVisible']) {
-      logConfirmationModal('🔄 [ngOnChanges] Detectada mudança na session ou visibilidade');
-      console.log('🔵 [CONFIRMATION-MODAL] Changes detectadas:', {
-        sessionChanged: !!changes['session'],
-        visibilityChanged: !!changes['isVisible'],
-        newSession: changes['session']?.currentValue ? 'presente' : 'ausente',
-        newVisibility: changes['isVisible']?.currentValue
-      });
-
-      logConfirmationModal('🔄 [ngOnChanges] Changes:', {
-        sessionChanged: !!changes['session'],
-        visibilityChanged: !!changes['isVisible'],
-        newSession: changes['session']?.currentValue ? 'presente' : 'ausente',
-        newVisibility: changes['isVisible']?.currentValue
-      });
-
-      // ✅ CRÍTICO: Invalidar cache quando session muda (para refletir picks editados)
-      if (changes['session']) {
-        const sessionChanged = changes['session'].currentValue !== changes['session'].previousValue;
-        const previousSession = changes['session'].previousValue;
-        const currentSession = changes['session'].currentValue;
-
-        console.log('🔄 [CONFIRMATION-MODAL] Session mudou - invalidando cache de picks/bans', {
-          referenceChanged: sessionChanged,
-          hasPreviousValue: !!previousSession,
-          hasCurrentValue: !!currentSession,
-          sessionVisible: this.isVisible,
-          previousSessionId: previousSession?.id || previousSession?.matchId,
-          currentSessionId: currentSession?.id || currentSession?.matchId
-        });
-
-        // ✅ CRÍTICO: Se o modal já está visível, forçar refresh IMEDIATO
-        if (this.isVisible) {
-          console.log('🟢 [CONFIRMATION-MODAL] Modal já visível - forçando refresh IMEDIATO');
-          console.log('🔄 [CONFIRMATION-MODAL] Session atual:', {
-            sessionId: this.session?.id || this.session?.matchId,
-            hasTeams: !!this.session?.teams,
-            blueTeamPicks: this.session?.teams?.blue?.allPicks,
-            redTeamPicks: this.session?.teams?.red?.allPicks,
-            phasesCount: this.session?.phases?.length
-          });
-          this.forceRefresh(); // ✅ Usar forceRefresh() que já faz tudo necessário
-        } else {
-          // ✅ CRÍTICO: Se modal está fechado, apenas invalidar cache (será recalculado quando abrir)
-          this.invalidateCache();
-        }
-
-        // ✅ CRÍTICO: Aguardar um tick e forçar refresh novamente para garantir sincronização
-        setTimeout(() => {
-          if (this.isVisible) {
-            // ✅ CRÍTICO: Modal ainda está visível - garantir que tudo está atualizado
-            this.invalidateCache();
-            this.getTeamPicks('blue');
-            this.getTeamPicks('red');
-            this.getTeamBans('blue');
-            this.getTeamBans('red');
-            this.getTeamByLane('blue');
-            this.getTeamByLane('red');
-            this.cdr.markForCheck();
-            this.cdr.detectChanges();
-            console.log('✅ [CONFIRMATION-MODAL] Refresh após tick - tudo recalculado');
-          }
-        }, 0);
-      }
-
-      // ✅ CRÍTICO: Quando o modal reabre (isVisible muda para true), SEMPRE forçar refresh completo
-      // Isso garante que mesmo se a session não tiver mudado via @Input, o modal sempre pega os dados mais recentes
-      if (changes['isVisible']?.currentValue === true && this.session) {
-        console.log('🔄 [CONFIRMATION-MODAL] Modal reabriu - forçando refresh completo');
-        console.log('🔴 [CONFIRMATION-MODAL] CRITICAL: Detectou reabertura do modal - invalidando cache e forçando recálculo TOTAL');
-
-        // ✅ CRÍTICO: Invalidar TODOS os caches antes de recalcular
-        this.invalidateCache();
-
-        // ✅ CRÍTICO: Aguardar um tick para garantir que o Angular processou a mudança de @Input session
-        // Isso é necessário porque o modal pode estar reabrindo enquanto a session está sendo atualizada
-        setTimeout(() => {
-          console.log('🔴 [CONFIRMATION-MODAL] Tick executado - session atual:', {
-            sessionId: this.session?.id || this.session?.matchId,
-            hasTeams: !!this.session?.teams,
-            bluePlayersCount: this.session?.teams?.blue?.players?.length || 0,
-            redPlayersCount: this.session?.teams?.red?.players?.length || 0
-          });
-
-          // ✅ CRÍTICO: Invalidar cache novamente (pode ter sido atualizado no tick)
-          this.invalidateCache();
-
-          // ✅ CRÍTICO: Forçar recálculo de TUDO para garantir dados atualizados
-          const bluePicks = this.getTeamPicks('blue');
-          const redPicks = this.getTeamPicks('red');
-          const blueBans = this.getTeamBans('blue');
-          const redBans = this.getTeamBans('red');
-          const blueByLane = this.getTeamByLane('blue');
-          const redByLane = this.getTeamByLane('red');
-
-          console.log('🔴 [CONFIRMATION-MODAL] Dados recalculados após reabertura:', {
-            bluePicks: bluePicks.length,
-            redPicks: redPicks.length,
-            blueBans: blueBans.length,
-            redBans: redBans.length,
-            blueByLane: blueByLane.length,
-            redByLane: redByLane.length
-          });
-
-          // ✅ CRÍTICO: Forçar detecção de mudanças (OnPush requer)
-          this.cdr.markForCheck();
-          this.cdr.detectChanges();
-
-          console.log('✅ [CONFIRMATION-MODAL] Refresh completo concluído após modal reabrir');
-        }, 0);
-      }
-
-      // ✅ LOG DETALHADO: Mostrar estrutura teams recebida do backend
-      if (changes['session']?.currentValue) {
-        const newSession = changes['session'].currentValue;
-        console.log('🔵 [CONFIRMATION-MODAL] === ESTRUTURA SESSION COMPLETA ===');
-        console.log('🔵 [CONFIRMATION-MODAL] Session:', JSON.stringify(newSession, null, 2));
-
-        logConfirmationModal('📥 [ngOnChanges] === ESTRUTURA SESSION RECEBIDA ===');
-        logConfirmationModal('📥 Session completa:', JSON.stringify(newSession, null, 2));
-
-        if (newSession.teams) {
-          console.log('🔵 [CONFIRMATION-MODAL] === ESTRUTURA TEAMS ===');
-          console.log('🔵 [CONFIRMATION-MODAL] Teams.blue:', JSON.stringify(newSession.teams.blue, null, 2));
-          console.log('🔵 [CONFIRMATION-MODAL] Teams.red:', JSON.stringify(newSession.teams.red, null, 2));
-
-          logConfirmationModal('📥 [ngOnChanges] === ESTRUTURA TEAMS ===');
-          logConfirmationModal('📥 Teams.blue:', JSON.stringify(newSession.teams.blue, null, 2));
-          logConfirmationModal('📥 Teams.red:', JSON.stringify(newSession.teams.red, null, 2));
-
-          if (newSession.teams.blue?.allBans) {
-            console.log('🔵 [CONFIRMATION-MODAL] Blue allBans:', newSession.teams.blue.allBans);
-            logConfirmationModal('📥 Blue allBans:', newSession.teams.blue.allBans);
-          }
-          if (newSession.teams.blue?.allPicks) {
-            console.log('🔵 [CONFIRMATION-MODAL] Blue allPicks:', newSession.teams.blue.allPicks);
-            logConfirmationModal('📥 Blue allPicks:', newSession.teams.blue.allPicks);
-          }
-          if (newSession.teams.red?.allBans) {
-            console.log('🔵 [CONFIRMATION-MODAL] Red allBans:', newSession.teams.red.allBans);
-            logConfirmationModal('📥 Red allBans:', newSession.teams.red.allBans);
-          }
-          if (newSession.teams.red?.allPicks) {
-            console.log('🔵 [CONFIRMATION-MODAL] Red allPicks:', newSession.teams.red.allPicks);
-            logConfirmationModal('📥 Red allPicks:', newSession.teams.red.allPicks);
-          }
-        } else {
-          console.log('⚠️ [CONFIRMATION-MODAL] Session SEM estrutura teams!');
-          logConfirmationModal('⚠️ [ngOnChanges] Session SEM estrutura teams!');
-        }
-      }
-
-      this.forceRefresh();
-
-      // ✅ NOVO: Auto-confirmar bots quando o modal abrir
-      if (changes['isVisible']?.currentValue === true && this.session) {
-        this.autoConfirmBots();
-      }
-    }
-  }
-
   // ✅ NOVO: Auto-confirmar bots para facilitar testes
   private async autoConfirmBots(): Promise<void> {
-    if (!this.session) {
+    const currentSession = this.session();
+    if (!currentSession) {
       return;
     }
 
@@ -465,11 +301,11 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
     // Pegar todos os jogadores (blue + red)
     const allPlayers: any[] = [];
 
-    if (this.session.blueTeam) {
-      allPlayers.push(...this.session.blueTeam);
+    if (currentSession.blueTeam) {
+      allPlayers.push(...currentSession.blueTeam);
     }
-    if (this.session.redTeam) {
-      allPlayers.push(...this.session.redTeam);
+    if (currentSession.redTeam) {
+      allPlayers.push(...currentSession.redTeam);
     }
 
     // Filtrar apenas bots
@@ -477,12 +313,15 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
 
     logConfirmationModal(`🤖 [autoConfirmBots] Encontrados ${bots.length} bots para auto-confirmar`);
 
+    // ✅ Obter confirmationData atual
+    const currentConfirmationData = this.confirmationData();
+
     // Auto-confirmar cada bot com delay pequeno
     for (const bot of bots) {
       const botId = this.getPlayerIdentifier(bot);
 
       // Verificar se já confirmou
-      if (this.confirmationData?.confirmations?.[botId]?.confirmed) {
+      if (currentConfirmationData?.confirmations?.[botId]?.confirmed) {
         logConfirmationModal(`⏭️ [autoConfirmBots] Bot ${botId} já confirmou`);
         continue;
       }
@@ -490,7 +329,7 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
       try {
         logConfirmationModal(`✅ [autoConfirmBots] Confirmando bot: ${botId}`);
 
-        const url = `${this.baseUrl}/match/${this.session.id}/confirm-final-draft`;
+        const url = `${this.baseUrl}/match/${currentSession.id}/confirm-final-draft`;
         const body = { playerId: botId };
 
         const response = await firstValueFrom(
@@ -514,14 +353,15 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
 
   // ✅ NOVO: Verificar se jogador confirmou
   isPlayerConfirmed(player: any): boolean {
-    if (!this.confirmationData?.confirmations) {
+    const currentConfirmationData = this.confirmationData();
+    if (!currentConfirmationData?.confirmations) {
       return false;
     }
 
     // ✅ CORREÇÃO: confirmations é um array de strings (nomes de jogadores)
     const playerId = this.getPlayerIdentifier(player);
-    const confirmationsArray = Array.isArray(this.confirmationData.confirmations)
-      ? this.confirmationData.confirmations
+    const confirmationsArray = Array.isArray(currentConfirmationData.confirmations)
+      ? currentConfirmationData.confirmations
       : [];
 
     // ✅ Verificar se o jogador está no array de confirmados (comparação case-insensitive)
@@ -662,41 +502,45 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
 
   // MÉTODOS PARA VERIFICAR ESTADO DOS CAMPEÕES
   getBannedChampions(): any[] {
-    if (this.isCacheValid() && this._cachedBannedanys) {
+    if (this.isCacheValid() && this._cachedBannedChampions) {
       // ✅ CRÍTICO: Mesmo retornando do cache, criar nova referência para garantir detecção (OnPush)
-      return [...this._cachedBannedanys];
+      return [...this._cachedBannedChampions];
     }
 
-    if (!this.session) return [];
+    const currentSession = this.session();
+    if (!currentSession) return [];
 
-    const bannedanys = this.session.phases
-      .filter(phase => phase.action === 'ban' && phase.champion)
-      .map(phase => phase.champion!)
-      .filter((champion, index, self) =>
-        index === self.findIndex(c => c.id === champion.id)
+    const bannedChampions = currentSession.phases
+      .filter((phase: any) => phase.action === 'ban' && phase.champion)
+      .map((phase: any) => phase.champion!)
+      .filter((champion: any, index: number, self: any[]) =>
+        index === self.findIndex((c: any) => c.id === champion.id)
       );
 
     // ✅ CRÍTICO: Sempre retornar NOVO array para garantir detecção de mudança (OnPush)
-    const newBannedanys = [...bannedanys];
+    const newBannedChampions = [...bannedChampions];
 
-    this._cachedBannedanys = newBannedanys;
+    this._cachedBannedChampions = newBannedChampions;
     this._lastCacheUpdate = Date.now();
 
-    return newBannedanys;
+    return newBannedChampions;
   }
 
   getTeamPicks(team: 'blue' | 'red'): any[] {
+    const currentSession = this.session();
+    const modalVisible = this.isVisible();
+
     console.log('🟢🟢🟢 [CONFIRMATION-MODAL] getTeamPicks chamado para:', team, {
-      isVisible: this.isVisible,
-      hasSession: !!this.session,
+      isVisible: modalVisible,
+      hasSession: !!currentSession,
       cacheValid: this.isCacheValid(),
-      sessionTimestamp: (this.session as any)?._lastUpdate || 'não definido',
-      sessionReference: this.session ? 'presente' : 'ausente'
+      sessionTimestamp: (currentSession as any)?._lastUpdate || 'não definido',
+      sessionReference: currentSession ? 'presente' : 'ausente'
     });
 
     // ✅ CRÍTICO: Se o modal está visível, sempre recalcular para garantir dados atualizados
     // Isso é especialmente importante quando o modal reabre após changePick
-    if (this.isVisible) {
+    if (modalVisible) {
       // Se o modal está visível, sempre recalcular (não usar cache)
       // O cache é útil apenas quando o modal está fechado
       console.log('🟢 [CONFIRMATION-MODAL] Modal visível - ignorando cache e recalculando');
@@ -710,24 +554,24 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
       return [...this._cachedRedTeamPicks];
     }
 
-    if (!this.session) {
+    if (!currentSession) {
       console.log('❌ [CONFIRMATION-MODAL] Session não existe!');
       return [];
     }
 
     console.log('🟢 [CONFIRMATION-MODAL] Session existe:', {
-      hasTeams: !!this.session.teams,
-      hasActions: !!this.session.actions,
-      hasPhases: !!this.session.phases,
-      blueTeamData: this.session.teams?.blue ? {
-        playersCount: this.session.teams.blue.players?.length || 0,
-        allPicksCount: this.session.teams.blue.allPicks?.length || 0,
-        allPicks: this.session.teams.blue.allPicks
+      hasTeams: !!currentSession.teams,
+      hasActions: !!currentSession.actions,
+      hasPhases: !!currentSession.phases,
+      blueTeamData: currentSession.teams?.blue ? {
+        playersCount: currentSession.teams.blue.players?.length || 0,
+        allPicksCount: currentSession.teams.blue.allPicks?.length || 0,
+        allPicks: currentSession.teams.blue.allPicks
       } : 'não existe',
-      redTeamData: this.session.teams?.red ? {
-        playersCount: this.session.teams.red.players?.length || 0,
-        allPicksCount: this.session.teams.red.allPicks?.length || 0,
-        allPicks: this.session.teams.red.allPicks
+      redTeamData: currentSession.teams?.red ? {
+        playersCount: currentSession.teams.red.players?.length || 0,
+        allPicksCount: currentSession.teams.red.allPicks?.length || 0,
+        allPicks: currentSession.teams.red.allPicks
       } : 'não existe'
     });
 
@@ -736,8 +580,8 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
     let teamPicks: any[] = [];
 
     // ✅ CORREÇÃO: Usar estrutura hierárquica (teams.blue/red.players[].actions)
-    if (this.session.teams) {
-      const teamData = team === 'blue' ? this.session.teams.blue : this.session.teams.red;
+    if (currentSession.teams) {
+      const teamData = team === 'blue' ? currentSession.teams.blue : currentSession.teams.red;
       console.log('🟢 [CONFIRMATION-MODAL] teamData:', teamData);
 
       if (teamData?.players) {
@@ -809,11 +653,11 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
       }
     }
     // FALLBACK 1: Estrutura antiga (actions)
-    else if (this.session.actions && this.session.actions.length > 0) {
+    else if (currentSession.actions && currentSession.actions.length > 0) {
       const teamIndex = team === 'blue' ? 1 : 2;
       logConfirmationModal(`🎯 [getTeamPicks] Usando actions (fallback) - teamIndex: ${teamIndex}`);
 
-      teamPicks = this.session.actions
+      teamPicks = currentSession.actions
         .filter((action: any) => {
           return action.teamIndex === teamIndex &&
             action.action === 'pick' &&
@@ -823,14 +667,14 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
         .map((action: any) => action.champion);
     }
     // FALLBACK 2: Estrutura muito antiga (phases)
-    else if (this.session.phases) {
+    else if (currentSession.phases) {
       logConfirmationModal(`🎯 [getTeamPicks] Usando phases (fallback antigo)`);
-      teamPicks = this.session.phases
-        .filter(phase => phase.team === team && phase.action === 'pick' && phase.champion)
-        .map(phase => phase.champion!);
+      teamPicks = currentSession.phases
+        .filter((phase: any) => phase.team === team && phase.action === 'pick' && phase.champion)
+        .map((phase: any) => phase.champion!);
     }
 
-    logConfirmationModal(`🎯 [getTeamPicks] Picks finais do time ${team}: ${teamPicks.length} picks`, teamPicks.map(pick => pick.name));
+    logConfirmationModal(`🎯 [getTeamPicks] Picks finais do time ${team}: ${teamPicks.length} picks`, teamPicks.map((pick: any) => pick.name));
 
     // ✅ CRÍTICO: Sempre retornar NOVO array para garantir detecção de mudança (OnPush)
     // Isso é essencial quando o modal está visível ou quando há mudança na session
@@ -847,13 +691,14 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
   }
 
   getTeamBans(team: 'blue' | 'red'): any[] {
-    if (!this.session) return [];
+    const currentSession = this.session();
+    if (!currentSession) return [];
 
     logConfirmationModal(`🎯 [getTeamBans] Obtendo bans do time ${team}`);
 
     // ✅ Usar allBans da estrutura hierárquica (mais simples e direto)
-    if (this.session.teams?.[team]?.allBans) {
-      const bans = this.session.teams[team].allBans;
+    if (currentSession.teams?.[team]?.allBans) {
+      const bans = currentSession.teams[team].allBans;
       logConfirmationModal(`✅ [getTeamBans] Encontrados ${bans.length} IDs de bans`, bans);
 
       const bansArray = bans.map((championId: string) => {
@@ -881,9 +726,9 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
     }
 
     // Fallback para actions (estrutura antiga)
-    if (this.session.actions && this.session.actions.length > 0) {
+    if (currentSession.actions && currentSession.actions.length > 0) {
       const teamIndex = team === 'blue' ? 1 : 2;
-      const bansArray = this.session.actions
+      const bansArray = currentSession.actions
         .filter((action: any) => {
           return action.teamIndex === teamIndex &&
             action.action === 'ban' &&
@@ -896,10 +741,10 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
     }
 
     // Fallback para phases (estrutura muito antiga)
-    if (this.session.phases) {
-      const bansArray = this.session.phases
-        .filter(phase => phase.team === team && phase.action === 'ban' && phase.champion)
-        .map(phase => phase.champion!);
+    if (currentSession.phases) {
+      const bansArray = currentSession.phases
+        .filter((phase: any) => phase.team === team && phase.action === 'ban' && phase.champion)
+        .map((phase: any) => phase.champion!);
       // ✅ CRÍTICO: Sempre retornar NOVO array para garantir detecção de mudança (OnPush)
       return [...bansArray];
     }
@@ -909,13 +754,14 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
 
   // MÉTODOS PARA ORGANIZAR TIMES POR LANE
   getSortedTeamByLane(team: 'blue' | 'red'): any[] {
-    if (!this.session) return [];
+    const currentSession = this.session();
+    if (!currentSession) return [];
 
     logConfirmationModal(`🎯 [getSortedTeamByLane] === OBTENDO TIME ${team.toUpperCase()} ORDENADO ===`);
 
-    const teamPlayers = team === 'blue' ? this.session.blueTeam : this.session.redTeam;
+    const teamPlayers = team === 'blue' ? currentSession.blueTeam : currentSession.redTeam;
 
-    logConfirmationModal(`🎯 [getSortedTeamByLane] Time ${team} antes da ordenação:`, teamPlayers.map(p => ({
+    logConfirmationModal(`🎯 [getSortedTeamByLane] Time ${team} antes da ordenação:`, teamPlayers.map((p: any) => ({
       name: p.summonerName || p.name,
       teamIndex: p.teamIndex,
       assignedLane: p.assignedLane,
@@ -924,7 +770,7 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
 
     const sortedTeam = this.sortPlayersByLane(teamPlayers);
 
-    logConfirmationModal(`🎯 [getSortedTeamByLane] Time ${team} após ordenação:`, sortedTeam.map(p => ({
+    logConfirmationModal(`🎯 [getSortedTeamByLane] Time ${team} após ordenação:`, sortedTeam.map((p: any) => ({
       name: p.summonerName || p.name,
       teamIndex: p.teamIndex,
       assignedLane: p.assignedLane,
@@ -998,8 +844,11 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
 
   // MÉTODOS PARA ORGANIZAR TIMES COM PICKS
   getTeamByLane(team: 'blue' | 'red'): TeamSlot[] {
+    const modalVisible = this.isVisible();
+    const currentSession = this.session();
+
     // ✅ CRÍTICO: Se o modal está visível, sempre recalcular para garantir dados atualizados
-    if (this.isVisible) {
+    if (modalVisible) {
       // Modal visível - sempre recalcular (não usar cache)
       console.log('🟢 [CONFIRMATION-MODAL] getTeamByLane - Modal visível, recalculando para:', team);
     } else if (team === 'blue' && this.isCacheValid() && this._cachedBlueTeamByLane) {
@@ -1010,7 +859,7 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
       return this._cachedRedTeamByLane.map(slot => ({ ...slot }));
     }
 
-    if (!this.session) return [];
+    if (!currentSession) return [];
 
     logConfirmationModal(`🎯 [getTeamByLane] === ORGANIZANDO TIME ${team.toUpperCase()} ===`);
     const teamPlayers = this.getSortedTeamByLane(team);
@@ -1107,8 +956,9 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
       }
 
       // ✅ FALLBACK 1: Buscar na estrutura antiga (actions)
-      if (!playerChampion && this.session?.actions) {
-        const playerAction = this.session.actions.find((action: any) => {
+      const currentSession = this.session();
+      if (!playerChampion && currentSession?.actions) {
+        const playerAction = currentSession.actions.find((action: any) => {
           return action.action === 'pick' &&
             action.locked &&
             action.champion &&
@@ -1162,7 +1012,8 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
   }
 
   private getPhaseIndexForPlayer(player: any): number {
-    if (!this.session) return 0;
+    const currentSession = this.session();
+    if (!currentSession) return 0;
 
     console.log('🔍 [getPhaseIndexForPlayer] Procurando fase para jogador:', {
       id: player.id,
@@ -1172,8 +1023,8 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
     });
 
     // Encontrar a fase onde este jogador fez pick
-    for (let i = 0; i < this.session.phases.length; i++) {
-      const phase = this.session.phases[i];
+    for (let i = 0; i < currentSession.phases.length; i++) {
+      const phase = currentSession.phases[i];
       if (phase.action === 'pick' && phase.champion && phase.playerId) {
         const isMatch = this.comparePlayerWithId(player, phase.playerId);
         console.log(`🔍 [getPhaseIndexForPlayer] Fase ${i}:`, {
@@ -1203,15 +1054,17 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
 
   // MÉTODOS PARA VERIFICAR JOGADOR ATUAL
   isCurrentPlayer(player: any): boolean {
+    const current = this.currentPlayer();
+
     logConfirmationModal('🔍 [isCurrentPlayer] === VERIFICANDO JOGADOR ATUAL ===');
     logConfirmationModal('🔍 [isCurrentPlayer] Verificando:', {
-      hasCurrentPlayer: !!this.currentPlayer,
+      hasCurrentPlayer: !!current,
       currentPlayer: {
-        id: this.currentPlayer?.id,
-        summonerName: this.currentPlayer?.summonerName,
-        name: this.currentPlayer?.name,
-        gameName: this.currentPlayer?.gameName,
-        tagLine: this.currentPlayer?.tagLine
+        id: current?.id,
+        summonerName: current?.summonerName,
+        name: current?.name,
+        gameName: current?.gameName,
+        tagLine: current?.tagLine
       },
       player: {
         id: player?.id,
@@ -1331,40 +1184,43 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
   // MÉTODOS PARA CONTROLE DO MODAL
   closeModal(): void {
     logConfirmationModal('🚪 [closeModal] Fechando modal de confirmação');
-    this.onClose.emit();
+    this.closed.emit();
   }
 
   async confirmFinalDraft(): Promise<void> {
+    const currentSession = this.session();
+    const current = this.currentPlayer();
+
     console.log('🟢 [CONFIRM-FINAL-DRAFT] === CONFIRMANDO DRAFT FINAL ===');
-    console.log('🟢 [CONFIRM-FINAL-DRAFT] Session:', this.session);
-    console.log('🟢 [CONFIRM-FINAL-DRAFT] CurrentPlayer:', this.currentPlayer);
+    console.log('🟢 [CONFIRM-FINAL-DRAFT] Session:', currentSession);
+    console.log('🟢 [CONFIRM-FINAL-DRAFT] CurrentPlayer:', current);
 
     logConfirmationModal('✅ [confirmFinalDraft] === CONFIRMANDO DRAFT FINAL ===');
 
     // ✅ Validar dados necessários
-    if (!this.session?.id) {
+    if (!currentSession?.id) {
       console.error('❌ [confirmFinalDraft] Session ID não disponível');
-      this.confirmationMessage = 'Erro: Session não disponível';
+      this.confirmationMessage.set('Erro: Session não disponível');
       return;
     }
 
-    if (!this.currentPlayer?.summonerName) {
+    if (!current?.summonerName) {
       console.error('❌ [confirmFinalDraft] Player não disponível');
-      this.confirmationMessage = 'Erro: Jogador não identificado';
+      this.confirmationMessage.set('Erro: Jogador não identificado');
       return;
     }
 
     // ✅ Mostrar feedback de carregamento
-    this.isConfirming = true;
-    this.confirmationMessage = 'Confirmando sua seleção...';
+    this.isConfirming.set(true);
+    this.confirmationMessage.set('Confirmando sua seleção...');
 
     try {
-      const url = `${this.baseUrl}/match/${this.session.id}/confirm-final-draft`;
+      const url = `${this.baseUrl}/match/${currentSession.id}/confirm-final-draft`;
       const body = {
-        playerId: this.currentPlayer.summonerName
+        playerId: current.summonerName
       };
 
-      console.log('� [confirmFinalDraft] Enviando confirmação:', { url, body });
+      console.log('📤 [confirmFinalDraft] Enviando confirmação:', { url, body });
       logConfirmationModal('📤 [confirmFinalDraft] Enviando HTTP POST:', url);
 
       const response: any = await firstValueFrom(
@@ -1380,10 +1236,10 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
       if (response.success) {
         const { allConfirmed, confirmedCount, totalPlayers, message } = response;
 
-        this.confirmationMessage = message ||
+        this.confirmationMessage.set(message ||
           (allConfirmed
             ? 'Todos confirmaram! Iniciando partida...'
-            : `Confirmado! Aguardando ${totalPlayers - confirmedCount} jogadores...`);
+            : `Confirmado! Aguardando ${totalPlayers - confirmedCount} jogadores...`));
 
         console.log(`📊 [confirmFinalDraft] Confirmações: ${confirmedCount}/${totalPlayers}`);
 
@@ -1391,7 +1247,8 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
           console.log('🎮 [confirmFinalDraft] TODOS CONFIRMARAM! Aguardando game_started...');
           // ✅ Modal será fechado quando receber evento game_started via WebSocket
         } else {
-          this.isConfirming = false;
+          this.isConfirming.set(false);
+          this.confirmationMessage.set('');
         }
       } else {
         throw new Error(response.message || 'Falha ao confirmar');
@@ -1401,36 +1258,36 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
       console.error('❌ [confirmFinalDraft] Erro ao confirmar:', error);
       logConfirmationModal('❌ [confirmFinalDraft] Erro:', error);
 
-      this.isConfirming = false;
-      this.confirmationMessage = error?.error?.error || error?.message || 'Erro ao confirmar. Tente novamente.';
+      this.isConfirming.set(false);
+      this.confirmationMessage.set(error?.error?.error || error?.message || 'Erro ao confirmar. Tente novamente.');
     }
   }
 
   cancelFinalDraft(): void {
     logConfirmationModal('❌ [cancelFinalDraft] === CANCELANDO DRAFT ===');
-    this.onCancel.emit();
+    this.cancelled.emit();
   }
 
   // ✅ NOVO: Método para atualizar estado da confirmação
   updateConfirmationState(confirmed: boolean, allConfirmed: boolean): void {
     if (confirmed) {
-      this.confirmationMessage = allConfirmed
+      this.confirmationMessage.set(allConfirmed
         ? 'Todos confirmaram! Iniciando partida...'
-        : 'Sua confirmação foi registrada! Aguardando outros jogadores...';
+        : 'Sua confirmação foi registrada! Aguardando outros jogadores...');
 
       if (allConfirmed) {
         // Todos confirmaram, modal será fechado automaticamente
         setTimeout(() => {
-          this.isConfirming = false;
-          this.confirmationMessage = '';
+          this.isConfirming.set(false);
+          this.confirmationMessage.set('');
         }, 2000);
       } else {
         // Resetar estado de carregamento, mas manter mensagem
-        this.isConfirming = false;
+        this.isConfirming.set(false);
       }
     } else {
-      this.isConfirming = false;
-      this.confirmationMessage = 'Erro ao confirmar. Tente novamente.';
+      this.isConfirming.set(false);
+      this.confirmationMessage.set('Erro ao confirmar. Tente novamente.');
     }
   }
 
@@ -1439,7 +1296,7 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
   refreshDraftState(): void {
     logConfirmationModal('🔄 [refreshDraftState] Solicitando atualização do estado do draft');
     this.forceRefresh(); // Limpar cache local
-    this.onRefreshDraft.emit(); // Notificar componente pai para buscar dados atualizados
+    this.refreshDraft.emit(); // Notificar componente pai para buscar dados atualizados
   }
 
   // MÉTODO PARA VERIFICAR SE BOTÃO DEVE APARECER
@@ -1468,17 +1325,18 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
     // Mostrar apenas para outros jogadores humanos ou bots
     const shouldShow = !isCurrentPlayerResult && (!isBotResult || isBotResult);
 
+    const currentPlayer = this.currentPlayer();
     logConfirmationModal('🔍 [shouldShowEditButton] Resultado final:', {
       playerName: slot.player.summonerName || slot.player.name,
       slotPlayerGameName: slot.player.gameName,
       slotPlayerTagLine: slot.player.tagLine,
-      currentPlayerGameName: this.currentPlayer?.gameName,
-      currentPlayerTagLine: this.currentPlayer?.tagLine,
-      currentPlayerSummonerName: this.currentPlayer?.summonerName,
+      currentPlayerGameName: currentPlayer?.gameName,
+      currentPlayerTagLine: currentPlayer?.tagLine,
+      currentPlayerSummonerName: currentPlayer?.summonerName,
       isCurrentPlayer: isCurrentPlayerResult,
       isBot: isBotResult,
       shouldShow: shouldShow,
-      hasCurrentPlayer: !!this.currentPlayer,
+      hasCurrentPlayer: !!currentPlayer,
       reasoning: isCurrentPlayerResult ? 'Jogador atual - usar botão principal' : 'Mostrar botão individual'
     });
 
@@ -1490,6 +1348,9 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
 
   // MÉTODOS PARA EDIÇÃO
   startEditingPick(playerId: string, phaseIndex: number): void {
+    const current = this.currentPlayer();
+    const currentSession = this.session();
+
     console.log('🟡 [START-EDITING-PICK] === INICIANDO EDIÇÃO ===');
     console.log('🟡 [START-EDITING-PICK] playerId:', playerId);
     console.log('🟡 [START-EDITING-PICK] phaseIndex:', phaseIndex);
@@ -1497,13 +1358,13 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
     logConfirmationModal('🎯 [startEditingPick] === INICIANDO EDIÇÃO ===');
     logConfirmationModal('🎯 [startEditingPick] playerId:', playerId);
     logConfirmationModal('🎯 [startEditingPick] phaseIndex:', phaseIndex);
-    logConfirmationModal('🎯 [startEditingPick] currentPlayer:', this.currentPlayer);
-    logConfirmationModal('🎯 [startEditingPick] session presente:', !!this.session);
+    logConfirmationModal('🎯 [startEditingPick] currentPlayer:', current);
+    logConfirmationModal('🎯 [startEditingPick] session presente:', !!currentSession);
 
-    console.log('🟡 [START-EDITING-PICK] Emitindo evento onEditPick...');
-    this.onEditPick.emit({ playerId, phaseIndex });
-    console.log('🟡 [START-EDITING-PICK] Evento onEditPick emitido!');
-    logConfirmationModal('🎯 [startEditingPick] Evento onEditPick emitido com sucesso');
+    console.log('🟡 [START-EDITING-PICK] Emitindo evento editPick...');
+    this.editPick.emit({ playerId, phaseIndex });
+    console.log('🟡 [START-EDITING-PICK] Evento editPick emitido!');
+    logConfirmationModal('🎯 [startEditingPick] Evento editPick emitido com sucesso');
   }
 
   // ✅ NOVO: Método para editar o pick do jogador atual via botão principal
@@ -1550,18 +1411,24 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
       logConfirmationModal('🎯 [startEditingCurrentPlayer] playerIdentifier:', playerIdentifier);
 
       // ✅ DEBUG: Mostrar TODAS as phases disponíveis
-      console.log('📋 [EDITAR MEU PICK] TODAS AS PHASES:', JSON.stringify(this.session.phases, null, 2));
-      console.log('📋 [EDITAR MEU PICK] Total de phases:', this.session.phases?.length || 0);
+      const currentSession = this.session();
+      if (!currentSession) {
+        console.error('❌ [EDITAR MEU PICK] Session não disponível');
+        return;
+      }
+
+      console.log('📋 [EDITAR MEU PICK] TODAS AS PHASES:', JSON.stringify(currentSession.phases, null, 2));
+      console.log('📋 [EDITAR MEU PICK] Total de phases:', currentSession.phases?.length || 0);
 
       // ✅ PASSO 3: Buscar o pick deste jogador nas phases
       let phaseIndex = -1;
       let currentChampionId: string | null = null;
 
-      if (this.session.phases) {
+      if (currentSession.phases) {
         console.log('🔍 [EDITAR MEU PICK] Procurando pick para:', playerIdentifier);
 
-        for (let i = 0; i < this.session.phases.length; i++) {
-          const phase = this.session.phases[i];
+        for (let i = 0; i < currentSession.phases.length; i++) {
+          const phase = currentSession.phases[i];
 
           // ✅ CORREÇÃO: O campo correto é 'byPlayer', não 'playerName' ou 'playerId'
           const phasePlayer = (phase as any).byPlayer || phase.playerName || phase.playerId;
@@ -1581,10 +1448,13 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
             console.log(`  ➡️ É um PICK! Comparando:`);
             console.log(`     playerIdentifier: "${playerIdentifier}"`);
             console.log(`     phasePlayer (byPlayer): "${phasePlayer}"`);
-            console.log(`     Igualdade: ${phasePlayer === playerIdentifier}`);
 
-            // ✅ Comparar byPlayer com o identificador construído
-            if (phasePlayer === playerIdentifier) {
+            // ✅ FIX: Comparação case-insensitive
+            const isMatch = phasePlayer?.toLowerCase() === playerIdentifier.toLowerCase();
+            console.log(`     Igualdade (case-insensitive): ${isMatch}`);
+
+            // ✅ Comparar byPlayer com o identificador construído (case-insensitive)
+            if (isMatch) {
               phaseIndex = i;
               currentChampionId = (phase as any).championId || phase.champion?.id || null;
               console.log('✅✅✅ [EDITAR MEU PICK] Pick ENCONTRADO!', {
@@ -1636,7 +1506,7 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
 
   // MÉTODOS PARA CACHE
   private invalidateCache(): void {
-    this._cachedBannedanys = null;
+    this._cachedBannedChampions = null;
     this._cachedBlueTeamPicks = null;
     this._cachedRedTeamPicks = null;
     this._cachedBlueTeamByLane = null;
@@ -1655,7 +1525,7 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
 
   // MÉTODO PARA QUANDO O MODAL SE TORNA VISÍVEL
   onModalShow(): void {
-    if (this.isVisible) {
+    if (this.isVisible()) {
       this.invalidateCache();
     }
   }
@@ -1663,22 +1533,24 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
   // ✅ NOVO: Método para forçar atualização completa (público para ser chamado do componente pai)
   forceRefresh(): void {
     console.log('🔄 [CONFIRMATION-MODAL] forceRefresh() CHAMADO - forçando atualização completa');
+
+    const currentSession = this.session();
     console.log('🔄 [CONFIRMATION-MODAL] Estado atual:', {
-      isVisible: this.isVisible,
-      hasSession: !!this.session,
-      sessionId: this.session?.id || this.session?.matchId,
-      hasTeams: !!this.session?.teams,
-      blueTeamPicks: this.session?.teams?.blue?.allPicks?.length || 0,
-      redTeamPicks: this.session?.teams?.red?.allPicks?.length || 0,
-      blueTeamPicksArray: this.session?.teams?.blue?.allPicks,
-      redTeamPicksArray: this.session?.teams?.red?.allPicks,
-      bluePlayersCount: this.session?.teams?.blue?.players?.length || 0,
-      redPlayersCount: this.session?.teams?.red?.players?.length || 0
+      isVisible: this.isVisible(),
+      hasSession: !!currentSession,
+      sessionId: currentSession?.id || currentSession?.matchId,
+      hasTeams: !!currentSession?.teams,
+      blueTeamPicks: currentSession?.teams?.blue?.allPicks?.length || 0,
+      redTeamPicks: currentSession?.teams?.red?.allPicks?.length || 0,
+      blueTeamPicksArray: currentSession?.teams?.blue?.allPicks,
+      redTeamPicksArray: currentSession?.teams?.red?.allPicks,
+      bluePlayersCount: currentSession?.teams?.blue?.players?.length || 0,
+      redPlayersCount: currentSession?.teams?.red?.players?.length || 0
     });
 
     // ✅ CRÍTICO: Log detalhado dos players e actions
-    if (this.session?.teams?.blue?.players) {
-      console.log('🔵 [CONFIRMATION-MODAL] Blue team players:', this.session.teams.blue.players.map((p: any) => ({
+    if (currentSession?.teams?.blue?.players) {
+      console.log('🔵 [CONFIRMATION-MODAL] Blue team players:', currentSession.teams.blue.players.map((p: any) => ({
         name: p.summonerName || p.name,
         actions: p.actions?.map((a: any) => ({
           type: a.type,
@@ -1687,8 +1559,8 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
         }))
       })));
     }
-    if (this.session?.teams?.red?.players) {
-      console.log('🔴 [CONFIRMATION-MODAL] Red team players:', this.session.teams.red.players.map((p: any) => ({
+    if (currentSession?.teams?.red?.players) {
+      console.log('🔴 [CONFIRMATION-MODAL] Red team players:', currentSession.teams.red.players.map((p: any) => ({
         name: p.summonerName || p.name,
         actions: p.actions?.map((a: any) => ({
           type: a.type,
@@ -1702,7 +1574,7 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
 
     // ✅ CRÍTICO: Invalidar TODOS os caches
     this.invalidateCache();
-    this._cachedBannedanys = null;
+    this._cachedBannedChampions = null;
     this._cachedBlueTeamPicks = null;
     this._cachedRedTeamPicks = null;
     this._cachedBlueTeamByLane = null;
@@ -1710,7 +1582,7 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
     this._lastCacheUpdate = 0; // Forçar recache
 
     // ✅ CRÍTICO: Forçar recálculo COMPLETO de todos os dados
-    if (this.session) {
+    if (currentSession) {
       console.log('🔄 [CONFIRMATION-MODAL] Recalculando dados...');
       const bluePicks = this.getTeamPicks('blue');
       const redPicks = this.getTeamPicks('red');
@@ -1766,11 +1638,12 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
    * Marca o jogador atual nos dados da partida
    */
   private markCurrentUserInPlayers(currentUser: any): void {
-    if (!this.session) return;
+    const currentSession = this.session();
+    if (!currentSession) return;
 
     const allPlayers = [
-      ...(this.session.blueTeam || []),
-      ...(this.session.redTeam || [])
+      ...(currentSession.blueTeam || []),
+      ...(currentSession.redTeam || [])
     ];
 
     allPlayers.forEach(player => {
@@ -1783,31 +1656,41 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
 
   /**
    * Verifica se um jogador é o usuário atual baseado nos dados do LCU
+   * ✅ FIX: Comparação case-insensitive para evitar problemas com capitalização
    */
   private isPlayerCurrentUser(player: any, currentUser: any): boolean {
     if (!player || !currentUser) return false;
 
+    // ✅ Normalizar para lowercase para comparação
+    const playerNameLower = player.summonerName?.toLowerCase();
+
     // Comparar por displayName (formato completo com #)
-    if (currentUser.displayName && player.summonerName === currentUser.displayName) {
-      return true;
+    if (currentUser.displayName) {
+      if (playerNameLower === currentUser.displayName.toLowerCase()) {
+        return true;
+      }
     }
 
     // Comparar por summonerName
-    if (currentUser.summonerName && player.summonerName === currentUser.summonerName) {
-      return true;
+    if (currentUser.summonerName) {
+      if (playerNameLower === currentUser.summonerName.toLowerCase()) {
+        return true;
+      }
     }
 
     // Comparar por gameName#tagLine
     if (currentUser.gameName && currentUser.tagLine) {
-      const fullName = `${currentUser.gameName}#${currentUser.tagLine}`;
-      if (player.summonerName === fullName) {
+      const fullName = `${currentUser.gameName}#${currentUser.tagLine}`.toLowerCase();
+      if (playerNameLower === fullName) {
         return true;
       }
     }
 
     // Comparar por gameName (sem tag)
-    if (currentUser.gameName && player.summonerName === currentUser.gameName) {
-      return true;
+    if (currentUser.gameName) {
+      if (playerNameLower === currentUser.gameName.toLowerCase()) {
+        return true;
+      }
     }
 
     return false;
@@ -1825,10 +1708,13 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
    * ✅ CORREÇÃO: Usar confirmationData.confirmations (array de strings) para verificar status
    */
   getPlayerConfirmationStatus(summonerName: string): 'pending' | 'confirmed' | 'declined' | 'timeout' {
+    const currentConfirmationData = this.confirmationData();
+    const currentSession = this.session();
+
     // ✅ PRIORIDADE 1: Verificar em confirmationData.confirmations (fonte mais atualizada)
-    if (this.confirmationData?.confirmations && Array.isArray(this.confirmationData.confirmations)) {
+    if (currentConfirmationData?.confirmations && Array.isArray(currentConfirmationData.confirmations)) {
       const normalizedSummonerName = summonerName?.toLowerCase().trim();
-      const isConfirmed = this.confirmationData.confirmations.some((confirmedPlayer: string) =>
+      const isConfirmed = currentConfirmationData.confirmations.some((confirmedPlayer: string) =>
         confirmedPlayer?.toLowerCase().trim() === normalizedSummonerName
       );
 
@@ -1839,8 +1725,8 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
 
     // ✅ FALLBACK: Tentar buscar no session (menos confiável)
     const allPlayers = [
-      ...(this.session?.blueTeam || []),
-      ...(this.session?.redTeam || [])
+      ...(currentSession?.blueTeam || []),
+      ...(currentSession?.redTeam || [])
     ];
 
     const player = allPlayers.find(p => {
@@ -1884,27 +1770,33 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
    * ✅ CORREÇÃO: Usar confirmationData se disponível (fonte mais atualizada)
    */
   getConfirmationCount(): { confirmed: number; total: number } {
+    const currentConfirmationData = this.confirmationData();
+
     // ✅ PRIORIDADE 1: Usar confirmationData (vem do WebSocket em tempo real)
-    if (this.confirmationData) {
+    if (currentConfirmationData) {
       return {
-        confirmed: this.confirmationData.confirmedCount || this.confirmationData.confirmations?.length || 0,
-        total: this.confirmationData.totalPlayers || 10
+        confirmed: currentConfirmationData.confirmedCount || currentConfirmationData.confirmations?.length || 0,
+        total: currentConfirmationData.totalPlayers || 10
       };
     }
 
     // ✅ FALLBACK: Usar valores internos atualizados
-    if (this.confirmedCount > 0 || this.totalPlayers > 0) {
+    const currentConfirmedCount = this.confirmedCount();
+    const currentTotalPlayers = this.totalPlayers();
+
+    if (currentConfirmedCount > 0 || currentTotalPlayers > 0) {
       return {
-        confirmed: this.confirmedCount,
-        total: this.totalPlayers
+        confirmed: currentConfirmedCount,
+        total: currentTotalPlayers
       };
     }
 
     // ✅ FALLBACK 2: Tentar contar do session (menos confiável)
     let confirmed = 0;
+    const currentSession = this.session();
     const allPlayers = [
-      ...(this.session?.blueTeam || []),
-      ...(this.session?.redTeam || [])
+      ...(currentSession?.blueTeam || []),
+      ...(currentSession?.redTeam || [])
     ];
 
     allPlayers.forEach(player => {
@@ -1966,7 +1858,7 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
 
         // Se o evento é para este match E o modal está visível, apenas invalidar cache
         // O pai já atualizou a session, então apenas forçar recálculo
-        if (data && dataMatchId && this.activeMatchId && dataMatchId === this.activeMatchId && this.isVisible) {
+        if (data && dataMatchId && this.activeMatchId && dataMatchId === this.activeMatchId && this.isVisible()) {
           console.log('✅ [CONFIRMATION-MODAL] draft_updated para este match - invalidando cache E recalculando dados');
 
           // ✅ Invalidar cache e forçar recálculo com a session do pai (que já foi atualizada)
@@ -1995,7 +1887,8 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
     this.subscriptions.push(
       this.electronEvents.draftConfirmationUpdate$.subscribe((data: any) => {
         // ✅ CORREÇÃO: Verificar matchId de múltiplas formas
-        const sessionMatchId = this.session?.id || this.session?.matchId;
+        const currentSession = this.session();
+        const sessionMatchId = currentSession?.id || currentSession?.matchId;
         const dataMatchId = data?.matchId || data?.id;
 
         if (data && dataMatchId && sessionMatchId && String(dataMatchId) === String(sessionMatchId)) {
@@ -2065,68 +1958,18 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
   private handleConfirmationProgress(data: any): void {
     console.log('📊 [ConfirmationModal] Progresso de confirmação recebido:', data);
 
+    const currentSession = this.session();
+    if (!currentSession) return;
+
     if (data.confirmations && Array.isArray(data.confirmations)) {
-      // ✅ CORREÇÃO: Usar mesma técnica do match_found MAS criar NOVAS referências
-      // ✅ CRÍTICO: NÃO mutar diretamente - criar novos objetos para Signals detectarem
-      const blueTeamPlayers = (this.session?.blueTeam || []).map(player => {
-        // Resetar para 'pending' criando novo objeto
-        return { ...player, acceptanceStatus: 'pending' };
-      });
+      // ✅ CORREÇÃO: Trabalhar com dados locais - InputSignals são read-only
+      // A UI usa os métodos getter que já acessam this.session() corretamente
 
-      const redTeamPlayers = (this.session?.redTeam || []).map(player => {
-        // Resetar para 'pending' criando novo objeto
-        return { ...player, acceptanceStatus: 'pending' };
-      });
+      // Atualizar contadores de estado interno
+      this.confirmedCount.set(data.confirmedCount || 0);
+      this.totalPlayers.set(data.totalPlayers || 10);
 
-      const allPlayers = [...blueTeamPlayers, ...redTeamPlayers];
-
-      console.log(`📊 [ConfirmationModal] Processando ${data.confirmations.length} confirmações para ${allPlayers.length} jogadores`);
-      console.log(`📊 [ConfirmationModal] Todos jogadores resetados para 'pending' com novas referências`);
-
-      // Marcar jogadores confirmados como 'confirmed' (COM NOVAS REFERÊNCIAS)
-      data.confirmations.forEach((confirmedPlayerName: string) => {
-        const playerIndex = allPlayers.findIndex(p =>
-          p.summonerName?.toLowerCase() === confirmedPlayerName?.toLowerCase() ||
-          (p.riotIdGameName && p.riotIdTagline && `${p.riotIdGameName}#${p.riotIdTagline}`.toLowerCase() === confirmedPlayerName?.toLowerCase())
-        );
-
-        if (playerIndex >= 0) {
-          // ✅ CRÍTICO: Criar NOVA referência do player para Signals detectarem
-          allPlayers[playerIndex] = {
-            ...allPlayers[playerIndex],
-            acceptanceStatus: 'confirmed',
-            acceptedAt: new Date().toISOString()
-          };
-          console.log('✅ [ConfirmationModal] Jogador confirmado (nova referência):', allPlayers[playerIndex].summonerName);
-        } else {
-          console.log('⚠️ [ConfirmationModal] Jogador não encontrado:', confirmedPlayerName);
-        }
-      });
-
-      // ✅ CRÍTICO: Atualizar session com NOVAS REFERÊNCIAS dos arrays
-      if (this.session) {
-        // Separar novamente em blue/red
-        const blueCount = this.session.blueTeam?.length || 0;
-        const updatedBlueTeam = allPlayers.slice(0, blueCount);
-        const updatedRedTeam = allPlayers.slice(blueCount);
-
-        // ✅ CRÍTICO: Notificar componente PAI via Output para atualizar session
-        // O modal NÃO deve modificar @Input diretamente
-        // (Isso será implementado no próximo passo - por ora apenas criar novas referências localmente)
-        this.session = {
-          ...this.session,
-          blueTeam: updatedBlueTeam,
-          redTeam: updatedRedTeam
-        };
-
-        console.log('✅ [ConfirmationModal] Session atualizada com novas referências dos teams');
-      }
-
-      // Atualizar contadores
-      this.confirmedCount = data.confirmedCount || 0;
-      this.totalPlayers = data.totalPlayers || 10;
-
-      console.log(`📊 [ConfirmationModal] Atualizado: ${this.confirmedCount}/${this.totalPlayers} confirmados`);
+      console.log(`📊 [ConfirmationModal] Atualizado: ${this.confirmedCount()}/${this.totalPlayers()} confirmados`);
       console.log(`📊 [ConfirmationModal] Progresso: ${this.getConfirmationProgress()}%`);
 
       // ✅ NOVO: Forçar detecção de mudanças
@@ -2148,60 +1991,20 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
   private handleConfirmationUpdate(data: any): void {
     console.log('🔄 [ConfirmationModal] Atualização de confirmação recebida:', data);
 
+    const currentSession = this.session();
+    if (!currentSession) return;
+
     if (data.playerName && data.status) {
-      // ✅ CRÍTICO: Criar NOVAS referências dos arrays ao invés de mutar
-      const blueTeam = this.session?.blueTeam || [];
-      const redTeam = this.session?.redTeam || [];
+      // ✅ CORREÇÃO: Trabalhar com dados locais - InputSignals são read-only
+      // A UI irá re-render automaticamente quando os dados vierem do parent
+      console.log(`🔄 [ConfirmationModal] Status de ${data.playerName}: ${data.status}`);
 
-      // Procurar player em blue team
-      const bluePlayerIndex = blueTeam.findIndex(p => p.summonerName === data.playerName);
-      if (bluePlayerIndex >= 0) {
-        // ✅ CRÍTICO: Criar NOVA referência do array e do player
-        const updatedBlueTeam = [...blueTeam];
-        updatedBlueTeam[bluePlayerIndex] = {
-          ...blueTeam[bluePlayerIndex],
-          acceptanceStatus: data.status,
-          acceptedAt: data.status === 'confirmed' ? new Date().toISOString() : updatedBlueTeam[bluePlayerIndex].acceptedAt
-        };
+      // Forçar re-checagem dos contadores
+      const counts = this.getConfirmationCount();
+      this.confirmedCount.set(counts.confirmed);
+      this.totalPlayers.set(counts.total);
 
-        if (this.session) {
-          // ✅ CRÍTICO: Criar NOVA referência da session
-          this.session = {
-            ...this.session,
-            blueTeam: updatedBlueTeam
-          };
-        }
-
-        console.log(`🔄 [ConfirmationModal] Status atualizado para ${data.playerName}: ${data.status} (blue team, nova referência)`);
-        this.cdr.markForCheck();
-        return;
-      }
-
-      // Procurar player em red team
-      const redPlayerIndex = redTeam.findIndex(p => p.summonerName === data.playerName);
-      if (redPlayerIndex >= 0) {
-        // ✅ CRÍTICO: Criar NOVA referência do array e do player
-        const updatedRedTeam = [...redTeam];
-        updatedRedTeam[redPlayerIndex] = {
-          ...redTeam[redPlayerIndex],
-          acceptanceStatus: data.status,
-          acceptedAt: data.status === 'confirmed' ? new Date().toISOString() : updatedRedTeam[redPlayerIndex].acceptedAt
-        };
-
-        if (this.session) {
-          // ✅ CRÍTICO: Criar NOVA referência da session
-          this.session = {
-            ...this.session,
-            redTeam: updatedRedTeam
-          };
-        }
-
-        console.log(`🔄 [ConfirmationModal] Status atualizado para ${data.playerName}: ${data.status} (red team, nova referência)`);
-        this.cdr.markForCheck();
-        return;
-      }
-
-      console.log('⚠️ [ConfirmationModal] Jogador não encontrado:', data.playerName);
+      this.cdr.markForCheck();
     }
   }
 
@@ -2210,40 +2013,25 @@ export class DraftConfirmationModalComponent implements OnInit, OnChanges, OnDes
    * Inicializa os status de confirmação de todos os jogadores
    */
   private initializeConfirmationStatuses(): void {
-    if (!this.session) {
+    const currentSession = this.session();
+    if (!currentSession) {
       console.log('⚠️ [ConfirmationModal] Session não disponível para inicialização');
       return;
     }
 
     console.log(`🔄 [ConfirmationModal] Inicializando status de confirmação`);
 
-    // ✅ CRÍTICO: Criar NOVAS referências dos arrays ao invés de mutar
-    const updatedBlueTeam = (this.session.blueTeam || []).map(player => ({
-      ...player,
-      acceptanceStatus: 'pending',
-      isCurrentUser: player.isCurrentUser || false
-    }));
+    // ✅ CORREÇÃO: Apenas resetar contadores locais - session é read-only input
+    const blueTeamSize = currentSession.blueTeam?.length || 0;
+    const redTeamSize = currentSession.redTeam?.length || 0;
 
-    const updatedRedTeam = (this.session.redTeam || []).map(player => ({
-      ...player,
-      acceptanceStatus: 'pending',
-      isCurrentUser: player.isCurrentUser || false
-    }));
+    this.confirmedCount.set(0);
+    this.totalPlayers.set(blueTeamSize + redTeamSize);
 
-    console.log(`🔄 [ConfirmationModal] Inicializando ${updatedBlueTeam.length + updatedRedTeam.length} jogadores com novas referências`);
-
-    // ✅ CRÍTICO: Atualizar session com NOVAS referências
-    this.session = {
-      ...this.session,
-      blueTeam: updatedBlueTeam,
-      redTeam: updatedRedTeam
-    };
-
-    this.confirmedCount = 0;
-    this.totalPlayers = updatedBlueTeam.length + updatedRedTeam.length;
-
-    console.log(`🔄 [ConfirmationModal] Status inicializados: ${this.confirmedCount}/${this.totalPlayers} jogadores`);
+    console.log(`🔄 [ConfirmationModal] Inicializando ${this.totalPlayers()} jogadores`);
+    console.log(`🔄 [ConfirmationModal] Status inicializados: ${this.confirmedCount()}/${this.totalPlayers()} jogadores`);
     console.log(`🔄 [ConfirmationModal] Progresso inicial: ${this.getConfirmationProgress()}%`);
-    console.log(`✅ [ConfirmationModal] Todas as referências foram criadas novas para Signals detectarem`);
+
+    this.cdr.markForCheck();
   }
 }

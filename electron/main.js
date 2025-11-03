@@ -22,8 +22,14 @@ try {
 // ✅ NOVO: Variável global para a janela principal
 let mainWindow = null;
 
-// ⚠️ LOGS DESABILITADOS EM PRODUÇÃO - Não salvar arquivos de log
-let LOG_FILE = null; // Mantido como null para desabilitar logs em arquivo
+// ✅ NOVO: Cache de identificação para evitar identificações desnecessárias
+let lastIdentifiedSession = null;
+let lastIdentificationTimestamp = 0;
+const IDENTIFICATION_COOLDOWN = 5000; // 5 segundos de cooldown
+
+// ✅ LOGS HABILITADOS - Salvar arquivos de log
+let LOG_FILE = path.join(__dirname, "..", "electron.log");
+let FRONTEND_LOG_FILE = path.join(__dirname, "..", "frontend.log");
 
 function sanitizeForLog(value) {
   try {
@@ -61,10 +67,32 @@ function sanitizeForLog(value) {
   }
 }
 
-function appendLogLine(line) {
-  // ⚠️ LOGS DESABILITADOS - Não criar arquivos .log na raiz
-  // Os logs continuam no console, mas não são salvos em arquivo
-  return; // Desabilitado
+function appendLogLine(line, logFile = LOG_FILE) {
+  // ✅ Salvar logs em arquivo especificado
+  if (!logFile) return;
+  
+  try {
+    const timestamp = new Date().toISOString();
+    const logLine = `[${timestamp}] ${line}\n`;
+    fs.appendFileSync(logFile, logLine, "utf8");
+  } catch (e) {
+    // Silenciar erros de escrita de log
+  }
+}
+
+function appendFrontendLog(...args) {
+  try {
+    const parts = args.map((a) => {
+      try {
+        return typeof a === "string" ? a : JSON.stringify(sanitizeForLog(a));
+      } catch (e) {
+        return String(a);
+      }
+    });
+    appendLogLine("[frontend] " + parts.join(" "), FRONTEND_LOG_FILE);
+  } catch (e) {
+    /* ignore logging errors */
+  }
 }
 
 function safeLog(...args) {
@@ -202,9 +230,19 @@ function createWindow(startUrl, isDev) {
   win.webContents.on("render-process-gone", (_e, details) =>
     safeLog("render-process-gone", details)
   );
-  win.webContents.on("console-message", (_e, level, message, line, sourceId) =>
-    safeLog("console-message", level, message, sourceId + ":" + line)
-  );
+  
+  // ✅ Capturar logs do console e salvar em frontend.log
+  win.webContents.on("console-message", (_e, level, message, line, sourceId) => {
+    const logLevels = ["verbose", "info", "warning", "error"];
+    const levelName = logLevels[level] || "unknown";
+    const logMessage = `[${levelName}] ${message} (${sourceId}:${line})`;
+    
+    // Log no console normal
+    safeLog("console-message", level, message, sourceId + ":" + line);
+    
+    // ✅ NOVO: Salvar em frontend.log
+    appendFrontendLog(logMessage);
+  });
 
   if (isDev) win.webContents.openDevTools({ mode: "right" });
 
@@ -485,7 +523,10 @@ async function performCompleteRefresh(mainWindow) {
       if (wsClient && wsClient.readyState === WebSocket.OPEN) {
         safeLog("🔄 [Electron] Reestabelecendo vinculação...");
 
-        // Reenviar identificação
+        // ✅ REIDENTIFICAÇÃO PROATIVA: Após reload completo
+        safeLog(
+          "🔄 [PROACTIVE-REIDENTIFY] Motivo: Reload completo do app (limpeza de estado)"
+        );
         const lockfileInfo = readLockfileInfo();
         if (lockfileInfo) {
           await identifyPlayerToBackend(lockfileInfo);
@@ -699,7 +740,10 @@ function startLockfileWatcher(backendBase) {
           safeLog("lockfile parsed", parsed);
           postConfigToBackend(backendBase, parsed);
 
-          // ✅ NOVO: Identificar jogador automaticamente quando lockfile é detectado
+          // ✅ REIDENTIFICAÇÃO PROATIVA: Lockfile detectado pela primeira vez
+          safeLog(
+            "🔄 [PROACTIVE-REIDENTIFY] Motivo: Lockfile detectado (primeira conexão com LCU)"
+          );
           setTimeout(() => {
             identifyPlayerToBackend(parsed);
           }, 2000); // Aguardar 2s para garantir que LCU está pronto
@@ -1311,38 +1355,33 @@ async function startWebSocketGateway(backendBase) {
             json.error
           );
         }
-        // ✅ NOVO: Handler para solicitação de identificação LCU
+        // ❌ REMOVIDO: Backend/Frontend NÃO DEVEM forçar identificação
+        // Electron se identifica PROATIVAMENTE apenas quando necessário:
+        // 1. Conexão inicial com WebSocket
+        // 2. Reconexão após desconexão
+        // 3. Mudança detectada no customSessionId (summoner name mudou)
         else if (json.type === "request_identity_confirmation") {
           safeLog(
-            "🔗 [Player-Sessions] [BACKEND→ELECTRON] Solicitação de identificação LCU recebida"
+            "⚠️ [Player-Sessions] [ELECTRON] Evento IGNORADO: request_identity_confirmation"
           );
           safeLog(
-            `🔗 [Player-Sessions] [BACKEND→ELECTRON] Summoner: ${json.summonerName}`
+            "   Motivo: Electron gerencia identificação PROATIVAMENTE (não aceita solicitações forçadas)"
           );
-          safeLog(
-            `🔗 [Player-Sessions] [BACKEND→ELECTRON] Motivo: ${json.reason}`
-          );
-
-          // ✅ PROATIVO: Enviar identificação LCU imediatamente
-          await sendProactiveIdentification(json.reason);
         }
-        // ✅ REMOVIDO: Reidentificação ao entrar na fila é DESNECESSÁRIA
-        // A sessão já deve estar ativa - o backend tem o customSessionId
         else if (json.type === "queue_entry_requested") {
           safeLog(
-            "🔗 [Player-Sessions] [FRONTEND→ELECTRON] Entrada na fila detectada (reidentificação NÃO necessária)"
+            "⚠️ [Player-Sessions] [ELECTRON] Evento IGNORADO: queue_entry_requested"
           );
-          // ❌ REMOVIDO: sendProactiveIdentification("queue_entry_proactive");
-          // Motivo: Se a sessão WebSocket está ativa, o backend já tem todos os dados
+          safeLog(
+            "   Motivo: Sessão já está ativa - backend tem customSessionId vinculado"
+          );
         }
-        // ❌ REMOVIDO: Backend NÃO DEVE solicitar identificação
-        // Electron se identifica PROATIVAMENTE ao conectar e ao reconectar
         else if (json.type === "request_identity_verification") {
           safeLog(
-            "⚠️ [Player-Sessions] [ELECTRON] Evento DEPRECIADO: request_identity_verification - IGNORANDO"
+            "⚠️ [Player-Sessions] [ELECTRON] Evento IGNORADO: request_identity_verification"
           );
           safeLog(
-            "⚠️ Backend NÃO DEVE solicitar identificação - Electron gerencia proativamente"
+            "   Motivo: Backend NÃO DEVE solicitar identificação - Electron gerencia proativamente"
           );
         }
         // ✅ NOVO: Handler para match_found (CRÍTICO PARA DEBUG)
@@ -1425,6 +1464,34 @@ async function startWebSocketGateway(backendBase) {
         } else if (json.type === "game_cancelled") {
           await handleGameCancelledEvent(json);
         }
+        // ✅ QUEUE EVENTS
+        else if (json.type === "queue_status") {
+          safeLog("📊 [Queue] queue_status recebido:", json);
+          if (mainWindow && mainWindow.webContents) {
+            mainWindow.webContents.send("queue-status", json);
+            safeLog("✅ [Queue] queue_status enviado para frontend via IPC");
+          }
+        } else if (json.type === "queue_update") {
+          safeLog("📊 [Queue] queue_update recebido:", json);
+          if (mainWindow && mainWindow.webContents) {
+            mainWindow.webContents.send("queue-update", json);
+            safeLog("✅ [Queue] queue_update enviado para frontend via IPC");
+          }
+        }
+        // ✅ CONNECTION EVENTS
+        else if (json.type === "backend_connection_success") {
+          safeLog("🔌 [Connection] backend_connection_success recebido:", json);
+          if (mainWindow && mainWindow.webContents) {
+            mainWindow.webContents.send("backend-connection", json);
+            safeLog("✅ [Connection] backend-connection enviado para frontend via IPC");
+          }
+        } else if (json.type === "player_session_updated") {
+          safeLog("🔔 [Session] player_session_updated recebido:", json);
+          if (mainWindow && mainWindow.webContents) {
+            mainWindow.webContents.send("player-session-update", json);
+            safeLog("✅ [Session] player-session-update enviado para frontend via IPC");
+          }
+        }
         // ✅ NOVO: Session sync status response
         else if (json.type === "session_sync_status") {
           handleSessionSyncStatus(json);
@@ -1444,21 +1511,109 @@ async function startWebSocketGateway(backendBase) {
         }
         // ✅ NOVO: Monitoramento proativo - qualquer mensagem que mencione summoner atual
         else {
-          // ✅ CORRIGIDO: Não processar mensagens de confirmação para evitar loop infinito
-          // ✅ CRÍTICO: Não reidentificar em resposta a eventos que já são consequência da identificação
+          // ✅ POLÍTICA DE REIDENTIFICAÇÃO:
+          // Electron se identifica PROATIVAMENTE apenas quando:
+          // 1. Conexão inicial com WebSocket (ao abrir app)
+          // 2. Reconexão após desconexão (WebSocket close → open)
+          // 3. Mudança no customSessionId (summoner name mudou no LCU)
+          //
+          // ❌ ELECTRON NÃO reidentifica em resposta a eventos do backend/frontend
+          // para evitar loops infinitos e reidentificações desnecessárias
           const skipReidentificationEvents = [
+            // === EVENTOS DE CONFIRMAÇÃO (causam loops) ===
             "electron_identified",
             "player_identified",
-            "player_session_updated", // ← CAUSA LOOP
-            "session_sync_confirmed", // ← CAUSA LOOP
-            "draft_update", // ← Evento de timer, não requer reidentificação
-            "draft_updated", // ← Evento de draft, não requer reidentificação
-            "draft_starting", // ← Evento de draft, não requer reidentificação
-            "draft_started", // ← Evento de draft, não requer reidentificação
+            "player_session_updated",
+            "session_sync_confirmed",
+            "session_sync_status",
+            
+            // === EVENTOS DE FILA ===
+            "queue_status",
+            "queue_update",
+            "queue_timer_update",
+            "queue_entry_requested",
+            "queue_entry_request",
+            "player_joined_queue",
+            "player_left_queue",
+            
+            // === EVENTOS DE MATCH FOUND ===
+            "match_found",
+            "match_ready",
+            "acceptance_progress",
+            "acceptance_timer",
+            "all_players_accepted",
+            "player_accepted",
+            "player_declined",
+            
+            // === EVENTOS DE DRAFT ===
+            "draft_starting",
+            "draft_started",
+            "draft_update",
+            "draft_updated",
+            "draft_cancelled",
+            "pick_completed",
+            "ban_completed",
+            "draft_timer_update",
+            "draft_phase_changed",
+            "draft_confirmation_updated",
+            "final_draft_confirmed",
+            
+            // === EVENTOS DE JOGO ===
+            "game_starting",
+            "game_started",
+            "game_in_progress",
+            "game_update",
+            "game_cancelled",
+            "game_ended",
+            
+            // === EVENTOS DE RESULTADO ===
+            "winner_modal",
+            "vote_winner",
+            "match_result",
+            "match_ended",
+            
+            // === EVENTOS DE CANCELAMENTO ===
+            "match_cancelled",
+            "queue_cancelled",
+            
+            // === EVENTOS DE DISCORD ===
+            "discord_users",
+            "discord_status",
+            "discord_channel_change",
+            "discord_connected",
+            "discord_disconnected",
+            
+            // === EVENTOS DE LCU ===
+            "lcu_status_ack",
+            "lcu_connected",
+            "lcu_disconnected",
+            "lcu_summoner_updated",
+            
+            // === EVENTOS DE SOLICITAÇÃO (backend/frontend tentando forçar) ===
+            "request_identity_confirmation",
+            "request_identity_verification",
+            "request_lcu_identification",
+            
+            // === EVENTOS DE ESPECTADOR ===
+            "spectator_mode_enabled",
+            "spectator_mode_disabled",
+            "spectator_data",
+            
+            // === OUTROS ===
+            "unknown",
+            "error",
+            "ping",
+            "pong",
+            "heartbeat",
+            "connection_status",
           ];
 
           if (!skipReidentificationEvents.includes(json.type)) {
-            // Verificar se a mensagem menciona o summoner atual e revincular
+            // ⚠️ CRÍTICO: Este bloco SÓ deve executar para eventos MUITO específicos
+            // que genuinamente necessitam reidentificação (ex: sessão expirada no backend)
+            safeLog(
+              `⚠️ [Player-Sessions] Evento '${json.type}' NÃO está na lista de skip - verificando se requer reidentificação...`
+            );
             checkAndRebindOnSummonerEvent(json.type || "unknown", json);
           }
         }
@@ -1651,6 +1806,7 @@ function initializeProactiveMonitoring() {
 // ✅ NOVO: Verificar se evento envolve summoner atual e revincular
 function checkAndRebindOnSummonerEvent(eventType, eventData) {
   if (!proactiveMonitoringEnabled || !currentSummonerInfo) {
+    // Log apenas em debug para não poluir logs
     return false;
   }
 
@@ -1660,16 +1816,21 @@ function checkAndRebindOnSummonerEvent(eventType, eventData) {
 
     if (summonerMentioned) {
       safeLog(
-        "🔗 [Player-Sessions] [ELECTRON] Evento " +
+        "🔗 [Player-Sessions] [PROACTIVE-MONITOR] Evento '" +
           eventType +
-          " menciona summoner atual - revinculando..."
+          "' menciona summoner atual (" +
+          currentSummonerInfo.summonerName +
+          ") - revinculando..."
       );
       sendProactiveIdentification("event_" + eventType);
       return true;
+    } else {
+      // Log apenas quando evento não menciona (para debug)
+      // safeLog("🔍 [Player-Sessions] [PROACTIVE-MONITOR] Evento '" + eventType + "' NÃO menciona summoner atual - ignorando");
     }
   } catch (error) {
     safeLog(
-      "❌ [Player-Sessions] [ELECTRON] Erro ao verificar evento summoner:",
+      "❌ [Player-Sessions] [PROACTIVE-MONITOR] Erro ao verificar evento summoner:",
       error
     );
   }
@@ -1677,22 +1838,35 @@ function checkAndRebindOnSummonerEvent(eventType, eventData) {
   return false;
 }
 
-// ✅ NOVO: Verificar se dados mencionam o summoner atual
+// ✅ NOVO: Verificar se dados mencionam o summoner atual DE FORMA ESPECÍFICA
+// ⚠️ IMPORTANTE: Apenas reidentificar se o evento é DIRECIONADO ao jogador,
+// não se apenas menciona ele em uma lista de jogadores
 function checkSummonerMention(data) {
   if (!data || !currentSummonerInfo) {
     return false;
   }
 
   try {
-    const dataStr = JSON.stringify(data).toLowerCase();
-    const summonerName = currentSummonerInfo.summonerName.toLowerCase();
-    const gameName = currentSummonerInfo.gameName.toLowerCase();
-
-    return (
-      dataStr.includes(summonerName) ||
-      dataStr.includes(gameName) ||
-      dataStr.includes(currentSummonerInfo.puuid.toLowerCase())
-    );
+    // ✅ CORREÇÃO: Verificar campos ESPECÍFICOS que indicam que o evento é para este jogador
+    // NÃO fazer busca genérica em todo o JSON (causa falsos positivos)
+    
+    // 1. Verificar se há campo "summonerName" ou "playerId" no nível raiz
+    if (data.summonerName || data.playerId || data.targetPlayer) {
+      const targetName = (data.summonerName || data.playerId || data.targetPlayer || "").toLowerCase();
+      const currentName = currentSummonerInfo.summonerName.toLowerCase();
+      const currentGameName = currentSummonerInfo.gameName.toLowerCase();
+      
+      return targetName === currentName || targetName === currentGameName;
+    }
+    
+    // 2. Verificar se há campo "puuid" específico
+    if (data.puuid) {
+      return data.puuid.toLowerCase() === currentSummonerInfo.puuid.toLowerCase();
+    }
+    
+    // 3. Se não há campos específicos, NÃO reidentificar
+    // (evita falsos positivos em listas de jogadores)
+    return false;
   } catch (error) {
     return false;
   }
@@ -3726,20 +3900,44 @@ async function identifyPlayerToBackend(lockfileInfo) {
       return;
     }
 
-    // 2. Buscar ranked info (opcional, mas útil)
-    const ranked = await performLcuRequest(
-      "GET",
-      "/lol-ranked/v1/current-ranked-stats"
-    ).catch(() => null);
-
-    // 3. Construir payload COMPLETO
+    // 2. Construir customSessionId
     const fullName = `${summoner.gameName}#${summoner.tagLine}`;
-
-    // ✅ NOVO: Criar sessionId customizado baseado no summonerName#tag
     const customSessionId = `player_${fullName
       .replace("#", "_")
       .replace(/[^a-zA-Z0-9_]/g, "_")
       .toLowerCase()}`;
+
+    // ✅ NOVO: Verificar se já identificamos recentemente COM MESMA SESSION
+    const now = Date.now();
+    if (
+      lastIdentifiedSession === customSessionId &&
+      now - lastIdentificationTimestamp < IDENTIFICATION_COOLDOWN
+    ) {
+      safeLog(
+        `⏭️ [Electron] Identificação ignorada - mesma sessão identificada há ${
+          Math.round((now - lastIdentificationTimestamp) / 1000)
+        }s`,
+        customSessionId
+      );
+      return;
+    }
+
+    // ✅ NOVO: Se a sessão mudou, SEMPRE identificar (novo jogador no LCU)
+    if (lastIdentifiedSession && lastIdentifiedSession !== customSessionId) {
+      safeLog(
+        "🔄 [Electron] NOVA SESSÃO DETECTADA - Identificando novo jogador:",
+        {
+          old: lastIdentifiedSession,
+          new: customSessionId,
+        }
+      );
+    }
+
+    // 3. Buscar ranked info (opcional, mas útil)
+    const ranked = await performLcuRequest(
+      "GET",
+      "/lol-ranked/v1/current-ranked-stats"
+    ).catch(() => null);
 
     const payload = {
       type: "electron_identify",
@@ -3817,6 +4015,14 @@ async function identifyPlayerToBackend(lockfileInfo) {
         `✅ [Electron] Identificação com sessionId customizado enviada: ${fullName} → ${customSessionId}`
       );
 
+      // ✅ ATUALIZAR CACHE APÓS IDENTIFICAÇÃO BEM-SUCEDIDA
+      lastIdentifiedSession = customSessionId;
+      lastIdentificationTimestamp = Date.now();
+      safeLog(
+        "💾 [Electron] Cache de identificação atualizado:",
+        customSessionId
+      );
+
       // Armazenar dados localmente para detectar mudanças
       lastKnownPuuid = summoner.puuid;
       lastKnownSummoner = fullName;
@@ -3879,7 +4085,10 @@ function startIdentityMonitor() {
           `🔄 [Electron] SessionId customizado atualizado: ${oldCustomSessionId} → ${newCustomSessionId}`
         );
 
-        // ✅ Reenviar identificação com novo sessionId
+        // ✅ REIDENTIFICAÇÃO PROATIVA: CustomSessionId mudou (summoner name mudou no LCU)
+        safeLog(
+          "🔄 [PROACTIVE-REIDENTIFY] Motivo: CustomSessionId mudou (summoner alterado no LCU)"
+        );
         const lockfileInfo = readLockfileInfo();
         if (lockfileInfo) {
           await identifyPlayerToBackend(lockfileInfo);
@@ -3990,9 +4199,9 @@ function handleSessionSyncStatus(data) {
         `   Actual: customSID=${actualCustomSessionId}, summoner=${actualSummonerName}`
       );
 
-      // ✅ RE-SINCRONIZAR: Reenviar identificação
+      // ✅ REIDENTIFICAÇÃO PROATIVA: Dessincronização detectada
       safeLog(
-        "🔄 [Session Sync] Re-enviando identificação para sincronizar..."
+        "🔄 [PROACTIVE-REIDENTIFY] Motivo: Dessincronização detectada (session_sync_status mismatch)"
       );
       const lockfileInfo = readLockfileInfo();
       if (lockfileInfo) {

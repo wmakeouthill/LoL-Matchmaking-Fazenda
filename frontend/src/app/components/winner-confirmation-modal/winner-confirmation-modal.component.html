@@ -327,7 +327,32 @@
                         )[lane] as participant
                       "
                       [class.current-player]="isPlayerInOurMatch(participant)"
+                      [class.voted-player]="
+                        getPlayerVoteStatus(
+                          participant.summonerName || participant.riotIdGameName
+                        ) === 'voted'
+                      "
+                      [class.declined-player]="
+                        getPlayerVoteStatus(
+                          participant.summonerName || participant.riotIdGameName
+                        ) === 'declined'
+                      "
+                      [class.timeout-player]="
+                        getPlayerVoteStatus(
+                          participant.summonerName || participant.riotIdGameName
+                        ) === 'timeout'
+                      "
                     >
+                      <!-- Status de votação -->
+                      <div
+                        class="vote-status"
+                        [class]="getVoteStatusClass(participant)"
+                      >
+                        <span class="status-icon">{{
+                          getVoteStatusIcon(participant)
+                        }}</span>
+                      </div>
+
                       <!-- Champion Info -->
                       <div class="participant-champion-section">
                         <div class="champion-avatar">
@@ -470,7 +495,7 @@
           </div>
         </div>
 
-        <div class="no-matches" *ngIf="matchOptions.length === 0">
+        <div class="no-matches" *ngIf="matchOptions().length === 0">
           <p>❌ Nenhuma partida personalizada encontrada no histórico.</p>
           <p>
             Certifique-se de que a partida foi concluída no League of Legends.

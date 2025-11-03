@@ -1,14 +1,29 @@
 // League of Legends Matchmaking App - Main Component Styles
 
+// ✅ IMPORT: Fonte Press Start 2P (Retro Gaming/Cyberpunk)
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+// ✅ VARIÁVEIS CYBERPUNK
+$pixel-font: 'Press Start 2P', 'Courier New', monospace;
+$cyber-blue: #00f3ff;
+$cyber-pink: #ff00ff;
+$cyber-green: #00ff41;
+$cyber-yellow: #ffff00;
+$cyber-red: #ff0055;
+$lol-gold: #c8aa6e;
+$dark-bg: #0a0a0f;
+$dark-panel: #1a1a2e;
+
 // App Container
 .app-container {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: var(--bg-primary);
+  background: linear-gradient(135deg, $dark-panel 0%, #16213e 50%, #0f3460 100%);
   color: var(--text-primary);
   position: relative;
 
+  // ✅ Background cyberpunk com scan lines
   &::before {
     content: '';
     position: absolute;
@@ -16,9 +31,13 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background:
-      radial-gradient(circle at 20% 30%, rgba(5, 150, 170, 0.15) 0%, transparent 40%),
-      radial-gradient(circle at 80% 70%, rgba(200, 155, 60, 0.1) 0%, transparent 40%);
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0, 0, 0, 0.1),
+      rgba(0, 0, 0, 0.1) 1px,
+      transparent 1px,
+      transparent 3px
+    );
     pointer-events: none;
     z-index: 0;
   }
@@ -29,29 +48,70 @@
   }
 }
 
-// Header Styling
+// ✅ HEADER CYBERPUNK RETRO - Mantém layout, muda visual
 .app-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: var(--spacing-lg) var(--spacing-xl);
-  background: var(--gradient-header);
-  border-bottom: 2px solid var(--border-primary);
+  background: linear-gradient(135deg, $dark-panel 0%, #16213e 50%, #0f3460 100%);
+  border-bottom: 2px solid $cyber-blue;
   backdrop-filter: blur(20px);
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 0 20px rgba(0, 243, 255, 0.3), 0 4px 12px rgba(0, 0, 0, 0.5);
   position: relative;
+  font-family: $pixel-font;
+
+  // ✅ Scan lines effect (cyberpunk)
+  &::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0, 0, 0, 0.15),
+      rgba(0, 0, 0, 0.15) 1px,
+      transparent 1px,
+      transparent 2px
+    );
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  // Garantir que o conteúdo fique acima das scan lines
+  > * {
+    position: relative;
+    z-index: 2;
+  }
 
   h1 {
-    font-size: 28px;
+    font-size: 0.9rem; // ✅ AUMENTADO para melhor legibilidade
     font-weight: 700;
-    background: var(--gradient-primary);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    font-family: $pixel-font;
+    color: $lol-gold;
+    text-shadow: 0 0 10px $lol-gold, 2px 2px 0 $cyber-pink, -1px -1px 0 $cyber-blue;
     margin: 0;
     display: flex;
     align-items: center;
     gap: var(--spacing-sm);
+    letter-spacing: 1px;
+    animation: glowPulse 3s ease-in-out infinite;
+
+    // Remover gradiente anterior (não funciona bem com Press Start)
+    -webkit-background-clip: initial;
+    -webkit-text-fill-color: initial;
+    background-clip: initial;
+  }
+
+  @keyframes glowPulse {
+    0%, 100% {
+      text-shadow: 0 0 10px $lol-gold, 2px 2px 0 $cyber-pink, -1px -1px 0 $cyber-blue;
+    }
+    50% {
+      text-shadow: 0 0 20px $lol-gold, 2px 2px 0 $cyber-pink, -1px -1px 0 $cyber-blue, 0 0 30px rgba(200, 170, 110, 0.5);
+    }
   }
 
   .header-content {
@@ -122,6 +182,7 @@
     display: flex;
     gap: var(--spacing-md);
     align-items: center;
+    font-family: $pixel-font;
 
     .status {
       display: flex;
@@ -129,22 +190,37 @@
       gap: var(--spacing-xs);
       padding: var(--spacing-xs) var(--spacing-md);
       border-radius: var(--radius-lg);
-      font-size: 12px;
+      font-size: 0.45rem; // ✅ AUMENTADO para melhor legibilidade
       font-weight: 500;
       transition: var(--transition-fast);
-      border: 1px solid transparent;
+      border: 2px solid transparent;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
 
       &.connected {
-        background: rgba(0, 255, 136, 0.15);
-        color: var(--success);
-        border-color: rgba(0, 255, 136, 0.3);
+        background: rgba(0, 255, 65, 0.15);
+        color: $cyber-green;
+        border-color: $cyber-green;
+        box-shadow: 0 0 15px rgba(0, 255, 65, 0.3);
+        text-shadow: 0 0 5px $cyber-green;
+        animation: statusPulse 2s ease-in-out infinite;
       }
 
       &.disconnected {
-        background: rgba(255, 107, 107, 0.15);
-        color: var(--error);
-        border-color: rgba(255, 107, 107, 0.3);
+        background: rgba(255, 0, 85, 0.15);
+        color: $cyber-red;
+        border-color: $cyber-red;
+        box-shadow: 0 0 15px rgba(255, 0, 85, 0.3);
+        text-shadow: 0 0 5px $cyber-red;
       }
+    }
+  }
+
+  @keyframes statusPulse {
+    0%, 100% {
+      box-shadow: 0 0 15px rgba(0, 255, 65, 0.3);
+    }
+    50% {
+      box-shadow: 0 0 25px rgba(0, 255, 65, 0.6);
     }
   }
 
@@ -179,55 +255,120 @@
   }
 }
 
-// Navigation Buttons (Simple version)
+// ✅ NAVIGATION CYBERPUNK RETRO
 .nav-buttons {
   display: flex;
   gap: var(--spacing-sm);
   padding: var(--spacing-lg) var(--spacing-xl);
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-primary);
+  background: linear-gradient(135deg, rgba(26, 26, 46, 0.9) 0%, rgba(15, 52, 96, 0.8) 100%);
+  border-bottom: 2px solid rgba(0, 243, 255, 0.5);
   margin-bottom: 0px !important;
+  font-family: $pixel-font;
+  position: relative;
+
+  // ✅ Glow effect no fundo
+  &::before {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg,
+      transparent 0%,
+      $cyber-blue 25%,
+      $cyber-pink 50%,
+      $cyber-blue 75%,
+      transparent 100%
+    );
+    animation: navGlow 3s linear infinite;
+  }
+
+  @keyframes navGlow {
+    0% {
+      opacity: 0.3;
+    }
+    50% {
+      opacity: 0.8;
+    }
+    100% {
+      opacity: 0.3;
+    }
+  }
 
   button {
     padding: var(--spacing-md) var(--spacing-lg);
-    border: 2px solid var(--border-primary);
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
+    border: 2px solid rgba(0, 243, 255, 0.3);
+    background: linear-gradient(135deg, rgba(0, 243, 255, 0.05) 0%, rgba(255, 0, 255, 0.02) 100%);
+    color: $cyber-blue;
     border-radius: var(--radius-md);
     cursor: pointer;
-    transition: var(--transition-normal);
+    transition: all 0.3s ease;
     font-weight: 500;
-    font-size: 14px;
+    font-size: 0.48rem; // ✅ AUMENTADO para melhor legibilidade
+    font-family: $pixel-font;
+    text-shadow: 0 0 5px currentColor;
+    box-shadow: 0 0 10px rgba(0, 243, 255, 0.1);
     position: relative;
     overflow: hidden;
 
+    // ✅ Efeito de hover com glow
     &::before {
       content: '';
       position: absolute;
-      top: 0;
-      left: -100%;
-      width: 100%;
-      height: 100%;
-      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
-      transition: var(--transition-normal);
+      top: 50%;
+      left: 50%;
+      width: 0;
+      height: 0;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(0, 243, 255, 0.3) 0%, transparent 70%);
+      transform: translate(-50%, -50%);
+      transition: width 0.4s ease, height 0.4s ease;
     }
 
     &:hover {
-      border-color: var(--primary-gold);
-      background: var(--bg-secondary);
+      border-color: $cyber-blue;
+      background: linear-gradient(135deg, rgba(0, 243, 255, 0.15) 0%, rgba(255, 0, 255, 0.08) 100%);
+      color: #fff;
       transform: translateY(-2px);
-      box-shadow: var(--shadow-sm);
+      box-shadow: 0 0 20px $cyber-blue, 0 4px 12px rgba(0, 0, 0, 0.4);
 
       &::before {
-        left: 100%;
+        width: 300px;
+        height: 300px;
       }
     }
 
     &.active {
-      background: var(--gradient-primary);
-      border-color: var(--primary-blue);
-      color: white;
-      box-shadow: var(--shadow-glow);
+      border-color: $lol-gold;
+      background: linear-gradient(135deg, rgba(200, 170, 110, 0.25) 0%, rgba(255, 215, 0, 0.15) 100%);
+      color: $lol-gold;
+      box-shadow: 0 0 25px rgba(200, 170, 110, 0.5), 0 0 15px rgba(255, 215, 0, 0.3);
+      text-shadow: 0 0 10px $lol-gold;
+      transform: scale(1.05);
+
+      &::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        border: 1px solid $lol-gold;
+        border-radius: var(--radius-md);
+        animation: activePulse 2s ease-in-out infinite;
+      }
+    }
+  }
+
+  @keyframes activePulse {
+    0%, 100% {
+      opacity: 0.5;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.02);
     }
   }
 }

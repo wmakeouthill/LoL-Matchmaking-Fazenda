@@ -228,7 +228,7 @@ public class RedisWebSocketSessionService {
 
             ClientInfo clientInfo = ClientInfo.builder()
                     .sessionId(sessionId)
-                    .summonerName(normalizedSummoner)
+                    .summonerName(summonerName) // ✅ CRÍTICO: Usar summonerName ORIGINAL, não normalizado
                     .ipAddress(ipAddress)
                     .connectedAt(Instant.now())
                     .lastActivity(Instant.now())
@@ -237,12 +237,13 @@ public class RedisWebSocketSessionService {
                     // Nota: puuid, summonerId, etc. serão atualizados depois via updatePlayerData()
                     .build();
 
-            // ✅ CRÍTICO: Usar summonerName na chave (não sessionId)
+            // ✅ CRÍTICO: Usar normalizedSummoner na CHAVE, mas summonerName original no
+            // ClientInfo
             RBucket<ClientInfo> clientInfoBucket = redisson.getBucket(clientInfoKey);
             clientInfoBucket.set(clientInfo, Duration.ofHours(1));
 
-            log.info("✅ [RedisWS] Sessão registrada: {} → {} (IP: {})",
-                    sessionId, normalizedSummoner, ipAddress);
+            log.info("✅ [RedisWS] Sessão registrada: {} → {} (IP: {}) [chave: {}]",
+                    sessionId, summonerName, ipAddress, normalizedSummoner);
 
             return true;
 
@@ -718,7 +719,10 @@ public class RedisWebSocketSessionService {
         if (summonerName == null) {
             return "";
         }
-        return summonerName.trim().toLowerCase();
+        // ✅ CRÍTICO: Usar mesma normalização do customSessionId
+        // para garantir consistência nas chaves Redis
+        return summonerName.trim().toLowerCase()
+                .replaceAll("[^a-z0-9_]", "_");
     }
 
     /**

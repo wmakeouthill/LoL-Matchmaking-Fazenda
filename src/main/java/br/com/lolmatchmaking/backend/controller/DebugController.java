@@ -466,11 +466,16 @@ public class DebugController {
         // Criar estrutura teams.blue e teams.red
         Map<String, Object> teams = new HashMap<>();
 
+        // ✅ CORREÇÃO: Extrair bans dos participantes antes de processar
+        List<String> blueAllBans = extractBansForTeam(blueTeam, 100);
+        List<String> redAllBans = extractBansForTeam(redTeam, 200);
+
+        log.info("🚫 [DEBUG] Bans extraídos - Blue: {}, Red: {}", blueAllBans, redAllBans);
+
         // Blue Team
         Map<String, Object> blueTeamData = new HashMap<>();
         List<Map<String, Object>> bluePlayers = new ArrayList<>();
         List<String> blueAllPicks = new ArrayList<>();
-        List<String> blueAllBans = new ArrayList<>();
 
         int teamIndex = 0;
         for (Map<String, Object> participant : blueTeam) {
@@ -499,7 +504,6 @@ public class DebugController {
         Map<String, Object> redTeamData = new HashMap<>();
         List<Map<String, Object>> redPlayers = new ArrayList<>();
         List<String> redAllPicks = new ArrayList<>();
-        List<String> redAllBans = new ArrayList<>();
 
         teamIndex = 5;
         for (Map<String, Object> participant : redTeam) {
@@ -528,11 +532,93 @@ public class DebugController {
         pickBanData.put("currentPhase", "completed");
         pickBanData.put("currentIndex", 20);
 
+        // ✅ CORREÇÃO: Adicionar estruturas de bans para compatibilidade com frontend
+        pickBanData.put("blueBans", blueAllBans);
+        pickBanData.put("redBans", redAllBans);
+        pickBanData.put("team1Bans", blueAllBans);
+        pickBanData.put("team2Bans", redAllBans);
+
         // Criar listas team1 e team2 (formato antigo para compatibilidade)
         pickBanData.put("team1", bluePlayers);
         pickBanData.put("team2", redPlayers);
 
         return pickBanData;
+    }
+
+    /**
+     * ✅ NOVO: Extrai bans de um time do LCU match data
+     */
+    private List<String> extractBansForTeam(List<Map<String, Object>> teamParticipants, int teamId) {
+        List<String> bans = new ArrayList<>();
+
+        // Procurar pelo primeiro participante que tem informações de bans
+        for (Map<String, Object> participant : teamParticipants) {
+            Object teamIdObj = participant.get("teamId");
+            if (teamIdObj instanceof Number && ((Number) teamIdObj).intValue() == teamId) {
+
+                // Verificar se tem stats com bans
+                Object statsObj = participant.get("stats");
+                if (statsObj instanceof Map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> stats = (Map<String, Object>) statsObj;
+
+                    // Extrair bans individuais (algumas versões do LCU incluem isso)
+                    for (int i = 0; i < 10; i++) {
+                        String banKey = "playerBan" + i;
+                        Object banObj = stats.get(banKey);
+                        if (banObj instanceof Number) {
+                            int banChampId = ((Number) banObj).intValue();
+                            if (banChampId > 0 && banChampId != -1) {
+                                bans.add(String.valueOf(banChampId));
+                            }
+                        }
+                    }
+                }
+
+                // Se não encontrou nos stats, tentar buscar em teams (estrutura alternativa)
+                Object teamsObj = participant.get("teams");
+                if (teamsObj instanceof List) {
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> teams = (List<Map<String, Object>>) teamsObj;
+
+                    for (Map<String, Object> team : teams) {
+                        Object teamIdTeamObj = team.get("teamId");
+                        if (teamIdTeamObj instanceof Number && ((Number) teamIdTeamObj).intValue() == teamId) {
+                            Object bansObj = team.get("bans");
+                            if (bansObj instanceof List) {
+                                @SuppressWarnings("unchecked")
+                                List<Map<String, Object>> bansList = (List<Map<String, Object>>) bansObj;
+
+                                for (Map<String, Object> ban : bansList) {
+                                    Object championIdObj = ban.get("championId");
+                                    if (championIdObj instanceof Number) {
+                                        int banChampId = ((Number) championIdObj).intValue();
+                                        if (banChampId > 0 && banChampId != -1) {
+                                            bans.add(String.valueOf(banChampId));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Se já encontrou bans, pode sair do loop
+                if (!bans.isEmpty()) {
+                    break;
+                }
+            }
+        }
+
+        // ✅ FALLBACK: Se não encontrou bans na estrutura esperada, retornar lista vazia
+        // (partidas customizadas podem não ter bans registrados pelo LCU)
+        if (bans.isEmpty()) {
+            log.warn(
+                    "⚠️ [DEBUG] Nenhum ban encontrado para teamId {} nos dados do LCU. Partida pode não ter tido fase de bans.",
+                    teamId);
+        }
+
+        return bans;
     }
 
     /**

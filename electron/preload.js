@@ -152,6 +152,14 @@ const electronAPI = {
   onDraftCancelled: (callback) => ipcRenderer.on("draft-cancelled", callback),
   onGameCancelled: (callback) => ipcRenderer.on("game-cancelled", callback),
 
+  // ✅ QUEUE EVENTS
+  onQueueStatus: (callback) => ipcRenderer.on("queue-status", callback),
+  onQueueUpdate: (callback) => ipcRenderer.on("queue-update", callback),
+
+  // ✅ CONNECTION EVENTS
+  onBackendConnection: (callback) => ipcRenderer.on("backend-connection", callback),
+  onPlayerSessionUpdate: (callback) => ipcRenderer.on("player-session-update", callback),
+
   getBackendApiUrl: () => {
     // CONFIGURAÇÃO DE REDE: Altere esta URL para o IP do servidor na rede
     // Para testes locais: 'http://localhost:8080'

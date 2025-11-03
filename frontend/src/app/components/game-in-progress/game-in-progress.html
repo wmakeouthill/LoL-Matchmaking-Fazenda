@@ -344,11 +344,11 @@
     <h4>Debug Info</h4>
     <pre>
 {{ {
-      gameStatus: gameStatus,
-      lcuDetected: lcuGameDetected,
-      selectedWinner: selectedWinner,
-      gameDuration: gameDuration,
-      lcuEnabled: lcuDetectionEnabled
+      gameStatus: gameStatus(),
+      lcuDetected: lcuGameDetected(),
+      selectedWinner: selectedWinner(),
+      gameDuration: gameDuration(),
+      lcuEnabled: lcuDetectionEnabled()
     } | json }}</pre
     >
   </div>

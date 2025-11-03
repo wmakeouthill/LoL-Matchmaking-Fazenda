@@ -291,6 +291,11 @@ public class MatchVoteController {
                         response.put("shouldLink", true);
                         response.put("voterName", voterName);
 
+                        // ✅ CORREÇÃO: Incluir voteWeight na resposta para special users
+                        if (isSpecialUserVote && voteResult.containsKey("voteWeight")) {
+                            response.put("voteWeight", voteResult.get("voteWeight"));
+                        }
+
                         return ResponseEntity.ok(response);
                     } else {
                         log.warn("⚠️ Partida LCU não encontrada no histórico: {}", votedGameId);
@@ -321,6 +326,11 @@ public class MatchVoteController {
             response.put("specialUserVote", isSpecialUserVote);
             response.put("shouldLink", shouldLink);
             response.put("voterName", voterName);
+
+            // ✅ CORREÇÃO: Incluir voteWeight na resposta para special users
+            if (isSpecialUserVote && voteResult.containsKey("voteWeight")) {
+                response.put("voteWeight", voteResult.get("voteWeight"));
+            }
 
             return ResponseEntity.ok(response);
 

@@ -1465,8 +1465,14 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
       saveLogToRoot(`🔄 [updateDraftState] isMyTurn=${myTurn}`);
 
-      // ✅ MELHORADO: Atualizar estado da interface
-      this.updateInterfaceState();
+      // ✅ MELHORADO: Atualizar estado da interface (apenas se não estiver em modo de edição)
+      // ✅ CRÍTICO: NÃO chamar updateInterfaceState durante modo de edição
+      const isEditingNow = this.isEditingMode();
+      if (!isEditingNow) {
+        this.updateInterfaceState();
+      } else {
+        saveLogToRoot(`⏭️ [updateDraftState] Modo de edição ativo - PULANDO updateInterfaceState`);
+      }
 
       // ✅ CRÍTICO: Forçar detecção de mudanças para OnPush (updateInterfaceState já chama detectChanges quando necessário)
       this.cdr.markForCheck();
@@ -1517,12 +1523,19 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
     }
 
     // ✅ NOVO: Verificar se draft foi completado
-    const isDraftCompleted = currentSession.phase === 'completed' ||
-      currentSession.currentAction >= (currentSession.phases?.length || 0);
+    // ✅ CRÍTICO: Modal só deve abrir quando TODOS os jogadores terminaram suas ações
+    const allPhasesCompleted = currentSession.phases?.every((phase: any) => {
+      // Verificar se a fase tem um campeão selecionado
+      return !!(phase.championId || phase.champion?.id);
+    }) || false;
+
+    const isDraftCompleted = (currentSession.phase === 'completed' ||
+      currentSession.currentAction >= (currentSession.phases?.length || 0)) &&
+      allPhasesCompleted;
 
     if (isDraftCompleted) {
       logDraft('🎯 [updateInterfaceState] Draft completado - mostrando modal de confirmação');
-      saveLogToRoot(`✅ [updateInterfaceState] Draft completado - mostrando modal de confirmação`);
+      saveLogToRoot(`✅ [updateInterfaceState] Draft completado - mostrando modal de confirmação (todas as fases completas: ${allPhasesCompleted})`);
       this.showChampionModal.set(false);
       this.showConfirmationModal.set(true);
       // ✅ CRÍTICO: Forçar detecção de mudanças para OnPush
@@ -2671,23 +2684,23 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
 
     // ✅ PRIMEIRO: Log do estado atual ANTES de qualquer alteração
     console.log('🔵 [EDIT-PICK] Estado ANTES:', {
-      showChampionModal: this.showChampionModal,
-      showConfirmationModal: this.showConfirmationModal,
-      isEditingMode: this.isEditingMode
+      showChampionModal: this.showChampionModal(),
+      showConfirmationModal: this.showConfirmationModal(),
+      isEditingMode: this.isEditingMode()
     });
-    saveLogToRoot(`🔍 [onConfirmationModalEditPick] ANTES: showanyModal=${this.showChampionModal}, showConfirmationModal=${this.showConfirmationModal}, isEditingMode=${this.isEditingMode}`);
+    saveLogToRoot(`🔍 [onConfirmationModalEditPick] ANTES: showChampionModal=${this.showChampionModal()}, showConfirmationModal=${this.showConfirmationModal()}, isEditingMode=${this.isEditingMode()}`);
 
     // ✅ CRÍTICO: Definir modo de edição PRIMEIRO para bloquear updateInterfaceState
     this.isEditingMode.set(true);
     console.log('🔵 [EDIT-PICK] Modo de edição ATIVADO!');
-    saveLogToRoot(`🔒 [onConfirmationModalEditPick] MODO EDIÇÃO ATIVADO: isEditingMode=${this.isEditingMode}`);
+    saveLogToRoot(`🔒 [onConfirmationModalEditPick] MODO EDIÇÃO ATIVADO: isEditingMode=${this.isEditingMode()}`);
 
     // ✅ SIGNALS: Armazenar dados da edição ANTES de alterar modais
     this.currentEditingPlayer.set({
       playerId: data.playerId,
       phaseIndex: data.phaseIndex
     });
-    saveLogToRoot(`� [onConfirmationModalEditPick] Dados de edição armazenados: ${JSON.stringify(this.currentEditingPlayer)}`);
+    saveLogToRoot(`📦 [onConfirmationModalEditPick] Dados de edição armazenados: ${JSON.stringify(this.currentEditingPlayer())}`);
 
     // ✅ SIGNALS: Capturar session para validação
     const currentSession = this.session();
@@ -2745,7 +2758,12 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
         saveLogToRoot(`🔧 [onConfirmationModalEditPick] Estado corrigido`);
       }
     }, 100);
-    saveLogToRoot(`� [onConfirmationModalEditPick] Detecção de mudanças forçada`);
+
+    // ✅ NOVO: Adicionar timeout adicional para garantir estabilidade
+    setTimeout(() => {
+      this.cdr.detectChanges();
+      saveLogToRoot(`🔄 [onConfirmationModalEditPick] Detecção de mudanças forçada novamente (200ms)`);
+    }, 200);
   }
 
   // ✅ NOVO: Método para atualizar estado do draft
@@ -3695,15 +3713,18 @@ export class DraftPickBanComponent implements OnInit, OnDestroy, OnChanges {
   openPlayerHelpModal(player: any): void {
     logDraft('[DraftPickBan] Abrindo modal de ajuda para jogador:', player);
 
+    // ✅ CORREÇÃO: Usar .set() para signals ao invés de atribuição direta
     // Determinar summonerName correto
-    this.selectedPlayerForHelp = player.summonerName || `${player.gameName}#${player.tagLine}`;
+    const summonerName = player.summonerName || `${player.gameName}#${player.tagLine}`;
+    this.selectedPlayerForHelp.set(summonerName);
 
     // Determinar nome para exibição
-    this.selectedPlayerNameForHelp = player.name || player.gameName || player.summonerName || 'Jogador';
+    const displayName = player.name || player.gameName || player.summonerName || 'Jogador';
+    this.selectedPlayerNameForHelp.set(displayName);
 
     this.showPlayerHelpModal.set(true);
 
-    saveLogToRoot(`📊 [openPlayerHelpModal] Modal aberto para: ${this.selectedPlayerNameForHelp} (${this.selectedPlayerForHelp})`);
+    saveLogToRoot(`📊 [openPlayerHelpModal] Modal aberto para: ${displayName} (${summonerName})`);
 
     // ✅ CRÍTICO: Forçar detecção de mudanças para OnPush
     this.cdr.markForCheck();

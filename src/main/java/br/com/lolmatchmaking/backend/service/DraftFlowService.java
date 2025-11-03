@@ -1386,6 +1386,9 @@ public class DraftFlowService {
                     cm.setPickBanDataJson(jsonToSave);
                     customMatchRepository.save(cm);
 
+                    // ✅ CRÍTICO: Sincronizar MySQL → Redis após cada ação
+                    syncMySQLtoRedis(matchId);
+
                     log.info("📊 [persist] AÇÕES - Total:{}, Completed:{}, Pending:{}",
                             st.getActions().size(), completedActions, pendingActions);
 

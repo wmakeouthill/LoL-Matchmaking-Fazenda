@@ -47,6 +47,14 @@ declare global {
       onDraftCancelled: (callback: (event: any, data: any) => void) => void;
       onGameCancelled: (callback: (event: any, data: any) => void) => void;
 
+      // === QUEUE EVENTS ===
+      onQueueStatus: (callback: (event: any, data: any) => void) => void;
+      onQueueUpdate: (callback: (event: any, data: any) => void) => void;
+
+      // === CONNECTION EVENTS ===
+      onBackendConnection: (callback: (event: any, data: any) => void) => void;
+      onPlayerSessionUpdate: (callback: (event: any, data: any) => void) => void;
+
       // === LCU API ===
       lcu: {
         request: (pathname: string, method?: string, body?: any) => Promise<any>;
