@@ -44,7 +44,7 @@ interface PlayerChampionData {
   standalone: true,
   imports: [CommonModule],
   templateUrl: './draft-player-help-modal.html',
-  styleUrls: ['./draft-player-help-modal.css']
+  styleUrls: ['./draft-player-help-modal.scss']
 })
 export class DraftPlayerHelpModalComponent implements OnInit, OnChanges {
   @Input() isVisible: boolean = false;

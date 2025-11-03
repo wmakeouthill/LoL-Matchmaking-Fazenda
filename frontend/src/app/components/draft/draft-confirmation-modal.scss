@@ -529,7 +529,14 @@ $dark-panel: #1a1a2e;
     }
 
     .ban-name {
-      color: #888;
+      font-family: $pixel-font;
+      font-size: $player-card-font-size;
+      color: $cyber-red;
+      text-align: center;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-shadow: 0 0 5px $cyber-red, 1px 1px 0 rgba(0, 0, 0, 0.8);
     }
   }
 }

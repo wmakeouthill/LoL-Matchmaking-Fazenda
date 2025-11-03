@@ -1,3 +1,27 @@
+// ✅ IMPORT: Módulo Sass Color (moderno)
+@use 'sass:color';
+
+// ✅ IMPORT: Fonte Press Start 2P (Retro Gaming)
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+// ✅ TEMA RETRO GAMER / CYBERPUNK PIXELIZADO COM CORES DO LEAGUE OF LEGENDS
+$pixel-font: 'Press Start 2P', 'Courier New', monospace;
+$base-font-size: 0.36rem;
+$player-card-font-size: 0.50rem;
+$cyber-blue: #00f3ff;
+$cyber-pink: #ff00ff;
+$cyber-green: #00ff41;
+$cyber-yellow: #ffff00;
+$cyber-red: #ff0055;
+$neon-blue: #3498db;
+$neon-purple: #9b59b6;
+$lol-blue: #3c9aff;
+$lol-red: #ff3d3d;
+$lol-gold: #c8aa6e;
+$lol-dark-gold: #a09b8c;
+$dark-bg: #0a0a0f;
+$dark-panel: #1a1a2e;
+
 /* Modal Overlay */
 .modal-overlay {
   position: fixed;
@@ -5,13 +29,44 @@
   left: 0;
   width: 100vw;
   height: 100vh;
-  background: rgba(0, 0, 0, 0.8);
-  backdrop-filter: blur(5px);
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 9999;
-  animation: fadeIn 0.2s ease-out;
+  animation: fadeIn 0.3s ease;
+  font-family: $pixel-font;
+  image-rendering: pixelated;
+
+  // Scanlines CRT effect
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0, 0, 0, 0.15),
+      rgba(0, 0, 0, 0.15) 1px,
+      transparent 1px,
+      transparent 2px
+    );
+    pointer-events: none;
+    z-index: 2;
+    animation: scanlines 8s linear infinite;
+  }
+}
+
+@keyframes scanlines {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 0 100%;
+  }
 }
 
 @keyframes fadeIn {
@@ -25,15 +80,42 @@
 
 /* Modal Container */
 .modal-container {
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-  border-radius: 16px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  background: linear-gradient(135deg, $dark-panel 0%, #16213e 50%, #0f3460 100%);
+  border-radius: 4px;
+  border: 4px solid $cyber-blue;
+  box-shadow: 0 0 20px $cyber-blue, 0 0 40px rgba(0, 243, 255, 0.5), inset 0 0 60px rgba(0, 243, 255, 0.1);
   width: 90%;
   max-width: 500px;
   max-height: 80vh;
   overflow: hidden;
-  animation: slideUp 0.3s ease-out;
-  border: 2px solid rgba(255, 255, 255, 0.1);
+  animation: slideUp 0.3s ease, glitchBorder 0.1s infinite;
+  position: relative;
+  z-index: 3;
+
+  // Grid cyberpunk background
+  &::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image:
+      linear-gradient(rgba($cyber-blue, 0.03) 2px, transparent 2px),
+      linear-gradient(90deg, rgba($cyber-blue, 0.03) 2px, transparent 2px);
+    background-size: 50px 50px;
+    pointer-events: none;
+    z-index: 0;
+  }
+}
+
+@keyframes glitchBorder {
+  0%, 90%, 100% {
+    border-color: $cyber-blue;
+  }
+  95% {
+    border-color: $cyber-pink;
+  }
 }
 
 @keyframes slideUp {
@@ -52,96 +134,114 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 20px 24px;
-  background: rgba(255, 255, 255, 0.05);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 16px 20px;
+  background: rgba(0, 0, 0, 0.5);
+  border-bottom: 2px solid $cyber-blue;
+  position: relative;
+  z-index: 1;
 }
 
 .modal-header h2 {
   margin: 0;
-  font-size: 1.5rem;
-  color: #fff;
-  font-weight: 600;
+  font-size: 0.6rem;
+  color: $lol-gold;
+  font-weight: 700;
+  font-family: $pixel-font;
+  text-shadow: 0 0 10px $lol-gold, 2px 2px 0 $cyber-pink;
+  letter-spacing: 2px;
+  text-transform: uppercase;
 }
 
 .close-btn {
-  background: none;
-  border: none;
-  color: #fff;
-  font-size: 1.5rem;
+  background: rgba(0, 0, 0, 0.5);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  color: $cyber-red;
+  font-size: 1.2rem;
   cursor: pointer;
-  padding: 8px;
-  border-radius: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
   transition: all 0.2s;
-  opacity: 0.7;
+  font-family: $pixel-font;
+  text-shadow: 0 0 5px $cyber-red;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: $cyber-red;
+    box-shadow: 0 0 10px $cyber-red;
+    transform: scale(1.1);
+  }
 }
 
-.close-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  opacity: 1;
-}
-
-/* ✅ NOVO: Auto-refresh Control */
+/* Auto-refresh Control */
 .auto-refresh-control {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 16px;
-  padding: 12px 24px;
-  background: rgba(255, 255, 255, 0.03);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  gap: 12px;
+  padding: 10px 20px;
+  background: rgba(0, 0, 0, 0.3);
+  border-bottom: 1px solid rgba(0, 243, 255, 0.2);
+  position: relative;
+  z-index: 1;
 }
 
 .checkbox-label {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #fff;
+  color: $lol-dark-gold;
   cursor: pointer;
-  font-size: 0.95rem;
+  font-size: $base-font-size;
+  font-family: $pixel-font;
   user-select: none;
+  text-shadow: 0 0 5px $lol-dark-gold;
+
+  &:hover span {
+    color: $cyber-green;
+    text-shadow: 0 0 10px $cyber-green;
+  }
 }
 
 .checkbox-label input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
+  width: 14px;
+  height: 14px;
   cursor: pointer;
-  accent-color: #0ac8b9;
+  accent-color: $cyber-green;
 }
 
-.checkbox-label:hover span {
-  color: #0ac8b9;
-}
-
-/* ✅ NOVO: Botão de Atualização Manual */
+/* Botão de Atualização Manual */
 .manual-refresh-btn {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 16px;
-  background: linear-gradient(135deg, #0ac8b9 0%, #08a497 100%);
-  color: #fff;
-  border: none;
-  border-radius: 8px;
+  padding: 6px 12px;
+  background: rgba(0, 255, 65, 0.2);
+  color: $cyber-green;
+  border: 2px solid $cyber-green;
+  border-radius: 4px;
   cursor: pointer;
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: $base-font-size;
+  font-family: $pixel-font;
   transition: all 0.2s;
   white-space: nowrap;
-}
+  text-shadow: 0 0 5px $cyber-green;
+  box-shadow: 0 0 8px $cyber-green;
 
-.manual-refresh-btn:hover:not(:disabled) {
-  background: linear-gradient(135deg, #08a497 0%, #06887c 100%);
-  transform: scale(1.05);
-}
+  &:hover:not(:disabled) {
+    background: rgba(0, 255, 65, 0.3);
+    transform: scale(1.05);
+    box-shadow: 0 0 15px $cyber-green;
+  }
 
-.manual-refresh-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 
-.manual-refresh-btn:active:not(:disabled) {
-  transform: scale(0.98);
+  &:active:not(:disabled) {
+    transform: scale(0.98);
+  }
 }
 
 /* Loading State */
@@ -150,18 +250,27 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 60px 24px;
-  color: #fff;
+  padding: 40px 20px;
+  color: $lol-gold;
+  position: relative;
+  z-index: 1;
+
+  p {
+    font-family: $pixel-font;
+    font-size: $base-font-size;
+    text-shadow: 0 0 5px $lol-gold;
+  }
 }
 
 .spinner {
-  width: 40px;
-  height: 40px;
-  border: 4px solid rgba(255, 255, 255, 0.2);
-  border-top-color: #0ac8b9;
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(0, 243, 255, 0.2);
+  border-top-color: $cyber-blue;
   border-radius: 50%;
   animation: spin 1s linear infinite;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
+  box-shadow: 0 0 10px $cyber-blue;
 }
 
 @keyframes spin {

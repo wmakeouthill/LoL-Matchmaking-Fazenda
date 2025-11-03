@@ -1678,9 +1678,12 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       return this.cachedTeamBans.get(team)!;
     }
 
+    // Extrair valor do signal gameData
+    const gameDataValue = this.gameData();
+
     // ✅ PRIORIDADE 1: Fallback direto no gameData (estrutura que o backend está enviando)
-    if (team === 'blue' && Array.isArray((this.gameData as any)?.blueBans)) {
-      const bans = (this.gameData as any).blueBans.map((championId: any) => ({
+    if (team === 'blue' && Array.isArray((gameDataValue as any)?.blueBans)) {
+      const bans = (gameDataValue as any).blueBans.map((championId: any) => ({
         champion: { id: championId, name: this.getChampionNameById(championId) },
         championName: this.getChampionNameById(championId),
         championId: championId
@@ -1690,8 +1693,8 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
         this.cachedTeamBans.set(team, bans);
         return bans;
       }
-    } else if (team === 'red' && Array.isArray((this.gameData as any)?.redBans)) {
-      const bans = (this.gameData as any).redBans.map((championId: any) => ({
+    } else if (team === 'red' && Array.isArray((gameDataValue as any)?.redBans)) {
+      const bans = (gameDataValue as any).redBans.map((championId: any) => ({
         champion: { id: championId, name: this.getChampionNameById(championId) },
         championName: this.getChampionNameById(championId),
         championId: championId
@@ -1720,9 +1723,9 @@ export class GameInProgressComponent implements OnInit, OnDestroy, OnChanges {
       logGameInProgress(`🔍 [GameInProgress] redBans:`, pickBanData?.redBans);
 
       // ✅ NOVO: Debug da estrutura completa do gameData
-      logGameInProgress(`🔍 [GameInProgress] gameData completo:`, this.gameData);
-      logGameInProgress(`🔍 [GameInProgress] gameData.blueBans:`, (this.gameData as any)?.blueBans);
-      logGameInProgress(`🔍 [GameInProgress] gameData.redBans:`, (this.gameData as any)?.redBans);
+      logGameInProgress(`🔍 [GameInProgress] gameData completo:`, gameDataValue);
+      logGameInProgress(`🔍 [GameInProgress] gameData.blueBans:`, (gameDataValue as any)?.blueBans);
+      logGameInProgress(`🔍 [GameInProgress] gameData.redBans:`, (gameDataValue as any)?.redBans);
 
       // ✅ CORREÇÃO: Extrair bans das phases (estrutura correta)
       if (Array.isArray(pickBanData?.phases)) {

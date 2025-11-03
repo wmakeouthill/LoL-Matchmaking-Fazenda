@@ -29,7 +29,7 @@ interface MuteResponse {
   standalone: true,
   imports: [CommonModule],
   templateUrl: './spectators-modal.component.html',
-  styleUrls: ['./spectators-modal.component.css']
+  styleUrls: ['./spectators-modal.component.scss']
 })
 export class SpectatorsModalComponent implements OnInit, OnDestroy {
   @Input() matchId!: number;

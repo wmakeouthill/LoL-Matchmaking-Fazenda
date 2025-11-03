@@ -9,7 +9,7 @@
     (click)="$event.stopPropagation()"
     (keydown)="$event.stopPropagation()"
   >
-    
+
     <!-- Header -->
     <div class="confirmation-header">
       <div class="header-left">
@@ -205,13 +205,6 @@
         [disabled]="isConfirming"
       >
         ❌ Cancelar Partida
-      </button>
-      <button
-        class="btn btn-info btn-lg"
-        (click)="refreshDraftState()"
-        [disabled]="isConfirming"
-      >
-        🔄 Atualizar Estado do Draft
       </button>
       <button
         class="btn btn-secondary btn-lg"

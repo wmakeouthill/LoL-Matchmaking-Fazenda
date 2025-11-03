@@ -430,7 +430,7 @@ $dark-panel: #1a1a2e;
 
     .vs-text {
       font-family: $pixel-font;
-      font-size: 0.8rem;
+      font-size: 0.6rem;
       font-weight: 900;
       color: $lol-gold;
       text-shadow: 0 0 10px $lol-gold, 2px 2px 0 rgba(0, 0, 0, 0.8);
@@ -701,10 +701,11 @@ $dark-panel: #1a1a2e;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.3s ease;
-    font-size: 16px;
+    font-size: $base-font-size;
+    font-family: $pixel-font;
 
     .btn-icon {
-      font-size: 18px;
+      font-size: 14px;
     }
 
     &.btn-primary {
@@ -881,14 +882,16 @@ $dark-panel: #1a1a2e;
       h4 {
         margin: 0;
         color: #f0c040;
-        font-size: 16px;
+        font-size: $base-font-size;
         font-weight: bold;
+        font-family: $pixel-font;
       }
 
       .progress-text {
         color: #c9aa71;
-        font-size: 14px;
+        font-size: $base-font-size;
         font-weight: 500;
+        font-family: $pixel-font;
       }
     }
 
@@ -928,9 +931,10 @@ $dark-panel: #1a1a2e;
     .vote-message {
       margin: 0;
       color: #00ff00;
-      font-size: 12px;
+      font-size: $base-font-size;
       text-align: center;
       font-weight: bold;
+      font-family: $pixel-font;
     }
   }
 }
@@ -971,8 +975,9 @@ $dark-panel: #1a1a2e;
   .info-message {
     margin: 0;
     color: #e0e6ed;
-    font-size: 14px;
+    font-size: $base-font-size;
     line-height: 1.4;
+    font-family: $pixel-font;
 
     strong {
       color: #4fc3f7;
@@ -1072,7 +1077,7 @@ $dark-panel: #1a1a2e;
     .close-btn {
       background: none;
       border: none;
-      font-size: 24px;
+      font-size: 20px;
       color: #a09b8c;
       cursor: pointer;
       padding: 0;
@@ -1107,7 +1112,8 @@ $dark-panel: #1a1a2e;
         padding: 8px 16px;
         border-radius: 20px;
         font-weight: 600;
-        font-size: 14px;
+        font-size: $base-font-size;
+        font-family: $pixel-font;
         margin-bottom: 8px;
 
         &.high-confidence {
@@ -1127,7 +1133,8 @@ $dark-panel: #1a1a2e;
       }
 
       .confidence-reason {
-        font-size: 14px;
+        font-size: $base-font-size;
+        font-family: $pixel-font;
         color: #a09b8c;
         margin: 0;
       }
@@ -1144,12 +1151,14 @@ $dark-panel: #1a1a2e;
           display: inline-block;
           font-weight: 600;
           color: #5cb85c;
-          font-size: 12px;
+          font-size: $base-font-size;
+          font-family: $pixel-font;
           letter-spacing: 1px;
         }
 
         .live-description {
-          font-size: 12px;
+          font-size: $base-font-size;
+          font-family: $pixel-font;
           color: #a09b8c;
           margin: 4px 0 0 0;
         }
@@ -1164,7 +1173,8 @@ $dark-panel: #1a1a2e;
 
       h4 {
         margin: 0 0 12px 0;
-        font-size: 16px;
+        font-size: $base-font-size;
+        font-family: $pixel-font;
         color: #c8aa6e;
       }
 
@@ -1181,12 +1191,16 @@ $dark-panel: #1a1a2e;
 
         .label {
           font-weight: 500;
+          font-size: $base-font-size;
+          font-family: $pixel-font;
           color: #a09b8c;
         }
 
         .value {
           color: #e0e6ed;
           font-weight: 500;
+          font-size: $base-font-size;
+          font-family: $pixel-font;
 
           &.winner {
             font-weight: 600;
