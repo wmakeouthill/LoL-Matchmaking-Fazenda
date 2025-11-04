@@ -184,14 +184,15 @@ public class PlayerService {
                 player.setPuuid(puuid);
             }
 
-            // ✅ NOVO: Atualizar profileIconUrl se profileIconId fornecido e URL ainda não
-            // existe
-            if (profileIconId != null && (player.getProfileIconUrl() == null || player.getProfileIconUrl().isEmpty())) {
+            // ✅ CORREÇÃO: SEMPRE atualizar profileIconUrl se profileIconId fornecido
+            // (não verificar se já existe, pois o ícone pode ter mudado)
+            // Usar Community Dragon (mais confiável que Data Dragon)
+            if (profileIconId != null) {
                 String profileIconUrl = String.format(
-                        "https://ddragon.leagueoflegends.com/cdn/latest/img/profileicon/%d.png",
+                        "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/profile-icons/%d.jpg",
                         profileIconId);
                 player.setProfileIconUrl(profileIconUrl);
-                log.info("✅ Profile icon URL salva no login: {}", profileIconUrl);
+                log.info("✅ Profile icon URL atualizada no login: {} (iconId: {})", profileIconUrl, profileIconId);
             }
 
             // ✅ Atualizar custom_mmr (current_mmr + custom_lp)
@@ -204,13 +205,15 @@ public class PlayerService {
                     customLp,
                     player.getCustomMmr());
         } else {
-            // ✅ NOVO: Construir profileIconUrl se profileIconId fornecido
+            // ✅ Construir profileIconUrl se profileIconId fornecido
+            // Usar Community Dragon (mais confiável que Data Dragon)
             String profileIconUrl = null;
             if (profileIconId != null) {
                 profileIconUrl = String.format(
-                        "https://ddragon.leagueoflegends.com/cdn/latest/img/profileicon/%d.png",
+                        "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/profile-icons/%d.jpg",
                         profileIconId);
-                log.info("✅ Profile icon URL definida para novo jogador: {}", profileIconUrl);
+                log.info("✅ Profile icon URL definida para novo jogador: {} (iconId: {})", profileIconUrl,
+                        profileIconId);
             }
 
             player = Player.builder()

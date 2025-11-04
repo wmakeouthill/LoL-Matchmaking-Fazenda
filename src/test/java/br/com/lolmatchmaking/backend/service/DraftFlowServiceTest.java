@@ -2,7 +2,6 @@ package br.com.lolmatchmaking.backend.service;
 
 import br.com.lolmatchmaking.backend.domain.entity.CustomMatch;
 import br.com.lolmatchmaking.backend.domain.repository.CustomMatchRepository;
-import br.com.lolmatchmaking.backend.domain.repository.QueuePlayerRepository;
 import br.com.lolmatchmaking.backend.websocket.SessionRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -13,7 +12,8 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class DraftFlowServiceTest {
 

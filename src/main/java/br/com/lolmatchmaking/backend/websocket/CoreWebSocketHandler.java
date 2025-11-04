@@ -254,6 +254,10 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
 
         CompletableFuture.runAsync(() -> {
             try {
+                // ✅ CORREÇÃO: Aguardar 3000ms antes de fazer requisição LCU
+                // Evita erro "TEXT_PARTIAL_WRITING" quando WebSocket ainda está processando
+                Thread.sleep(3000);
+
                 log.info("📊 [WS] Buscando dados de ranked para inicializar MMR: {}", finalSummonerName);
 
                 // Buscar ranked stats via RPC gateway
@@ -329,6 +333,9 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                 } else {
                     log.warn("⚠️ [WS] Não foi possível extrair dados de ranked solo");
                 }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt(); // Restaurar flag de interrupção
+                log.warn("⚠️ [WS] Thread interrompida ao buscar ranked: {}", e.getMessage());
             } catch (Exception e) {
                 log.warn("⚠️ [WS] Erro ao buscar ranked/salvar MMR (não crítico): {}", e.getMessage());
             }
@@ -802,8 +809,9 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
 
                 log.info("🔗 [CoreWS] Mapeamento ARMazenado: {} → {} (Redis + cache local, mappings antigos limpos)",
                         session.getId(), customSessionId);
-                
-                // ✅ CRÍTICO: Enviar eventos pendentes AGORA que customSessionId está registrado!
+
+                // ✅ CRÍTICO: Enviar eventos pendentes AGORA que customSessionId está
+                // registrado!
                 webSocketService.sendPendingEventsForSession(customSessionId, session.getId());
             }
 
@@ -861,7 +869,8 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             // Responder
             session.sendMessage(new TextMessage("{\"type\":\"electron_identified\",\"success\":true}"));
 
-            // ✅ CRÍTICO: Verificar e enviar eventos pendentes APÓS identificação bem-sucedida
+            // ✅ CRÍTICO: Verificar e enviar eventos pendentes APÓS identificação
+            // bem-sucedida
             // Agora temos o customSessionId correto, podemos buscar eventos pendentes
             try {
                 String randomSessionId = session.getId();
@@ -878,7 +887,8 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                     for (var event : pendingEvents) {
                         try {
                             webSocketService.sendMessage(randomSessionId, event.getEventType(), event.getPayload());
-                            log.info("✅ [CoreWS] Evento pendente enviado: {} → {}", event.getEventType(), customSessionId);
+                            log.info("✅ [CoreWS] Evento pendente enviado: {} → {}", event.getEventType(),
+                                    customSessionId);
                         } catch (Exception e) {
                             log.error("❌ [CoreWS] Erro ao enviar evento pendente: {}", event.getEventType(), e);
                         }
@@ -886,14 +896,15 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
 
                     // Limpar eventos após envio
                     webSocketService.clearPendingEventsByCustomSessionId(customSessionId);
-                    log.info("🗑️ [CoreWS] {} eventos pendentes limpos para customSessionId: {}", pendingEvents.size(), customSessionId);
+                    log.info("🗑️ [CoreWS] {} eventos pendentes limpos para customSessionId: {}", pendingEvents.size(),
+                            customSessionId);
                 } else {
                     log.debug("📭 [CoreWS] Nenhum evento pendente para customSessionId: {}", customSessionId);
                 }
             } catch (Exception e) {
                 log.error("❌ [CoreWS] Erro ao verificar eventos pendentes: {}", e.getMessage());
             }
-            
+
             // ✅ NOVO: Enviar confirmação de sincronização de sessão para Electron
             try {
                 Map<String, Object> syncConfirmation = new HashMap<>();
@@ -902,14 +913,12 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
                 syncConfirmation.put("summonerName", summonerName);
                 syncConfirmation.put("synced", true);
                 syncConfirmation.put("timestamp", System.currentTimeMillis());
-                
+
                 session.sendMessage(new TextMessage(
-                    objectMapper.writeValueAsString(Map.of(
-                        "type", "session_sync_confirmed",
-                        "data", syncConfirmation
-                    ))
-                ));
-                
+                        objectMapper.writeValueAsString(Map.of(
+                                "type", "session_sync_confirmed",
+                                "data", syncConfirmation))));
+
                 log.info("✅ [CoreWS] session_sync_confirmed enviado: {} ↔ {}", session.getId(), customSessionId);
             } catch (Exception e) {
                 log.warn("⚠️ [CoreWS] Erro ao enviar session_sync_confirmed: {}", e.getMessage());
@@ -917,17 +926,18 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
 
             // ✅ NOVO: Enviar notificação de sessão atualizada para FRONTEND
             try {
-                // Verificar se é reconexão (se já existia customSessionId para outro randomSessionId)
+                // Verificar se é reconexão (se já existia customSessionId para outro
+                // randomSessionId)
                 boolean isReconnection = false;
                 String eventType = "connected";
-                
+
                 // Buscar sessões antigas deste jogador
                 Optional<String> oldSessionOpt = redisWSSession.getSessionBySummoner(summonerName);
                 if (oldSessionOpt.isPresent() && !oldSessionOpt.get().equals(session.getId())) {
                     isReconnection = true;
                     eventType = "reconnected";
-                    log.info("🔄 [Session Notification] Reconexão detectada: {} (old: {}, new: {})", 
-                        summonerName, oldSessionOpt.get(), session.getId());
+                    log.info("🔄 [Session Notification] Reconexão detectada: {} (old: {}, new: {})",
+                            summonerName, oldSessionOpt.get(), session.getId());
                 }
 
                 Map<String, Object> notificationData = new HashMap<>();
@@ -943,9 +953,9 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
 
                 // Enviar notificação apenas para este jogador (frontend)
                 webSocketService.sendToPlayer("player_session_updated", notificationData, summonerName);
-                
-                log.info("🔔 [Session Notification] Notificação enviada: {} - {} ({})", 
-                    eventType, summonerName, customSessionId);
+
+                log.info("🔔 [Session Notification] Notificação enviada: {} - {} ({})",
+                        eventType, summonerName, customSessionId);
             } catch (Exception e) {
                 log.debug("⚠️ [Session Notification] Erro ao enviar notificação: {}", e.getMessage());
             }
@@ -1663,42 +1673,41 @@ public class CoreWebSocketHandler extends TextWebSocketHandler {
             if (puuid != null || profileIconId != null || summonerLevel != null) {
                 try {
                     // Buscar dados atuais
-                    Optional<br.com.lolmatchmaking.backend.service.redis.RedisWebSocketSessionService.ClientInfo> currentInfoOpt = 
-                        redisWSSession.getClientInfo(summonerName);
+                    Optional<br.com.lolmatchmaking.backend.service.redis.RedisWebSocketSessionService.ClientInfo> currentInfoOpt = redisWSSession
+                            .getClientInfo(summonerName);
 
                     if (currentInfoOpt.isPresent()) {
                         var currentInfo = currentInfoOpt.get();
-                        
+
                         // Verificar se houve mudança
                         boolean hasChanges = false;
                         if (puuid != null && !puuid.equals(currentInfo.getPuuid())) {
                             hasChanges = true;
-                            log.info("🔄 [Heartbeat] PUUID mudou para {}: {} → {}", 
-                                summonerName, currentInfo.getPuuid(), puuid);
+                            log.info("🔄 [Heartbeat] PUUID mudou para {}: {} → {}",
+                                    summonerName, currentInfo.getPuuid(), puuid);
                         }
                         if (profileIconId != null && !profileIconId.equals(currentInfo.getProfileIconId())) {
                             hasChanges = true;
-                            log.debug("🔄 [Heartbeat] ProfileIcon mudou para {}: {} → {}", 
-                                summonerName, currentInfo.getProfileIconId(), profileIconId);
+                            log.debug("🔄 [Heartbeat] ProfileIcon mudou para {}: {} → {}",
+                                    summonerName, currentInfo.getProfileIconId(), profileIconId);
                         }
                         if (summonerLevel != null && !summonerLevel.equals(currentInfo.getSummonerLevel())) {
                             hasChanges = true;
-                            log.debug("🔄 [Heartbeat] Level mudou para {}: {} → {}", 
-                                summonerName, currentInfo.getSummonerLevel(), summonerLevel);
+                            log.debug("🔄 [Heartbeat] Level mudou para {}: {} → {}",
+                                    summonerName, currentInfo.getSummonerLevel(), summonerLevel);
                         }
 
                         // Atualizar se houve mudanças
                         if (hasChanges) {
                             redisWSSession.updatePlayerData(
-                                summonerName,
-                                puuid != null ? puuid : currentInfo.getPuuid(),
-                                currentInfo.getSummonerId(),
-                                profileIconId != null ? profileIconId : currentInfo.getProfileIconId(),
-                                summonerLevel != null ? summonerLevel : currentInfo.getSummonerLevel(),
-                                currentInfo.getGameName(),
-                                currentInfo.getTagLine(),
-                                customSessionId
-                            );
+                                    summonerName,
+                                    puuid != null ? puuid : currentInfo.getPuuid(),
+                                    currentInfo.getSummonerId(),
+                                    profileIconId != null ? profileIconId : currentInfo.getProfileIconId(),
+                                    summonerLevel != null ? summonerLevel : currentInfo.getSummonerLevel(),
+                                    currentInfo.getGameName(),
+                                    currentInfo.getTagLine(),
+                                    customSessionId);
                             log.info("✅ [Heartbeat] Dados atualizados para: {}", summonerName);
                         }
                     }
